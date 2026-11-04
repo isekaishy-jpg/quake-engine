@@ -6,6 +6,7 @@
 - **Research:**
   - [Research plan](research/plan.md): the items that need researching, in order
   - [Open research questions](research/open-questions.md)
+  - [Windows window previews](research/windows-previews.md)
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
   - [0001: engine architecture and the road to playing Quake](proposals/0001-architecture.md)

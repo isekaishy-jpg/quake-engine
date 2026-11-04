@@ -14,6 +14,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | What exactly did CS2's sub-tick and Overwatch's command buffer do? | Primary sources. Only third-party accounts were found | Weapon timing, client clock |
 | How does Quake Live's `g_lagHax` work? | A reliable source. Only anecdotes were found | Lag compensation |
 | How much launch delay and correction feels right? | Testing in play | Projectiles |
-| How fast can a minimized window refresh its preview through the iconic bitmap APIs, and does Alt-Tab take the image as taskbar hover does? | A test once frames draw, by hovering and pressing Alt-Tab in each state, measuring the cost of each refresh | Platform, Renderer |
+| How fast can a minimized window refresh its [preview](windows-previews.md), and how do we tell a peek view has closed? No message says so | A test once frames draw, by hovering and pressing Alt-Tab in each state, measuring the cost of each refresh | Platform, Renderer |
 | Does one message per raw event keep up with an 8 kHz mouse? | A measurement on real hardware, then perhaps a dedicated input thread | Platform |
 | What's the product's real name? | The human's decision | Packaging |
