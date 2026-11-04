@@ -4,11 +4,13 @@ Status: accepted, 2026-11-03, increment 1.
 
 ## Research
 
-- The human's direction: a minimized window "could just have a preview or just save resources". The preview meant is the Windows one, shown on taskbar hover and in Alt-Tab, and both are wanted: save resources and keep that preview.
+- The human's direction: a minimized window "could just have a preview or just save resources". The preview meant is the Windows one, shown on taskbar hover and in Alt-Tab, which the human describes as live at around 30 frames a second, with a mechanism of its own for each. Both are wanted: save resources and keep that preview.
 - [Review 0003](../reviews/0003-increment-1.md) showed frames kept running at the full cap while minimized, drawing nothing anyone could see, and that ticks don't need frames.
 - A minimized window can report a zero-sized surface, as [this NVIDIA forum report](https://forums.developer.nvidia.com/t/problems-with-vk-khr-swapchain/43513) describes, and a swapchain can't be created at zero extent, as [this Khronos thread](https://community.khronos.org/t/about-the-swapchain-image-resizing/7397) notes. The usual answer, as in the [vulkanalia tutorial](https://kylemayes.github.io/vulkanalia/swapchain/recreation.html), is to skip rendering until the size returns.
-- That doesn't stop the Windows preview, which is a separate route. With [`DWMWA_FORCE_ICONIC_REPRESENTATION` and `DWMWA_HAS_ICONIC_BITMAP`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) set, the system asks the window for a bitmap with [`WM_DWMSENDICONICTHUMBNAIL`](https://learn.microsoft.com/en-us/windows/win32/dwm/wm-dwmsendiconicthumbnail), and the window answers with [`DwmSetIconicThumbnail`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmseticonicthumbnail). The full-size peek works the same way through [`DwmSetIconicLivePreviewBitmap`](https://learn.microsoft.com/en-us/windows/win32/api/Dwmapi/nf-dwmapi-dwmseticoniclivepreviewbitmap).
-- The bitmap is 32-bit and no larger than the size asked for. `DwmInvalidateIconicBitmaps` marks it as out of date. If the window doesn't answer in time, the system falls back to its own default.
+- The Windows preview doesn't go through the application at all while the window is on the desktop. Microsoft's [thumbnail overview](https://learn.microsoft.com/en-us/windows/win32/dwm/thumbnail-ovw) calls these "dynamic, constant connections", not snapshots, and names both taskbar hover and Alt-Tab. So they stay live for as long as frames run, at a rate the system sets. That rate isn't documented, and neither is how the shell builds each one.
+- A minimized window is different. A [third-party developer](https://github.com/Yun-yyskk/windowpeeking) reports that Windows stops composing it, and [a clock app's issue](https://github.com/danielchalmers/DesktopClock/issues/126) reports the preview staying as it was at minimize. Both are secondary sources. If they hold, the last frame stays in the preview with no work from the engine.
+- An application can supply its own image. With [`DWMWA_HAS_ICONIC_BITMAP`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) set, the system asks through [`WM_DWMSENDICONICTHUMBNAIL`](https://learn.microsoft.com/en-us/windows/win32/dwm/wm-dwmsendiconicthumbnail), and the window answers with [`DwmSetIconicThumbnail`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwmseticonicthumbnail). The full-size peek uses [`DwmSetIconicLivePreviewBitmap`](https://learn.microsoft.com/en-us/windows/win32/api/Dwmapi/nf-dwmapi-dwmseticoniclivepreviewbitmap).
+- That route has two traps. `DWMWA_FORCE_ICONIC_REPRESENTATION` shows the static bitmap even when a live view exists, so it would make a visible window's preview worse. And [`DwmInvalidateIconicBitmaps`](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/nf-dwmapi-dwminvalidateiconicbitmaps) "should not be called frequently", so this route can't give a 30 frames a second preview of a minimized window.
 - `winit` has no hook for these messages in its public window API, while `solapp` can give the window's `HWND`, so the window could be subclassed inside `engine_platform`.
 - `solapp` reports `minimized` in `SADisplayGeometry`, with a zero client size being valid while minimized.
 
@@ -21,10 +23,10 @@ Status: accepted, 2026-11-03, increment 1.
 
 ## Proposal
 
-- **Selected approach:** save resources now. The Windows preview waits for a renderer, since there's no image to give it yet.
+- **Selected approach:** save resources when minimized, and only then. A window that's merely behind others keeps its frames, so its preview stays live. Nothing is built for the preview, because the system handles it. Whether that's enough is tested once frames draw.
 - **Tradeoffs:** the taskbar shows whatever the system last had, which may be stale. Pausing a single-player game when minimized is a separate choice, left for when there's a game to pause.
 - **Acceptance criteria:** frames stop while minimized and resume on restore, and ticks stay at 72 a second throughout. The CPU saving can only be measured once frames draw something.
-- **Future extension:** when frames draw, the renderer keeps a copy of the last frame as the window is minimized, and `engine_platform` answers the system's requests with it. That costs one read-back per minimize and no frames. The [open question](../research/open-questions.md) covers the details.
+- **Future extension:** if a minimized window's preview comes out blank or wrong under Vulkan, the renderer keeps a copy of the last frame, and `engine_platform` supplies it with `DWMWA_HAS_ICONIC_BITMAP`, without forcing it. That's in the [open questions](../research/open-questions.md).
 
 ## Review
 
