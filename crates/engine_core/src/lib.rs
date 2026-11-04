@@ -5,5 +5,6 @@
 pub mod entity;
 pub mod math;
 pub mod player;
+pub mod sound;
 pub mod time;
 pub mod window;

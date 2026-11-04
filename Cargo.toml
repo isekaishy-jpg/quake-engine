@@ -46,6 +46,7 @@ cargo_metadata = { version = "=0.23.1", default-features = false }
 
 # Engine crates.
 engine_assets = { path = "crates/engine_assets" }
+engine_audio = { path = "crates/engine_audio" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
 engine_map = { path = "crates/engine_map" }
@@ -59,6 +60,8 @@ engine_sim = { path = "crates/engine_sim" }
 engine_core = { path = "crates/engine_core" }
 engine_platform = { path = "crates/engine_platform" }
 fixture_quake = { path = "crates/fixture_quake" }
+# Proposal 0029: audio, private to `engine_audio`. The fixture parses WAV itself.
+kira = { version = "=0.12.6", default-features = false, features = ["cpal", "ogg", "vorbis"] }
 # Proposal 0025: Luau, private to `engine_script`.
 mlua = { version = "=0.12.2", features = ["luau", "vendored"] }
 # Proposal 0022: collision, private to `engine_physics`.

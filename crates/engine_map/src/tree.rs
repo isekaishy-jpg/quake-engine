@@ -80,6 +80,8 @@ pub struct Leaf {
     pub first_face: u32,
     /// How many faces touch it.
     pub face_count: u32,
+    /// How much water, sky, slime and lava can be heard, out of 255.
+    pub ambient: [u8; 4],
 }
 
 /// The tree of the world model, with its visibility data.

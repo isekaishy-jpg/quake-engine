@@ -273,6 +273,9 @@ fn import_tree(bsp: &BspData) -> Tree {
             },
             first_face: leaf.face_idx.0,
             face_count: leaf.face_num.0,
+            ambient: leaf.ambience.map_or([0; 4], |ambience| {
+                [ambience.water, ambience.sky, ambience.slime, ambience.lava]
+            }),
         })
         .collect();
     Tree {

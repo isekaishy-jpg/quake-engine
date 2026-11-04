@@ -22,6 +22,15 @@ fn find_ignoring_case(directory: &Path, name: &str) -> Option<PathBuf> {
         .map(|entry| entry.path())
 }
 
+/// Mounts the rerelease's loose files for `game`, which is where Steam keeps
+/// its music, if there are any. Mount this first, so it's searched last.
+pub fn mount_music(filesystem: &mut FileSystem, base: &Path, game: &str) {
+    let directory = base.join("rerelease").join(game);
+    if directory.is_dir() {
+        filesystem.mount(Box::new(DirectoryArchive::new(&directory)));
+    }
+}
+
 /// Mounts a game directory: its loose files, then `pak0.pak`, `pak1.pak` and
 /// so on until one is missing. Each goes in front, so paks override loose
 /// files in the same directory, as in the original.
