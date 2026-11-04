@@ -28,7 +28,7 @@ default-members = ["crates/engine_app"]
 
 # Patched third-party sources used by the Sol crates. They are dependencies,
 # not engine code (proposal 0009).
-exclude = ["vendor/winit", "vendor/micropool"]
+exclude = ["vendor/winit", "vendor/micropool", "vendor/vulkane"]
 
 # Cargo's SemVer spelling of the product version: `0.0.0-alpha` is the product
 # version `0.0.0a` (proposal 0007).
@@ -47,9 +47,18 @@ cargo_metadata = { version = "=0.23.1", default-features = false }
 engine_assets = { path = "crates/engine_assets" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
+engine_map = { path = "crates/engine_map" }
+engine_render = { path = "crates/engine_render" }
 engine_core = { path = "crates/engine_core" }
 engine_platform = { path = "crates/engine_platform" }
 fixture_quake = { path = "crates/fixture_quake" }
+# Proposal 0017: BSP parsing, private to `fixture_quake`.
+qbsp = { version = "=0.17.0", default-features = false }
+# Proposal 0019: writing screenshots, private to `engine_app`.
+png = { version = "=0.18.0", default-features = false }
+# Proposal 0016: the Vulkan backend, private to `engine_render`. The patched
+# copy adds mipmapped images and samplers, and `fetch-spec` stays off.
+vulkane = { path = "vendor/vulkane", default-features = false, features = ["naga"] }
 # Proposal 0011: the application host, private to `engine_platform`.
 solapp = { path = "crates/solapp" }
 

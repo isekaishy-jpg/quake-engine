@@ -1,0 +1,542 @@
+//! Safe wrappers for `VkPipelineLayout` and `VkPipeline` (compute).
+//!
+//! A [`PipelineLayout`] describes the descriptor set layouts and push
+//! constant ranges a pipeline uses. A [`ComputePipeline`] pairs a
+//! layout with a compute shader module.
+//!
+//! For **graphics pipelines**, see
+//! [`GraphicsPipelineBuilder`](super::GraphicsPipelineBuilder) in the
+//! `graphics_pipeline` module.
+//!
+//! Optional: [`SpecializationConstants`] for baking workgroup sizes or
+//! dtype switches at pipeline creation time, and [`PipelineCache`] for
+//! caching compiled pipelines to disk.
+
+use super::descriptor::{DescriptorSetLayout, ShaderStageFlags};
+use super::device::DeviceInner;
+use super::shader::ShaderModule;
+use super::{Device, Error, Result, check};
+use crate::raw::bindings::*;
+use std::ffi::CString;
+use std::sync::Arc;
+
+/// One push constant range — a `(stage_flags, offset, size)` tuple.
+///
+/// Push constants are small chunks of data (typically 16-128 bytes — the
+/// guaranteed minimum is 128 bytes per the Vulkan spec) that the host pushes
+/// directly into the command buffer for a single draw or dispatch. They are
+/// the cheapest way to pass per-invocation parameters to a shader: there's
+/// no descriptor set, no buffer, no memory binding — just an inline copy in
+/// the command buffer.
+///
+/// In GLSL, push constants are declared with:
+///
+/// ```glsl
+/// layout(push_constant) uniform PushConsts {
+///     uint count;
+///     float scale;
+/// } pc;
+/// ```
+///
+/// `offset` and `size` are in bytes and must be multiples of 4. The Vulkan
+/// spec requires that ranges declared in a single pipeline layout do not
+/// overlap.
+#[derive(Debug, Clone, Copy)]
+pub struct PushConstantRange {
+    /// Which shader stages will read this range.
+    pub stage_flags: ShaderStageFlags,
+    /// Byte offset of this range from the start of push constant memory.
+    pub offset: u32,
+    /// Size of this range in bytes.
+    pub size: u32,
+}
+
+/// A safe wrapper around `VkPipelineLayout`.
+///
+/// A pipeline layout describes the descriptor set layouts and push constant
+/// ranges that a pipeline expects. It's destroyed automatically on drop.
+pub struct PipelineLayout {
+    pub(crate) handle: VkPipelineLayout,
+    pub(crate) device: Arc<DeviceInner>,
+}
+
+impl PipelineLayout {
+    /// Create a pipeline layout from descriptor set layouts only (no push
+    /// constants).
+    ///
+    /// This is a convenience for the common case. Use
+    /// [`with_push_constants`](Self::with_push_constants) when you also need
+    /// to declare push constant ranges.
+    pub fn new(device: &Device, set_layouts: &[&DescriptorSetLayout]) -> Result<Self> {
+        Self::with_push_constants(device, set_layouts, &[])
+    }
+
+    /// Create a pipeline layout from descriptor set layouts and push
+    /// constant ranges.
+    ///
+    /// Either slice may be empty. Push constant ranges must be non-overlapping
+    /// per the Vulkan spec.
+    pub fn with_push_constants(
+        device: &Device,
+        set_layouts: &[&DescriptorSetLayout],
+        push_constant_ranges: &[PushConstantRange],
+    ) -> Result<Self> {
+        let create = device
+            .inner
+            .dispatch
+            .vkCreatePipelineLayout
+            .ok_or(Error::MissingFunction("vkCreatePipelineLayout"))?;
+
+        let raw_layouts: Vec<VkDescriptorSetLayout> =
+            set_layouts.iter().map(|l| l.handle).collect();
+
+        let raw_pcrs: Vec<VkPushConstantRange> = push_constant_ranges
+            .iter()
+            .map(|r| VkPushConstantRange {
+                stageFlags: r.stage_flags.0,
+                offset: r.offset,
+                size: r.size,
+            })
+            .collect();
+
+        let info = VkPipelineLayoutCreateInfo {
+            sType: VkStructureType::STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
+            setLayoutCount: raw_layouts.len() as u32,
+            pSetLayouts: raw_layouts.as_ptr(),
+            pushConstantRangeCount: raw_pcrs.len() as u32,
+            pPushConstantRanges: raw_pcrs.as_ptr(),
+            ..Default::default()
+        };
+
+        let mut handle: VkPipelineLayout = 0;
+        // Safety: info, raw_layouts, and raw_pcrs are all valid for the call.
+        check(unsafe { create(device.inner.handle, &info, std::ptr::null(), &mut handle) })?;
+
+        Ok(Self {
+            handle,
+            device: Arc::clone(&device.inner),
+        })
+    }
+
+    /// Returns the raw `VkPipelineLayout` handle.
+    pub fn raw(&self) -> VkPipelineLayout {
+        self.handle
+    }
+}
+
+impl Drop for PipelineLayout {
+    fn drop(&mut self) {
+        if let Some(destroy) = self.device.dispatch.vkDestroyPipelineLayout {
+            // Safety: handle is valid; we are the sole owner.
+            unsafe { destroy(self.device.handle, self.handle, std::ptr::null()) };
+        }
+    }
+}
+
+/// A typed builder for SPIR-V specialization constants.
+///
+/// Specialization constants are values baked into the SPIR-V at pipeline
+/// creation time. The shader declares them with `layout(constant_id = N)
+/// const TYPE NAME = DEFAULT;` and the host can override the default with a
+/// value when building the pipeline. This is the canonical way to set
+/// workgroup sizes, unroll factors, and dtype switches without recompiling
+/// the shader.
+///
+/// # Example
+///
+/// ```ignore
+/// let specs = SpecializationConstants::new()
+///     .add_u32(0, 64)   // local_size_x
+///     .add_u32(1, 4)    // unroll factor
+///     .add_f32(2, 1.5); // gain
+/// let pipeline = ComputePipeline::with_specialization(
+///     &device, &layout, &shader, "main", &specs,
+/// )?;
+/// ```
+#[derive(Default, Clone)]
+pub struct SpecializationConstants {
+    entries: Vec<VkSpecializationMapEntry>,
+    data: Vec<u8>,
+}
+
+impl SpecializationConstants {
+    /// Create an empty specialization constants set.
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Add a `u32` specialization constant with the given `constant_id`.
+    pub fn add_u32(mut self, constant_id: u32, value: u32) -> Self {
+        self.push_bytes(constant_id, &value.to_ne_bytes());
+        self
+    }
+
+    /// Add an `i32` specialization constant with the given `constant_id`.
+    pub fn add_i32(mut self, constant_id: u32, value: i32) -> Self {
+        self.push_bytes(constant_id, &value.to_ne_bytes());
+        self
+    }
+
+    /// Add an `f32` specialization constant with the given `constant_id`.
+    pub fn add_f32(mut self, constant_id: u32, value: f32) -> Self {
+        self.push_bytes(constant_id, &value.to_ne_bytes());
+        self
+    }
+
+    /// Add a `bool` specialization constant. SPIR-V represents these as
+    /// 32-bit values: `0` for false, non-zero for true.
+    pub fn add_bool(mut self, constant_id: u32, value: bool) -> Self {
+        let v: u32 = if value { 1 } else { 0 };
+        self.push_bytes(constant_id, &v.to_ne_bytes());
+        self
+    }
+
+    /// Returns true if no constants have been added.
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
+    /// Returns the number of constants currently in this set.
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    fn push_bytes(&mut self, constant_id: u32, bytes: &[u8]) {
+        let offset = self.data.len() as u32;
+        self.entries.push(VkSpecializationMapEntry {
+            constantID: constant_id,
+            offset,
+            size: bytes.len(),
+        });
+        self.data.extend_from_slice(bytes);
+    }
+
+    /// Build a raw `VkSpecializationInfo` that borrows from this struct.
+    /// The returned struct is only valid for the lifetime of `self`.
+    pub(crate) fn as_raw(&self) -> VkSpecializationInfo {
+        VkSpecializationInfo {
+            mapEntryCount: self.entries.len() as u32,
+            pMapEntries: self.entries.as_ptr(),
+            dataSize: self.data.len(),
+            pData: self.data.as_ptr() as *const _,
+        }
+    }
+}
+
+/// A safe wrapper around `VkPipelineCache`.
+///
+/// Pipeline caches accelerate pipeline creation by storing the
+/// implementation-specific compiled blob and reusing it across runs and
+/// across pipelines that share state. The typical pattern:
+///
+/// 1. Load any previously serialized cache bytes from disk via
+///    [`PipelineCache::with_data`].
+/// 2. Pass the cache to all your pipeline creations via
+///    [`ComputePipeline::with_specialization_and_cache`].
+/// 3. Before exit, call [`PipelineCache::data`] and write the bytes back
+///    to disk.
+///
+/// The exact format is implementation-specific and may even change between
+/// driver versions; on driver mismatch the implementation simply ignores
+/// the supplied data and starts fresh, so it's safe to always pass any
+/// previously saved bytes.
+///
+/// The cache is destroyed automatically on drop.
+pub struct PipelineCache {
+    pub(crate) handle: VkPipelineCache,
+    pub(crate) device: Arc<DeviceInner>,
+}
+
+impl PipelineCache {
+    /// Create a new empty pipeline cache.
+    pub fn new(device: &Device) -> Result<Self> {
+        Self::with_data(device, &[])
+    }
+
+    /// Create a new pipeline cache pre-populated with `data` (typically
+    /// the bytes from a previous run's [`PipelineCache::data`] call).
+    pub fn with_data(device: &Device, data: &[u8]) -> Result<Self> {
+        let create = device
+            .inner
+            .dispatch
+            .vkCreatePipelineCache
+            .ok_or(Error::MissingFunction("vkCreatePipelineCache"))?;
+
+        let info = VkPipelineCacheCreateInfo {
+            sType: VkStructureType::STRUCTURE_TYPE_PIPELINE_CACHE_CREATE_INFO,
+            initialDataSize: data.len(),
+            pInitialData: if data.is_empty() {
+                std::ptr::null()
+            } else {
+                data.as_ptr() as *const _
+            },
+            ..Default::default()
+        };
+
+        let mut handle: VkPipelineCache = 0;
+        // Safety: info is valid for the call, data outlives it.
+        check(unsafe { create(device.inner.handle, &info, std::ptr::null(), &mut handle) })?;
+
+        Ok(Self {
+            handle,
+            device: Arc::clone(&device.inner),
+        })
+    }
+
+    /// Returns the raw `VkPipelineCache` handle.
+    pub fn raw(&self) -> VkPipelineCache {
+        self.handle
+    }
+
+    /// Serialize the cache contents into a fresh `Vec<u8>` suitable for
+    /// writing to disk.
+    pub fn data(&self) -> Result<Vec<u8>> {
+        let get = self
+            .device
+            .dispatch
+            .vkGetPipelineCacheData
+            .ok_or(Error::MissingFunction("vkGetPipelineCacheData"))?;
+
+        let mut size: usize = 0;
+        // Safety: count query, data ptr is null.
+        check(unsafe {
+            get(
+                self.device.handle,
+                self.handle,
+                &mut size,
+                std::ptr::null_mut(),
+            )
+        })?;
+
+        let mut bytes = vec![0u8; size];
+        // Safety: bytes has space for `size` bytes.
+        check(unsafe {
+            get(
+                self.device.handle,
+                self.handle,
+                &mut size,
+                bytes.as_mut_ptr() as *mut _,
+            )
+        })?;
+        bytes.truncate(size);
+        Ok(bytes)
+    }
+}
+
+impl Drop for PipelineCache {
+    fn drop(&mut self) {
+        if let Some(destroy) = self.device.dispatch.vkDestroyPipelineCache {
+            // Safety: handle is valid; we are the sole owner.
+            unsafe { destroy(self.device.handle, self.handle, std::ptr::null()) };
+        }
+    }
+}
+
+/// A safe wrapper around a compute `VkPipeline`.
+///
+/// Compute pipelines bundle a single compute shader stage with a pipeline
+/// layout. To dispatch work, bind the pipeline and a compatible descriptor
+/// set on a command buffer and call `dispatch`.
+///
+/// Pipelines are destroyed automatically on drop.
+pub struct ComputePipeline {
+    pub(crate) handle: VkPipeline,
+    pub(crate) device: Arc<DeviceInner>,
+}
+
+/// Optional knobs for [`ComputePipeline::with_options`].
+///
+/// Unlike the flat-argument constructors, this struct carries all
+/// extension-layer configuration in a single place, so adding support
+/// for a new extension doesn't require another `with_*` variant.
+#[derive(Clone, Copy, Default)]
+pub struct ComputePipelineOptions<'a> {
+    /// Specialization constants baked in at create time. `None` =
+    /// empty (equivalent to [`ComputePipeline::new`]).
+    pub specialization: Option<&'a SpecializationConstants>,
+    /// Pipeline cache to warm-start from. `None` = no cache.
+    pub cache: Option<&'a PipelineCache>,
+    /// Required subgroup size for the compute stage — `VK_EXT_subgroup_size_control`
+    /// (core in Vulkan 1.3).
+    ///
+    /// ML kernels tuned for a specific subgroup width (wave 32 on NVIDIA,
+    /// wave 64 on AMD CDNA, etc.) can pin the shader to their preferred
+    /// size rather than accepting the driver's default. Must be one of
+    /// the supported sizes reported by
+    /// `VkPhysicalDeviceSubgroupSizeControlProperties.minSubgroupSize /
+    /// maxSubgroupSize`, and the device must have the
+    /// `computeFullSubgroups` feature enabled if the shader's local
+    /// size isn't a multiple of the required size.
+    ///
+    /// `None` leaves the choice to the driver.
+    pub required_subgroup_size: Option<u32>,
+}
+
+impl ComputePipeline {
+    /// Create a compute pipeline from a shader module and pipeline layout
+    /// with no specialization constants.
+    ///
+    /// `entry_point` is the GLSL/SPIR-V `main` function name (typically `"main"`).
+    pub fn new(
+        device: &Device,
+        layout: &PipelineLayout,
+        shader: &ShaderModule,
+        entry_point: &str,
+    ) -> Result<Self> {
+        Self::with_options(
+            device,
+            layout,
+            shader,
+            entry_point,
+            ComputePipelineOptions::default(),
+        )
+    }
+
+    /// Create a compute pipeline with specialization constants baked in.
+    ///
+    /// The constants must match the IDs declared in the shader's SPIR-V via
+    /// `OpSpecConstant*`. Mismatched IDs are silently ignored by the driver.
+    pub fn with_specialization(
+        device: &Device,
+        layout: &PipelineLayout,
+        shader: &ShaderModule,
+        entry_point: &str,
+        specialization: &SpecializationConstants,
+    ) -> Result<Self> {
+        Self::with_options(
+            device,
+            layout,
+            shader,
+            entry_point,
+            ComputePipelineOptions {
+                specialization: Some(specialization),
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Create a compute pipeline with specialization constants AND an
+    /// optional [`PipelineCache`] for fast warm starts. Pass `Some(&cache)`
+    /// to plug into a cache that may already contain a previously compiled
+    /// version of this pipeline.
+    pub fn with_specialization_and_cache(
+        device: &Device,
+        layout: &PipelineLayout,
+        shader: &ShaderModule,
+        entry_point: &str,
+        specialization: &SpecializationConstants,
+        cache: Option<&PipelineCache>,
+    ) -> Result<Self> {
+        Self::with_options(
+            device,
+            layout,
+            shader,
+            entry_point,
+            ComputePipelineOptions {
+                specialization: Some(specialization),
+                cache,
+                ..Default::default()
+            },
+        )
+    }
+
+    /// Most general compute-pipeline constructor, taking a
+    /// [`ComputePipelineOptions`] bag for extension-layer knobs.
+    ///
+    /// All other constructors delegate here; it's the right entry point
+    /// when you need `required_subgroup_size` or any future
+    /// options-struct field.
+    pub fn with_options(
+        device: &Device,
+        layout: &PipelineLayout,
+        shader: &ShaderModule,
+        entry_point: &str,
+        options: ComputePipelineOptions<'_>,
+    ) -> Result<Self> {
+        let create = device
+            .inner
+            .dispatch
+            .vkCreateComputePipelines
+            .ok_or(Error::MissingFunction("vkCreateComputePipelines"))?;
+
+        // Keep the C string and the spec info alive across the call.
+        let entry_c = CString::new(entry_point)?;
+
+        // Build the spec info on the stack so its pointers stay valid.
+        let empty_spec = SpecializationConstants::new();
+        let spec_ref = options.specialization.unwrap_or(&empty_spec);
+        let spec_raw = spec_ref.as_raw();
+        let p_spec = if spec_ref.is_empty() {
+            std::ptr::null()
+        } else {
+            &spec_raw as *const _
+        };
+
+        // Optional subgroup-size pNext on the compute stage.
+        // Keep the struct on the stack so its address is stable across
+        // the synchronous vkCreateComputePipelines call.
+        let subgroup_struct = options.required_subgroup_size.map(|size| {
+            VkPipelineShaderStageRequiredSubgroupSizeCreateInfo {
+                sType: VkStructureType::STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_REQUIRED_SUBGROUP_SIZE_CREATE_INFO,
+                pNext: std::ptr::null(),
+                requiredSubgroupSize: size,
+            }
+        });
+        let stage_pnext: *const std::ffi::c_void = subgroup_struct
+            .as_ref()
+            .map_or(std::ptr::null(), |s| s as *const _ as *const _);
+
+        let stage = VkPipelineShaderStageCreateInfo {
+            sType: VkStructureType::STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO,
+            pNext: stage_pnext,
+            stage: 0x20, // VK_SHADER_STAGE_COMPUTE_BIT
+            module: shader.handle,
+            pName: entry_c.as_ptr(),
+            pSpecializationInfo: p_spec,
+            ..Default::default()
+        };
+
+        let info = VkComputePipelineCreateInfo {
+            sType: VkStructureType::STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO,
+            stage,
+            layout: layout.handle,
+            ..Default::default()
+        };
+
+        let cache_handle = options.cache.map_or(0u64, |c| c.handle);
+
+        let mut handle: VkPipeline = 0;
+        // Safety: info, stage, entry_c, spec_raw, subgroup_struct, and
+        // the data inside `spec_ref` all live for the duration of this
+        // synchronous call.
+        check(unsafe {
+            create(
+                device.inner.handle,
+                cache_handle,
+                1,
+                &info,
+                std::ptr::null(),
+                &mut handle,
+            )
+        })?;
+
+        Ok(Self {
+            handle,
+            device: Arc::clone(&device.inner),
+        })
+    }
+
+    /// Returns the raw `VkPipeline` handle.
+    pub fn raw(&self) -> VkPipeline {
+        self.handle
+    }
+}
+
+impl Drop for ComputePipeline {
+    fn drop(&mut self) {
+        if let Some(destroy) = self.device.dispatch.vkDestroyPipeline {
+            // Safety: handle is valid; we are the sole owner.
+            unsafe { destroy(self.device.handle, self.handle, std::ptr::null()) };
+        }
+    }
+}
