@@ -235,6 +235,10 @@ impl MenuHost for Host {
     fn can_save(&self) -> bool {
         self.can_save
     }
+
+    fn name(&self) -> String {
+        "tester".to_owned()
+    }
 }
 
 /// Presses `keys` in turn.
@@ -270,11 +274,11 @@ fn a_new_game_asks_first_if_one_is_running() {
 }
 
 #[test]
-fn the_cursor_skips_multiplayer_until_it_exists() {
+fn options_can_be_reached_from_the_main_menu() {
     let mut menu = Menu::new();
     let mut host = Host::default();
     menu.toggle(&mut host);
-    press(&mut menu, &mut host, &["DOWNARROW", "ENTER"]);
+    press(&mut menu, &mut host, &["DOWNARROW", "DOWNARROW", "ENTER"]);
     press(
         &mut menu,
         &mut host,
@@ -388,10 +392,77 @@ fn every_screen_draws_without_a_gap() {
         Screen::Keys,
         Screen::Help,
         Screen::Quit,
+        Screen::Multiplayer,
+        Screen::Join,
+        Screen::Host,
+        Screen::Setup,
     ] {
         let mut menu = Menu::new();
         menu.open(screen, &mut host);
         let (_names, quads) = drawn(|canvas| menu.draw(canvas, 1.0, &host));
         assert!(!quads.is_empty(), "{screen:?}");
     }
+}
+
+#[test]
+fn an_address_can_be_typed_and_joined() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Multiplayer, &mut host);
+    press(&mut menu, &mut host, &["ENTER"]);
+    press(&mut menu, &mut host, &["ENTER"]);
+    assert!(host.commands.is_empty(), "there's nothing typed yet");
+    let keys = [
+        "1",
+        "0",
+        ".",
+        "0",
+        ".",
+        "0",
+        ".",
+        "9",
+        "9",
+        "SEMICOLON",
+        "2",
+        "6",
+    ];
+    press(&mut menu, &mut host, &keys);
+    press(&mut menu, &mut host, &["BACKSPACE", "ENTER"]);
+    assert_eq!(host.commands, ["connect \"10.0.0.99:2\""]);
+}
+
+#[test]
+fn hosting_sets_the_rules_then_starts() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Multiplayer, &mut host);
+    press(&mut menu, &mut host, &["DOWNARROW", "ENTER"]);
+    press(
+        &mut menu,
+        &mut host,
+        &["DOWNARROW", "DOWNARROW", "DOWNARROW"],
+    );
+    press(&mut menu, &mut host, &["RIGHTARROW", "RIGHTARROW"]);
+    press(
+        &mut menu,
+        &mut host,
+        &["DOWNARROW", "DOWNARROW", "DOWNARROW", "ENTER"],
+    );
+    let command = &host.commands[0];
+    assert!(command.contains("deathmatch 1"), "{command}");
+    assert!(command.contains("fraglimit 20"), "{command}");
+    assert!(command.ends_with("map dm1; host"), "{command}");
+    assert!(!menu.is_open());
+}
+
+#[test]
+fn setup_keeps_a_name_and_steps_through_colours() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Setup, &mut host);
+    press(&mut menu, &mut host, &["BACKSPACE", "Z"]);
+    press(&mut menu, &mut host, &["DOWNARROW", "LEFTARROW"]);
+    assert_eq!(host.setting("topcolor"), 13.0, "it wraps round");
+    press(&mut menu, &mut host, &["ESCAPE"]);
+    assert_eq!(host.commands, ["name \"testez\""]);
 }

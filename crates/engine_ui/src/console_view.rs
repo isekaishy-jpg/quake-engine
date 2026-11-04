@@ -87,6 +87,8 @@ pub struct ConsoleView {
     down: f32,
     /// Whether Shift is held.
     shift: bool,
+    /// Whether it opened for one line of chat, and closes after it.
+    chat: bool,
 }
 
 impl ConsoleView {
@@ -122,9 +124,17 @@ impl ConsoleView {
     /// Opens or closes it, starting with nothing typed.
     pub fn set_open(&mut self, open: bool) {
         self.open = open;
+        self.chat = false;
         self.input.clear();
         self.history_at = 0;
         self.scroll = 0;
+    }
+
+    /// Opens it for one line to say to everyone.
+    pub fn open_chat(&mut self) {
+        self.set_open(true);
+        self.input.push_str("say ");
+        self.chat = true;
     }
 
     /// Forgets what's over the view.
@@ -180,6 +190,10 @@ impl ConsoleView {
                 self.print(&format!("{PROMPT}{line}"), f64::NEG_INFINITY);
                 self.history_at = 0;
                 self.scroll = 0;
+                if self.chat {
+                    self.chat = false;
+                    self.open = false;
+                }
                 if line.is_empty() {
                     return None;
                 }

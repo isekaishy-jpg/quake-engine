@@ -19,8 +19,8 @@ Status: accepted, 2026-11-04, increment 9.
 - The rest of those QuakeC files is ported, with the translator's habits, keeping original names.
 - A player's frames are a full port of `player.qc`, replacing the short list kept for first person.
 - `ServerMessage::Scores` sends a list of names, frags and colours when it changes. `Hud` draws them.
-- Skins are recoloured on the CPU when a player's colours change, into their own texture, since there are only as many as players.
-- `say` and `messagemode` give chat, with a line drawn over the view.
+- Skins are recoloured as a model is loaded for a player's colours, into its own texture, since there are only as many as players.
+- `say` and `messagemode` give chat. `messagemode` opens the console's line for one message.
 - Multiplayer in the menus has Join, Host and Setup: a typed address, a map and rules, and a name and colours.
 
 ## Proposal

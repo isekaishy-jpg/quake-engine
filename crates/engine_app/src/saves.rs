@@ -129,6 +129,7 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
         saved,
     )?;
     let origin = server.player_origin();
+    world.leave_game();
     world.level = server.level().clone();
     world.server = Some(server);
     world.client = Some(Client::new(Box::new(client_end), collision, origin));

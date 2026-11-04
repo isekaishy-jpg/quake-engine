@@ -177,7 +177,7 @@ impl NetServer {
         }))
     }
 
-    /// Tells everyone it's over.
+    /// Tells everyone it's over, and sends that now.
     pub fn close(&mut self) {
         let mut guard = self.end.borrow_mut();
         let end = &mut *guard;

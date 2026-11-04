@@ -79,6 +79,8 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("connect", connect);
     console.register("disconnect", disconnect);
     console.register("say", say);
+    console.register("messagemode", message_mode);
+    console.register("menu_multiplayer", open_menu);
     console.register("save", save);
     console.register("load", load);
     for command in ["kill", "god", "notarget", "give"] {
@@ -223,9 +225,9 @@ fn restart(console: &mut Console<World>, world: &mut World, _args: &Args) {
     }
 }
 
-/// `newgame`: starts again from the first map.
+/// `newgame`: starts a game for one from the first map, leaving any other.
 fn newgame(console: &mut Console<World>, _world: &mut World, _args: &Args) {
-    console.add("map start");
+    console.add("disconnect; deathmatch 0; coop 0; map start");
 }
 
 /// `reset_defaults`: goes back to the game's settings, and this engine's keys.
@@ -266,6 +268,7 @@ fn open_menu(console: &mut Console<World>, world: &mut World, args: &Args) {
         "menu_keys" => Screen::Keys,
         "menu_video" => Screen::Video,
         "menu_quit" => Screen::Quit,
+        "menu_multiplayer" => Screen::Multiplayer,
         "help" => Screen::Help,
         _ => Screen::Main,
     };
@@ -281,7 +284,8 @@ fn bonus_flash(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 
 /// `pause`: stops the game, or starts it again.
 fn pause(_console: &mut Console<World>, world: &mut World, _args: &Args) {
-    world.paused = !world.paused && world.client.is_some();
+    // A game with others in it can't stop for one of them.
+    world.paused = !world.paused && world.client.is_some() && !world.is_online();
 }
 
 /// `centerview`: looks straight ahead.
@@ -355,6 +359,13 @@ fn say(console: &mut Console<World>, world: &mut World, args: &Args) {
         client.send_console(&format!("say {}", args.rest()));
     } else {
         console.print("say needs a game running");
+    }
+}
+
+/// `messagemode`: types one line to say to everyone.
+fn message_mode(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if world.client.is_some() {
+        world.console_view.open_chat();
     }
 }
 

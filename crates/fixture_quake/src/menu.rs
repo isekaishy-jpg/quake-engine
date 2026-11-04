@@ -16,11 +16,31 @@ const SLIDER_RANGE: u8 = 10;
 /// How many rows the main menu's picture has.
 const MAIN_ROWS: usize = 5;
 
-/// The row of the main menu that isn't ready until online play.
-const MULTIPLAYER_ROW: usize = 1;
-
 /// How many rows the single player menu's picture has.
 const SINGLE_ROWS: usize = 3;
+
+/// How many rows the multiplayer menu's picture has.
+const MULTIPLAYER_ROWS: usize = 3;
+
+/// How many rows hosting a game has.
+const HOST_ROWS: usize = 7;
+
+/// The row that starts it.
+const HOST_BEGIN_ROW: usize = 6;
+
+/// The longest address or name that can be typed.
+const MAX_TYPED: usize = 32;
+
+/// The levels a game can be hosted on.
+const HOST_LEVELS: [&str; 12] = [
+    "dm1", "dm2", "dm3", "dm4", "dm5", "dm6", "start", "e1m1", "e2m1", "e3m1", "e4m1", "end",
+];
+
+/// What teamplay's settings are called.
+const TEAMPLAY_NAMES: [&str; 3] = ["Off", "No Friendly Fire", "Friendly Fire"];
+
+/// What the skills are called.
+const SKILL_NAMES: [&str; 4] = ["Easy", "Normal", "Hard", "Nightmare"];
 
 /// What's asked to change a binding.
 const KEY_ACTIONS: [(&str, &str); 18] = [
@@ -164,6 +184,14 @@ pub enum Screen {
     Quit,
     /// Asking whether to leave the game for a new one.
     NewGame,
+    /// Joining or hosting.
+    Multiplayer,
+    /// Typing an address to join.
+    Join,
+    /// Choosing the rules of a game to host.
+    Host,
+    /// Choosing a name and colours.
+    Setup,
 }
 
 /// What the menus need from the engine.
@@ -184,6 +212,36 @@ pub trait MenuHost {
     fn in_game(&self) -> bool;
     /// Whether the game can be saved now.
     fn can_save(&self) -> bool;
+    /// The player's name.
+    fn name(&self) -> String;
+}
+
+/// A game to host.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct HostRules {
+    /// Whether it's co-op rather than deathmatch.
+    coop: bool,
+    /// The teamplay setting.
+    teamplay: usize,
+    /// The skill.
+    skill: usize,
+    /// The frag limit, in tens.
+    frag_tens: usize,
+    /// The time limit, in fives of minutes.
+    time_fives: usize,
+    /// Which of [`HOST_LEVELS`].
+    level: usize,
+}
+
+/// The character a key types into a menu's field, on a US keyboard.
+fn typed(key: &str) -> Option<char> {
+    if key == "SEMICOLON" {
+        return Some(':');
+    }
+    let mut letters = key.chars();
+    let (first, rest) = (letters.next()?, letters.next());
+    let usable = first.is_ascii_alphanumeric() || first == '.' || first == '-';
+    (rest.is_none() && usable).then(|| first.to_ascii_lowercase())
 }
 
 /// The menus' state.
@@ -213,6 +271,18 @@ pub struct Menu {
     quit_message: usize,
     /// The save slots, as they were when the screen opened.
     saves: Vec<Option<String>>,
+    /// The multiplayer menu's cursor.
+    multiplayer_cursor: usize,
+    /// The address being typed.
+    address: String,
+    /// The rules of a game to host.
+    rules: HostRules,
+    /// The host menu's cursor.
+    host_cursor: usize,
+    /// The name being typed.
+    name: String,
+    /// The setup menu's cursor.
+    setup_cursor: usize,
 }
 
 /// One step through `count` rows, wrapping round.
@@ -257,6 +327,7 @@ impl Menu {
                 self.behind = self.screen;
                 self.quit_message = (self.quit_message + 3) % QUIT_MESSAGES.len();
             }
+            Screen::Setup => self.name = host.name(),
             Screen::NewGame => self.behind = self.screen,
             _ => {}
         }
@@ -286,6 +357,132 @@ impl Menu {
             Screen::Help => self.help_key(key, host),
             Screen::Quit => self.question_key(key, host, "quit"),
             Screen::NewGame => self.question_key(key, host, "newgame"),
+            Screen::Multiplayer => self.multiplayer_key(key, host),
+            Screen::Join => self.join_key(key, host),
+            Screen::Host => self.host_key(key, host),
+            Screen::Setup => self.setup_key(key, host),
+        }
+    }
+
+    /// The multiplayer menu's keys.
+    fn multiplayer_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+        match key {
+            "ESCAPE" => self.open(Screen::Main, host),
+            "DOWNARROW" | "UPARROW" => {
+                host.play("misc/menu1.wav");
+                let forward = key == "DOWNARROW";
+                self.multiplayer_cursor = step(self.multiplayer_cursor, MULTIPLAYER_ROWS, forward);
+            }
+            "ENTER" => match self.multiplayer_cursor {
+                0 => self.open(Screen::Join, host),
+                1 => self.open(Screen::Host, host),
+                _ => self.open(Screen::Setup, host),
+            },
+            _ => {}
+        }
+    }
+
+    /// Typing an address.
+    fn join_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+        match key {
+            "ESCAPE" => self.open(Screen::Multiplayer, host),
+            "ENTER" if !self.address.is_empty() => {
+                self.close();
+                host.run(&format!("connect \"{}\"", self.address));
+            }
+            "BACKSPACE" => {
+                let _last = self.address.pop();
+            }
+            _ => {
+                if let Some(character) = typed(key).filter(|_| self.address.len() < MAX_TYPED) {
+                    self.address.push(character);
+                }
+            }
+        }
+    }
+
+    /// Changes a rule of a game to host, up or down.
+    fn change_rule(&mut self, up: bool) {
+        let turn = |value: usize, count: usize| step(value, count, up);
+        let rules = &mut self.rules;
+        match self.host_cursor {
+            0 => rules.coop = !rules.coop,
+            1 => rules.teamplay = turn(rules.teamplay, TEAMPLAY_NAMES.len()),
+            2 => rules.skill = turn(rules.skill, SKILL_NAMES.len()),
+            3 => rules.frag_tens = turn(rules.frag_tens, 11),
+            4 => rules.time_fives = turn(rules.time_fives, 13),
+            5 => rules.level = turn(rules.level, HOST_LEVELS.len()),
+            _ => {}
+        }
+    }
+
+    /// Starts a game by the rules chosen, for others to join.
+    fn begin_host(&mut self, host: &mut dyn MenuHost) {
+        let rules = self.rules;
+        self.close();
+        host.run(&format!(
+            "disconnect; coop {}; deathmatch {}; teamplay {}; skill {}; fraglimit {}; \
+             timelimit {}; map {}; host",
+            u8::from(rules.coop),
+            u8::from(!rules.coop),
+            rules.teamplay,
+            rules.skill,
+            rules.frag_tens * 10,
+            rules.time_fives * 5,
+            HOST_LEVELS[rules.level]
+        ));
+    }
+
+    /// The host menu's keys.
+    fn host_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+        match key {
+            "ESCAPE" => self.open(Screen::Multiplayer, host),
+            "DOWNARROW" | "UPARROW" => {
+                host.play("misc/menu1.wav");
+                self.host_cursor = step(self.host_cursor, HOST_ROWS, key == "DOWNARROW");
+            }
+            "LEFTARROW" | "RIGHTARROW" => {
+                host.play("misc/menu3.wav");
+                self.change_rule(key == "RIGHTARROW");
+            }
+            "ENTER" if self.host_cursor == HOST_BEGIN_ROW => self.begin_host(host),
+            "ENTER" => self.change_rule(true),
+            _ => {}
+        }
+    }
+
+    /// The setup menu's keys.
+    fn setup_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+        match key {
+            "ESCAPE" | "ENTER" => {
+                host.run(&format!("name \"{}\"", self.name));
+                self.open(Screen::Multiplayer, host);
+            }
+            "DOWNARROW" | "UPARROW" => {
+                host.play("misc/menu1.wav");
+                self.setup_cursor = step(self.setup_cursor, 3, key == "DOWNARROW");
+            }
+            "LEFTARROW" | "RIGHTARROW" if self.setup_cursor > 0 => {
+                host.play("misc/menu3.wav");
+                let name = if self.setup_cursor == 1 {
+                    "topcolor"
+                } else {
+                    "bottomcolor"
+                };
+                let change = if key == "RIGHTARROW" { 1.0 } else { 13.0 };
+                let value = (host.setting(name) + change) % 14.0;
+                host.set_setting(name, value);
+            }
+            "BACKSPACE" if self.setup_cursor == 0 => {
+                let _last = self.name.pop();
+            }
+            _ => {
+                if self.setup_cursor == 0
+                    && let Some(character) = typed(key).filter(|_| self.name.len() < MAX_TYPED)
+                {
+                    self.name.push(character);
+                }
+            }
         }
     }
 
@@ -295,14 +492,11 @@ impl Menu {
             "ESCAPE" => self.toggle(host),
             "DOWNARROW" | "UPARROW" => {
                 host.play("misc/menu1.wav");
-                let forward = key == "DOWNARROW";
-                self.main_cursor = step(self.main_cursor, MAIN_ROWS, forward);
-                if self.main_cursor == MULTIPLAYER_ROW {
-                    self.main_cursor = step(self.main_cursor, MAIN_ROWS, forward);
-                }
+                self.main_cursor = step(self.main_cursor, MAIN_ROWS, key == "DOWNARROW");
             }
             "ENTER" => match self.main_cursor {
                 0 => self.open(Screen::SinglePlayer, host),
+                1 => self.open(Screen::Multiplayer, host),
                 2 => self.open(Screen::Options, host),
                 3 => self.open(Screen::Help, host),
                 _ => self.open(Screen::Quit, host),
@@ -528,6 +722,20 @@ impl Menu {
                 area.picture(canvas, &format!("gfx/help{}.lmp", self.help_page), 0.0, 0.0);
             }
             Screen::Quit => self.draw_quit(canvas, &area),
+            Screen::Multiplayer => {
+                area.titled(canvas, "gfx/p_multi.lmp", true);
+                area.picture(canvas, "gfx/mp_menu.lmp", 72.0, 32.0);
+                area.dot(canvas, self.multiplayer_cursor);
+            }
+            Screen::Join => {
+                area.titled(canvas, "gfx/p_multi.lmp", true);
+                area.print(canvas, 64.0, 40.0, "Address to join");
+                area.text_box(canvas, 56.0, 50.0, 26, 1);
+                canvas.text(area.x + 64.0, area.y + 58.0, self.address.as_bytes());
+                area.print(canvas, 64.0, 80.0, "Enter to connect");
+            }
+            Screen::Host => self.draw_host(canvas, &area),
+            Screen::Setup => self.draw_setup(canvas, &area, host),
             Screen::NewGame => {
                 area.text_box(canvas, 56.0, 76.0, 24, 4);
                 area.print(canvas, 64.0, 84.0, "Are you sure you want to");
@@ -535,6 +743,63 @@ impl Menu {
                 area.print(canvas, 64.0, 108.0, "   Press Y or N         ");
             }
         }
+    }
+
+    /// Draws the rules of a game to host, from `M_GameOptions_Draw`.
+    fn draw_host(&self, canvas: &mut Canvas<'_>, area: &Area) {
+        area.titled(canvas, "gfx/p_multi.lmp", true);
+        let rules = self.rules;
+        let limit = |value: usize, unit: &str| {
+            if value == 0 {
+                "none".to_owned()
+            } else {
+                format!("{value} {unit}")
+            }
+        };
+        let rows = [
+            (
+                "        Game Type",
+                (if rules.coop {
+                    "Cooperative"
+                } else {
+                    "Deathmatch"
+                })
+                .to_owned(),
+            ),
+            (
+                "         Teamplay",
+                TEAMPLAY_NAMES[rules.teamplay].to_owned(),
+            ),
+            ("            Skill", SKILL_NAMES[rules.skill].to_owned()),
+            ("       Frag Limit", limit(rules.frag_tens * 10, "frags")),
+            ("       Time Limit", limit(rules.time_fives * 5, "minutes")),
+            ("            Level", HOST_LEVELS[rules.level].to_owned()),
+            ("       Begin Game", String::new()),
+        ];
+        for (index, (name, value)) in (0u8..).zip(rows) {
+            let top = 40.0 + 8.0 * f32::from(index);
+            area.print(canvas, 0.0, top, name);
+            area.print(canvas, 160.0, top, &value);
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a few rows")]
+        let top = 40.0 + 8.0 * self.host_cursor as f32;
+        area.cursor(canvas, 144.0, top);
+    }
+
+    /// Draws the player's name and colours, from `M_Setup_Draw`.
+    fn draw_setup(&self, canvas: &mut Canvas<'_>, area: &Area, host: &dyn MenuHost) {
+        area.titled(canvas, "gfx/p_multi.lmp", true);
+        area.print(canvas, 64.0, 56.0, "Your name");
+        canvas.text(area.x + 168.0, area.y + 56.0, self.name.as_bytes());
+        for (name, setting, top) in [
+            ("Shirt color", "topcolor", 80.0),
+            ("Pants color", "bottomcolor", 104.0),
+        ] {
+            area.print(canvas, 64.0, top, name);
+            area.print(canvas, 168.0, top, &format!("{}", host.setting(setting)));
+        }
+        let rows = [56.0, 80.0, 104.0];
+        area.cursor(canvas, 56.0, rows[self.setup_cursor]);
     }
 
     /// Draws the load or save menu.

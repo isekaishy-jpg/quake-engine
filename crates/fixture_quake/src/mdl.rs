@@ -127,6 +127,9 @@ const SHIRT_ROW: u8 = 16;
 /// The row of the pants.
 const PANTS_ROW: u8 = 96;
 
+/// The colours that leave a skin as it was painted.
+const AS_DRAWN: u8 = 0x16;
+
 /// What each palette index becomes for `colors`, from `CL_NewTranslation`. The
 /// artists made the rows from 128 up run backwards.
 fn translation(colors: u8) -> [u8; 256] {
@@ -184,11 +187,11 @@ fn read_skins(
 /// 224 up are fullbright, as on the world.
 #[must_use]
 pub fn parse_mdl(bytes: &[u8], palette: &Palette) -> Option<AliasModel> {
-    parse_colored_mdl(bytes, palette, 0)
+    parse_colored_mdl(bytes, palette, AS_DRAWN)
 }
 
 /// Reads an MDL with its shirt and pants in `colors`, as the high and low four
-/// bits. Colours of 0 and 1 paint them as they were drawn.
+/// bits.
 #[must_use]
 pub fn parse_colored_mdl(bytes: &[u8], palette: &Palette, colors: u8) -> Option<AliasModel> {
     let mut reader = Reader { bytes };
@@ -212,7 +215,7 @@ pub fn parse_colored_mdl(bytes: &[u8], palette: &Palette, colors: u8) -> Option<
         return None;
     }
     let size = usize::try_from(width.checked_mul(height)?).ok()?;
-    let table = translation(if colors == 0 { 0x16 } else { colors });
+    let table = translation(colors);
     let skins = read_skins(
         &mut reader,
         skin_count,

@@ -124,3 +124,13 @@ fn the_scale_suits_the_screen_unless_a_setting_says() {
     assert_eq!(canvas_scale(200, 0.0), 1);
     assert_eq!(canvas_scale(1080, 5.0), 5);
 }
+
+#[test]
+fn chat_is_one_line_then_it_closes() {
+    let mut view = ConsoleView::new();
+    view.open_chat();
+    assert!(view.is_open());
+    let line = typed(&mut view, &["H", "I", "ENTER"]);
+    assert_eq!(line.as_deref(), Some("say hi"));
+    assert!(!view.is_open());
+}

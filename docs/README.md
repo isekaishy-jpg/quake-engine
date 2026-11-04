@@ -62,6 +62,11 @@
     - [0042: the drawn console](proposals/0042-the-console.md)
     - [0043: the menus](proposals/0043-menus.md)
     - [0044: saved games](proposals/0044-saves.md)
+  - Increment 9:
+    - [0045: many players](proposals/0045-many-players.md)
+    - [0046: the network](proposals/0046-the-network.md)
+    - [0047: deathmatch and co-op](proposals/0047-deathmatch-and-coop.md)
+    - [0048: interpolation and rewind](proposals/0048-seeing-the-past.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -74,6 +79,7 @@
   - [0009: increment 6](reviews/0009-increment-6.md)
   - [0010: increment 7](reviews/0010-increment-7.md)
   - [0011: increment 8](reviews/0011-increment-8.md)
+  - [0012: increment 9](reviews/0012-increment-9.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

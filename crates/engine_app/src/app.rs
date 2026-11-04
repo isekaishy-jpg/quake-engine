@@ -1047,6 +1047,7 @@ impl Engine {
         self.follow_settings();
         // With no game, there's always something to type at.
         if self.world.client.is_none()
+            && self.world.connecting.is_none()
             && !self.world.menu.is_open()
             && !self.world.console_view.is_open()
         {
@@ -1431,6 +1432,7 @@ impl PlatformApp for Engine {
     fn stopping(&mut self) {
         self.show_output();
         saves::write_config(&self.console, &self.world);
+        self.world.leave_game();
         self.world.renderer = None;
         self.window = None;
     }

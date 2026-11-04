@@ -172,7 +172,9 @@ impl World {
 pub(crate) type MenuSettings = HashMap<&'static str, f32>;
 
 /// The settings the menus show.
-pub(crate) const MENU_SETTINGS: [&str; 10] = [
+pub(crate) const MENU_SETTINGS: [&str; 12] = [
+    "topcolor",
+    "bottomcolor",
     "gamma",
     "sensitivity",
     "bgmvolume",
@@ -218,6 +220,10 @@ impl MenuHost for MenuView<'_> {
 
     fn can_save(&self) -> bool {
         false
+    }
+
+    fn name(&self) -> String {
+        String::new()
     }
 }
 
@@ -266,5 +272,9 @@ impl MenuHost for MenuActions<'_> {
 
     fn can_save(&self) -> bool {
         self.world.can_save()
+    }
+
+    fn name(&self) -> String {
+        self.world.identity.name.clone()
     }
 }

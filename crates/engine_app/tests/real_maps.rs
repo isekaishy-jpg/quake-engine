@@ -3,17 +3,19 @@
 
 #![expect(clippy::print_stdout, reason = "the measurements are the point")]
 
+use std::cell::Cell;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
 use engine_audio::Audio;
+use engine_client::Client;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::{AliasCorner, AliasModel, ClipChild, Map, Tree};
 use engine_movement::{MoveVars, player_move};
-use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
+use engine_net::{ClientMessage, Loopback, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::{
@@ -1090,6 +1092,112 @@ fn coming_back_with_a_rune_lands_in_the_other_start() {
     assert!((first - back).length() > 100.0);
 }
 
+/// Loses every nth unreliable message, as a poor connection does.
+struct Lossy {
+    /// The real end.
+    inner: Loopback,
+    /// How many have gone.
+    sent: u32,
+    /// One in how many is lost.
+    drop_every: u32,
+    /// Bytes sent, for measuring.
+    bytes: Rc<Cell<usize>>,
+}
+
+impl Transport for Lossy {
+    fn send(&mut self, bytes: Vec<u8>) {
+        self.bytes.set(self.bytes.get() + bytes.len());
+        self.inner.send(bytes);
+    }
+
+    fn send_unreliable(&mut self, bytes: Vec<u8>) {
+        self.bytes.set(self.bytes.get() + bytes.len());
+        self.sent += 1;
+        if !self.sent.is_multiple_of(self.drop_every) {
+            self.inner.send(bytes);
+        }
+    }
+
+    fn receive(&mut self) -> Option<Vec<u8>> {
+        self.inner.receive()
+    }
+}
+
+/// Plays `name` through a real client at one message in `drop_every` lost, with
+/// a fight going. Returns the client's error from the server's truth, in units,
+/// and bytes a second from the server.
+fn play_online(
+    filesystem: &FileSystem,
+    palette: &Palette,
+    name: &str,
+    drop_every: u32,
+) -> (f32, usize) {
+    let map = load(filesystem, name, palette);
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let (client_end, server_end) = loopback();
+    let bytes = Rc::new(Cell::new(0));
+    let lossy_server = Lossy {
+        inner: server_end,
+        sent: 0,
+        drop_every,
+        bytes: Rc::clone(&bytes),
+    };
+    let lossy_client = Lossy {
+        inner: client_end,
+        sent: 0,
+        drop_every,
+        bytes: Rc::new(Cell::new(0)),
+    };
+    let origin = spawn_point(&map).origin;
+    let mut level = normal_level();
+    name.clone_into(&mut level.name);
+    let mut server = Server::new(
+        Box::new(lossy_server),
+        Rc::clone(&world),
+        &map,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        level,
+    )
+    .expect("the scripts load");
+    let mut client = Client::new(Box::new(lossy_client), world, origin);
+    let mut random = Random(3);
+    server.exec(START_A_FIGHT).expect("a fight");
+    let mut worst: f32 = 0.0;
+    let seconds = 10;
+    for tick in 0..(72 * seconds) {
+        client.send_command(busy_player(tick, &mut random), 1.0 / 72.0);
+        server.tick();
+        client.receive();
+        // Lost snapshots only make the client a tick or two stale.
+        if tick > 72 {
+            let truth = server.player_origin();
+            worst = worst.max((client.predicted().origin - truth).length());
+        }
+    }
+    (
+        worst,
+        bytes.get() / usize::try_from(seconds).expect("small"),
+    )
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_real_client_keeps_up_at_two_and_five_percent_loss() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    for name in ["e1m1", "dm3", "e4m8"] {
+        for (loss, drop_every) in [("none", u32::MAX), ("2%", 50), ("5%", 20)] {
+            let (worst, rate) = play_online(&filesystem, &palette, name, drop_every);
+            println!("{name} at {loss} loss: {worst:.1} units out, {rate} bytes a second");
+            assert!(worst < 64.0, "{name} at {loss}: {worst}");
+            assert!(rate < 200_000, "{name} at {loss}: {rate}");
+        }
+    }
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn every_picture_the_screens_use_is_in_the_game() {
@@ -1260,6 +1368,7 @@ fn every_class_on_every_map_has_a_function() {
             found.push(text);
         }
     }
+    found.retain(|text| !text.ends_with("entered the game"));
     println!("{} classes, none for {found:?}", classes.len());
     assert!(found.is_empty(), "{found:?}");
 }
