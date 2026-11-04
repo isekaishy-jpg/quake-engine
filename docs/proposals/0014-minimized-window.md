@@ -28,7 +28,7 @@ The human's decision: go to a reduced mode while minimized, saving resources whi
 - **Selected approach:** reduced mode, as above. A window that's merely behind others stays at full rate.
 - **Tradeoffs:** a minimized game still uses a little GPU time once frames draw. Pausing a single-player game when minimized is a separate choice, left for when there's a game to pause.
 - **Acceptance criteria:** frames drop to the reduced rate with `Frame::reduced` set, normal frames return on restore, and ticks stay at 72 a second throughout. CPU use doesn't rise. The GPU saving can only be measured once frames draw.
-- **Future extension:** the renderer reads `Frame::reduced` and draws small. What's still unknown is how that output reaches the preview, since a minimized window may have no surface to present to. The [open questions](../research/open-questions.md) list the routes to try.
+- **Future extension:** the human checked once frames drew, and the Alt-Tab and taskbar previews worked while minimized with no further work. If a preview ever falls short, the renderer can read `Frame::reduced` and draw small, and [Windows previews](../research/windows-previews.md) records the routes.
 
 ## Review
 

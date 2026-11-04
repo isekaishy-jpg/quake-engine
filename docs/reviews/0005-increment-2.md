@@ -25,6 +25,7 @@ These ran against the Steam data, read in place.
 | Flying | `W` for 1 s moved exactly 400 units along the view, `D` moved right and space moved up, with keys sent to the window |
 | Borderless default | The client area fills the 2560 by 1440 monitor with no caption, and a screen grab shows the map at full size |
 | `-window` | A captioned 1280 by 720 window |
+| Hands-on test by the human | Flying and mouse look looked generally right, and the Alt-Tab and taskbar previews worked, including while minimized |
 | Exit | Code 0 |
 | GPU tests | 6 pass on a GTX 1070, and they skip with no Vulkan device |
 
@@ -32,9 +33,8 @@ These ran against the Steam data, read in place.
 
 ## Remaining
 
-- Mouse look on a real map hasn't been tested with a real mouse. Raw motion reached the view in review 0004, and it needs window focus, so it's for the human to try.
 - Entities aren't drawn, and doors and lifts sit at rest. Light styles start as on, so lights that should start off are lit.
 - The picture may be darker than people remember, because it follows the software renderer's sums with no gamma setting. `gamma` is unknown to the console.
-- The human checked the taskbar preview and it worked. Alt-Tab hasn't been checked. Rendering in reduced mode, and getting it to the preview, is still an [open question](../research/open-questions.md).
+- Reduced mode still draws nothing. The previews work without it, so it stays as it is unless a preview falls short.
 - Debug builds ran at around 160 frames a second. Release speed wasn't measured.
 - Increment 3 is next: collision, movement, and client and server over loopback.
