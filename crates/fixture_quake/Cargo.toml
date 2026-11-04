@@ -8,6 +8,9 @@ publish.workspace = true
 
 [dependencies]
 engine_assets.workspace = true
+engine_core.workspace = true
+engine_map.workspace = true
+qbsp.workspace = true
 
 [lints]
 workspace = true

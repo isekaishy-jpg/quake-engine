@@ -1,0 +1,78 @@
+//! Small value types for geometry.
+
+use std::ops::{Add, Mul, Sub};
+
+/// A point or direction. Z is up, as in the map data.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Vec3 {
+    /// Forward at yaw 0.
+    pub x: f32,
+    /// Left at yaw 0.
+    pub y: f32,
+    /// Up.
+    pub z: f32,
+}
+
+impl Vec3 {
+    /// The origin.
+    pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);
+
+    /// A vector from its parts.
+    #[must_use]
+    pub const fn new(x: f32, y: f32, z: f32) -> Self {
+        Self { x, y, z }
+    }
+
+    /// The dot product.
+    #[must_use]
+    pub fn dot(self, other: Self) -> f32 {
+        self.x * other.x + self.y * other.y + self.z * other.z
+    }
+
+    /// The length.
+    #[must_use]
+    pub fn length(self) -> f32 {
+        self.dot(self).sqrt()
+    }
+
+    /// The same direction with length 1, or zero if it has no length.
+    #[must_use]
+    pub fn normalized(self) -> Self {
+        let length = self.length();
+        if length > 0.0 {
+            self * (1.0 / length)
+        } else {
+            Self::ZERO
+        }
+    }
+
+    /// The point `fraction` of the way to `other`.
+    #[must_use]
+    pub fn lerp(self, other: Self, fraction: f32) -> Self {
+        self + (other - self) * fraction
+    }
+}
+
+impl Add for Vec3 {
+    type Output = Self;
+
+    fn add(self, other: Self) -> Self {
+        Self::new(self.x + other.x, self.y + other.y, self.z + other.z)
+    }
+}
+
+impl Sub for Vec3 {
+    type Output = Self;
+
+    fn sub(self, other: Self) -> Self {
+        Self::new(self.x - other.x, self.y - other.y, self.z - other.z)
+    }
+}
+
+impl Mul<f32> for Vec3 {
+    type Output = Self;
+
+    fn mul(self, scale: f32) -> Self {
+        Self::new(self.x * scale, self.y * scale, self.z * scale)
+    }
+}
