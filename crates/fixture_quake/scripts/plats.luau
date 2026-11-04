@@ -239,6 +239,27 @@ function func_train(self)
 	self.think = func_train_find
 end
 
+-- Carries the player's way to the final boss. Its model waits for models.
+function misc_teleporttrain(self)
+	if self.speed == 0 then
+		self.speed = 100
+	end
+	if not has_text(self.target) then
+		objerror("func_train without a target")
+	end
+
+	self.cnt = 1
+	self.solid = SOLID_NOT
+	self.movetype = MOVETYPE_PUSH
+	self.blocked = train_blocked
+	self.use = train_use
+	self.noise = "misc/null.wav"
+	self.noise1 = "misc/null.wav"
+
+	self.nextthink = self.ltime + 0.1
+	self.think = func_train_find
+end
+
 -- A marker trains follow. Monsters use its touch in the original.
 function path_corner(self)
 	if not has_text(self.targetname) then

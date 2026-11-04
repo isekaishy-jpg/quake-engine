@@ -273,3 +273,16 @@ fn messages_from_the_server_are_kept_until_asked_for() {
 fn unknown_buttons_are_reported() {
     assert!(!Buttons::default().set("attack", true));
 }
+
+#[test]
+fn a_model_that_replaces_another_is_not_drawn_between_them() {
+    let (mut client, mut server, _world) = setup();
+    let other = ModelInstance {
+        model: instance(10.0).model + 1,
+        ..instance(10.0)
+    };
+    snapshot_with(&mut server, 1, vec![instance(0.0)]);
+    snapshot_with(&mut server, 2, vec![other]);
+    client.receive();
+    assert!((client.draw_instances(0.5)[0].origin.z - 10.0).abs() < f32::EPSILON);
+}

@@ -183,10 +183,12 @@ function teleport_touch(self, other)
 		objerror("couldn't find target")
 	end
 
-	local forward = makevectors(t.mangle)
+	-- A teleport can target a train, which has no mangle.
+	local mangle = t.mangle or vector.zero
+	local forward = makevectors(mangle)
 	setorigin(other, t.origin)
 	if other.classname == "player" then
-		engine.set_view(t.mangle.y, t.mangle.x)
+		engine.set_view(mangle.y, mangle.x)
 		other.velocity = forward * 300
 	end
 end

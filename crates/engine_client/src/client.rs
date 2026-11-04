@@ -84,7 +84,11 @@ impl Client {
             .iter()
             .zip(&self.instances)
             .map(|(from, to)| ModelInstance {
-                origin: from.origin.lerp(to.origin, fraction),
+                origin: if from.model == to.model {
+                    from.origin.lerp(to.origin, fraction)
+                } else {
+                    to.origin
+                },
                 ..*to
             })
             .collect()

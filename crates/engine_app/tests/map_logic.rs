@@ -253,6 +253,20 @@ fn a_door_opens_when_the_player_comes_near_and_closes_after_its_wait() {
     assert!(game.instance(1).origin.z < open, "it came back down");
 }
 
+/// `SV_LinkEdict` grows the field and the player by 1 each, so a door at
+/// x = 100 reaches a player of half width 16 at 100 - 60 - 16 - 2 = 22.
+#[test]
+fn a_door_field_reaches_as_far_as_quakes() {
+    let (mins, maxs) = door_box();
+    let map = map(&[(mins, maxs)], &[DOOR]);
+    let mut outside = Game::new(&map, at_floor(21.5, 0.0));
+    outside.wait(0.3);
+    assert!(outside.instance(1).origin.z.abs() < 0.5, "out of reach");
+    let mut inside = Game::new(&map, at_floor(22.5, 0.0));
+    inside.wait(0.3);
+    assert!(inside.instance(1).origin.z > 0.0, "in reach");
+}
+
 /// `ED_LoadFromFile`: at normal skill, `NOT_MEDIUM` entities don't spawn.
 #[test]
 fn entities_for_other_skill_levels_do_not_spawn() {

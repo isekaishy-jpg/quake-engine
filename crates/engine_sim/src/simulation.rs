@@ -21,7 +21,8 @@ const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
 /// The largest corner of the player's box.
 const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
-/// How far `SV_LinkEdict` grows a box before checking triggers.
+/// How far `SV_LinkEdict` grows every box, so triggers and the player each
+/// reach this much further.
 const LINK_MARGIN: f32 = 1.0;
 
 /// How an entity blocks others.
@@ -437,8 +438,8 @@ impl Simulation {
                     && boxes_touch(
                         low,
                         high,
-                        entity.origin + entity.mins,
-                        entity.origin + entity.maxs,
+                        entity.origin + entity.mins - margin,
+                        entity.origin + entity.maxs + margin,
                     );
                 if touching {
                     touches.push(Callback::Touch { id, other: player });

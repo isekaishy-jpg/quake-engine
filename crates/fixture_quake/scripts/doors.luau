@@ -137,6 +137,11 @@ function door_touch(self, other)
 	if other.classname ~= "player" then
 		return
 	end
+	-- A door touched before it links, in its first tenth of a second, has no
+	-- owner.
+	if self.owner == nil then
+		return
+	end
 	if (self.owner.attack_finished or 0) > time() then
 		return
 	end

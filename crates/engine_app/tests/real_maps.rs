@@ -12,7 +12,7 @@ use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::{ClipChild, Map, Tree};
 use engine_movement::{MoveVars, player_move};
-use engine_net::{ServerMessage, Transport, loopback};
+use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::Server;
 use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
@@ -300,6 +300,128 @@ fn every_maps_scripts_run_without_errors() {
                 );
             } else if moved > 0 {
                 println!("{game_name}/{name}: fine, {moved} models moved");
+            }
+        }
+    }
+    println!("{maps} maps, {failures} with errors");
+    assert_eq!(failures, 0);
+}
+
+/// The models of teleports aimed at an `info_null`, which removes itself.
+/// `teleport_touch` stops the game on these in the original too, so maps can't
+/// rely on reaching them.
+fn dead_teleports(map: &Map) -> Vec<String> {
+    let nulls: Vec<&str> = map
+        .entities
+        .iter()
+        .filter(|entity| entity.get("classname") == Some("info_null"))
+        .filter_map(|entity| entity.get("targetname"))
+        .collect();
+    map.entities
+        .iter()
+        .filter(|entity| entity.get("classname") == Some("trigger_teleport"))
+        .filter(|entity| entity.get("target").is_some_and(|t| nulls.contains(&t)))
+        .filter_map(|entity| entity.get("model").map(str::to_owned))
+        .collect()
+}
+
+/// Runs every touch and target in `map`, and returns the script errors.
+fn fire_everything(map: &Arc<Map>, world: &Rc<CollisionWorld>) -> Vec<String> {
+    let (mut client, server_end) = loopback();
+    let origin = spawn_point(map).origin;
+    let mut server = Server::new(
+        Box::new(server_end),
+        Rc::clone(world),
+        map,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+    )
+    .expect("the scripts load");
+    let mut errors = Vec::new();
+    let mut exec_errors = Vec::new();
+    let mut run = |server: &mut Server, client: &mut dyn Transport, ticks: u32| {
+        for _ in 0..ticks {
+            server.tick();
+            let _level = server.take_next_level();
+            while let Some(bytes) = client.receive() {
+                if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
+                    && text.contains("script error")
+                {
+                    errors.push(text);
+                }
+            }
+        }
+    };
+    run(&mut server, &mut client, 20);
+    let unreachable = dead_teleports(map);
+    for (number, model) in map.models.iter().enumerate().skip(1) {
+        if unreachable.contains(&format!("*{number}")) {
+            continue;
+        }
+        let middle = (model.mins + model.maxs) * 0.5;
+        let text = format!("setpos {} {} {}", middle.x, middle.y, middle.z);
+        client.send(ClientMessage::Console(text).encode());
+        run(&mut server, &mut client, 3);
+    }
+    let mut names: Vec<&str> = map
+        .entities
+        .iter()
+        .filter_map(|entity| entity.get("targetname"))
+        .collect();
+    names.sort_unstable();
+    names.dedup();
+    for name in names {
+        let source = format!(
+            r#"
+            activator = find_all("classname", "player")[1]
+            for _, entity in find_all("targetname", "{name}") do
+                if entity.use and not is_removed(entity) then
+                    entity.use(entity, activator)
+                end
+            end
+            "#
+        );
+        if let Err(error) = server.exec(&source) {
+            exec_errors.push(format!("{name}: {error}"));
+        }
+        run(&mut server, &mut client, 3);
+    }
+    // Long enough for delays, trains and doors to play out.
+    run(&mut server, &mut client, 72 * 5);
+    errors.append(&mut exec_errors);
+    errors
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_touch_and_target_runs_without_errors() {
+    let base = base();
+    let palette = palette(&base);
+    let mut failures = 0;
+    let mut maps = 0;
+    for (root, game_name) in [
+        (base.clone(), "id1"),
+        (base.clone(), "hipnotic"),
+        (base.clone(), "rogue"),
+        (base.join("rerelease"), "mg1"),
+    ] {
+        let filesystem = game(&root, game_name);
+        for path in filesystem.list("maps/") {
+            let Some(name) = path
+                .strip_prefix("maps/")
+                .and_then(|p| p.strip_suffix(".bsp"))
+            else {
+                continue;
+            };
+            let map = load(&filesystem, name, &palette);
+            let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+            let errors = fire_everything(&map, &world);
+            maps += 1;
+            if !errors.is_empty() {
+                failures += 1;
+                let first = errors[0].lines().next().unwrap_or("");
+                println!("{game_name}/{name}: {} errors, first {first}", errors.len());
             }
         }
     }

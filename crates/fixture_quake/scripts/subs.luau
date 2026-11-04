@@ -110,6 +110,9 @@ function SUB_CalcMove(self, tdest, tspeed, func)
 	if tspeed == 0 then
 		objerror("No speed is defined!")
 	end
+	-- An unset vector is zero in QuakeC. A secret door can link to a door, and
+	-- then has no pos2.
+	tdest = tdest or vector.zero
 	self.think1 = func
 	self.finaldest = tdest
 	self.think = SUB_CalcMoveDone
