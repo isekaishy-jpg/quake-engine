@@ -94,6 +94,26 @@ impl Client {
             .collect()
     }
 
+    /// How far behind the last snapshot `state`'s ground is drawn. Adding this
+    /// keeps a player riding a brush model on it, because the model is drawn
+    /// between ticks while the player only moves with it on them.
+    #[must_use]
+    pub fn ground_lag(&self, state: &PlayerState, fraction: f32) -> Vec3 {
+        let origin_in = |instances: &[ModelInstance]| {
+            instances
+                .iter()
+                .find(|instance| Some(instance.model) == state.ground_model)
+                .map(|instance| instance.origin)
+        };
+        match (
+            origin_in(&self.previous_instances),
+            origin_in(&self.instances),
+        ) {
+            (Some(from), Some(to)) => from.lerp(to, fraction) - to,
+            _ => Vec3::ZERO,
+        }
+    }
+
     /// Every light style's brightness at `time`.
     #[must_use]
     pub fn light_styles(&self, time: f64) -> [f32; LIGHT_STYLE_COUNT] {

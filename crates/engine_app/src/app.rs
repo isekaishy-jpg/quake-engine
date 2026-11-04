@@ -153,10 +153,9 @@ impl World {
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
-            let step = self
-                .step
-                .update(state.origin.z, state.on_ground, frame_seconds);
-            origin = state.origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step);
+            let body = state.origin + client.ground_lag(&state, fraction);
+            let step = self.step.update(body.z, state.on_ground, frame_seconds);
+            origin = body + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step);
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
         }

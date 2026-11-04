@@ -3,6 +3,7 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
+use engine_client::{Client, StepSmoother};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
@@ -355,6 +356,83 @@ fn a_plat_rises_when_stood_on_and_carries_the_player() {
     let feet = game.player().origin.z;
     assert!(feet > top_of_plat + 80.0, "the player rode it: {feet}");
     assert!(game.player().on_ground);
+}
+
+/// The most the gap between the view and a plat varies between frames while
+/// it rises and while it falls, with and without following the plat.
+fn view_wobble(follow: bool) -> (f32, f32) {
+    // Tall, so the rise lasts long enough for the view to settle.
+    let (mins, maxs) = (Vec3::new(-64.0, -64.0, -256.0), Vec3::new(64.0, 64.0, 44.0));
+    let plat: &[(&str, &str)] = &[("classname", "func_plat"), ("model", "*1")];
+    let map = map(&[(mins, maxs)], &[plat]);
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let start = Vec3::new(0.0, 0.0, -248.0 + 25.0);
+    let (client_end, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        Rc::clone(&world),
+        &map,
+        start,
+        SCRIPTS,
+        TICK,
+    )
+    .expect("the scripts load");
+    let mut client = Client::new(Box::new(client_end), world, start);
+    let mut step = StepSmoother::default();
+    let (mut rising, mut falling) = (Vec::new(), Vec::new());
+    let frames = 3_u8;
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    for count in 0..290 {
+        // Standing on a plat keeps it up, so this one has to be sent down.
+        if count == 180 {
+            let down = r#"plat_go_down(find_all("classname", "plat")[1])"#;
+            server.exec(down).expect("it runs");
+        }
+        client.send_command(UserCommand::default(), tick);
+        server.tick();
+        client.receive();
+        for frame in 1..=frames {
+            let fraction = f32::from(frame) / f32::from(frames);
+            let state = client.render_state(&UserCommand::default(), tick * fraction);
+            let lag = if follow {
+                client.ground_lag(&state, fraction)
+            } else {
+                Vec3::ZERO
+            };
+            let body = state.origin + lag;
+            let eye = body.z + step.update(body.z, state.on_ground, tick / f32::from(frames));
+            let at = |fraction| client.draw_instances(fraction)[0].origin.z;
+            let (drawn, speed) = (at(fraction), at(1.0) - at(0.0));
+            if state.on_ground && speed > 0.0 {
+                rising.push(eye - drawn);
+            } else if state.on_ground && speed < 0.0 {
+                falling.push(eye - drawn);
+            }
+        }
+    }
+    assert!(
+        rising.len() > 300 && falling.len() > 200,
+        "it went both ways"
+    );
+    // The view settles behind a rising floor first, as in `V_CalcRefdef`.
+    let wobble = |gaps: &[f32]| {
+        gaps.windows(2)
+            .map(|pair| (pair[1] - pair[0]).abs())
+            .fold(0.0, f32::max)
+    };
+    // At the top its last short move lets the view start catching up.
+    let end = rising.len() - 3;
+    (wobble(&rising[200..end]), wobble(&falling[1..]))
+}
+
+#[test]
+fn the_view_stays_steady_on_a_moving_plat() {
+    let before = view_wobble(false);
+    let after = view_wobble(true);
+    assert!(before.0 > 0.1 && before.1 > 0.1, "it shows up: {before:?}");
+    assert!(after.0 < 0.02, "rising: {}", after.0);
+    assert!(after.1 < 0.02, "falling: {}", after.1);
 }
 
 #[test]

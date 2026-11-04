@@ -18,6 +18,7 @@ Status: review record, 2026-11-04. Reviewed: proposals 0025 to 0028, and the cha
 | 12 | `SV_LinkEdict` grows both boxes, but only the player's grew, so every trigger reached 1 unit short | Both grow, with a test on a door's reach |
 | 13 | `door_touch` failed on a door touched before it linked | It waits for an owner, as `door_use` does |
 | 14 | The client blended positions by list order, so a model replacing another in one tick was drawn between them | It only blends a model with itself, with a test |
+| 15 | In play, a moving plat vibrated. The plat is drawn between ticks, but the player only moved with it on them, and the stair smoother turned that into a sawtooth on a rising plat | The view follows the ground model as drawn. The view's wobble against a plat fell from 0.65 units a frame rising and 1.39 falling to under 0.001, with a test |
 
 A door felt less responsive in play, especially closing, so `e1m1` was measured against `doors.qc`. Reach is now 78 units past the door's face, a door starts within a tick, and it holds while the player stays in its field. It starts closing 2 to 3 s after the player leaves, because touches only renew the wait once a second. A move under 0.1 s pauses and then snaps, which is `SUB_CalcMove`'s own rule. All of this matches the original apart from finding 12, and door sounds may change how it feels.
 
@@ -46,7 +47,7 @@ These ran against the Steam data, read in place.
 - Key doors stay shut until items exist, and shot buttons and doors work by touch or not at all until combat exists. Some levels can't be finished without `noclip`.
 - Sounds are stubs, and damage does nothing.
 - Secret counters and messages print to the terminal.
-- A button's alternate texture isn't shown.
+- A used button keeps its lit texture, as the alternate frame, such as `+abasebtn`, isn't shown. This was also seen in play.
 - Mission packs run the original game's logic for now, so their own classes do nothing. Running without errors doesn't show they play correctly.
 - Luau formatting isn't enforced by a tool.
 - A teleport doesn't hold back the player's backward movement for `teleport_time`.
