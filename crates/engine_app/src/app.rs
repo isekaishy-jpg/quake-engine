@@ -5,11 +5,14 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use engine_assets::{AssetError, FileSystem};
-use engine_client::{Look, LookScale};
+use engine_client::{Bindings, Buttons, FlyCamera, Look, LookScale};
 use engine_console::{Console, CvarFlags};
 use engine_core::time::{TickClock, TickRate};
-use engine_platform::{AppError, Frame, FrameOutcome, InputEvent, PlatformApp, ServiceOutcome};
-use fixture_quake::mount_game;
+use engine_platform::{
+    AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
+};
+use engine_render::{Renderer, Target, View};
+use fixture_quake::{Palette, import_map, light_styles, mount_game, spawn_point};
 
 use crate::commands;
 use crate::options::Options;
@@ -19,6 +22,10 @@ const TICK_RATE: Option<TickRate> = TickRate::new(72);
 
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
+
+/// Bindings for flying, set after the user's config (proposal 0019).
+const FLY_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
+                            bind space +moveup; bind c +movedown; bind shift +speed";
 
 /// The state console commands work on.
 pub(crate) struct World {
@@ -40,6 +47,53 @@ pub(crate) struct World {
     pub(crate) look: Look,
     /// Raw motion events received so far.
     pub(crate) motion_events: u64,
+    /// The renderer, once the window exists.
+    pub(crate) renderer: Option<Renderer>,
+    /// The camera.
+    pub(crate) camera: FlyCamera,
+    /// The movement buttons held.
+    pub(crate) buttons: Buttons,
+    /// Key bindings.
+    pub(crate) bindings: Bindings,
+    /// Seconds since the map loaded.
+    pub(crate) map_time: f64,
+    /// The field of view in degrees, at 4:3.
+    pub(crate) fov: f32,
+}
+
+impl World {
+    /// Loads the map called `name` and moves to its spawn point.
+    pub(crate) fn load_map(&mut self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+        let bsp = self.filesystem.read(&format!("maps/{name}.bsp"))?;
+        let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
+        let palette = self.filesystem.read("gfx/palette.lmp")?;
+        let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
+        let map = import_map(&bsp, lit.as_deref(), &palette)?;
+        let start = spawn_point(&map);
+        self.camera = FlyCamera::new(start.eye);
+        self.look.set_view(f64::from(start.yaw), 0.0);
+        self.map_time = 0.0;
+        if let Some(renderer) = &mut self.renderer {
+            renderer.load_map(map)?;
+        }
+        Ok(())
+    }
+
+    /// The view `fraction` of the way through the next tick.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "angles and map time need no more than f32 for drawing"
+    )]
+    pub(crate) fn view(&self, fraction: f32) -> View {
+        View {
+            origin: self.camera.view_position(fraction),
+            yaw: self.look.yaw() as f32,
+            pitch: self.look.pitch() as f32,
+            fov: self.fov,
+            time: self.map_time as f32,
+            styles: light_styles(self.map_time),
+        }
+    }
 }
 
 /// The engine: everything the main loop drives.
@@ -54,6 +108,10 @@ pub(crate) struct Engine {
     last_service: Option<Duration>,
     /// Lines typed on standard input.
     typed: Option<Receiver<String>>,
+    /// The window's size, for the renderer's first swapchain.
+    size: (u32, u32),
+    /// The window lease. It must outlive the renderer.
+    window: Option<Window>,
 }
 
 /// Reads standard input on its own thread, because reading blocks. The thread
@@ -74,7 +132,7 @@ fn read_standard_input() -> Receiver<String> {
 
 impl Engine {
     /// Builds the engine from the command line.
-    pub(crate) fn new(options: Options) -> Result<Self, AssetError> {
+    pub(crate) fn new(options: Options, size: (u32, u32)) -> Result<Self, AssetError> {
         let mut filesystem = FileSystem::new();
         for game in &options.game_directories {
             mount_game(&mut filesystem, &options.base_directory.join(game))?;
@@ -90,6 +148,7 @@ impl Engine {
         console.register_cvar("sensitivity", "3", saved);
         console.register_cvar("m_yaw", "0.022", saved);
         console.register_cvar("m_pitch", "0.022", saved);
+        console.register_cvar("fov", "90", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -103,10 +162,18 @@ impl Engine {
                 run_time: Duration::ZERO,
                 look: Look::new(LookScale::from_settings(0.0, 0.0, 0.0)),
                 motion_events: 0,
+                renderer: None,
+                camera: FlyCamera::default(),
+                buttons: Buttons::default(),
+                bindings: Bindings::new(),
+                map_time: 0.0,
+                fov: 90.0,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
             typed: None,
+            size,
+            window: None,
         })
     }
 
@@ -120,7 +187,45 @@ impl Engine {
         }
         self.console.execute(&mut self.world);
         self.world.look.set_scale(self.look_scale());
+        self.world.fov = self
+            .console
+            .cvar("fov")
+            .map_or(90.0, engine_console::Cvar::number);
+        let seconds = 1.0 / f64::from(self.clock.rate().hertz());
+        self.world.map_time += seconds;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a fly camera needs no more than f32"
+        )]
+        self.world.camera.tick(
+            self.world.buttons,
+            self.world.look.yaw() as f32,
+            self.world.look.pitch() as f32,
+            seconds as f32,
+        );
         self.show_output();
+    }
+
+    /// Runs what a key is bound to. Escape is reserved until there's a menu.
+    fn key(&mut self, name: &str, pressed: bool) {
+        if name == "ESCAPE" {
+            if pressed {
+                let captured = self.cvar_number("m_capture") != 0.0;
+                self.console.add(if captured {
+                    "m_capture 0"
+                } else {
+                    "m_capture 1"
+                });
+            }
+            return;
+        }
+        if pressed {
+            if let Some(command) = self.world.bindings.press(name) {
+                self.console.add(command);
+            }
+        } else if let Some(command) = self.world.bindings.release(name) {
+            self.console.add(&command);
+        }
     }
 
     /// The look scale from the cvars.
@@ -155,10 +260,14 @@ impl Engine {
 }
 
 impl PlatformApp for Engine {
-    fn started(&mut self) -> Result<(), AppError> {
+    fn started(&mut self, window: Window) -> Result<(), AppError> {
+        let target = Target::Window(window.native()?);
+        self.window = Some(window);
+        self.world.renderer = Some(Renderer::new(target, self.size)?);
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add("exec quake.rc");
+        self.console.add(FLY_BINDINGS);
         Ok(())
     }
 
@@ -177,9 +286,35 @@ impl PlatformApp for Engine {
     }
 
     fn input(&mut self, event: &InputEvent, time: Duration) {
-        if let InputEvent::Motion { x, y } = *event {
-            self.world.look.motion(x, y);
-            self.world.motion_events += 1;
+        match *event {
+            InputEvent::Motion { x, y } => {
+                self.world.look.motion(x, y);
+                self.world.motion_events += 1;
+            }
+            InputEvent::Key {
+                name,
+                pressed,
+                repeat: false,
+            } => self.key(name, pressed),
+            InputEvent::Button {
+                button: MouseButton::Left,
+                pressed: true,
+            } if self.cvar_number("m_capture") == 0.0 => self.console.add("m_capture 1"),
+            InputEvent::Button { button, pressed } => {
+                let name = match button {
+                    MouseButton::Left => "MOUSE1",
+                    MouseButton::Right => "MOUSE2",
+                    MouseButton::Middle => "MOUSE3",
+                };
+                self.key(name, pressed);
+            }
+            InputEvent::FocusLost => self.world.buttons = Buttons::default(),
+            InputEvent::Resized { width, height } => {
+                if let Some(renderer) = &mut self.world.renderer {
+                    renderer.resize(width, height);
+                }
+            }
+            _ => {}
         }
         if self.cvar_number("show_input") != 0.0 && !matches!(event, InputEvent::Motion { .. }) {
             self.console
@@ -190,6 +325,20 @@ impl PlatformApp for Engine {
     fn frame(&mut self, frame: &Frame) -> FrameOutcome {
         self.world.frames += 1;
         self.world.reduced_frames += u64::from(frame.reduced);
+        if !frame.reduced {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "an interpolation fraction needs no more than f32"
+            )]
+            let view = self.world.view(self.clock.fraction() as f32);
+            if let Some(renderer) = &mut self.world.renderer
+                && let Err(error) = renderer.draw(&view)
+            {
+                self.console.print(format!("renderer: {error}"));
+                self.show_output();
+                return FrameOutcome::Stop;
+            }
+        }
         if self.world.quit {
             FrameOutcome::Stop
         } else {
@@ -207,5 +356,7 @@ impl PlatformApp for Engine {
 
     fn stopping(&mut self) {
         self.show_output();
+        self.world.renderer = None;
+        self.window = None;
     }
 }

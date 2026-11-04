@@ -48,6 +48,13 @@ pub enum InputEvent {
     },
     /// The window lost focus, so held keys should be released.
     FocusLost,
+    /// The window's client area changed size. Zero is valid while minimized.
+    Resized {
+        /// The width in pixels.
+        width: u32,
+        /// The height in pixels.
+        height: u32,
+    },
 }
 
 /// Pixels per wheel line, for devices that report pixels.
@@ -164,6 +171,10 @@ pub(crate) fn translate(event: &SAInputEvent) -> Option<InputEvent> {
             },
         }),
         SAInputEvent::Focus(false) => Some(InputEvent::FocusLost),
+        SAInputEvent::Geometry { size, .. } => Some(InputEvent::Resized {
+            width: size.width,
+            height: size.height,
+        }),
         _ => None,
     }
 }

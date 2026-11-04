@@ -13,6 +13,9 @@ path = "src/main.rs"
 [dependencies]
 engine_assets.workspace = true
 engine_client.workspace = true
+engine_map.workspace = true
+engine_render.workspace = true
+png.workspace = true
 engine_console.workspace = true
 engine_core.workspace = true
 engine_platform.workspace = true

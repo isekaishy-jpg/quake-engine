@@ -60,6 +60,14 @@ impl Look {
         }
     }
 
+    /// Points the view at `yaw` and `pitch`, in degrees.
+    pub fn set_view(&mut self, yaw: f64, pitch: f64) {
+        self.yaw_origin = yaw;
+        self.pitch_origin = pitch.clamp(PITCH_UP_LIMIT, PITCH_DOWN_LIMIT);
+        self.yaw_counts = 0.0;
+        self.pitch_counts = 0.0;
+    }
+
     /// Applies one raw motion event. Call this for each event as it arrives,
     /// because pitch is clamped per event, so that a batch of events can't
     /// give a different result.

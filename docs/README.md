@@ -26,11 +26,17 @@
     - [0013: the filesystem and packs](proposals/0013-filesystem-and-packs.md)
     - [0014: the minimized window](proposals/0014-minimized-window.md)
     - [0015: mouse look](proposals/0015-mouse.md)
+  - Increment 2:
+    - [0016: taking in `vulkane`](proposals/0016-vulkane-intake.md)
+    - [0017: the map type and BSP importer](proposals/0017-map-importer.md)
+    - [0018: the world renderer](proposals/0018-world-renderer.md)
+    - [0019: key bindings and flying](proposals/0019-flying.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
   - [0003: increment 1](reviews/0003-increment-1.md)
   - [0004: the minimized window and mouse look](reviews/0004-minimized-and-mouse.md)
+  - [0005: increment 2](reviews/0005-increment-2.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

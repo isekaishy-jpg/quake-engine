@@ -3,11 +3,13 @@
 use std::error::Error;
 use std::time::Duration;
 
+use engine_core::window::NativeWindow;
+
 use solapp::{
     SAApplication, SAContext, SAError, SAEvent, SAEventFilter, SAFrame, SAFramePhase, SAHost,
     SAHostConfig, SAInputMode, SAPacingPolicy, SAPhysicalSize, SAPriority, SAPropagation,
     SAServiceBudget, SAServicePoint, SAServicePoints, SAServiceReport, SAServiceRequest,
-    SAServiceSpec, SAStopProgress, SAWindowSpec, SAWindowTarget,
+    SAServiceSpec, SAStopProgress, SAWindowAccess, SAWindowSpec, SAWindowTarget,
 };
 
 use crate::error::PlatformError;
@@ -33,6 +35,33 @@ pub struct WindowConfig {
     pub frame_cap: Option<u32>,
     /// Frames per second in reduced mode, while the window is minimized.
     pub reduced_frame_rate: u32,
+}
+
+/// A lease on the window. The window stays valid while this exists, so a
+/// renderer must be dropped before it.
+#[derive(Debug)]
+pub struct Window {
+    /// The host's lease.
+    access: SAWindowAccess,
+}
+
+impl Window {
+    /// The window's operating-system identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`PlatformError::Host`] if the window is gone, or isn't a kind
+    /// the engine can draw into.
+    pub fn native(&self) -> Result<NativeWindow, PlatformError> {
+        let host = |error: SAError| PlatformError::Host(error.to_string());
+        let native = self.access.native_ref().map_err(host)?;
+        let hwnd = native.hwnd().map_err(host)?.get();
+        let hinstance = native
+            .hinstance()
+            .map_err(host)?
+            .map_or(0, |value| value.get());
+        Ok(NativeWindow::Win32 { hwnd, hinstance })
+    }
 }
 
 /// What the application learns at each frame.
@@ -70,7 +99,7 @@ pub trait PlatformApp {
     /// # Errors
     ///
     /// Any error the application cannot start with.
-    fn started(&mut self) -> Result<(), AppError>;
+    fn started(&mut self, window: Window) -> Result<(), AppError>;
 
     /// Called on the simulation's schedule, including while the window is
     /// minimized. `now` is the time since the host started.
@@ -263,7 +292,11 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
 
     fn started(&mut self, cx: &mut SAContext<'_, Self>) -> Result<(), SAError> {
         self.start(cx)?;
-        self.app.started().map_err(|error| {
+        let target = self.target.ok_or(SAError::application("no window"))?;
+        let window = Window {
+            access: cx.acquire_window(target)?,
+        };
+        self.app.started(window).map_err(|error| {
             let message = error.to_string();
             self.startup_error = Some(message.clone());
             SAError::application(message)

@@ -15,8 +15,14 @@ use options::Options;
 /// The window title.
 const TITLE: &str = "Quake Engine";
 
-/// Frames per second until a renderer paces itself.
-const FRAME_CAP: u32 = 120;
+/// The most frames per second, for a present mode that doesn't wait.
+const FRAME_CAP: u32 = 240;
+
+/// The window's first width.
+const WIDTH: u32 = 1280;
+
+/// The window's first height.
+const HEIGHT: u32 = 720;
 
 /// Frames per second while minimized, enough for the system's previews.
 const REDUCED_FRAME_RATE: u32 = 10;
@@ -35,11 +41,11 @@ fn main() -> ExitCode {
 /// Reads the command line and runs the engine until it stops.
 fn start() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::from_arguments(std::env::args().skip(1))?;
-    let mut engine = Engine::new(options)?;
+    let mut engine = Engine::new(options, (WIDTH, HEIGHT))?;
     let config = WindowConfig {
         title: TITLE.to_owned(),
-        width: 1280,
-        height: 720,
+        width: WIDTH,
+        height: HEIGHT,
         frame_cap: Some(FRAME_CAP),
         reduced_frame_rate: REDUCED_FRAME_RATE,
     };
