@@ -7,6 +7,9 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+box3d-rust.workspace = true
+engine_core.workspace = true
+engine_map.workspace = true
 
 [lints]
 workspace = true

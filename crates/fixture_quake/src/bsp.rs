@@ -5,8 +5,8 @@ use std::fmt;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    Animation, Contents, Entity, Face, FaceLight, Leaf, Map, MipLevel, Model, Node, NodeChild,
-    Plane, TexelAxis, Texture, TextureKind, Tree,
+    Animation, ClipChild, ClipNode, Contents, Entity, Face, FaceLight, Leaf, Map, MipLevel, Model,
+    Node, NodeChild, Plane, TexelAxis, Texture, TextureKind, Tree,
 };
 use qbsp::data::models::BspFace;
 use qbsp::data::nodes::{BspLeaf, BspLeafContentFlags, BspNodeRef};
@@ -227,6 +227,19 @@ fn node_child(child: BspNodeRef) -> NodeChild {
     }
 }
 
+/// The leaf number `qbsp` gives `CONTENTS_SOLID` in a clipping hull.
+const CLIP_SOLID_LEAF: u32 = 1;
+
+/// Converts a `qbsp` clipping hull reference. Only solid stops a box, so
+/// water and the like count as open space, as `SV_RecursiveHullCheck` has it.
+fn clip_child(child: BspNodeRef) -> ClipChild {
+    match child {
+        BspNodeRef::Node(node) => ClipChild::Node(node),
+        BspNodeRef::Leaf(CLIP_SOLID_LEAF) => ClipChild::Solid,
+        BspNodeRef::Leaf(_) => ClipChild::Empty,
+    }
+}
+
 /// Builds the tree.
 fn import_tree(bsp: &BspData) -> Tree {
     let planes = bsp
@@ -263,6 +276,14 @@ fn import_tree(bsp: &BspData) -> Tree {
         nodes,
         leaves,
         leaf_faces: bsp.mark_surfaces.iter().map(|face| face.0).collect(),
+        clip_nodes: bsp
+            .clip_nodes
+            .iter()
+            .map(|node| ClipNode {
+                plane: node.plane_idx,
+                children: [clip_child(*node.front), clip_child(*node.back)],
+            })
+            .collect(),
         visible_leaf_count: bsp
             .models
             .first()
@@ -345,14 +366,14 @@ fn place_models(models: &mut [Model], entities: &[Entity]) {
 /// Where a player starts.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SpawnPoint {
-    /// The eye position.
-    pub eye: Vec3,
+    /// The centre of the player's box.
+    pub origin: Vec3,
     /// The yaw in degrees.
     pub yaw: f32,
 }
 
-/// The eye's height above a player's origin, from `DEFAULT_VIEWHEIGHT`.
-const VIEW_HEIGHT: f32 = 22.0;
+/// How far above a spawn point a player starts, from `PutClientInServer`.
+const SPAWN_HEIGHT: f32 = 1.0;
 
 /// The first `info_player_start`, or the middle of nowhere without one.
 #[must_use]
@@ -367,7 +388,7 @@ pub fn spawn_point(map: &Map) -> SpawnPoint {
         .and_then(|angle| angle.parse().ok())
         .unwrap_or(0.0);
     SpawnPoint {
-        eye: origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT),
+        origin: origin + Vec3::new(0.0, 0.0, SPAWN_HEIGHT),
         yaw,
     }
 }
@@ -467,6 +488,11 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
             face_count: model.num_faces,
             origin: Vec3::ZERO,
             visible: number == 0,
+            mins: vec3(model.bound.min),
+            maxs: vec3(model.bound.max),
+            hulls: model.hulls.for_size.map_or([ClipChild::Empty; 2], |hulls| {
+                [clip_child(hulls.small), clip_child(hulls.large)]
+            }),
         })
         .collect();
     place_models(&mut models, &entities);

@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 
-use crate::tree::Tree;
+use crate::tree::{ClipChild, Tree};
 
 /// How a texture is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -118,7 +118,7 @@ impl Face {
 }
 
 /// A group of faces: the world, or a brush model.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
     /// The first face in [`Map::faces`].
     pub first_face: u32,
@@ -128,6 +128,12 @@ pub struct Model {
     pub origin: Vec3,
     /// Whether it's drawn.
     pub visible: bool,
+    /// The smallest corner of its bounds.
+    pub mins: Vec3,
+    /// The largest corner of its bounds.
+    pub maxs: Vec3,
+    /// The roots of its clipping hulls, for players and for large monsters.
+    pub hulls: [ClipChild; 2],
 }
 
 /// An entity from the map, as key-value text.

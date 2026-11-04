@@ -47,6 +47,28 @@ pub struct Node {
     pub children: [NodeChild; 2],
 }
 
+/// What a side of a clipping node leads to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClipChild {
+    /// Another clipping node.
+    Node(u32),
+    /// Open space.
+    #[default]
+    Empty,
+    /// Solid.
+    Solid,
+}
+
+/// A node of a clipping hull, whose solids are already grown by the size of
+/// the box that uses it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipNode {
+    /// The dividing plane, by index.
+    pub plane: u32,
+    /// The front and back sides.
+    pub children: [ClipChild; 2],
+}
+
 /// A convex region of space.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Leaf {
@@ -74,6 +96,8 @@ pub struct Tree {
     pub leaves: Vec<Leaf>,
     /// Faces by leaf, as indices into [`crate::Map::faces`].
     pub leaf_faces: Vec<u32>,
+    /// The clipping hulls' nodes.
+    pub clip_nodes: Vec<ClipNode>,
     /// How many leaves visibility covers, not counting leaf 0.
     pub visible_leaf_count: u32,
     /// Run-length encoded visible sets.
@@ -114,6 +138,31 @@ impl Tree {
     /// The plane at `index`.
     fn plane(&self, index: u32) -> Option<&Plane> {
         self.planes.get(usize::try_from(index).ok()?)
+    }
+
+    /// Whether `point` is solid in the hull starting at `root`.
+    #[must_use]
+    pub fn clip_solid(&self, root: ClipChild, point: Vec3) -> bool {
+        let mut child = root;
+        loop {
+            match child {
+                ClipChild::Empty => return false,
+                ClipChild::Solid => return true,
+                ClipChild::Node(index) => {
+                    let node = self
+                        .clip_nodes
+                        .get(usize::try_from(index).unwrap_or(usize::MAX));
+                    let Some(node) = node else {
+                        return false;
+                    };
+                    let Some(plane) = self.plane(node.plane) else {
+                        return false;
+                    };
+                    let side = plane.normal.dot(point) - plane.distance;
+                    child = node.children[usize::from(side < 0.0)];
+                }
+            }
+        }
     }
 
     /// The leaf at `index`.

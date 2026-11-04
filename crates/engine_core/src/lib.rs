@@ -3,5 +3,6 @@
 //! May depend on nothing. See proposal 0008.
 
 pub mod math;
+pub mod player;
 pub mod time;
 pub mod window;

@@ -11,4 +11,4 @@ mod tree;
 pub use map::{
     Animation, Entity, Face, FaceLight, Map, MipLevel, Model, TexelAxis, Texture, TextureKind,
 };
-pub use tree::{Contents, Leaf, Node, NodeChild, Plane, Tree};
+pub use tree::{ClipChild, ClipNode, Contents, Leaf, Node, NodeChild, Plane, Tree};
