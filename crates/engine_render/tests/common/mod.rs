@@ -70,7 +70,6 @@ pub(crate) fn map(models: u32) -> Map {
         map.models.push(Model {
             first_face: number,
             face_count: 1,
-            visible: true,
             ..Model::default()
         });
     }

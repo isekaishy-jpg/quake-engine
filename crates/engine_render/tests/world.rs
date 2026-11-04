@@ -82,15 +82,18 @@ fn an_unlit_map_uses_full_brightness() {
 }
 
 #[test]
-fn brush_models_move_to_their_origin_and_always_draw() {
-    let mut map = map(2);
-    map.models[1].origin = Vec3::new(10.0, 0.0, 0.0);
+fn brush_models_keep_their_own_ranges_outside_the_visible_set() {
+    let map = map(2);
     let mesh = build_world(&map).expect("mesh");
+    assert!(mesh.model_ranges[0].is_empty());
+    assert_eq!(mesh.model_ranges[1].len(), 1);
+    assert_eq!(mesh.model_ranges[1][0].count, 6);
+    assert_eq!(mesh.model_indices.len(), 6);
+    assert_eq!(mesh.world_index_count, 6);
     assert_eq!(
-        mesh.vertices[4].position[0],
-        mesh.vertices[0].position[0] + 10.0
+        mesh.vertices[4].position, mesh.vertices[0].position,
+        "not moved here"
     );
-    assert_eq!(mesh.always_visible, [1]);
 }
 
 #[test]

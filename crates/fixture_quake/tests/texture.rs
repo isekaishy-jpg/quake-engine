@@ -1,7 +1,7 @@
 //! Quake's texture rules.
 
 use engine_map::TextureKind;
-use fixture_quake::{LIGHT_STYLE_COUNT, Palette, light_styles, texture_kind, without_stray_tail};
+use fixture_quake::{Palette, texture_kind, without_stray_tail};
 
 /// A BSP header of one 4 byte lump right after the header, then `tail`.
 fn bsp_with_tail(tail: &[u8]) -> Vec<u8> {
@@ -48,28 +48,4 @@ fn names_choose_the_kind() {
 fn a_palette_is_exactly_768_bytes() {
     assert!(Palette::parse(&[0; 768]).is_some());
     assert!(Palette::parse(&[0; 767]).is_none());
-}
-
-/// `world.qc`: style 0 never changes, and `m` is normal brightness.
-#[test]
-fn style_zero_is_steady_at_normal() {
-    for tick in 0..100 {
-        assert!((light_styles(f64::from(tick) * 0.1)[0] - 1.0).abs() < f32::EPSILON);
-    }
-}
-
-/// Style 1 is `mmnmmommommnonmmonqnmmo`, at ten letters a second.
-#[test]
-fn styles_step_ten_times_a_second() {
-    let dark = light_styles(0.0)[1];
-    let bright = light_styles(0.25)[1];
-    assert!((dark - 1.0).abs() < f32::EPSILON);
-    assert!((bright - 13.0 / 12.0).abs() < 1e-6, "the third letter is n");
-}
-
-#[test]
-fn styles_past_the_table_stay_normal() {
-    let styles = light_styles(3.3);
-    assert_eq!(styles.len(), LIGHT_STYLE_COUNT);
-    assert!((styles[40] - 1.0).abs() < f32::EPSILON);
 }

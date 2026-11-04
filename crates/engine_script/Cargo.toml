@@ -1,6 +1,6 @@
 [package]
 name = "engine_script"
-description = "The Luau host: runs game scripts for the simulation."
+description = "The Luau host and the engine API scripts see."
 version.workspace = true
 license.workspace = true
 edition.workspace = true
@@ -8,6 +8,10 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_core.workspace = true
+engine_map.workspace = true
+engine_sim.workspace = true
+mlua.workspace = true
 
 [lints]
 workspace = true

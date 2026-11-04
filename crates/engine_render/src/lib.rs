@@ -21,4 +21,4 @@ pub use matrix::view_projection;
 pub use overlay::overlay_vertices;
 pub use renderer::{Capture, Renderer, Statistics, Target, View};
 pub use visible::VisibleSet;
-pub use world::{Batch, BatchKind, Vertex, WorldMesh, build_world};
+pub use world::{Batch, BatchKind, ModelRange, Vertex, WorldMesh, build_world};

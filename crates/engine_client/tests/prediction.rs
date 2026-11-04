@@ -5,7 +5,8 @@ mod common;
 use std::rc::Rc;
 
 use common::room;
-use engine_client::{Buttons, Client, StepSmoother};
+use engine_client::{Buttons, Client, LightStyles, StepSmoother};
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_movement::{MoveVars, player_move};
@@ -49,6 +50,7 @@ fn answer(server: &mut Loopback, acknowledged: u32, player: PlayerState) {
         tick: acknowledged,
         acknowledged,
         player,
+        instances: Vec::new(),
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -90,7 +92,13 @@ fn a_late_snapshot_replays_to_the_same_place() {
         ..PlayerState::default()
     };
     for command in &commands[..5] {
-        player_move(&mut truth, command, &MoveVars::default(), &world);
+        player_move(
+            &mut truth,
+            command,
+            &MoveVars::default(),
+            world.with(&[]),
+            &mut Vec::new(),
+        );
     }
     answer(&mut server, 5, truth);
     client.receive();
@@ -165,6 +173,100 @@ fn held_buttons_become_run_speed_and_speed_walks() {
     assert!((command.yaw - 10.0).abs() < f32::EPSILON);
     assert!(buttons.set("speed", true));
     assert!((buttons.command(0.0, 0.0).forward - 200.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn light_styles_step_ten_times_a_second_and_default_to_normal() {
+    let mut styles = LightStyles::new();
+    styles.set(1, "mz");
+    let values = styles.values(0.0);
+    assert!((values[0] - 1.0).abs() < f32::EPSILON, "unset is normal");
+    assert!((values[1] - 1.0).abs() < f32::EPSILON);
+    assert!(
+        (styles.values(0.1)[1] - 25.0 / 12.0).abs() < 1e-5,
+        "the second letter"
+    );
+    assert!(
+        (styles.values(0.2)[1] - 1.0).abs() < f32::EPSILON,
+        "it loops"
+    );
+}
+
+#[test]
+fn out_of_range_styles_are_ignored() {
+    let mut styles = LightStyles::new();
+    styles.set(200, "a");
+    assert_eq!(styles, LightStyles::new());
+}
+
+/// A brush model at height `z`.
+fn instance(z: f32) -> ModelInstance {
+    ModelInstance {
+        model: 1,
+        origin: Vec3::new(0.0, 0.0, z),
+        visible: true,
+        solid: true,
+    }
+}
+
+/// Sends a snapshot with `instances`.
+fn snapshot_with(server: &mut Loopback, tick: u32, instances: Vec<ModelInstance>) {
+    let snapshot = Snapshot {
+        tick,
+        acknowledged: 0,
+        player: PlayerState {
+            origin: START,
+            ..PlayerState::default()
+        },
+        instances,
+    };
+    server.send(ServerMessage::Snapshot(snapshot).encode());
+}
+
+#[test]
+fn brush_models_draw_between_the_last_two_snapshots() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_with(&mut server, 1, vec![instance(0.0)]);
+    snapshot_with(&mut server, 2, vec![instance(10.0)]);
+    client.receive();
+    let drawn = client.draw_instances(0.5);
+    assert!((drawn[0].origin.z - 5.0).abs() < f32::EPSILON);
+    assert!((client.draw_instances(1.0)[0].origin.z - 10.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn a_changed_list_of_models_is_not_interpolated() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_with(&mut server, 1, vec![instance(0.0)]);
+    snapshot_with(&mut server, 2, vec![instance(10.0), instance(20.0)]);
+    client.receive();
+    assert_eq!(client.draw_instances(0.5).len(), 2);
+}
+
+#[test]
+fn messages_from_the_server_are_kept_until_asked_for() {
+    let (mut client, mut server, _world) = setup();
+    server.send(ServerMessage::Print("hello".to_owned()).encode());
+    server.send(
+        ServerMessage::SetView {
+            yaw: 90.0,
+            pitch: 0.0,
+        }
+        .encode(),
+    );
+    server.send(
+        ServerMessage::LightStyle {
+            index: 3,
+            pattern: "a".to_owned(),
+        }
+        .encode(),
+    );
+    client.receive();
+    assert_eq!(client.take_prints(), ["hello"]);
+    assert!(client.take_prints().is_empty());
+    assert_eq!(client.take_view(), Some((90.0, 0.0)));
+    assert_eq!(client.take_view(), None);
+    assert!(client.light_styles(0.0)[3].abs() < f32::EPSILON);
 }
 
 #[test]

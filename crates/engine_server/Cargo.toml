@@ -9,12 +9,11 @@ publish.workspace = true
 
 [dependencies]
 engine_core.workspace = true
+engine_map.workspace = true
+engine_script.workspace = true
 engine_net.workspace = true
 engine_physics.workspace = true
 engine_sim.workspace = true
-
-[dev-dependencies]
-engine_map.workspace = true
 
 [lints]
 workspace = true

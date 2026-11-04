@@ -37,7 +37,7 @@ fn command() -> UserCommand {
 fn run(state: &mut PlayerState, command: UserCommand, ticks: u32, world: &CollisionWorld) {
     let vars = MoveVars::default();
     for _ in 0..ticks {
-        player_move(state, &command, &vars, world);
+        player_move(state, &command, &vars, world.with(&[]), &mut Vec::new());
     }
 }
 
@@ -94,7 +94,7 @@ fn a_jump_rises_quakes_height() {
     let vars = MoveVars::default();
     let mut highest = floor;
     for _ in 0..72 {
-        player_move(&mut state, &jump, &vars, &world);
+        player_move(&mut state, &jump, &vars, world.with(&[]), &mut Vec::new());
         highest = highest.max(state.origin.z);
     }
     let height = highest - floor;
@@ -181,7 +181,13 @@ fn water_is_measured_from_the_feet_up() {
             origin: Vec3::new(0.0, 0.0, z),
             ..PlayerState::default()
         };
-        player_move(&mut state, &command(), &vars, &world);
+        player_move(
+            &mut state,
+            &command(),
+            &vars,
+            world.with(&[]),
+            &mut Vec::new(),
+        );
         state.water_level
     };
     assert_eq!(level(-90.0), 0, "the feet are above the surface");

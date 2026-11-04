@@ -35,6 +35,8 @@ pub struct PlayerState {
     pub jump_held: bool,
     /// Whether the player passes through everything.
     pub noclip: bool,
+    /// The brush model the player is standing on, if any.
+    pub ground_model: Option<u32>,
 }
 
 /// One numbered slice of player input.

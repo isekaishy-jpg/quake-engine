@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use engine_core::entity::ModelInstance;
+use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::{Map, TextureKind};
 use vulkane::safe::{
@@ -12,11 +14,11 @@ use vulkane::safe::{
     DeviceMemory, Fence, Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder,
     GraphicsShaderStage, Image, Image2dCreateInfo, ImageBarrier, ImageLayout, ImageUsage,
     ImageView, InputRate, Instance, InstanceCreateInfo, InstanceExtensions, MemoryPropertyFlags,
-    PhysicalDevice, PipelineLayout, PipelineStage, PresentMode, Queue, QueueCreateInfo, QueueFlags,
-    RenderPass, RenderPassCreateInfo, Sampler, SamplerAddressMode, SamplerCreateInfo,
-    SamplerFilter, SamplerMipmapMode, Semaphore, ShaderModule, ShaderStageFlags, SignalSemaphore,
-    Surface, Swapchain, SwapchainCreateInfo, VertexInputAttribute, VertexInputBinding,
-    WaitSemaphore,
+    PhysicalDevice, PipelineLayout, PipelineStage, PresentMode, PushConstantRange, Queue,
+    QueueCreateInfo, QueueFlags, RenderPass, RenderPassCreateInfo, Sampler, SamplerAddressMode,
+    SamplerCreateInfo, SamplerFilter, SamplerMipmapMode, Semaphore, ShaderModule, ShaderStageFlags,
+    SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, VertexInputAttribute,
+    VertexInputBinding, WaitSemaphore,
 };
 
 use crate::error::RenderError;
@@ -36,6 +38,9 @@ const DEPTH_FORMAT: Format = Format::D32_SFLOAT;
 
 /// The colour behind everything, seen with no map loaded.
 const CLEAR_COLOR: [f32; 4] = [0.02, 0.02, 0.03, 1.0];
+
+/// The size of the push constant holding a model's position.
+const MODEL_OFFSET_SIZE: u32 = 16;
 
 /// The `VK_INDEX_TYPE_UINT32` value.
 const INDEX_TYPE_U32: u32 = 1;
@@ -63,6 +68,8 @@ pub(crate) struct Scene<'a> {
     pub(crate) mesh: &'a WorldMesh,
     /// What's visible.
     pub(crate) visible: &'a VisibleSet,
+    /// Where brush models are.
+    pub(crate) instances: &'a [ModelInstance],
     /// Whether `visible` changed since it was last uploaded.
     pub(crate) changed: bool,
 }
@@ -268,7 +275,7 @@ fn pick_device(
             }
         }
     }
-    Err(RenderError("no Vulkan device can draw here".to_owned()))
+    Err(RenderError::no_device())
 }
 
 /// A render pass with one colour and one depth attachment.
@@ -386,7 +393,8 @@ impl Backend {
             api_version: ApiVersion::V1_1,
             enabled_extensions: window.as_ref().map(|_| &extensions),
             ..InstanceCreateInfo::default()
-        })?;
+        })
+        .map_err(|_no_loader| RenderError::no_device())?;
         let surface = window
             .map(|window| make_surface(&instance, window).map(Arc::new))
             .transpose()?;
@@ -438,7 +446,15 @@ impl Backend {
                 image_binding(1, DescriptorType::SAMPLER),
             ],
         )?;
-        let pipeline_layout = PipelineLayout::new(&device, &[&frame_layout, &texture_layout])?;
+        let pipeline_layout = PipelineLayout::with_push_constants(
+            &device,
+            &[&frame_layout, &texture_layout],
+            &[PushConstantRange {
+                stage_flags: ShaderStageFlags::VERTEX,
+                offset: 0,
+                size: MODEL_OFFSET_SIZE,
+            }],
+        )?;
         let pipelines = Self::make_pipelines(&device, &pipeline_layout, &present_pass)?;
         let texture_sampler = Sampler::new_mipmapped(
             &device,
@@ -782,13 +798,20 @@ impl Backend {
             vertex.write(&mut vertex_bytes);
         }
         let vertices = self.device_buffer(&vertex_bytes, BufferUsage::VERTEX_BUFFER)?;
-        let index_count: usize = mesh.face_indices.iter().map(Vec::len).sum();
-        let indices = host_buffer(
+        let world_indices = mesh.world_index_count as usize;
+        let mut indices = host_buffer(
             &self.device,
             &self.physical,
-            index_count * 4,
+            (world_indices + mesh.model_indices.len()) * 4,
             BufferUsage::INDEX_BUFFER,
         )?;
+        {
+            let mut mapped = indices.memory.map()?;
+            let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
+            for (index, chunk) in mesh.model_indices.iter().zip(&mut target[world_indices..]) {
+                *chunk = index.to_le_bytes();
+            }
+        }
 
         let sets = u32::try_from(map.textures.len() + 1).unwrap_or(u32::MAX);
         let pool = DescriptorPool::new(
@@ -1007,13 +1030,16 @@ impl Backend {
         )]
         let step = (time * ANIMATION_RATE) as u32;
         let mut bound = None;
-        for (batch, &(first, count)) in scene.mesh.batches.iter().zip(&scene.visible.ranges) {
-            if count == 0 {
-                continue;
-            }
+        let mut draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+                        batch: u32,
+                        first: u32,
+                        count: u32| {
+            let Some(batch) = scene.mesh.batches.get(batch as usize) else {
+                return;
+            };
             let texture = animated_texture(scene.map, batch.texture, step);
             let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
-                continue;
+                return;
             };
             if bound != Some(batch.kind) {
                 rec.bind_graphics_pipeline(pipelines.get(batch.kind));
@@ -1021,6 +1047,28 @@ impl Backend {
             }
             rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, set]);
             rec.draw_indexed(count, 1, first, 0, 0);
+        };
+        rec.push_constants(
+            layout,
+            ShaderStageFlags::VERTEX,
+            0,
+            &offset_bytes(Vec3::ZERO),
+        );
+        for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
+            if count > 0 {
+                draw(rec, batch, first, count);
+            }
+        }
+        for instance in scene.instances.iter().filter(|instance| instance.visible) {
+            let Some(ranges) = scene.mesh.model_ranges.get(instance.model as usize) else {
+                continue;
+            };
+            let bytes = offset_bytes(instance.origin);
+            rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
+            for range in ranges {
+                let first = scene.mesh.world_index_count + range.first;
+                draw(rec, range.batch, first, range.count);
+            }
         }
     }
 
@@ -1203,6 +1251,20 @@ impl Backend {
             rgba,
         })
     }
+}
+
+/// A model's position, as push constant bytes.
+fn offset_bytes(origin: Vec3) -> [u8; MODEL_OFFSET_SIZE as usize] {
+    let mut bytes = [0; MODEL_OFFSET_SIZE as usize];
+    for (chunk, value) in bytes
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip([origin.x, origin.y, origin.z, 0.0])
+    {
+        *chunk = value.to_le_bytes();
+    }
+    bytes
 }
 
 /// The texture to show for `texture` at animation `step`.

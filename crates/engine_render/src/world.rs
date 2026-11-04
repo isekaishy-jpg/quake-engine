@@ -70,6 +70,17 @@ pub struct Batch {
     pub kind: BatchKind,
 }
 
+/// The part of a brush model that uses one batch.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ModelRange {
+    /// The batch.
+    pub batch: u32,
+    /// The first index in [`WorldMesh::model_indices`].
+    pub first: u32,
+    /// How many indices.
+    pub count: u32,
+}
+
 /// A map's GPU data, in plain form.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct WorldMesh {
@@ -81,8 +92,13 @@ pub struct WorldMesh {
     pub face_batches: Vec<Option<u32>>,
     /// The batches.
     pub batches: Vec<Batch>,
-    /// Faces of visible brush models, which draw from everywhere.
-    pub always_visible: Vec<u32>,
+    /// The triangles of every brush model, batch after batch.
+    pub model_indices: Vec<u32>,
+    /// Each model's batches, with their first index and count, by model
+    /// number. The world's are empty, because its faces go through the PVS.
+    pub model_ranges: Vec<Vec<ModelRange>>,
+    /// The most indices the world's visible set can need.
+    pub world_index_count: u32,
     /// The atlas side.
     pub atlas_size: u32,
     /// The atlas, in RGBA bytes.
@@ -190,7 +206,6 @@ fn make_vertex(
     map: &Map,
     face: &Face,
     point: Vec3,
-    origin: Vec3,
     place: Option<LightPlace>,
     neutral: [u32; 2],
     atlas_size: u32,
@@ -198,9 +213,8 @@ fn make_vertex(
     let size = texture_size(map, face);
     let s = face.axes[0].project(point);
     let t = face.axes[1].project(point);
-    let world = point + origin;
     let mut vertex = Vertex {
-        position: [world.x, world.y, world.z],
+        position: [point.x, point.y, point.z],
         uv: [s / size[0], t / size[1]],
         styles: [Face::NO_STYLE; 4],
         ..Vertex::default()
@@ -272,10 +286,9 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
     }
     mesh.face_indices = vec![Vec::new(); map.faces.len()];
     mesh.face_batches = vec![None; map.faces.len()];
+    mesh.model_ranges = vec![Vec::new(); map.models.len()];
     for (number, model) in map.models.iter().enumerate() {
-        if !model.visible {
-            continue;
-        }
+        let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
         for index in model.first_face..model.first_face + model.face_count {
             let at = index as usize;
             let Some(face) = map.faces.get(at) else {
@@ -291,23 +304,36 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             let first = u32::try_from(mesh.vertices.len()).ok()?;
             for &point in map.face_points(face) {
                 mesh.vertices.push(make_vertex(
-                    map,
-                    face,
-                    point,
-                    model.origin,
-                    places[at],
-                    neutral,
-                    atlas_size,
+                    map, face, point, places[at], neutral, atlas_size,
                 ));
             }
             for corner in 2..face.point_count {
                 mesh.face_indices[at].extend([first, first + corner - 1, first + corner]);
             }
-            mesh.face_batches[at] = Some(batch);
-            if number != 0 {
-                mesh.always_visible.push(index);
+            if number == 0 {
+                mesh.face_batches[at] = Some(batch);
+            } else {
+                per_batch[batch as usize].extend_from_slice(&mesh.face_indices[at]);
+            }
+        }
+        for (batch, indices) in per_batch.iter().enumerate() {
+            if !indices.is_empty() {
+                mesh.model_ranges[number].push(ModelRange {
+                    batch: u32::try_from(batch).ok()?,
+                    first: u32::try_from(mesh.model_indices.len()).ok()?,
+                    count: u32::try_from(indices.len()).ok()?,
+                });
+                mesh.model_indices.extend_from_slice(indices);
             }
         }
     }
+    let world_indices: usize = mesh
+        .face_batches
+        .iter()
+        .zip(&mesh.face_indices)
+        .filter(|(batch, _)| batch.is_some())
+        .map(|(_, indices)| indices.len())
+        .sum();
+    mesh.world_index_count = u32::try_from(world_indices).ok()?;
     Some(mesh)
 }

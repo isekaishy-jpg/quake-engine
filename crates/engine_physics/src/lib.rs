@@ -9,4 +9,4 @@ mod solids;
 mod world;
 
 pub use solids::build_solids;
-pub use world::{CollisionWorld, DIST_EPSILON, PointContents, Trace};
+pub use world::{Collision, CollisionWorld, DIST_EPSILON, PointContents, Trace};

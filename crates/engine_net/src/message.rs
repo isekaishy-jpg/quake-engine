@@ -1,5 +1,6 @@
 //! What client and server say to each other.
 
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 
@@ -15,8 +16,26 @@ const TAG_CONSOLE: u8 = 2;
 /// The tag of a snapshot.
 const TAG_SNAPSHOT: u8 = 3;
 
+/// The tag of a light style.
+const TAG_LIGHT_STYLE: u8 = 4;
+
+/// The tag of printed text.
+const TAG_PRINT: u8 = 5;
+
+/// The tag of a view change.
+const TAG_SET_VIEW: u8 = 6;
+
+/// The most brush models a snapshot may list.
+const MAX_INSTANCES: usize = 4096;
+
+/// The longest text a server may send.
+const MAX_TEXT_BYTES: usize = 2048;
+
+/// The value sent for standing on no model.
+const NO_MODEL: u32 = u32::MAX;
+
 /// The server's view of the game at one tick.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Snapshot {
     /// The tick this describes.
     pub tick: u32,
@@ -24,6 +43,8 @@ pub struct Snapshot {
     pub acknowledged: u32,
     /// The player.
     pub player: PlayerState,
+    /// Where brush models are.
+    pub instances: Vec<ModelInstance>,
 }
 
 /// A message to the server.
@@ -36,10 +57,26 @@ pub enum ClientMessage {
 }
 
 /// A message to a client.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub enum ServerMessage {
     /// The state of the game.
     Snapshot(Snapshot),
+    /// A light style's pattern changed.
+    LightStyle {
+        /// The style's number.
+        index: u8,
+        /// Its pattern.
+        pattern: String,
+    },
+    /// Text for the player.
+    Print(String),
+    /// Turns the player's view.
+    SetView {
+        /// The yaw in degrees.
+        yaw: f32,
+        /// The pitch in degrees.
+        pitch: f32,
+    },
 }
 
 /// Reads fields from the front of a message.
@@ -186,21 +223,23 @@ impl ServerMessage {
     /// The message as bytes.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
-        let Self::Snapshot(snapshot) = self;
-        let player = &snapshot.player;
-        let mut out = vec![TAG_SNAPSHOT];
-        out.extend_from_slice(&snapshot.tick.to_le_bytes());
-        out.extend_from_slice(&snapshot.acknowledged.to_le_bytes());
-        put_vec3(&mut out, player.origin);
-        put_vec3(&mut out, player.velocity);
-        put_f32(&mut out, player.water_jump_time);
-        out.extend_from_slice(&[
-            u8::from(player.on_ground),
-            player.water_level,
-            liquid_number(player.liquid),
-            u8::from(player.jump_held),
-            u8::from(player.noclip),
-        ]);
+        let mut out = Vec::new();
+        match self {
+            Self::Snapshot(snapshot) => encode_snapshot(snapshot, &mut out),
+            Self::LightStyle { index, pattern } => {
+                out.extend_from_slice(&[TAG_LIGHT_STYLE, *index]);
+                out.extend_from_slice(pattern.as_bytes());
+            }
+            Self::Print(text) => {
+                out.push(TAG_PRINT);
+                out.extend_from_slice(text.as_bytes());
+            }
+            Self::SetView { yaw, pitch } => {
+                out.push(TAG_SET_VIEW);
+                put_f32(&mut out, *yaw);
+                put_f32(&mut out, *pitch);
+            }
+        }
         out
     }
 
@@ -208,29 +247,100 @@ impl ServerMessage {
     #[must_use]
     pub fn decode(bytes: &[u8]) -> Option<Self> {
         let (&tag, rest) = bytes.split_first()?;
-        if tag != TAG_SNAPSHOT {
-            return None;
+        match tag {
+            TAG_SNAPSHOT => decode_snapshot(rest).map(Self::Snapshot),
+            TAG_LIGHT_STYLE => {
+                let (&index, pattern) = rest.split_first()?;
+                let pattern = text_from(pattern)?;
+                Some(Self::LightStyle { index, pattern })
+            }
+            TAG_PRINT => text_from(rest).map(Self::Print),
+            TAG_SET_VIEW => {
+                let mut reader = Reader { bytes: rest };
+                let (yaw, pitch) = (reader.f32()?, reader.f32()?);
+                reader.finished().then_some(Self::SetView { yaw, pitch })
+            }
+            _ => None,
         }
-        let mut reader = Reader { bytes: rest };
-        let tick = reader.u32()?;
-        let acknowledged = reader.u32()?;
-        let origin = reader.vec3()?;
-        let velocity = reader.vec3()?;
-        let water_jump_time = reader.f32()?;
-        let player = PlayerState {
-            origin,
-            velocity,
-            water_jump_time,
-            on_ground: reader.flag()?,
-            water_level: reader.byte().filter(|level| *level <= 3)?,
-            liquid: liquid_from(reader.byte()?)?,
-            jump_held: reader.flag()?,
-            noclip: reader.flag()?,
-        };
-        reader.finished().then_some(Self::Snapshot(Snapshot {
-            tick,
-            acknowledged,
-            player,
-        }))
     }
+}
+
+/// Text from a message, within the size limit.
+fn text_from(bytes: &[u8]) -> Option<String> {
+    if bytes.len() > MAX_TEXT_BYTES {
+        return None;
+    }
+    std::str::from_utf8(bytes).ok().map(str::to_owned)
+}
+
+/// Appends a snapshot.
+fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
+    let player = &snapshot.player;
+    out.push(TAG_SNAPSHOT);
+    out.extend_from_slice(&snapshot.tick.to_le_bytes());
+    out.extend_from_slice(&snapshot.acknowledged.to_le_bytes());
+    put_vec3(out, player.origin);
+    put_vec3(out, player.velocity);
+    put_f32(out, player.water_jump_time);
+    out.extend_from_slice(&[
+        u8::from(player.on_ground),
+        player.water_level,
+        liquid_number(player.liquid),
+        u8::from(player.jump_held),
+        u8::from(player.noclip),
+    ]);
+    out.extend_from_slice(&player.ground_model.unwrap_or(NO_MODEL).to_le_bytes());
+    let count = u32::try_from(snapshot.instances.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for instance in &snapshot.instances {
+        out.extend_from_slice(&instance.model.to_le_bytes());
+        put_vec3(out, instance.origin);
+        out.extend_from_slice(&[u8::from(instance.visible), u8::from(instance.solid)]);
+    }
+}
+
+/// Reads a snapshot.
+fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
+    let mut reader = Reader { bytes };
+    let tick = reader.u32()?;
+    let acknowledged = reader.u32()?;
+    let origin = reader.vec3()?;
+    let velocity = reader.vec3()?;
+    let water_jump_time = reader.f32()?;
+    let on_ground = reader.flag()?;
+    let water_level = reader.byte().filter(|level| *level <= 3)?;
+    let liquid = liquid_from(reader.byte()?)?;
+    let jump_held = reader.flag()?;
+    let noclip = reader.flag()?;
+    let ground = reader.u32()?;
+    let player = PlayerState {
+        origin,
+        velocity,
+        on_ground,
+        water_level,
+        liquid,
+        water_jump_time,
+        jump_held,
+        noclip,
+        ground_model: (ground != NO_MODEL).then_some(ground),
+    };
+    let count = usize::try_from(reader.u32()?).ok()?;
+    if count > MAX_INSTANCES {
+        return None;
+    }
+    let mut instances = Vec::with_capacity(count);
+    for _ in 0..count {
+        instances.push(ModelInstance {
+            model: reader.u32()?,
+            origin: reader.vec3()?,
+            visible: reader.flag()?,
+            solid: reader.flag()?,
+        });
+    }
+    reader.finished().then_some(Snapshot {
+        tick,
+        acknowledged,
+        player,
+        instances,
+    })
 }

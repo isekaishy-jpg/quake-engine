@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::Map;
@@ -133,7 +134,11 @@ impl Renderer {
     }
 
     /// Updates the visible set for `view`, and prepares the scene.
-    fn scene<'a>(loaded: Option<&'a mut LoadedMap>, view: &View) -> Option<Scene<'a>> {
+    fn scene<'a>(
+        loaded: Option<&'a mut LoadedMap>,
+        view: &View,
+        instances: &'a [ModelInstance],
+    ) -> Option<Scene<'a>> {
         let loaded = loaded?;
         let changed = loaded
             .visible
@@ -142,6 +147,7 @@ impl Renderer {
             map: &loaded.map,
             mesh: &loaded.mesh,
             visible: &loaded.visible,
+            instances,
             changed,
         })
     }
@@ -151,8 +157,8 @@ impl Renderer {
     /// # Errors
     ///
     /// Returns [`RenderError`] if the device fails.
-    pub fn draw(&mut self, view: &View) -> Result<(), RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view);
+    pub fn draw(&mut self, view: &View, instances: &[ModelInstance]) -> Result<(), RenderError> {
+        let scene = Self::scene(self.loaded.as_mut(), view, instances);
         self.backend.draw(view, scene.as_ref())
     }
 
@@ -164,10 +170,11 @@ impl Renderer {
     pub fn capture(
         &mut self,
         view: &View,
+        instances: &[ModelInstance],
         width: u32,
         height: u32,
     ) -> Result<Capture, RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view);
+        let scene = Self::scene(self.loaded.as_mut(), view, instances);
         self.backend.capture(view, scene.as_ref(), width, height)
     }
 

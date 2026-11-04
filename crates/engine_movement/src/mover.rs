@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
-use engine_physics::{CollisionWorld, PointContents, Trace};
+use engine_physics::{Collision, PointContents, Trace};
 
 /// The highest step a player walks up.
 const STEP_SIZE: f32 = 18.0;
@@ -109,8 +109,10 @@ struct Mover<'a> {
     command: &'a UserCommand,
     /// The rules.
     vars: &'a MoveVars,
-    /// The map.
-    world: &'a CollisionWorld,
+    /// The map, with its moving models.
+    world: Collision<'a>,
+    /// Where brush models that were hit are noted.
+    touched: &'a mut Vec<u32>,
     /// The view's forward direction.
     forward: Vec3,
     /// The view's right direction.
@@ -144,6 +146,7 @@ impl Mover<'_> {
             if trace.fraction >= 1.0 {
                 break;
             }
+            self.touched.extend(trace.model);
             time_left -= time_left * trace.fraction;
             if plane_count >= MAX_CLIP_PLANES {
                 self.state.velocity = Vec3::ZERO;
@@ -351,11 +354,14 @@ impl Mover<'_> {
     fn categorize(&mut self) {
         if self.state.velocity.z > LEAVE_GROUND_SPEED {
             self.state.on_ground = false;
+            self.state.ground_model = None;
         } else {
             let below = self.state.origin - Vec3::new(0.0, 0.0, 1.0);
             let trace = self.trace(self.state.origin, below);
             self.state.on_ground = trace.normal.z >= MIN_GROUND_NORMAL;
+            self.state.ground_model = trace.model.filter(|_| self.state.on_ground);
             if self.state.on_ground {
+                self.touched.extend(trace.model);
                 self.state.water_jump_time = 0.0;
                 if !trace.start_solid && !trace.all_solid {
                     self.state.origin = trace.end;
@@ -482,12 +488,13 @@ impl Mover<'_> {
     }
 }
 
-/// Moves `state` by `command`.
+/// Moves `state` by `command`, adding any brush models it hit to `touched`.
 pub fn player_move(
     state: &mut PlayerState,
     command: &UserCommand,
     vars: &MoveVars,
-    world: &CollisionWorld,
+    world: Collision<'_>,
+    touched: &mut Vec<u32>,
 ) {
     let (yaw_sin, yaw_cos) = command.yaw.to_radians().sin_cos();
     let (pitch_sin, pitch_cos) = command.pitch.to_radians().sin_cos();
@@ -496,6 +503,7 @@ pub fn player_move(
         command,
         vars,
         world,
+        touched,
         forward: Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin),
         right: Vec3::new(yaw_sin, -yaw_cos, 0.0),
     }

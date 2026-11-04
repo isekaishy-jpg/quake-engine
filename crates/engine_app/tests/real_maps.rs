@@ -4,6 +4,7 @@
 #![expect(clippy::print_stdout, reason = "the measurements are the point")]
 
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
@@ -11,8 +12,10 @@ use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::{ClipChild, Map, Tree};
 use engine_movement::{MoveVars, player_move};
+use engine_net::{ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
-use fixture_quake::{Palette, import_map, mount_game, spawn_point};
+use engine_server::Server;
+use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
 
 /// A small random number generator, so a failure repeats.
 struct Random(u64);
@@ -157,7 +160,13 @@ fn wander(map: &Map, world: &CollisionWorld, ticks: u32) -> (u32, f32) {
             command.side = random.range(-400.0, 400.0);
             command.jump = random.next() < 0.3;
         }
-        player_move(&mut state, &command, &vars, world);
+        player_move(
+            &mut state,
+            &command,
+            &vars,
+            world.with(&[]),
+            &mut Vec::new(),
+        );
         travelled += (state.origin - before).length();
         if world.in_solid(state.origin) {
             in_solid += 1;
@@ -218,4 +227,82 @@ fn bsp2_maps_build_solids_and_can_be_walked() {
         assert!(solids > 0, "{name}");
         assert_eq!(in_solid, 0, "{name}");
     }
+}
+
+/// Runs a map's scripts for `seconds`, and returns any script errors, and how
+/// many brush models moved.
+fn run_scripts(map: &Arc<Map>, seconds: u32) -> (Vec<String>, usize) {
+    let world = Rc::new(CollisionWorld::new(Arc::clone(map)));
+    let (mut client, server_end) = loopback();
+    let origin = spawn_point(map).origin;
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        map,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+    )
+    .expect("the scripts load");
+    let mut errors = Vec::new();
+    let mut first = None;
+    let mut moved = std::collections::BTreeSet::new();
+    for _ in 0..seconds * 72 {
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            match ServerMessage::decode(&bytes).expect("valid") {
+                ServerMessage::Print(text) if text.contains("script error") => errors.push(text),
+                ServerMessage::Snapshot(snapshot) => {
+                    let start = first.get_or_insert_with(|| snapshot.instances.clone());
+                    for (from, to) in start.iter().zip(&snapshot.instances) {
+                        if from.origin != to.origin {
+                            moved.insert(to.model);
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+    (errors, moved.len())
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_maps_scripts_run_without_errors() {
+    let base = base();
+    let palette = palette(&base);
+    let mut failures = 0;
+    let mut maps = 0;
+    for (root, game_name) in [
+        (base.clone(), "id1"),
+        (base.clone(), "hipnotic"),
+        (base.clone(), "rogue"),
+        (base.join("rerelease"), "mg1"),
+    ] {
+        let filesystem = game(&root, game_name);
+        for path in filesystem.list("maps/") {
+            let Some(name) = path
+                .strip_prefix("maps/")
+                .and_then(|p| p.strip_suffix(".bsp"))
+            else {
+                continue;
+            };
+            let map = load(&filesystem, name, &palette);
+            let (errors, moved) = run_scripts(&map, 3);
+            maps += 1;
+            if !errors.is_empty() {
+                failures += 1;
+                println!(
+                    "{game_name}/{name}: {} errors, first {}",
+                    errors.len(),
+                    errors[0]
+                );
+            } else if moved > 0 {
+                println!("{game_name}/{name}: fine, {moved} models moved");
+            }
+        }
+    }
+    println!("{maps} maps, {failures} with errors");
+    assert_eq!(failures, 0);
 }

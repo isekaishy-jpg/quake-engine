@@ -1,5 +1,6 @@
 //! Encoding, and refusing bad input.
 
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_net::{ClientMessage, ServerMessage, Snapshot, Transport, loopback};
@@ -32,7 +33,14 @@ fn snapshot() -> Snapshot {
             water_jump_time: 1.5,
             jump_held: true,
             noclip: true,
+            ground_model: Some(4),
         },
+        instances: vec![ModelInstance {
+            model: 3,
+            origin: Vec3::new(7.0, 8.0, 9.0),
+            visible: true,
+            solid: false,
+        }],
     }
 }
 
@@ -42,8 +50,28 @@ fn messages_survive_the_round_trip() {
     assert_eq!(ClientMessage::decode(&moving.encode()), Some(moving));
     let console = ClientMessage::Console("noclip".to_owned());
     assert_eq!(ClientMessage::decode(&console.encode()), Some(console));
-    let state = ServerMessage::Snapshot(snapshot());
-    assert_eq!(ServerMessage::decode(&state.encode()), Some(state));
+    for message in [
+        ServerMessage::Snapshot(snapshot()),
+        ServerMessage::LightStyle {
+            index: 5,
+            pattern: "abc".to_owned(),
+        },
+        ServerMessage::Print("hello".to_owned()),
+        ServerMessage::SetView {
+            yaw: 90.0,
+            pitch: -10.0,
+        },
+    ] {
+        assert_eq!(ServerMessage::decode(&message.encode()), Some(message));
+    }
+}
+
+#[test]
+fn a_snapshot_claiming_too_many_models_is_refused() {
+    let mut bytes = ServerMessage::Snapshot(snapshot()).encode();
+    let count_at = bytes.len() - 4 - 18;
+    bytes[count_at..count_at + 4].copy_from_slice(&u32::MAX.to_le_bytes());
+    assert_eq!(ServerMessage::decode(&bytes), None);
 }
 
 #[test]

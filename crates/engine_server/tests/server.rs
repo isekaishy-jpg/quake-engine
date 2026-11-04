@@ -3,6 +3,7 @@
 mod common;
 
 use std::rc::Rc;
+use std::sync::Arc;
 
 use common::room;
 use engine_core::math::Vec3;
@@ -13,9 +14,12 @@ use engine_server::Server;
 
 /// A server, and the client's end.
 fn setup() -> (Server, Loopback) {
-    let world = Rc::new(CollisionWorld::new(room()));
+    let map = room();
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (client_end, server_end) = loopback();
-    let server = Server::new(Box::new(server_end), world, Vec3::new(0.0, 0.0, -255.0));
+    let origin = Vec3::new(0.0, 0.0, -255.0);
+    let server =
+        Server::new(Box::new(server_end), world, &map, origin, &[], 1.0 / 72.0).expect("server");
     (server, client_end)
 }
 

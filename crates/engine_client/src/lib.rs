@@ -5,11 +5,13 @@
 mod bindings;
 mod client;
 mod input;
+mod lightstyle;
 mod look;
 mod view;
 
 pub use bindings::{Bindings, canonical_key};
 pub use client::Client;
 pub use input::Buttons;
+pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};
 pub use view::{StepSmoother, VIEW_HEIGHT};

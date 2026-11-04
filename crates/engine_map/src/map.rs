@@ -124,10 +124,6 @@ pub struct Model {
     pub first_face: u32,
     /// How many faces it has.
     pub face_count: u32,
-    /// Where it's placed.
-    pub origin: Vec3,
-    /// Whether it's drawn.
-    pub visible: bool,
     /// The smallest corner of its bounds.
     pub mins: Vec3,
     /// The largest corner of its bounds.

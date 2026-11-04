@@ -19,6 +19,10 @@ use crate::texture::{Palette, texture_kind};
 /// World units between lightmap samples, from `gl_model.c`.
 const TEXELS_PER_SAMPLE: u32 = 16;
 
+/// How far `Mod_LoadSubmodels` spreads a model's bounds. Door travel and door
+/// linking both depend on it.
+const SPREAD: Vec3 = Vec3::new(1.0, 1.0, 1.0);
+
 /// The side of the checker texture used for missing textures.
 const MISSING_TEXTURE_SIZE: u32 = 16;
 
@@ -294,8 +298,10 @@ fn import_tree(bsp: &BspData) -> Tree {
 }
 
 /// Reads the entity lump: `{`, quoted pairs and `}`.
+///
+/// Trailing spaces leave a key, as in `ED_ParseEdict`: `r2m1` has a `"map "`.
 #[must_use]
-fn parse_entities(text: &str) -> Vec<Entity> {
+pub fn parse_entities(text: &str) -> Vec<Entity> {
     let mut entities = Vec::new();
     let mut current: Option<Entity> = None;
     let mut key: Option<String> = None;
@@ -320,7 +326,7 @@ fn parse_entities(text: &str) -> Vec<Entity> {
                 let token = body[..end].to_owned();
                 rest = body.get(end + 1..).unwrap_or("");
                 match key.take() {
-                    None => key = Some(token),
+                    None => key = Some(token.trim_end_matches(' ').to_owned()),
                     Some(name) => {
                         if let Some(entity) = &mut current {
                             entity.fields.push((name, token));
@@ -342,25 +348,6 @@ fn parse_vector(text: &str) -> Option<Vec3> {
     let y = parts.next()?.ok()?;
     let z = parts.next()?.ok()?;
     Some(Vec3::new(x, y, z))
-}
-
-/// Places each brush model from the entity that uses it. A model no entity
-/// uses isn't drawn, and neither are triggers, which `InitTrigger` hides.
-fn place_models(models: &mut [Model], entities: &[Entity]) {
-    for entity in entities {
-        let number = entity
-            .get("model")
-            .and_then(|model| model.strip_prefix('*'))
-            .and_then(|model| model.parse::<usize>().ok());
-        let Some(model) = number.and_then(|number| models.get_mut(number)) else {
-            continue;
-        };
-        let class = entity.get("classname").unwrap_or("");
-        model.visible = !class.starts_with("trigger_");
-        if let Some(origin) = entity.get("origin").and_then(parse_vector) {
-            model.origin = origin;
-        }
-    }
 }
 
 /// Where a player starts.
@@ -479,23 +466,19 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
             .collect()
     });
     let entities = parse_entities(&String::from_utf8_lossy(&bsp.entities));
-    let mut models: Vec<Model> = bsp
+    let models: Vec<Model> = bsp
         .models
         .iter()
-        .enumerate()
-        .map(|(number, model)| Model {
+        .map(|model| Model {
             first_face: model.first_face,
             face_count: model.num_faces,
-            origin: Vec3::ZERO,
-            visible: number == 0,
-            mins: vec3(model.bound.min),
-            maxs: vec3(model.bound.max),
+            mins: vec3(model.bound.min) - SPREAD,
+            maxs: vec3(model.bound.max) + SPREAD,
             hulls: model.hulls.for_size.map_or([ClipChild::Empty; 2], |hulls| {
                 [clip_child(hulls.small), clip_child(hulls.large)]
             }),
         })
         .collect();
-    place_models(&mut models, &entities);
 
     Ok(Map {
         textures,

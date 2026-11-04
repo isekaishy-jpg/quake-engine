@@ -8,12 +8,12 @@
 
 mod bsp;
 mod game;
-mod lightstyle;
 mod pak;
+mod scripts;
 mod texture;
 
-pub use bsp::{MapError, SpawnPoint, import_map, spawn_point, without_stray_tail};
+pub use bsp::{MapError, SpawnPoint, import_map, parse_entities, spawn_point, without_stray_tail};
 pub use game::mount_game;
-pub use lightstyle::{LIGHT_STYLE_COUNT, light_styles};
 pub use pak::PakArchive;
+pub use scripts::SCRIPTS;
 pub use texture::{Palette, texture_kind};

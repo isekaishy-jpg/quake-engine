@@ -9,6 +9,7 @@ use std::time::Duration;
 use engine_assets::{AssetError, FileSystem};
 use engine_client::{Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT};
 use engine_console::{Console, CvarFlags};
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
@@ -19,13 +20,16 @@ use engine_platform::{
 };
 use engine_render::{Renderer, Target, View};
 use engine_server::Server;
-use fixture_quake::{Palette, import_map, light_styles, mount_game, spawn_point};
+use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
 
 use crate::commands;
 use crate::options::Options;
 
 /// The simulation rate (proposal 0010).
 const TICK_RATE: Option<TickRate> = TickRate::new(72);
+
+/// The length of a tick.
+const TICK_SECONDS: f64 = 1.0 / 72.0;
 
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
@@ -86,8 +90,11 @@ impl World {
         self.server = Some(Server::new(
             Box::new(server_end),
             Rc::clone(&collision),
+            &map,
             start.origin,
-        ));
+            SCRIPTS,
+            TICK_SECONDS,
+        )?);
         self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
@@ -115,7 +122,17 @@ impl World {
             client.send_command(command, seconds);
             server.tick();
             client.receive();
+            if let Some((yaw, pitch)) = client.take_view() {
+                self.look.set_view(f64::from(yaw), f64::from(pitch));
+            }
         }
+    }
+
+    /// Text from the server, and a level to change to.
+    fn take_server_news(&mut self) -> (Vec<String>, Option<String>) {
+        let prints = self.client.as_mut().map(Client::take_prints);
+        let level = self.server.as_mut().and_then(Server::take_next_level);
+        (prints.unwrap_or_default(), level)
     }
 
     /// The view, `leftover` seconds past the last tick. `frame_seconds` is
@@ -124,23 +141,34 @@ impl World {
         clippy::cast_possible_truncation,
         reason = "angles and map time need no more than f32 for drawing"
     )]
-    pub(crate) fn view(&mut self, leftover: f32, frame_seconds: f32) -> View {
+    pub(crate) fn view(
+        &mut self,
+        leftover: f32,
+        fraction: f32,
+        frame_seconds: f32,
+    ) -> (View, Vec<ModelInstance>) {
         let command = self.command();
-        let origin = self.client.as_ref().map_or(Vec3::ZERO, |client| {
+        let mut origin = Vec3::ZERO;
+        let mut instances = Vec::new();
+        let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
+        if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
             let step = self
                 .step
                 .update(state.origin.z, state.on_ground, frame_seconds);
-            state.origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step)
-        });
-        View {
+            origin = state.origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step);
+            instances = client.draw_instances(fraction);
+            styles = client.light_styles(self.map_time);
+        }
+        let view = View {
             origin,
             yaw: self.look.yaw() as f32,
             pitch: self.look.pitch() as f32,
             fov: self.fov,
             time: self.map_time as f32,
-            styles: light_styles(self.map_time),
-        }
+            styles,
+        };
+        (view, instances)
     }
 }
 
@@ -257,6 +285,18 @@ impl Engine {
             reason = "a tick's length needs no more than f32"
         )]
         self.world.run_tick(seconds as f32);
+        let (prints, level) = self.world.take_server_news();
+        for text in prints {
+            self.console.print(text);
+        }
+        if let Some(level) = level {
+            match self.world.load_map(&level) {
+                Ok(()) => self.console.print(format!("loaded {level}")),
+                Err(error) => self
+                    .console
+                    .print(format!("couldn't load {level}: {error}")),
+            }
+        }
         self.show_output();
     }
 
@@ -396,16 +436,18 @@ impl PlatformApp for Engine {
                 .now
                 .saturating_sub(self.last_service.unwrap_or(frame.now));
             let tick_seconds = 1.0 / f64::from(self.clock.rate().hertz());
-            let leftover = self.clock.fraction_after(since_service) * tick_seconds;
+            let fraction = self.clock.fraction_after(since_service);
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "a frame's timing needs no more than f32"
             )]
-            let view = self
-                .world
-                .view(leftover as f32, frame.delta.as_secs_f64() as f32);
+            let (view, instances) = self.world.view(
+                (fraction * tick_seconds) as f32,
+                fraction as f32,
+                frame.delta.as_secs_f64() as f32,
+            );
             if let Some(renderer) = &mut self.world.renderer
-                && let Err(error) = renderer.draw(&view)
+                && let Err(error) = renderer.draw(&view, &instances)
             {
                 self.console.print(format!("renderer: {error}"));
                 self.show_output();

@@ -192,13 +192,13 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
         console.print("screenshot <path>");
         return;
     }
-    let view = world.view(0.0, 0.0);
+    let (view, instances) = world.view(0.0, 1.0, 0.0);
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;
     };
     let result = renderer
-        .capture(&view, SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT)
+        .capture(&view, &instances, SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT)
         .map_err(Into::into)
         .and_then(|capture| write_png(&capture, path));
     match result {

@@ -15,6 +15,9 @@ struct Frame {
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 
+// Where the model being drawn has moved to.
+var<immediate> model_offset: vec4<f32>;
+
 struct VertexIn {
     @location(0) position: vec3<f32>,
     @location(1) uv: vec2<f32>,
@@ -35,8 +38,9 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    out.clip = frame.view_projection * vec4<f32>(in.position, 1.0);
-    out.world = in.position;
+    let world = in.position + model_offset.xyz;
+    out.clip = frame.view_projection * vec4<f32>(world, 1.0);
+    out.world = world;
     out.uv = in.uv;
     out.light_uv = in.light_uv;
     out.light_step = in.light_step;

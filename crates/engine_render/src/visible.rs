@@ -78,9 +78,6 @@ impl VisibleSet {
                 add(face);
             }
         }
-        for &face in &mesh.always_visible {
-            add(face);
-        }
         self.indices.clear();
         self.ranges.clear();
         for batch in per_batch {

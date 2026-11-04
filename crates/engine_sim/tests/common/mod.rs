@@ -60,7 +60,6 @@ pub(crate) fn room() -> Arc<Map> {
     Arc::new(Map {
         tree,
         models: vec![Model {
-            visible: true,
             mins: Vec3::new(-256.0, -256.0, -256.0),
             maxs: Vec3::new(256.0, 256.0, 256.0),
             hulls: [ClipChild::Node(0), ClipChild::Empty],
