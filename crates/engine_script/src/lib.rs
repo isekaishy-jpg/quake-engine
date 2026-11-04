@@ -6,5 +6,7 @@
 //! May depend on `engine_core`, `engine_map`, `engine_sim`. See proposal 0008.
 
 mod game;
+mod save;
 
 pub use game::{Game, Outbox, ScriptError};
+pub use save::{SavedEntity, SavedScripts, SavedValue};

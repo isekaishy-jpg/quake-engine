@@ -17,9 +17,17 @@ use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::{
-    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_item_bsp, parse_mdl, parse_spr,
-    parse_wav, spawn_point,
+    Palette, SCRIPTS, Wad, import_map, load_picture, mount_game, mount_music, parse_item_bsp,
+    parse_mdl, parse_spr, parse_wav, spawn_point,
 };
+
+/// A level on normal skill, as the console's default sets.
+fn normal_level() -> Level {
+    Level {
+        settings: vec![("skill".to_owned(), 1.0), ("registered".to_owned(), 1.0)],
+        ..Level::default()
+    }
+}
 
 /// A small random number generator, so a failure repeats.
 struct Random(u64);
@@ -246,7 +254,7 @@ fn run_scripts(map: &Arc<Map>, seconds: u32) -> (Vec<String>, usize) {
         origin,
         SCRIPTS,
         1.0 / 72.0,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let mut errors = Vec::new();
@@ -350,7 +358,7 @@ fn fire_everything_listening(
         origin,
         SCRIPTS,
         1.0 / 72.0,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let mut errors = Vec::new();
@@ -578,7 +586,7 @@ fn fight_everything(map: &Arc<Map>) -> (Vec<String>, u32) {
         origin,
         SCRIPTS,
         1.0 / 72.0,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let mut errors = Vec::new();
@@ -725,7 +733,7 @@ fn shoot_everything(map: &Arc<Map>) -> Vec<String> {
         spawn_point(map).origin,
         SCRIPTS,
         1.0 / 72.0,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let mut prints = Vec::new();
@@ -843,6 +851,315 @@ fn item_boxes_wind_and_face_like_models_do() {
     }
 }
 
+/// Lua that arms the player and sets every monster on them.
+const START_A_FIGHT: &str = r#"
+    local player = find_all("classname", "player")[1]
+    player.items = bit32.bor(player.items, IT_SUPER_SHOTGUN, IT_NAILGUN, IT_SUPER_NAILGUN,
+        IT_GRENADE_LAUNCHER, IT_ROCKET_LAUNCHER, IT_LIGHTNING)
+    player.ammo_shells, player.ammo_nails, player.ammo_rockets, player.ammo_cells = 99, 99, 99, 99
+    player.health = 5000
+    for _, entity in saved_entities() do
+        if bit32.band(entity.flags, FL_MONSTER) ~= 0 and (entity.health or 0) > 0 then
+            entity.enemy = player
+            if entity.th_run then
+                entity.th_run(entity)
+            end
+        end
+    end
+"#;
+
+/// One side of a game, with the numbers it's sent.
+struct Side {
+    /// The game.
+    server: Server,
+    /// Its other end.
+    client: Box<dyn Transport>,
+    /// The next command's number.
+    sequence: u32,
+    /// The latest snapshot.
+    latest: Option<engine_net::Snapshot>,
+    /// Any script errors.
+    errors: Vec<String>,
+}
+
+impl Side {
+    /// Runs `command` for a tick.
+    fn tick(&mut self, command: UserCommand) {
+        self.sequence += 1;
+        let command = UserCommand {
+            sequence: self.sequence,
+            ..command
+        };
+        self.client.send(ClientMessage::Move(command).encode());
+        self.server.tick();
+        while let Some(bytes) = self.client.receive() {
+            match ServerMessage::decode(&bytes).expect("valid") {
+                ServerMessage::Snapshot(snapshot) => self.latest = Some(snapshot),
+                ServerMessage::Print(text) if text.contains("script error") => {
+                    self.errors.push(text);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+/// What a player does on tick `tick`: run about, change weapons and fire.
+fn busy_player(tick: u32, random: &mut Random) -> UserCommand {
+    UserCommand {
+        seconds: 1.0 / 72.0,
+        yaw: random.range(0.0, 360.0),
+        forward: 400.0,
+        attack: true,
+        jump: tick.is_multiple_of(50),
+        impulse: if tick.is_multiple_of(60) {
+            u8::try_from(tick / 60 % 7 + 2).expect("small")
+        } else {
+            0
+        },
+        ..UserCommand::default()
+    }
+}
+
+/// Plays `map` a while, saves it, and plays the game and the save on side by
+/// side. Returns what differs at the end, and any errors.
+fn save_and_compare(map: &Arc<Map>, name: &str) -> Result<(), String> {
+    let world = Rc::new(CollisionWorld::new(Arc::clone(map)));
+    let (client, server_end) = loopback();
+    let mut level = normal_level();
+    name.clone_into(&mut level.name);
+    let server = Server::new(
+        Box::new(server_end),
+        Rc::clone(&world),
+        map,
+        spawn_point(map).origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        level,
+    )
+    .expect("the scripts load");
+    let mut first = Side {
+        server,
+        client: Box::new(client),
+        sequence: 0,
+        latest: None,
+        errors: Vec::new(),
+    };
+    let mut random = Random(7);
+    for tick in 0..72 {
+        first.tick(busy_player(tick, &mut random));
+    }
+    first.server.exec(START_A_FIGHT).expect("a fight");
+    for tick in 72..360 {
+        first.tick(busy_player(tick, &mut random));
+    }
+    let saved = first.server.save().map_err(|error| error.to_string())?;
+    let text = serde_json::to_string(&saved).map_err(|error| error.to_string())?;
+    let saved = serde_json::from_str(&text).map_err(|error| error.to_string())?;
+    let (client, server_end) = loopback();
+    let server = Server::resume(Box::new(server_end), world, map, SCRIPTS, 1.0 / 72.0, saved)
+        .map_err(|error| error.to_string())?;
+    let mut second = Side {
+        server,
+        client: Box::new(client),
+        sequence: 0,
+        latest: None,
+        errors: Vec::new(),
+    };
+    for tick in 360..720 {
+        let command = busy_player(tick, &mut random);
+        first.tick(command);
+        second.tick(command);
+        let (one, two) = (
+            first.latest.as_ref().expect("a snapshot"),
+            second.latest.as_ref().expect("a snapshot"),
+        );
+        let difference = if one.player != two.player {
+            Some(format!("{:?} and {:?}", one.player, two.player))
+        } else if one.stats != two.stats {
+            Some(format!("{:?} and {:?}", one.stats, two.stats))
+        } else if one.entities != two.entities {
+            let pair = one.entities.iter().zip(&two.entities).find(|(a, b)| a != b);
+            Some(format!("entities {:?}", pair))
+        } else if one.instances != two.instances {
+            Some("brush models".to_owned())
+        } else {
+            None
+        };
+        if let Some(difference) = difference {
+            return Err(format!("tick {tick}: {difference}"));
+        }
+    }
+    let errors = [first.errors, second.errors].concat();
+    errors.first().map_or(Ok(()), |error| Err(error.clone()))
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_game_goes_on_the_same_after_a_save_on_every_map() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut wrong = Vec::new();
+    let mut maps = 0;
+    for path in filesystem.list("maps/") {
+        let Some(name) = path
+            .strip_prefix("maps/")
+            .and_then(|p| p.strip_suffix(".bsp"))
+            .filter(|name| !name.starts_with("b_"))
+        else {
+            continue;
+        };
+        maps += 1;
+        if let Err(error) = save_and_compare(&load(&filesystem, name, &palette), name) {
+            wrong.push(format!("{name}: {error}"));
+        }
+    }
+    println!("{maps} maps, wrong: {wrong:#?}");
+    assert!(maps > 30);
+    assert!(wrong.is_empty());
+}
+
+/// The level's name for each map, and what it leads to.
+fn exits(map: &Map) -> Vec<String> {
+    map.entities
+        .iter()
+        .filter(|entity| entity.get("classname") == Some("trigger_changelevel"))
+        .filter_map(|entity| entity.get("map").map(str::to_owned))
+        .collect()
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_episode_can_be_walked_from_start_to_the_end_map() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut seen = std::collections::BTreeSet::new();
+    let mut waiting = vec!["start".to_owned()];
+    while let Some(name) = waiting.pop() {
+        if !seen.insert(name.clone()) {
+            continue;
+        }
+        let map = load(&filesystem, &name, &palette);
+        waiting.extend(exits(&map));
+    }
+    println!("reachable: {seen:?}");
+    for wanted in [
+        "e1m7", "e2m6", "e3m6", "e4m7", "end", "e1m8", "e2m7", "e3m7", "e4m8",
+    ] {
+        assert!(seen.contains(wanted), "{wanted}");
+    }
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn coming_back_with_a_rune_lands_in_the_other_start() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let map = load(&filesystem, "start", &palette);
+    let start = |flags: f64| {
+        let (client, server_end) = loopback();
+        let mut level = normal_level();
+        level.flags = flags;
+        "start".clone_into(&mut level.name);
+        let server = Server::new(
+            Box::new(server_end),
+            Rc::new(CollisionWorld::new(Arc::clone(&map))),
+            &map,
+            spawn_point(&map).origin,
+            SCRIPTS,
+            1.0 / 72.0,
+            level,
+        )
+        .expect("the scripts load");
+        let mut side = Side {
+            server,
+            client: Box::new(client),
+            sequence: 0,
+            latest: None,
+            errors: Vec::new(),
+        };
+        side.tick(UserCommand::default());
+        side.latest.expect("a snapshot").player.origin
+    };
+    let (first, back) = (start(0.0), start(1.0));
+    println!("{first:?} and {back:?}");
+    assert!((first - back).length() > 100.0);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_picture_the_screens_use_is_in_the_game() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let wad = Wad::parse(&filesystem.read("gfx.wad").expect("gfx.wad")).expect("it parses");
+    let names = [
+        "conchars",
+        "sbar",
+        "ibar",
+        "scorebar",
+        "disc",
+        "num_0",
+        "num_9",
+        "anum_0",
+        "num_minus",
+        "anum_minus",
+        "num_colon",
+        "num_slash",
+        "inv_shotgun",
+        "inv2_lightng",
+        "inva5_rlaunch",
+        "sb_shells",
+        "sb_nails",
+        "sb_rocket",
+        "sb_cells",
+        "sb_armor1",
+        "sb_armor3",
+        "sb_key1",
+        "sb_quad",
+        "sb_sigil4",
+        "face1",
+        "face_p5",
+        "face_invis",
+        "face_invul2",
+        "face_inv2",
+        "face_quad",
+        "gfx/complete.lmp",
+        "gfx/inter.lmp",
+        "gfx/finale.lmp",
+        "gfx/conback.lmp",
+        "gfx/pause.lmp",
+        "gfx/loading.lmp",
+        "gfx/qplaque.lmp",
+        "gfx/ttl_main.lmp",
+        "gfx/mainmenu.lmp",
+        "gfx/menudot1.lmp",
+        "gfx/sp_menu.lmp",
+        "gfx/ttl_sgl.lmp",
+        "gfx/p_option.lmp",
+        "gfx/p_load.lmp",
+        "gfx/p_save.lmp",
+        "gfx/ttl_cstm.lmp",
+        "gfx/vidmodes.lmp",
+        "gfx/help0.lmp",
+        "gfx/help5.lmp",
+        "gfx/box_tl.lmp",
+        "gfx/box_mm2.lmp",
+    ];
+    for name in names {
+        let image = load_picture(name, &filesystem, &wad, &palette);
+        let image = image.unwrap_or_else(|| panic!("{name} is missing"));
+        assert_eq!(
+            image.rgba.len(),
+            usize::try_from(image.width * image.height * 4).expect("small"),
+            "{name}"
+        );
+    }
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn every_sprite_in_the_game_parses() {
@@ -922,7 +1239,7 @@ fn every_class_on_every_map_has_a_function() {
         Vec3::ZERO,
         SCRIPTS,
         1.0 / 72.0,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let source: String = classes

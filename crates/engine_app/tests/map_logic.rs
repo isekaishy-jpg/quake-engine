@@ -16,6 +16,14 @@ use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::SCRIPTS;
 
+/// A level on normal skill, as the console's default sets.
+fn normal_level() -> Level {
+    Level {
+        settings: vec![("skill".to_owned(), 1.0), ("registered".to_owned(), 1.0)],
+        ..Level::default()
+    }
+}
+
 /// One tick.
 const TICK: f64 = 1.0 / 72.0;
 
@@ -194,6 +202,12 @@ struct Game {
     music: Option<u8>,
     /// Effects received.
     effects: Vec<Effect>,
+    /// Commands for the client's console received.
+    stuffed: Vec<String>,
+    /// The last end of level screen asked for.
+    intermission: u8,
+    /// Damage reported to the player.
+    damage: Vec<(u8, u8, Vec3)>,
 }
 
 impl Game {
@@ -208,7 +222,7 @@ impl Game {
             origin,
             SCRIPTS,
             TICK,
-            Level::default(),
+            normal_level(),
         )
         .expect("the scripts load");
         Self {
@@ -222,6 +236,9 @@ impl Game {
             static_sounds: Vec::new(),
             music: None,
             effects: Vec::new(),
+            stuffed: Vec::new(),
+            intermission: 0,
+            damage: Vec::new(),
         }
     }
 
@@ -248,7 +265,15 @@ impl Game {
                     ServerMessage::StaticSound(sound) => self.static_sounds.push(sound),
                     ServerMessage::Music(track) => self.music = Some(track),
                     ServerMessage::Effect(effect) => self.effects.push(effect),
-                    ServerMessage::LightStyle { .. } | ServerMessage::ModelName { .. } => {}
+                    ServerMessage::CenterPrint(text) => self.prints.push(text),
+                    ServerMessage::Stuff(text) => self.stuffed.push(text),
+                    ServerMessage::Intermission(kind) => self.intermission = kind,
+                    ServerMessage::Damage { armor, blood, from } => {
+                        self.damage.push((armor, blood, from));
+                    }
+                    ServerMessage::LightStyle { .. }
+                    | ServerMessage::ModelName { .. }
+                    | ServerMessage::LevelTitle(_) => {}
                 }
             }
         }
@@ -450,7 +475,7 @@ fn view_wobble(follow: bool) -> (f32, f32) {
         start,
         SCRIPTS,
         TICK,
-        Level::default(),
+        normal_level(),
     )
     .expect("the scripts load");
     let mut client = Client::new(Box::new(client_end), world, start);
@@ -716,6 +741,7 @@ fn a_changelevel_trigger_asks_for_its_map() {
         ("classname", "trigger_changelevel"),
         ("model", "*1"),
         ("map", "e1m2"),
+        ("spawnflags", "1"),
     ]];
     let map = map(&[trigger], entities);
     let mut game = Game::new(&map, at_floor(0.0, 0.0));
@@ -1110,6 +1136,7 @@ fn a_level_change_carries_gear_but_not_keys() {
         ("classname", "trigger_changelevel"),
         ("model", "*1"),
         ("map", "next"),
+        ("spawnflags", "1"),
     ];
     let (mins, maxs) = (
         Vec3::new(-32.0, -32.0, -256.0),
@@ -1643,4 +1670,206 @@ fn the_ring_of_shadows_hides_the_gun_until_it_runs_out() {
     assert_eq!(model(&game), 0);
     game.wait(0.3);
     assert_ne!(model(&game), 0);
+}
+
+/// A level with an exit around the origin and a camera to end on, with
+/// `world` as its world.
+fn level_with_an_exit(world: &[(&str, &str)]) -> Arc<Map> {
+    let exit = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let trigger: &[(&str, &str)] = &[
+        ("classname", "trigger_changelevel"),
+        ("model", "*1"),
+        ("map", "next"),
+    ];
+    let camera: &[(&str, &str)] = &[
+        ("classname", "info_intermission"),
+        ("origin", "100 50 -100"),
+        ("mangle", "10 90 0"),
+    ];
+    map(&[exit], &[world, trigger, camera])
+}
+
+#[test]
+fn the_end_of_a_level_holds_the_player_at_the_camera_until_a_button() {
+    let map = level_with_an_exit(&[("classname", "worldspawn")]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    assert_eq!(game.intermission, 1);
+    assert_eq!(game.music, Some(3));
+    assert_eq!(game.views.last(), Some(&(90.0, 10.0)));
+    let held = game.player();
+    assert!(held.frozen);
+    assert_eq!(held.origin, Vec3::new(100.0, 50.0, -100.0));
+    let walking = UserCommand {
+        forward: 400.0,
+        ..UserCommand::default()
+    };
+    game.run(36, walking);
+    assert_eq!(game.player().origin, held.origin, "nothing moves them");
+    assert_eq!(game.server.take_next_level(), None, "not straight away");
+    game.wait(2.0);
+    assert_eq!(game.server.take_next_level(), None, "it waits for a button");
+    game.run(2, attack());
+    assert_eq!(game.server.take_next_level().as_deref(), Some("next"));
+    assert!(game.server.take_parms().is_some());
+}
+
+#[test]
+fn the_end_of_an_episode_has_its_text_first() {
+    let map = level_with_an_exit(&[("classname", "worldspawn")]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.check(r#"world.model = "maps/e3m6.bsp""#);
+    game.wait(2.5);
+    game.run(2, attack());
+    assert_eq!(game.intermission, 2);
+    assert_eq!(game.server.take_next_level(), None);
+    game.wait(1.1);
+    game.run(2, attack());
+    assert_eq!(game.server.take_next_level().as_deref(), Some("next"));
+}
+
+#[test]
+fn all_four_runes_are_worth_a_last_word() {
+    let map = level_with_an_exit(&[("classname", "worldspawn")]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.check(r#"world.model = "maps/e4m7.bsp" serverflags = 15"#);
+    game.wait(2.5);
+    game.run(2, attack());
+    game.wait(1.1);
+    game.run(2, attack());
+    assert_eq!(game.server.take_next_level(), None, "another page");
+    game.wait(1.1);
+    game.run(2, attack());
+    assert_eq!(game.server.take_next_level().as_deref(), Some("next"));
+    assert_eq!(game.server.flags(), 15.0);
+}
+
+#[test]
+fn a_rune_stays_collected_on_the_next_level() {
+    let map = map(&[], &[]);
+    let level = Level {
+        flags: 5.0,
+        ..normal_level()
+    };
+    let (client, server_end) = loopback();
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let server = Server::new(
+        Box::new(server_end),
+        world,
+        &map,
+        at_floor(0.0, 0.0),
+        SCRIPTS,
+        TICK,
+        level,
+    )
+    .expect("the scripts load");
+    server.exec("assert(serverflags == 5)").expect("it carries");
+    drop(client);
+}
+
+#[test]
+fn the_skill_chosen_in_the_start_map_goes_to_the_host() {
+    let (mins, maxs) = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let trigger: &[(&str, &str)] = &[
+        ("classname", "trigger_setskill"),
+        ("model", "*1"),
+        ("message", "3"),
+    ];
+    let map = map(&[(mins, maxs)], &[trigger]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    assert!(
+        game.server
+            .take_commands()
+            .iter()
+            .any(|command| command == "skill 3")
+    );
+}
+
+#[test]
+fn stats_follow_the_player() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check("player.health = 62 player.ammo_shells = 17 W_SetCurrentAmmo(player)");
+    game.wait(0.05);
+    let stats = game.latest.as_ref().expect("a snapshot").stats.clone();
+    assert_eq!(stats.len(), 16);
+    assert_eq!(stats[0], 62, "health");
+    assert_eq!(stats[3], 17, "the weapon's ammo");
+    assert_eq!(stats[6], 17, "shells");
+    assert_eq!(stats[10], 1, "the shotgun");
+    assert_ne!(stats[15] & 256, 0, "the shells icon");
+}
+
+#[test]
+fn being_hurt_is_told_once_with_where_it_came_from() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"
+        local from = spawn()
+        from.origin = vector.create(100, 0, 0)
+        player.armorvalue = 10
+        player.armortype = 0.5
+        T_Damage(player, from, from, 8)
+        "#,
+    );
+    game.wait(0.05);
+    assert_eq!(game.damage, [(4, 4, Vec3::new(100.0, 0.0, 0.0))]);
+}
+
+#[test]
+fn a_pickup_flashes_the_screen() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check("bonus_flash(player)");
+    game.wait(0.05);
+    assert_eq!(game.stuffed, ["bf"]);
+}
+
+#[test]
+fn obituaries_say_what_happened() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"
+        local ogre = spawn()
+        ogre.classname = "monster_ogre"
+        ogre.flags = FL_MONSTER
+        T_Damage(player, ogre, ogre, 500)
+        "#,
+    );
+    game.wait(0.05);
+    assert!(
+        game.prints
+            .iter()
+            .any(|text| text == "player was destroyed by an Ogre"),
+        "{:?}",
+        game.prints
+    );
+}
+
+#[test]
+fn cheats_arrive_through_the_console() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.client
+        .send(ClientMessage::Console("god ".to_owned()).encode());
+    game.wait(0.05);
+    game.check("T_Damage(player, world, world, 500) assert(player.health == 100)");
+    game.client
+        .send(ClientMessage::Console("kill ".to_owned()).encode());
+    game.wait(0.05);
+    assert!(game.server.take_next_level().is_some(), "it starts again");
 }

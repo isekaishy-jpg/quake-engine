@@ -19,6 +19,84 @@ const BOB_CYCLE: f32 = 0.6;
 /// `cl_bobup`: how much of a cycle goes up.
 const BOB_UP: f32 = 0.5;
 
+/// `cl_rollspeed`: the sideways speed of the most roll.
+const ROLL_SPEED: f32 = 200.0;
+
+/// `cl_rollangle`: the most roll from moving, in degrees.
+const ROLL_ANGLE: f32 = 2.0;
+
+/// `v_kicktime`: how long a hit knocks the view, in seconds.
+const KICK_SECONDS: f32 = 0.5;
+
+/// `v_kickroll`.
+const KICK_ROLL: f32 = 0.6;
+
+/// `v_kickpitch`.
+const KICK_PITCH: f32 = 0.6;
+
+/// The roll of a dead player's view.
+const DEAD_ROLL: f32 = 80.0;
+
+/// The roll of a view for moving sideways at `side`, from `V_CalcRoll`.
+#[must_use]
+pub fn view_roll(side: f32) -> f32 {
+    let amount = side.abs();
+    let roll = if amount < ROLL_SPEED {
+        amount * ROLL_ANGLE / ROLL_SPEED
+    } else {
+        ROLL_ANGLE
+    };
+    roll * side.signum()
+}
+
+/// The small sway of a view with nothing to do, as pitch, yaw and roll, from
+/// `V_AddIdle`.
+#[must_use]
+pub fn view_idle(time: f32) -> (f32, f32, f32) {
+    (
+        (time * 1.0).sin() * 0.3,
+        (time * 2.0).sin() * 0.3,
+        (time * 0.5).sin() * 0.1,
+    )
+}
+
+/// What being hit does to the view, from `V_ParseDamage` and `V_CalcViewRoll`.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewKick {
+    /// The roll at the start of the kick.
+    roll: f32,
+    /// The pitch at the start of the kick.
+    pitch: f32,
+    /// Seconds left.
+    left: f32,
+}
+
+impl ViewKick {
+    /// Knocks the view. `count` is how hard, and `side` and `ahead` say how
+    /// much of the blow came from the right and from in front.
+    pub fn hit(&mut self, count: f32, side: f32, ahead: f32) {
+        self.roll = count * side * KICK_ROLL;
+        self.pitch = count * ahead * KICK_PITCH;
+        self.left = KICK_SECONDS;
+    }
+
+    /// The view's pitch and roll now, and moves on by `seconds`.
+    pub fn update(&mut self, seconds: f32) -> (f32, f32) {
+        if self.left <= 0.0 {
+            return (0.0, 0.0);
+        }
+        let share = self.left / KICK_SECONDS;
+        self.left -= seconds;
+        (self.pitch * share, self.roll * share)
+    }
+}
+
+/// The roll of a dead player's view.
+#[must_use]
+pub const fn dead_roll() -> f32 {
+    DEAD_ROLL
+}
+
 /// How far the view bobs at `time`, for a player moving at `speed` along the
 /// ground, from `V_CalcBob`.
 #[must_use]

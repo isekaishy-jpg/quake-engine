@@ -20,6 +20,28 @@ const MAX_BLENDED_MOVE: f32 = 200.0;
 /// 10 frames a second.
 const FRAME_BLEND_TICKS: f32 = 7.2;
 
+/// Something the game wants the player to see.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ScreenEvent {
+    /// Text for the middle of the screen.
+    CenterPrint(String),
+    /// A command for the console.
+    Command(String),
+    /// The player was hurt.
+    Damage {
+        /// How much their armour took.
+        armor: u8,
+        /// How much they took.
+        blood: u8,
+        /// Where it came from.
+        from: Vec3,
+    },
+    /// An end of level screen starts, by the game's number.
+    Intermission(u8),
+    /// The level's title.
+    LevelTitle(String),
+}
+
 /// An entity as it should be drawn now.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DrawnEntity {
@@ -97,6 +119,12 @@ pub struct Client {
     static_sounds: Vec<StaticSound>,
     /// A music track waiting to be played.
     music: Option<u8>,
+    /// Game time in the latest snapshot.
+    time: f64,
+    /// The game's numbers for its status display.
+    stats: Vec<i32>,
+    /// What the game has to show, waiting to be taken.
+    events: Vec<ScreenEvent>,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -135,6 +163,9 @@ impl Client {
             sounds: Vec::new(),
             static_sounds: Vec::new(),
             music: None,
+            time: 0.0,
+            stats: Vec::new(),
+            events: Vec::new(),
             touched: Vec::new(),
         }
     }
@@ -238,6 +269,23 @@ impl Client {
     #[must_use]
     pub fn punch(&self, fraction: f32) -> Vec3 {
         self.previous_punch.lerp(self.punch, fraction)
+    }
+
+    /// Game time in the latest snapshot.
+    #[must_use]
+    pub fn time(&self) -> f64 {
+        self.time
+    }
+
+    /// The game's numbers for its status display.
+    #[must_use]
+    pub fn stats(&self) -> &[i32] {
+        &self.stats
+    }
+
+    /// Takes what the game has asked to show.
+    pub fn take_events(&mut self) -> Vec<ScreenEvent> {
+        std::mem::take(&mut self.events)
     }
 
     /// Takes the effects that have happened.
@@ -354,6 +402,8 @@ impl Client {
                     self.player_effects = snapshot.player_effects;
                     self.previous_punch = self.punch;
                     self.punch = snapshot.punch;
+                    self.time = snapshot.time;
+                    self.stats = snapshot.stats;
                     let mut predicted = snapshot.player;
                     let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
                     for command in &pending {
@@ -373,6 +423,19 @@ impl Client {
                 Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
                 Some(ServerMessage::Music(track)) => self.music = Some(track),
                 Some(ServerMessage::SetView { yaw, pitch }) => self.view = Some((yaw, pitch)),
+                Some(ServerMessage::CenterPrint(text)) => {
+                    self.events.push(ScreenEvent::CenterPrint(text));
+                }
+                Some(ServerMessage::Stuff(text)) => self.events.push(ScreenEvent::Command(text)),
+                Some(ServerMessage::Damage { armor, blood, from }) => {
+                    self.events.push(ScreenEvent::Damage { armor, blood, from });
+                }
+                Some(ServerMessage::Intermission(kind)) => {
+                    self.events.push(ScreenEvent::Intermission(kind));
+                }
+                Some(ServerMessage::LevelTitle(text)) => {
+                    self.events.push(ScreenEvent::LevelTitle(text));
+                }
                 None => {}
             }
         }

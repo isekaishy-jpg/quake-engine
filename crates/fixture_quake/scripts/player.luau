@@ -81,7 +81,16 @@ function PutClientInServer(self)
 	self.th_pain = player_pain
 	self.th_die = PlayerDie
 	self.deadflag = DEAD_NO
+	self.netname = "player"
 	setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
+	-- Returning with a rune lands somewhere else, from `SelectSpawnPoint`.
+	if serverflags ~= 0 then
+		local spot = find_entity(world, "classname", "info_player_start2")
+		if exists(spot) then
+			setorigin(self, spot.origin + vector.create(0, 0, 1))
+			engine.set_view(spot.angles.y, 0)
+		end
+	end
 end
 
 -- Stands the weapon down.
@@ -99,12 +108,17 @@ local function weapon_frames(self, frames, step, fire)
 		W_FireAxe(self)
 	end
 	self.nextthink = time() + 0.1
-	self.think = function(me)
-		if step == #frames then
-			player_run(me)
-		else
-			weapon_frames(me, frames, step + 1, fire)
-		end
+	self.weapon_steps = frames
+	self.weapon_step = step
+	self.weapon_strike = fire
+	self.think = weapon_frames_next
+end
+
+function weapon_frames_next(self)
+	if self.weapon_step == #self.weapon_steps then
+		player_run(self)
+	else
+		weapon_frames(self, self.weapon_steps, self.weapon_step + 1, self.weapon_strike)
 	end
 end
 
@@ -265,9 +279,11 @@ function PlayerDie(self)
 		DeathSound(self)
 	end
 	self.nextthink = time() + 1
-	self.think = function(me)
-		me.deadflag = DEAD_DEAD
-	end
+	self.think = PlayerDead
+end
+
+function PlayerDead(self)
+	self.deadflag = DEAD_DEAD
 end
 
 function PlayerDeathThink(self)
@@ -281,7 +297,7 @@ function PlayerDeathThink(self)
 	end
 	-- Wait for any button down.
 	if self.deadflag == DEAD_RESPAWNABLE and (self.button2 or self.button0) then
-		engine.restart()
+		respawn(self)
 	end
 end
 

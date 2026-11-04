@@ -11,14 +11,20 @@ const FAR: f32 = 65536.0;
 /// Screens are this wide for each unit of height when `fov` is exact.
 const REFERENCE_ASPECT: f32 = 4.0 / 3.0;
 
-/// The direction of a view, as the forward, right and up axes.
-fn view_axes(yaw: f32, pitch: f32) -> [Vec3; 3] {
+/// The direction of a view, as the forward, right and up axes, from
+/// `AngleVectors`.
+fn view_axes(yaw: f32, pitch: f32, roll: f32) -> [Vec3; 3] {
     let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
     let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
+    let (roll_sin, roll_cos) = roll.to_radians().sin_cos();
     let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
     let right = Vec3::new(yaw_sin, -yaw_cos, 0.0);
     let up = Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos);
-    [forward, right, up]
+    [
+        forward,
+        right * roll_cos - up * roll_sin,
+        up * roll_cos + right * roll_sin,
+    ]
 }
 
 /// A column-major matrix from world space to clip space, with y up and depth
@@ -26,10 +32,11 @@ fn view_axes(yaw: f32, pitch: f32) -> [Vec3; 3] {
 /// compiles the shader, so this mustn't flip it too.
 ///
 /// `fov` is the horizontal angle in degrees on a 4:3 screen, and wider screens
-/// see further to the sides. Positive pitch looks down.
+/// see further to the sides. `angles` are the yaw, pitch and roll in degrees,
+/// and positive pitch looks down.
 #[must_use]
-pub fn view_projection(origin: Vec3, yaw: f32, pitch: f32, fov: f32, aspect: f32) -> [f32; 16] {
-    let [forward, right, up] = view_axes(yaw, pitch);
+pub fn view_projection(origin: Vec3, angles: [f32; 3], fov: f32, aspect: f32) -> [f32; 16] {
+    let [forward, right, up] = view_axes(angles[0], angles[1], angles[2]);
     let scale_y = REFERENCE_ASPECT / (fov.to_radians() * 0.5).tan();
     let scale_x = scale_y / aspect;
     let depth = FAR / (FAR - NEAR);

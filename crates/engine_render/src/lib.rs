@@ -9,9 +9,9 @@
 mod alias;
 mod atlas;
 mod backend;
+mod canvas;
 mod error;
 mod matrix;
-mod overlay;
 mod renderer;
 mod sprite;
 mod visible;
@@ -19,9 +19,9 @@ mod world;
 
 pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::Atlas;
+pub use canvas::{QuadBatch, canvas_vertices};
 pub use error::RenderError;
 pub use matrix::view_projection;
-pub use overlay::overlay_vertices;
 pub use renderer::{Capture, Drawables, Renderer, Statistics, Target, View};
 pub use sprite::{
     LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, ParticleColor, ParticleDraw, SpriteDraw,

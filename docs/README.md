@@ -55,6 +55,13 @@
   - Increment 7:
     - [0037: how monsters move](proposals/0037-monster-movement.md)
     - [0038: the QuakeC port of monsters](proposals/0038-quakec-monster-port.md)
+  - Increment 8:
+    - [0039: the canvas](proposals/0039-the-canvas.md)
+    - [0040: the status bar and the view](proposals/0040-the-status-bar.md)
+    - [0041: from the start of the game to the end](proposals/0041-game-flow.md)
+    - [0042: the drawn console](proposals/0042-the-console.md)
+    - [0043: the menus](proposals/0043-menus.md)
+    - [0044: saved games](proposals/0044-saves.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -66,6 +73,7 @@
   - [0008: increment 5](reviews/0008-increment-5.md)
   - [0009: increment 6](reviews/0009-increment-6.md)
   - [0010: increment 7](reviews/0010-increment-7.md)
+  - [0011: increment 8](reviews/0011-increment-8.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

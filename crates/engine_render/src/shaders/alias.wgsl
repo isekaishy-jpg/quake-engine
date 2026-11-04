@@ -58,5 +58,6 @@ fn vs_main(in: VertexIn) -> VertexOut {
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(skin, skin_sampler, in.uv);
-    return vec4<f32>(mix(texel.rgb, texel.rgb * in.light, texel.a), 1.0);
+    let color = mix(texel.rgb, texel.rgb * in.light, texel.a);
+    return vec4<f32>(pow(max(color, vec3<f32>(0.0)), vec3<f32>(frame.params.w)), 1.0);
 }

@@ -59,6 +59,8 @@ fn answer(server: &mut Loopback, acknowledged: u32, player: PlayerState) {
         player_entity: 0,
         player_effects: 0,
         punch: Vec3::ZERO,
+        time: 0.0,
+        stats: Vec::new(),
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -171,8 +173,43 @@ fn going_down_or_in_the_air_is_not_smoothed() {
 }
 
 #[test]
-fn held_buttons_become_run_speed_and_speed_walks() {
+fn with_always_run_off_speed_runs() {
     let mut buttons = Buttons::default();
+    assert!(buttons.set("forward", true));
+    assert!((buttons.command(0.0, 0.0).forward - 200.0).abs() < f32::EPSILON);
+    assert!(buttons.set("speed", true));
+    assert!((buttons.command(0.0, 0.0).forward - 400.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn turning_keys_turn_and_strafe_makes_them_sidestep() {
+    let mut buttons = Buttons::default();
+    assert!(buttons.set("left", true));
+    assert!((buttons.turn(1.0).0 - 140.0).abs() < f32::EPSILON);
+    assert!(buttons.command(0.0, 0.0).side.abs() < f32::EPSILON);
+    assert!(buttons.set("strafe", true));
+    assert!(buttons.turn(1.0).0.abs() < f32::EPSILON);
+    assert!(buttons.command(0.0, 0.0).side < 0.0);
+}
+
+#[test]
+fn letting_go_of_everything_keeps_always_run() {
+    let mut buttons = Buttons {
+        always_run: true,
+        forward: true,
+        ..Buttons::default()
+    };
+    buttons.release();
+    assert!(buttons.always_run);
+    assert!(!buttons.forward);
+}
+
+#[test]
+fn held_buttons_become_run_speed_and_speed_walks() {
+    let mut buttons = Buttons {
+        always_run: true,
+        ..Buttons::default()
+    };
     assert!(buttons.set("forward", true));
     assert!(buttons.set("moveleft", true));
     let command = buttons.command(10.0, 20.0);
@@ -235,6 +272,8 @@ fn snapshot_with(server: &mut Loopback, tick: u32, instances: Vec<ModelInstance>
         player_entity: 0,
         player_effects: 0,
         punch: Vec3::ZERO,
+        time: 0.0,
+        stats: Vec::new(),
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -346,6 +385,8 @@ fn snapshot_of(server: &mut Loopback, tick: u32, entities: Vec<EntityState>) {
         player_entity: 0,
         player_effects: 0,
         punch: Vec3::ZERO,
+        time: 0.0,
+        stats: Vec::new(),
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }

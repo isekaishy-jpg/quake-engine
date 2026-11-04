@@ -48,6 +48,13 @@ const MOVE_TYPE_NUMBERS: [(MoveType, f64); 9] = [
 #[derive(Debug)]
 pub struct ScriptError(String);
 
+impl ScriptError {
+    /// An error saying `message`.
+    pub(crate) fn new(message: String) -> Self {
+        Self(message)
+    }
+}
+
 impl fmt::Display for ScriptError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(&self.0)
@@ -85,6 +92,21 @@ pub struct Outbox {
     pub parms: Option<Vec<f64>>,
     /// Whether the level should start again.
     pub restart: bool,
+    /// The game's flags to carry to the next level.
+    pub level_flags: Option<f64>,
+    /// Text for the middle of the screen.
+    pub center_prints: Vec<String>,
+    /// Commands for the client's console.
+    pub stuffed: Vec<String>,
+    /// Commands for the host's console.
+    pub local_commands: Vec<String>,
+    /// Damage to the player, as what armour took, what they took, and where
+    /// it came from.
+    pub damage: Vec<(u8, u8, Vec3)>,
+    /// An end of level screen, by the game's number.
+    pub intermission: Option<u8>,
+    /// The level's title.
+    pub level_title: Option<String>,
 }
 
 /// Turns a script's vector into an engine one.
@@ -153,6 +175,7 @@ fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
         "button0" => Value::Boolean(sim.attack_down()),
         "impulse" => Value::Number(f64::from(sim.impulse())),
         "dead" => Value::Boolean(player.dead),
+        "frozen" => Value::Boolean(player.frozen),
         "v_angle" => {
             let (yaw, pitch) = sim.view();
             Value::Vector(from_vec3(Vec3::new(pitch, yaw, 0.0)))
@@ -208,7 +231,7 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         }
         "v_angle" if id != sim.player_id() => vector(entity.view_angle),
         "waterlevel" | "watertype" | "onground" | "button0" | "button2" | "impulse" | "dead"
-        | "v_angle" | "waterjump" | "noclip" => read_player_field(sim, id, field),
+        | "v_angle" | "waterjump" | "noclip" | "frozen" => read_player_field(sim, id, field),
         "flags" => {
             let on_ground = id == sim.player_id() && sim.player().on_ground;
             let ground = if on_ground { FLAG_ON_GROUND } else { 0 };
@@ -276,6 +299,7 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
         "weaponframe" => sim.set_weapon_frame(small_number(value)?),
         "impulse" => sim.set_impulse(u8::try_from(small_number(value)?).unwrap_or(0)),
         "dead" => sim.set_dead(matches!(value, Value::Boolean(true))),
+        "frozen" => sim.set_frozen(matches!(value, Value::Boolean(true))),
         "weaponhidden" => sim.set_weapon_hidden(matches!(value, Value::Boolean(true))),
         _ => {
             let number = as_number(value);
@@ -381,6 +405,11 @@ impl Game {
         })
     }
 
+    /// The Luau state.
+    pub(crate) fn lua(&self) -> &Lua {
+        &self.lua
+    }
+
     /// Adds the `engine` table.
     fn register(
         lua: &Lua,
@@ -455,8 +484,10 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "changelevel",
-            lua.create_function(move |_, name: String| {
-                out.borrow_mut().level = Some(name);
+            lua.create_function(move |_, (name, flags): (String, Option<f64>)| {
+                let mut out = out.borrow_mut();
+                out.level = Some(name);
+                out.level_flags = flags;
                 Ok(())
             })?,
         )?;
@@ -659,6 +690,69 @@ impl Game {
                 out.borrow_mut().restart = true;
                 Ok(())
             })?,
+        )?;
+        Self::register_screen(lua, outbox, engine)
+    }
+
+    /// Adds what's shown to the player to the `engine` table.
+    fn register_screen(
+        lua: &Lua,
+        outbox: &Rc<RefCell<Outbox>>,
+        engine: &Table,
+    ) -> mlua::Result<()> {
+        let out = Rc::clone(outbox);
+        engine.set(
+            "centerprint",
+            lua.create_function(move |_, text: String| {
+                out.borrow_mut().center_prints.push(text);
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "stuffcmd",
+            lua.create_function(move |_, text: String| {
+                out.borrow_mut().stuffed.push(text);
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "localcmd",
+            lua.create_function(move |_, text: String| {
+                out.borrow_mut().local_commands.push(text);
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "damage",
+            lua.create_function(move |_, (armor, blood, from): (f64, f64, Vector)| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a cast saturates damage too large for a byte"
+                )]
+                let (armor, blood) = (armor as u8, blood as u8);
+                out.borrow_mut().damage.push((armor, blood, to_vec3(from)));
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "intermission",
+            lua.create_function(move |_, kind: u8| {
+                out.borrow_mut().intermission = Some(kind);
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "level_title",
+            lua.create_function(move |_, text: String| {
+                out.borrow_mut().level_title = Some(text);
+                Ok(())
+            })?,
         )
     }
 
@@ -734,6 +828,22 @@ impl Game {
         }
     }
 
+    /// Tells the game which level this is, with the host's `settings` and the
+    /// flags carried from the last level, before anything spawns.
+    pub fn start_level(&self, name: &str, settings: &[(String, f64)], flags: f64) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("start_level");
+        let settings: std::collections::HashMap<&str, f64> = settings
+            .iter()
+            .map(|(name, value)| (name.as_str(), *value))
+            .collect();
+        match function {
+            Ok(Some(function)) => self.report(function.call::<()>((name, settings, flags))),
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
     /// Spawns a map's entities.
     pub fn spawn_map(&self, entities: &[MapEntity]) {
         let spawner: mlua::Result<Function> = self.lua.globals().get("spawn_from_map");
@@ -796,6 +906,41 @@ impl Game {
             }
             Ok(None) => {}
             Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Passes a console command from the player to the game's `ClientCommand`.
+    pub fn client_command(&self, command: &str, argument: &str) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientCommand");
+        match function {
+            Ok(Some(function)) => {
+                self.report(function.call::<()>((self.player.clone(), command, argument)));
+            }
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// The numbers the game's `ClientData` gives for the status display, as
+    /// `SV_WriteClientdataToMessage`. It sends what's due to the player, too.
+    #[must_use]
+    pub fn client_data(&self) -> Vec<i32> {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientData");
+        let Ok(Some(function)) = function else {
+            return Vec::new();
+        };
+        match function.call::<Vec<f64>>(self.player.clone()) {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "stats are whole, and item bits fill all 32"
+            )]
+            Ok(stats) => stats.into_iter().map(|stat| stat as i64 as i32).collect(),
+            Err(error) => {
+                self.report(Err(error));
+                Vec::new()
+            }
         }
     }
 

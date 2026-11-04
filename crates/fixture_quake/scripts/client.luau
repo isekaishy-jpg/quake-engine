@@ -12,19 +12,181 @@
 --
 --  See the LICENSE file for details.
 --
--- Ported from the level changing and player sound parts of client.qc. The
--- intermission waits for a HUD.
+-- Ported from client.qc: level changes, the intermission, obituaries, and the
+-- player's sounds.
+
+local CONTENT_WATER = -3
+local CONTENT_SLIME = -4
+local CONTENT_LAVA = -5
+
+-- The next level, and where the last one was.
+nextmap = ""
+mapname = ""
+
+-- From `SV_SpawnServer`: what's fixed for the level, before anything spawns.
+function level_started(name, flags)
+	mapname = name
+	serverflags = flags
+	skill = math.clamp(rint(cvar("skill")), 0, 3)
+end
+
+-- The camera for the end of a level, from `FindIntermission`.
+function FindIntermission()
+	local spot = find_entity(world, "classname", "info_intermission")
+	if exists(spot) then
+		-- Pick a random one.
+		local cyc = random() * 4
+		while cyc > 1 do
+			spot = find_entity(spot, "classname", "info_intermission")
+			if not exists(spot) then
+				spot = find_entity(spot, "classname", "info_intermission")
+			end
+			cyc -= 1
+		end
+		return spot
+	end
+	-- Then look for the start position.
+	spot = find_entity(world, "classname", "info_player_start")
+	if exists(spot) then
+		return spot
+	end
+	objerror("FindIntermission: no spot")
+	return spot
+end
+
+-- Whether a level change has been asked for, from `PF_changelevel`.
+changelevel_issued = false
+
+-- Moves on, taking what the player has and what's been finished.
+function changelevel(map)
+	if changelevel_issued then
+		return
+	end
+	changelevel_issued = true
+	SetChangeParms(the_player)
+	engine.set_parms(parms)
+	engine.changelevel(map, serverflags)
+end
+
+function GotoNextMap()
+	if cvar("samelevel") ~= 0 then
+		changelevel(mapname)
+	else
+		changelevel(nextmap)
+	end
+end
+
+-- The text at the end of each episode.
+local EPISODE_ENDS = {
+	["maps/e2m6.bsp"] = "The Rune of Black Magic throbs evilly in\nyour hand and whispers dark thoughts\ninto your brain. You learn the inmost\nlore of the Hell-Mother; Shub-Niggurath!\nYou now know that she is behind all the\nterrible plotting which has led to so\nmuch death and horror. But she is not\ninviolate! Armed with this Rune, you\nrealize that once all four Runes are\ncombined, the gate to Shub-Niggurath's\nPit will open, and you can face the\nWitch-Goddess herself in her frightful\notherworld cathedral.",
+	["maps/e3m6.bsp"] = "The charred viscera of diabolic horrors\nbubble viscously as you seize the Rune\nof Hell Magic. Its heat scorches your\nhand, and its terrible secrets blight\nyour mind. Gathering the shreds of your\ncourage, you shake the devil's shackles\nfrom your soul, and become ever more\nhard and determined to destroy the\nhideous creatures whose mere existence\nthreatens the souls and psyches of all\nthe population of Earth.",
+	["maps/e4m7.bsp"] = "Despite the awful might of the Elder\nWorld, you have achieved the Rune of\nElder Magic, capstone of all types of\narcane wisdom. Beyond good and evil,\nbeyond life and death, the Rune\npulsates, heavy with import. Patient and\npotent, the Elder Being Shub-Niggurath\nweaves her dire plans to clear off all\nlife from the Earth, and bring her own\nfoul offspring to our world! For all the\ndwellers in these nightmare dimensions\nare her descendants! Once all Runes of\nmagic power are united, the energy\nbehind them will blast open the Gateway\nto Shub-Niggurath, and you can travel\nthere to foil the Hell-Mother's plots\nin person.",
+}
+
+-- The first episode's end, which depends on the edition.
+local SHAREWARE_END = "As the corpse of the monstrous entity\nChthon sinks back into the lava whence\nit rose, you grip the Rune of Earth\nMagic tightly. Now that you have\nconquered the Dimension of the Doomed,\nrealm of Earth Magic, you are ready to\ncomplete your task in the other three\nhaunted lands of Quake. Or are you? If\nyou don't register Quake, you'll never\nknow what awaits you in the Realm of\nBlack Magic, the Netherworld, and the\nElder World!"
+local REGISTERED_END = "As the corpse of the monstrous entity\nChthon sinks back into the lava whence\nit rose, you grip the Rune of Earth\nMagic tightly. Now that you have\nconquered the Dimension of the Doomed,\nrealm of Earth Magic, you are ready to\ncomplete your task. A Rune of magic\npower lies at the end of each haunted\nland of Quake. Go forth, seek the\ntotality of the four Runes!"
+
+local ALL_RUNES = "Now, you have all four Runes. You sense\ntremendous invisible forces moving to\nunseal ancient barriers. Shub-Niggurath\nhad hoped to use the Runes Herself to\nclear off the Earth, but now instead,\nyou will use them to enter her home and\nconfront her as an avatar of avenging\nEarth-life. If you defeat her, you will\nbe remembered forever as the savior of\nthe planet. If she conquers, it will be\nas if you had never been born."
+
+function ExitIntermission()
+	-- Skip any text in deathmatch.
+	if deathmatch ~= 0 then
+		GotoNextMap()
+		return
+	end
+
+	intermission_exittime = time() + 1
+	intermission_running += 1
+
+	-- Run some text if at the end of an episode.
+	if intermission_running == 2 then
+		local text = EPISODE_ENDS[world.model]
+		if world.model == "maps/e1m7.bsp" then
+			text = if cvar("registered") ~= 0 then REGISTERED_END else SHAREWARE_END
+		end
+		if text then
+			engine.music(2)
+			finale(text)
+			return
+		end
+		GotoNextMap()
+		return
+	end
+
+	if intermission_running == 3 then
+		if cvar("registered") == 0 then
+			-- The shareware episode is over, so go to the sell screen.
+			localcmd("help")
+			return
+		end
+		if bit32.band(serverflags, 15) == 15 then
+			finale(ALL_RUNES)
+			return
+		end
+	end
+
+	GotoNextMap()
+end
+
+-- When the player presses attack or jump, change to the next level.
+function IntermissionThink(self)
+	if time() < intermission_exittime then
+		return
+	end
+	if not self.button0 and not self.button2 then
+		return
+	end
+	ExitIntermission()
+end
+
+-- Holds the player at `pos`, looking its way, for the end of a level or game.
+function hold_at_camera(player, pos)
+	local mangle = pos.mangle or vector.zero
+	player.view_ofs = vector.zero
+	player.angles = mangle
+	-- Turn this way immediately.
+	engine.set_view(mangle.y, mangle.x)
+	player.nextthink = time() + 0.5
+	player.takedamage = DAMAGE_NO
+	player.solid = SOLID_NOT
+	player.movetype = MOVETYPE_NONE
+	player.modelindex = 0
+	player.frozen = true
+	player.weaponhidden = true
+	setorigin(player, pos.origin)
+end
+
+function execute_changelevel(_self)
+	intermission_running = 1
+	-- Enforce a wait time before allowing changelevel.
+	intermission_exittime = time() + (if deathmatch ~= 0 then 5 else 2)
+	engine.music(3)
+	hold_at_camera(the_player, FindIntermission())
+	engine.intermission(1)
+end
 
 function changelevel_touch(self, other)
 	if other.classname ~= "player" then
 		return
 	end
+	if cvar("noexit") ~= 0 then
+		T_Damage(other, self, self, 50000)
+		return
+	end
+	bprint(other.netname .. " exited the level")
+	nextmap = self.map
 	activator = other
 	SUB_UseTargets(self)
+	if bit32.band(self.spawnflags, 1) ~= 0 and deathmatch == 0 then
+		-- NO_INTERMISSION.
+		GotoNextMap()
+		return
+	end
 	self.touch = SUB_Null
-	SetChangeParms(other)
-	engine.set_parms(parms)
-	engine.changelevel(self.map)
+	-- Touch functions run in the middle of movement, so move people later.
+	self.think = execute_changelevel
+	self.nextthink = time() + 0.1
 end
 
 function trigger_changelevel(self)
@@ -35,9 +197,176 @@ function trigger_changelevel(self)
 	self.touch = changelevel_touch
 end
 
-local CONTENT_WATER = -3
-local CONTENT_SLIME = -4
-local CONTENT_LAVA = -5
+-- Called by ClientKill and PlayerDeathThink. One player restarts the level.
+function respawn(_self)
+	engine.restart()
+end
+
+function ClientKill(self)
+	bprint(self.netname .. " suicides")
+	respawn(self)
+end
+
+-- What each monster did to the player.
+local MONSTER_OBITUARIES = {
+	monster_army = " was shot by a Grunt",
+	monster_demon1 = " was eviscerated by a Fiend",
+	monster_dog = " was mauled by a Rottweiler",
+	monster_dragon = " was fried by a Dragon",
+	monster_enforcer = " was blasted by an Enforcer",
+	monster_fish = " was fed to the Rotfish",
+	monster_hell_knight = " was slain by a Death Knight",
+	monster_knight = " was slashed by a Knight",
+	monster_ogre = " was destroyed by an Ogre",
+	monster_oldone = " became one with Shub-Niggurath",
+	monster_shalrath = " was exploded by a Vore",
+	monster_shambler = " was smashed by a Shambler",
+	monster_tarbaby = " was slimed by a Spawn",
+	monster_vomit = " was vomited on by a Vomitus",
+	monster_wizard = " was scragged by a Scrag",
+	monster_zombie = " joins the Zombies",
+}
+
+-- How a player killed themselves.
+local function killed_self(targ)
+	if targ.weapon == 64 and targ.waterlevel > 1 then
+		return " discharges into the water."
+	end
+	if targ.weapon == 16 then
+		return " tries to put the pin back in"
+	end
+	return " becomes bored with life"
+end
+
+-- What took a player without another player's help.
+local function death_message(targ, attacker)
+	local liquid = targ.watertype
+	if liquid == CONTENT_WATER then
+		return if random() < 0.5 then " sleeps with the fishes" else " sucks it down"
+	elseif liquid == CONTENT_SLIME then
+		return if random() < 0.5
+			then " gulped a load of slime"
+			else " can't exist on slime alone"
+	elseif liquid == CONTENT_LAVA then
+		if targ.health < -15 then
+			return " burst into flames"
+		end
+		return if random() < 0.5 then " turned into hot slag" else " visits the Volcano God"
+	end
+	if bit32.band(attacker.flags, FL_MONSTER) ~= 0 then
+		return MONSTER_OBITUARIES[attacker.classname] or " died"
+	end
+	if attacker.classname == "explo_box" then
+		return " blew up"
+	end
+	if attacker.solid == SOLID_BSP and exists(attacker) then
+		return " was squished"
+	end
+	if targ.deathtype == "falling" then
+		targ.deathtype = ""
+		return " fell to their death"
+	end
+	if attacker.classname == "trap_shooter" or attacker.classname == "trap_spikeshooter" then
+		return " was spiked"
+	end
+	if attacker.classname == "fireball" then
+		return " ate a lavaball"
+	end
+	if attacker.classname == "trigger_changelevel" then
+		return " tried to leave"
+	end
+	return " died"
+end
+
+-- Called when anything dies. Another player's kills wait for online play.
+function ClientObituary(targ, attacker)
+	if targ.classname ~= "player" then
+		return
+	end
+	attacker = ent(attacker)
+	if attacker.classname == "teledeath" then
+		bprint(targ.netname .. " was telefragged by " .. attacker.owner.netname)
+	elseif attacker.classname == "teledeath2" then
+		bprint("Satan's power deflects " .. targ.netname .. "'s telefrag")
+	elseif attacker == targ then
+		bprint(targ.netname .. killed_self(targ))
+	else
+		bprint(targ.netname .. death_message(targ, attacker))
+	end
+end
+
+-- Cheats and other things the player can ask for from the console.
+function ClientCommand(self, command, argument)
+	if command == "kill" then
+		ClientKill(self)
+	elseif command == "changelevel" then
+		changelevel(argument)
+	elseif command == "god" then
+		self.flags = bit32.bxor(self.flags, FL_GODMODE)
+		local on = bit32.band(self.flags, FL_GODMODE) ~= 0
+		sprint(self, "godmode " .. (if on then "ON" else "OFF"))
+	elseif command == "notarget" then
+		self.flags = bit32.bxor(self.flags, FL_NOTARGET)
+		local on = bit32.band(self.flags, FL_NOTARGET) ~= 0
+		sprint(self, "notarget " .. (if on then "ON" else "OFF"))
+	elseif command == "give" then
+		ClientGive(self, argument)
+	end
+end
+
+-- From `Host_Give_f`: a weapon by its number, or some of an ammo or health.
+function ClientGive(self, argument)
+	local kind, amount = string.match(argument, "^(%S+)%s*(%S*)$")
+	local count = tonumber(amount) or 0
+	if kind == nil then
+		return
+	end
+	local number = tonumber(kind)
+	if number and number >= 2 and number <= 8 then
+		self.items = bit32.bor(self.items, bit32.lshift(IT_SHOTGUN, number - 2))
+	elseif kind == "s" then
+		self.ammo_shells = count
+	elseif kind == "n" then
+		self.ammo_nails = count
+	elseif kind == "r" then
+		self.ammo_rockets = count
+	elseif kind == "c" then
+		self.ammo_cells = count
+	elseif kind == "h" then
+		self.health = count
+	end
+	W_SetCurrentAmmo(self)
+end
+
+-- What's sent to the player each tick, from `SV_WriteClientdataToMessage`. The
+-- numbers are the original's `STAT_` values, with its items last.
+function ClientData(self)
+	local take, save = self.dmg_take or 0, self.dmg_save or 0
+	if take ~= 0 or save ~= 0 then
+		local from = ent(self.dmg_inflictor)
+		engine.damage(save, take, from.origin + (from.mins + from.maxs) * 0.5)
+		self.dmg_take = 0
+		self.dmg_save = 0
+	end
+	return {
+		self.health,
+		self.frags or 0,
+		0,
+		self.currentammo or 0,
+		self.armorvalue or 0,
+		self.weaponframe,
+		self.ammo_shells or 0,
+		self.ammo_nails or 0,
+		self.ammo_rockets or 0,
+		self.ammo_cells or 0,
+		self.weapon or 0,
+		total_secrets,
+		total_monsters,
+		found_secrets,
+		killed_monsters,
+		bit32.bor(self.items or 0, bit32.lshift(serverflags, 28)),
+	}
+end
 
 function PlayerJump(self)
 	if self.waterjump then
@@ -125,6 +454,15 @@ end
 
 -- Runs before each of the player's moves.
 function PlayerPreThink(self)
+	if intermission_running ~= 0 then
+		-- Otherwise a button could be missed between the think tics.
+		IntermissionThink(self)
+		return
+	end
+	if self.view_ofs == vector.zero then
+		-- Intermission or finale.
+		return
+	end
 	if self.deadflag == DEAD_DYING then
 		return
 	end
@@ -142,6 +480,10 @@ end
 
 -- Runs after each of the player's moves.
 function PlayerPostThink(self)
+	if self.view_ofs == vector.zero then
+		-- Intermission or finale.
+		return
+	end
 	if self.deadflag ~= DEAD_NO then
 		return
 	end
@@ -152,6 +494,7 @@ function PlayerPostThink(self)
 		elseif fall < -650 then
 			T_Damage(self, world, world, 5)
 			sound(self, CHAN_VOICE, "player/land2.wav", 1, ATTN_NORM)
+			self.deathtype = "falling"
 		else
 			sound(self, CHAN_VOICE, "player/land.wav", 1, ATTN_NORM)
 		end
@@ -175,6 +518,7 @@ end
 function ClientConnect(self, name, saved)
 	if world then
 		world.model = "maps/" .. name .. ".bsp"
+		engine.level_title(world.message or "")
 	end
 	if saved then
 		parms = saved

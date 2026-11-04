@@ -53,6 +53,7 @@ function Killed(targ, attacker)
 	if bit32.band(targ.flags, FL_MONSTER) ~= 0 then
 		killed_monsters += 1
 	end
+	ClientObituary(targ, attacker)
 	targ.takedamage = DAMAGE_NO
 	targ.touch = SUB_Null
 	monster_death_use(targ)
@@ -86,6 +87,13 @@ function T_Damage(targ, inflictor, attacker, damage)
 	end
 	targ.armorvalue = armorvalue - save
 	local take = math.ceil(damage - save)
+
+	-- Add to the damage total for the player's screen.
+	if bit32.band(targ.flags, FL_CLIENT) ~= 0 then
+		targ.dmg_take = (targ.dmg_take or 0) + take
+		targ.dmg_save = (targ.dmg_save or 0) + save
+		targ.dmg_inflictor = inflictor
+	end
 
 	-- Figure momentum add.
 	if inflictor ~= world and inflictor ~= nil and targ.movetype == MOVETYPE_WALK then

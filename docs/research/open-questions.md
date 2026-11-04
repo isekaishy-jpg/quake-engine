@@ -14,4 +14,5 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | Does one message per raw event keep up with an 8 kHz mouse? | A measurement on real hardware, then perhaps a dedicated input thread | Platform |
 | How should door logic be revamped? | The human's design, after the port plays through. The port matches `doors.qc`, and it may feel better with sound | Game scripts |
 | Should the rerelease's coloured `.lit` light be read? | The human's decision. Every original level has one in the rerelease pak | Importer, renderer |
+| Should the status bar and menus become scripts? | The human's decision. They're Rust in the fixture today, and only a canvas reaches the engine | UI |
 | What's the product's real name? | The human's decision | Packaging |

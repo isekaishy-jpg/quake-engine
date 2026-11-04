@@ -3,9 +3,10 @@
 mod common;
 
 use common::map;
+use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{Face, Map};
-use engine_render::{Atlas, BatchKind, VisibleSet, build_world, overlay_vertices, view_projection};
+use engine_render::{Atlas, BatchKind, VisibleSet, build_world, canvas_vertices, view_projection};
 
 /// A map with one square.
 fn square_map() -> Map {
@@ -132,49 +133,40 @@ fn rectangles_that_cannot_fit_are_refused() {
     assert_eq!(Atlas::pack(&[[9000, 1]], 8192), None);
 }
 
-/// Floats in a quad: six vertices of four.
-const QUAD_FLOATS: usize = 24;
-
-#[test]
-fn overlay_text_has_a_backing_and_a_quad_per_glyph() {
-    assert_eq!(
-        overlay_vertices("60 FPS", (1280, 720)).len(),
-        6 * QUAD_FLOATS
-    );
+/// A quad of `picture` over the middle of a screen of 200 by 100.
+fn quad(picture: u32) -> Quad {
+    Quad {
+        picture,
+        place: [50.0, 25.0, 150.0, 75.0],
+        source: [0.0, 0.0, 1.0, 1.0],
+        color: [1.0, 1.0, 1.0, 1.0],
+    }
 }
 
 #[test]
-fn an_empty_overlay_draws_nothing() {
-    assert!(overlay_vertices("", (1280, 720)).is_empty());
-    assert!(overlay_vertices("60", (0, 0)).is_empty());
+fn a_quad_lands_in_clip_space_with_y_up() {
+    let (vertices, _batches) = canvas_vertices(&[quad(1)], (200, 100));
+    let (corners, _rest) = vertices.as_chunks::<8>();
+    assert_eq!(corners.len(), 6);
+    assert_eq!(corners[0][..4], [-0.5, 0.5, 0.0, 0.0]);
+    assert_eq!(corners[2][..4], [0.5, -0.5, 1.0, 1.0]);
 }
 
 #[test]
-fn the_overlay_sits_in_the_top_right_corner() {
-    let vertices = overlay_vertices("60", (1280, 720));
-    let (quads, _rest) = vertices.as_chunks::<4>();
-    assert!(
-        quads
-            .iter()
-            .all(|vertex| vertex[0] > 0.5 && vertex[0] <= 1.0)
-    );
-    assert!(
-        quads
-            .iter()
-            .all(|vertex| vertex[1] > 0.5 && vertex[1] <= 1.0)
-    );
+fn quads_of_one_picture_share_a_batch_until_it_changes() {
+    let (_vertices, batches) = canvas_vertices(&[quad(1), quad(1), quad(2), quad(1)], (200, 100));
+    let runs: Vec<(u32, u32, u32)> = batches
+        .iter()
+        .map(|batch| (batch.picture, batch.first, batch.count))
+        .collect();
+    assert_eq!(runs, [(1, 0, 12), (2, 12, 6), (1, 18, 6)]);
 }
 
 #[test]
-fn the_overlay_grows_with_the_window() {
-    let width = |height| {
-        let vertices = overlay_vertices("60", (height * 2, height));
-        let (quads, _rest) = vertices.as_chunks::<4>();
-        let low = quads.iter().map(|v| v[0]).fold(f32::MAX, f32::min);
-        let high = quads.iter().map(|v| v[0]).fold(f32::MIN, f32::max);
-        (high - low) * f32::from(u16::try_from(height).expect("small"))
-    };
-    assert!(width(1440) > width(720) * 1.5);
+fn an_empty_canvas_draws_nothing() {
+    let (vertices, batches) = canvas_vertices(&[], (200, 100));
+    assert!(vertices.is_empty());
+    assert!(batches.is_empty());
 }
 
 /// Applies a column-major matrix to a point, and divides by w.
@@ -188,7 +180,7 @@ fn project(matrix: &[f32; 16], point: Vec3) -> [f32; 3] {
 
 #[test]
 fn the_camera_looks_along_yaw_with_up_at_the_screen_top() {
-    let matrix = view_projection(Vec3::ZERO, 0.0, 0.0, 90.0, 4.0 / 3.0);
+    let matrix = view_projection(Vec3::ZERO, [0.0, 0.0, 0.0], 90.0, 4.0 / 3.0);
     let ahead = project(&matrix, Vec3::new(100.0, 0.0, 0.0));
     assert!(ahead[0].abs() < 1e-5 && ahead[1].abs() < 1e-5);
     assert!((0.0..1.0).contains(&ahead[2]));
@@ -206,10 +198,10 @@ fn the_camera_looks_along_yaw_with_up_at_the_screen_top() {
 
 #[test]
 fn positive_pitch_looks_down_and_yaw_turns_left() {
-    let down = view_projection(Vec3::ZERO, 0.0, 90.0, 90.0, 1.0);
+    let down = view_projection(Vec3::ZERO, [0.0, 90.0, 0.0], 90.0, 1.0);
     let floor = project(&down, Vec3::new(0.0, 0.0, -100.0));
     assert!(floor[0].abs() < 1e-4 && floor[1].abs() < 1e-4);
-    let left = view_projection(Vec3::ZERO, 90.0, 0.0, 90.0, 1.0);
+    let left = view_projection(Vec3::ZERO, [90.0, 0.0, 0.0], 90.0, 1.0);
     let target = project(&left, Vec3::new(0.0, 100.0, 0.0));
     assert!(target[0].abs() < 1e-4);
 }

@@ -2,6 +2,8 @@
 
 use std::sync::Arc;
 
+use serde::{Deserialize, Serialize};
+
 use crate::math::Vec3;
 
 /// A sound starting on an entity's channel.
@@ -25,7 +27,7 @@ pub struct SoundStart {
 }
 
 /// A sound that loops at a fixed place for the whole level.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct StaticSound {
     /// Where it comes from.
     pub origin: Vec3,

@@ -90,11 +90,16 @@ fn light(in: VertexOut) -> vec3<f32> {
     return min(2.0 * (baked + vec3<f32>(dynamic_light(in.world))), vec3<f32>(2.0));
 }
 
+// The brightness setting, as `BuildGammaTable` does for the palette.
+fn raised(color: vec3<f32>) -> vec3<f32> {
+    return pow(max(color, vec3<f32>(0.0)), vec3<f32>(frame.params.w));
+}
+
 @fragment
 fn fs_solid(in: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(surface, surface_sampler, in.uv);
     let lit = texel.rgb * light(in);
-    return vec4<f32>(mix(texel.rgb, lit, texel.a), 1.0);
+    return vec4<f32>(raised(mix(texel.rgb, lit, texel.a)), 1.0);
 }
 
 @fragment
@@ -104,7 +109,7 @@ fn fs_cutout(in: VertexOut) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
-    return vec4<f32>(lit, 1.0);
+    return vec4<f32>(raised(lit), 1.0);
 }
 
 @fragment
@@ -114,7 +119,7 @@ fn fs_liquid(in: VertexOut) -> @location(0) vec4<f32> {
     let time = frame.params.x;
     let warped = texels + 8.0 * sin(texels.yx * 0.125 + time);
     let texel = textureSample(surface, surface_sampler, warped / size);
-    return vec4<f32>(texel.rgb, 1.0);
+    return vec4<f32>(raised(texel.rgb), 1.0);
 }
 
 @fragment
@@ -129,5 +134,5 @@ fn fs_sky(in: VertexOut) -> @location(0) vec4<f32> {
         surface, surface_sampler, vec2<f32>(0.5 + back_uv.x * 0.5, back_uv.y), 0.0);
     let front = textureSampleLevel(
         surface, surface_sampler, vec2<f32>(front_uv.x * 0.5, front_uv.y), 0.0);
-    return vec4<f32>(mix(back.rgb, front.rgb, front.a), 1.0);
+    return vec4<f32>(raised(mix(back.rgb, front.rgb, front.a)), 1.0);
 }

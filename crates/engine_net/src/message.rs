@@ -44,6 +44,24 @@ const TAG_TEMP: u8 = 11;
 /// The tag of particles.
 const TAG_PARTICLES: u8 = 12;
 
+/// The tag of text in the middle of the screen.
+const TAG_CENTER_PRINT: u8 = 13;
+
+/// The tag of a command for the client.
+const TAG_STUFF: u8 = 14;
+
+/// The tag of damage to the player.
+const TAG_DAMAGE: u8 = 15;
+
+/// The tag of an end of level screen.
+const TAG_INTERMISSION: u8 = 16;
+
+/// The tag of the level's title.
+const TAG_LEVEL_TITLE: u8 = 17;
+
+/// The most stats a snapshot may carry.
+const MAX_STATS: usize = 64;
+
 /// The most entities a snapshot may list.
 const MAX_ENTITIES: usize = 8192;
 
@@ -84,6 +102,10 @@ pub struct Snapshot {
     pub player_effects: u8,
     /// How far the view is knocked, in degrees of pitch, yaw and roll.
     pub punch: Vec3,
+    /// Game time in seconds.
+    pub time: f64,
+    /// Numbers for the game's status display, which only the game understands.
+    pub stats: Vec<i32>,
 }
 
 /// A message to the server.
@@ -131,6 +153,23 @@ pub enum ServerMessage {
         /// The pitch in degrees.
         pitch: f32,
     },
+    /// Text for the middle of the screen.
+    CenterPrint(String),
+    /// A command for the client's console.
+    Stuff(String),
+    /// The player was hurt.
+    Damage {
+        /// How much their armour took.
+        armor: u8,
+        /// How much they took.
+        blood: u8,
+        /// Where it came from.
+        from: Vec3,
+    },
+    /// An end of level screen starts, by the game's number, or stops for 0.
+    Intermission(u8),
+    /// The level's title.
+    LevelTitle(String),
 }
 
 /// Reads fields from the front of a message.
@@ -170,6 +209,13 @@ impl Reader<'_> {
     fn f32(&mut self) -> Option<f32> {
         self.take()
             .map(f32::from_le_bytes)
+            .filter(|value| value.is_finite())
+    }
+
+    /// A double, which must be finite.
+    fn f64(&mut self) -> Option<f64> {
+        self.take()
+            .map(f64::from_le_bytes)
             .filter(|value| value.is_finite())
     }
 
@@ -351,6 +397,23 @@ impl ServerMessage {
                 out.extend_from_slice(&number.to_le_bytes());
                 out.extend_from_slice(name.as_bytes());
             }
+            Self::CenterPrint(text) => {
+                out.push(TAG_CENTER_PRINT);
+                out.extend_from_slice(text.as_bytes());
+            }
+            Self::Stuff(text) => {
+                out.push(TAG_STUFF);
+                out.extend_from_slice(text.as_bytes());
+            }
+            Self::Damage { armor, blood, from } => {
+                out.extend_from_slice(&[TAG_DAMAGE, *armor, *blood]);
+                put_vec3(&mut out, *from);
+            }
+            Self::Intermission(kind) => out.extend_from_slice(&[TAG_INTERMISSION, *kind]),
+            Self::LevelTitle(text) => {
+                out.push(TAG_LEVEL_TITLE);
+                out.extend_from_slice(text.as_bytes());
+            }
         }
         out
     }
@@ -405,6 +468,21 @@ impl ServerMessage {
                 [track] => Some(Self::Music(*track)),
                 _ => None,
             },
+            TAG_CENTER_PRINT => text_from(rest).map(Self::CenterPrint),
+            TAG_STUFF => text_from(rest).map(Self::Stuff),
+            TAG_DAMAGE => {
+                let mut reader = Reader { bytes: rest };
+                let (armor, blood) = (reader.byte()?, reader.byte()?);
+                let from = reader.vec3()?;
+                reader
+                    .finished()
+                    .then_some(Self::Damage { armor, blood, from })
+            }
+            TAG_INTERMISSION => match rest {
+                [kind] => Some(Self::Intermission(*kind)),
+                _ => None,
+            },
+            TAG_LEVEL_TITLE => text_from(rest).map(Self::LevelTitle),
             _ => None,
         }
     }
@@ -473,6 +551,7 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         u8::from(player.jump_held),
         u8::from(player.noclip),
         u8::from(player.dead),
+        u8::from(player.frozen),
     ]);
     out.extend_from_slice(&player.ground_model.unwrap_or(NO_MODEL).to_le_bytes());
     let count = u32::try_from(snapshot.instances.len()).unwrap_or(u32::MAX);
@@ -488,6 +567,12 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
     out.extend_from_slice(&snapshot.player_entity.to_le_bytes());
     out.push(snapshot.player_effects);
     put_vec3(out, snapshot.punch);
+    out.extend_from_slice(&snapshot.time.to_le_bytes());
+    let count = u32::try_from(snapshot.stats.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for stat in &snapshot.stats {
+        out.extend_from_slice(&stat.to_le_bytes());
+    }
     let count = u32::try_from(snapshot.entities.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&count.to_le_bytes());
     for entity in &snapshot.entities {
@@ -520,6 +605,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
     let jump_held = reader.flag()?;
     let noclip = reader.flag()?;
     let dead = reader.flag()?;
+    let frozen = reader.flag()?;
     let ground = reader.u32()?;
     let player = PlayerState {
         origin,
@@ -531,6 +617,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
         jump_held,
         noclip,
         dead,
+        frozen,
         ground_model: (ground != NO_MODEL).then_some(ground),
     };
     let count = usize::try_from(reader.u32()?).ok()?;
@@ -552,6 +639,15 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
     let player_entity = u64::from_le_bytes(reader.take()?);
     let player_effects = reader.byte()?;
     let punch = reader.vec3()?;
+    let time = reader.f64()?;
+    let count = usize::try_from(reader.u32()?).ok()?;
+    if count > MAX_STATS {
+        return None;
+    }
+    let mut stats = Vec::with_capacity(count);
+    for _ in 0..count {
+        stats.push(i32::from_le_bytes(reader.take()?));
+    }
     let count = usize::try_from(reader.u32()?).ok()?;
     if count > MAX_ENTITIES {
         return None;
@@ -588,5 +684,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
         player_entity,
         player_effects,
         punch,
+        time,
+        stats,
     })
 }

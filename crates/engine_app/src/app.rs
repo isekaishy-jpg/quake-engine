@@ -1,23 +1,27 @@
 //! The running engine: the main loop's two halves.
 
 use std::io::{BufRead, Write};
+use std::path::PathBuf;
 use std::rc::Rc;
 use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
+use engine_assets::DirectoryArchive;
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Buttons, Client, DrawnEntity, EffectSource, Effects, Look, LookScale,
-    StepSmoother, VIEW_HEIGHT, view_bob,
+    ScreenEvent, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key, dead_roll, view_bob,
+    view_idle, view_roll,
 };
 use engine_console::{Console, CvarFlags};
+use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
-use engine_map::Map;
+use engine_map::{Contents, Map};
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_platform::{
@@ -28,24 +32,35 @@ use engine_render::{
     View,
 };
 use engine_server::{Level, Server};
-use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point};
+use engine_ui::ConsoleView;
+use fixture_quake::{
+    Hud, Intermission, Menu, Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point,
+};
 
 use crate::commands;
 use crate::models::{DrawLists, Lighting, ModelBank};
 use crate::options::Options;
+use crate::saves;
+use crate::screen::{MENU_SETTINGS, MenuActions, MenuSettings, PictureBank};
 use crate::sounds::SoundBank;
 
 /// The simulation rate (proposal 0010).
 const TICK_RATE: Option<TickRate> = TickRate::new(72);
 
 /// The length of a tick.
-const TICK_SECONDS: f64 = 1.0 / 72.0;
+pub(crate) const TICK_SECONDS: f64 = 1.0 / 72.0;
 
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
 
-/// Modern movement bindings, set after the user's config (proposal 0019).
-const MOVE_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
+/// The name of the saved settings.
+pub(crate) const CONFIG_NAME: &str = "config.cfg";
+
+/// How many frames show the loading plaque before a level changes.
+const PLAQUE_FRAMES: u8 = 2;
+
+/// Modern movement bindings, set the first time (proposal 0019).
+pub(crate) const MOVE_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
                              bind space +jump; bind c +movedown; bind shift +speed";
 
 /// The sound levels the console sets.
@@ -64,6 +79,16 @@ struct AudioLevels {
 /// How far the eye sits above a dead player's middle.
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
+/// Settings a game can read, which go to it as each level starts.
+const LEVEL_SETTINGS: [&str; 6] = [
+    "skill",
+    "deathmatch",
+    "coop",
+    "samelevel",
+    "noexit",
+    "registered",
+];
+
 /// A frame's picture.
 pub(crate) struct Picture {
     /// The view.
@@ -78,6 +103,8 @@ pub(crate) struct Picture {
     particles: Vec<ParticleDraw>,
     /// The dynamic lights.
     lights: Vec<LightDraw>,
+    /// What's drawn over all of that.
+    pub(crate) quads: Vec<Quad>,
 }
 
 impl Picture {
@@ -89,6 +116,7 @@ impl Picture {
             sprites: &self.sprites,
             particles: &self.particles,
             lights: &self.lights,
+            quads: &self.quads,
         }
     }
 }
@@ -149,19 +177,99 @@ pub(crate) struct World {
     palette: Option<Palette>,
     /// What the player carries into the next level.
     next_parms: Option<Vec<f64>>,
+    /// The game's flags to carry into the next level.
+    next_flags: f64,
+    /// The level being played, with what it started with.
+    pub(crate) level: Level,
     /// The map, for the light on models.
     map: Option<Arc<Map>>,
+    /// The status bar and the rest of what's over the view.
+    pub(crate) hud: Hud,
+    /// The menus.
+    pub(crate) menu: Menu,
+    /// The console, as it's drawn.
+    pub(crate) console_view: ConsoleView,
+    /// Pictures loaded so far.
+    pub(crate) pictures: PictureBank,
+    /// Whether the game is paused.
+    pub(crate) paused: bool,
+    /// What being hit is doing to the view.
+    kick: ViewKick,
+    /// A level to change to, once the plaque has been seen.
+    pub(crate) level_pending: Option<String>,
+    /// Frames shown since `level_pending` was set.
+    level_wait: u8,
+    /// Console commands from the game, waiting to run.
+    pub(crate) commands: Vec<String>,
+    /// `ui_scale`.
+    pub(crate) ui_scale: f32,
+    /// `crosshair`.
+    pub(crate) crosshair: bool,
+    /// `gamma`.
+    gamma: f32,
+    /// The frame rate as it's shown, or empty.
+    pub(crate) rate_text: String,
+    /// The settings the menus show.
+    pub(crate) menu_settings: MenuSettings,
+    /// Where configs and saves go.
+    pub(crate) user_directory: PathBuf,
 }
 
 impl World {
-    /// Loads the map called `name` and moves to its spawn point.
-    pub(crate) fn load_map(&mut self, name: &str) -> Result<(), Box<dyn std::error::Error>> {
+    /// Starts a new game on the map called `name`.
+    pub(crate) fn new_game(
+        &mut self,
+        name: &str,
+        console: &Console<Self>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        self.next_parms = None;
+        self.next_flags = 0.0;
+        self.load_map(name, console)
+    }
+
+    /// Sets what the next level starts with.
+    pub(crate) fn carry(&mut self, parms: Option<Vec<f64>>, flags: f64) {
+        self.next_parms = parms;
+        self.next_flags = flags;
+    }
+
+    /// Whether the player sees the game itself, with nothing open over it.
+    pub(crate) fn is_playing_screen(&self) -> bool {
+        !self.menu.is_open() && !self.console_view.is_open()
+    }
+
+    /// Whether the game moves on, as `_Host_Frame` decides.
+    pub(crate) fn is_running(&self) -> bool {
+        self.is_playing_screen() && !self.paused && self.level_pending.is_none()
+    }
+
+    /// Whether the game can be saved now, from `Host_Savegame_f`.
+    pub(crate) fn can_save(&self) -> bool {
+        self.server.is_some()
+            && self.level_pending.is_none()
+            && self.hud.intermission() == Intermission::None
+            && !self.hud.is_dead()
+    }
+
+    /// Loads the map called `name` and moves to its spawn point, carrying what
+    /// `next_parms` and `next_flags` hold.
+    pub(crate) fn load_map(
+        &mut self,
+        name: &str,
+        console: &Console<Self>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
         let bsp = self.filesystem.read(&format!("maps/{name}.bsp"))?;
         let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
         let palette = self.filesystem.read("gfx/palette.lmp")?;
         let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
         let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
         let start = spawn_point(&map);
+        let level = Level {
+            name: name.to_owned(),
+            parms: self.next_parms.take(),
+            flags: self.next_flags,
+            settings: Self::level_settings(console),
+        };
         let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
         let (client_end, server_end) = loopback();
         self.server = Some(Server::new(
@@ -171,15 +279,40 @@ impl World {
             start.origin,
             SCRIPTS,
             TICK_SECONDS,
-            Level {
-                name: name.to_owned(),
-                parms: self.next_parms.take(),
-            },
+            level.clone(),
         )?);
+        self.level = level;
         self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
+        self.after_load(&map, palette)
+    }
+
+    /// The settings a level starts with.
+    fn level_settings(console: &Console<Self>) -> Vec<(String, f64)> {
+        LEVEL_SETTINGS
+            .iter()
+            .map(|name| {
+                let value = console.cvar(name).map_or(0.0, engine_console::Cvar::number);
+                ((*name).to_owned(), f64::from(value))
+            })
+            .collect()
+    }
+
+    /// Gets everything ready to show a game on `map` that's just been set up.
+    pub(crate) fn after_load(
+        &mut self,
+        map: &Arc<Map>,
+        palette: Palette,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let map = Arc::clone(map);
         self.map_time = 0.0;
+        self.hud = Hud::new();
+        self.kick = ViewKick::default();
+        self.paused = false;
+        self.menu.close();
+        self.console_view.set_open(false);
+        self.console_view.clear_notify();
         self.audio.stop_sounds();
         let water = self
             .sounds
@@ -211,6 +344,7 @@ impl World {
 
     /// Runs one tick of the game.
     fn run_tick(&mut self, seconds: f32) {
+        self.turn_view(seconds);
         let command = self.command();
         self.buttons.impulse = 0;
         if let (Some(client), Some(server)) = (&mut self.client, &mut self.server) {
@@ -220,8 +354,66 @@ impl World {
             if let Some((yaw, pitch)) = client.take_view() {
                 self.look.set_view(f64::from(yaw), f64::from(pitch));
             }
+            self.map_time = client.time();
+            self.hud.set_stats(client.stats(), client.time());
+            let events = client.take_events();
+            self.show_events(events);
         }
         self.play_sounds();
+    }
+
+    /// Turns the view by the keys held.
+    fn turn_view(&mut self, seconds: f32) {
+        let (yaw, pitch) = self.buttons.turn(seconds);
+        let held = self
+            .client
+            .as_ref()
+            .is_some_and(|client| client.predicted().frozen);
+        if !held && (yaw != 0.0 || pitch != 0.0) {
+            let (yaw, pitch) = (
+                self.look.yaw() + f64::from(yaw),
+                self.look.pitch() + f64::from(pitch),
+            );
+            self.look.set_view(yaw, pitch);
+        }
+    }
+
+    /// Shows what the game asked to.
+    fn show_events(&mut self, events: Vec<ScreenEvent>) {
+        for event in events {
+            match event {
+                ScreenEvent::CenterPrint(text) => self.hud.center_print(text),
+                ScreenEvent::Command(text) => self.commands.push(text),
+                ScreenEvent::Damage { armor, blood, from } => self.hurt(armor, blood, from),
+                ScreenEvent::Intermission(kind) => {
+                    self.hud.set_intermission(Intermission::from_number(kind));
+                }
+                ScreenEvent::LevelTitle(text) => {
+                    self.console_view.print(&text, f64::NEG_INFINITY);
+                    self.hud.set_level_title(text);
+                }
+            }
+        }
+    }
+
+    /// Shows the player being hurt, from `V_ParseDamage`.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f32 keeps angles to a few thousandths of a degree"
+    )]
+    fn hurt(&mut self, armor: u8, blood: u8, from: Vec3) {
+        self.hud.damage(armor, blood);
+        let Some(client) = &self.client else {
+            return;
+        };
+        let count = (f32::from(blood) * 0.5 + f32::from(armor) * 0.5).max(10.0);
+        let direction = (from - client.predicted().origin).normalized();
+        let (yaw_sin, yaw_cos) = (self.look.yaw() as f32).to_radians().sin_cos();
+        let (pitch_sin, pitch_cos) = (self.look.pitch() as f32).to_radians().sin_cos();
+        let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
+        let right = Vec3::new(yaw_sin, -yaw_cos, 0.0);
+        self.kick
+            .hit(count, direction.dot(right), direction.dot(forward));
     }
 
     /// Passes on the sounds and music the client has heard about.
@@ -303,8 +495,21 @@ impl World {
         let level = self.server.as_mut().and_then(Server::take_next_level);
         if level.is_some() {
             self.next_parms = self.server.as_mut().and_then(Server::take_parms);
+            self.next_flags = self.server.as_ref().map_or(0.0, Server::flags);
+        }
+        if let Some(server) = &mut self.server {
+            self.commands.extend(server.take_commands());
         }
         (prints.unwrap_or_default(), level)
+    }
+
+    /// What's at the eye, for the colour of the view.
+    fn contents_at(&self, eye: Vec3) -> Contents {
+        self.map.as_ref().map_or(Contents::Empty, |map| {
+            map.tree
+                .leaf(map.tree.leaf_at(eye))
+                .map_or(Contents::Empty, |leaf| leaf.contents)
+        })
     }
 
     /// Follows what's on the client for effects, and returns the lights
@@ -371,6 +576,8 @@ impl World {
         let mut lights = Vec::new();
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
         let mut punch = Vec3::ZERO;
+        let mut sway = (0.0, 0.0, 0.0);
+        let mut roll = 0.0;
         let time = self.map_time as f32;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
@@ -378,7 +585,10 @@ impl World {
             let step = self.step.update(body.z, state.on_ground, frame_seconds);
             let speed = Vec3::new(state.velocity.x, state.velocity.y, 0.0).length();
             let bob = view_bob(time, speed);
-            let eye = if state.dead {
+            let frozen = state.frozen;
+            let eye = if frozen {
+                0.0
+            } else if state.dead {
                 DEAD_VIEW_HEIGHT
             } else {
                 VIEW_HEIGHT
@@ -392,6 +602,17 @@ impl World {
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
             punch = client.punch(fraction);
+            let (kick_pitch, kick_roll) = self.kick.update(frame_seconds);
+            let right = self.listener.right;
+            roll = view_roll(state.velocity.dot(right)) + kick_roll;
+            punch.x += kick_pitch;
+            if state.dead {
+                roll = dead_roll();
+            }
+            if frozen {
+                roll = 0.0;
+                sway = view_idle(time);
+            }
             let drawn = client.draw_entities(fraction);
             let (model, frame) = client.weapon();
             let player = EffectSource {
@@ -428,21 +649,32 @@ impl World {
                 // From `V_CalcRefdef`, with the status bar's 2 units.
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
-                lists.entities.extend(self.models.draw_weapon(
-                    u32::from(model),
-                    frame,
-                    (placed, angles),
-                    &lighting,
-                ));
+                if !frozen {
+                    lists.entities.extend(self.models.draw_weapon(
+                        u32::from(model),
+                        frame,
+                        (placed, angles),
+                        &lighting,
+                    ));
+                }
             }
         }
+        let contents = self.contents_at(origin);
+        let fade = if self.is_running() {
+            frame_seconds
+        } else {
+            0.0
+        };
+        self.hud.update_view(fade, contents);
         let view = View {
             origin,
-            yaw: self.look.yaw() as f32 + punch.y,
-            pitch: self.look.pitch() as f32 + punch.x,
+            yaw: self.look.yaw() as f32 + punch.y + sway.1,
+            pitch: self.look.pitch() as f32 + punch.x + sway.0,
+            roll: roll + sway.2,
             fov: self.fov,
             time: self.map_time as f32,
             styles,
+            gamma: self.gamma,
         };
         Picture {
             view,
@@ -451,6 +683,7 @@ impl World {
             sprites: lists.sprites,
             particles: self.particle_draws(),
             lights,
+            quads: Vec::new(),
         }
     }
 }
@@ -473,6 +706,8 @@ pub(crate) struct Engine {
     window: Option<Window>,
     /// The frame rate shown on screen.
     fps: FpsMeter,
+    /// Whether there was a saved config to start from.
+    has_config: bool,
 }
 
 /// Reads standard input on its own thread, because reading blocks. The thread
@@ -501,6 +736,10 @@ impl Engine {
         for game in &options.game_directories {
             mount_game(&mut filesystem, &options.base_directory.join(game))?;
         }
+        let user_directory = saves::user_directory(&options);
+        let _created = std::fs::create_dir_all(&user_directory);
+        filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
+        let has_config = user_directory.join(CONFIG_NAME).is_file();
         let mut console = Console::new();
         commands::register(&mut console);
         console.register_cvar("show_input", "0", CvarFlags::default());
@@ -508,7 +747,7 @@ impl Engine {
             saved: true,
             server: false,
         };
-        console.register_cvar("m_capture", "0", CvarFlags::default());
+        console.register_cvar("m_capture", "1", CvarFlags::default());
         console.register_cvar("sensitivity", "3", saved);
         console.register_cvar("m_yaw", "0.022", saved);
         console.register_cvar("m_pitch", "0.022", saved);
@@ -519,6 +758,21 @@ impl Engine {
         console.register_cvar("bgmvolume", "1", saved);
         console.register_cvar("ambient_level", "0.3", saved);
         console.register_cvar("ambient_water", "0.5", saved);
+        console.register_cvar("gamma", "1", saved);
+        console.register_cvar("ui_scale", "0", saved);
+        console.register_cvar("crosshair", "0", saved);
+        console.register_cvar("cl_alwaysrun", "1", saved);
+        console.register_cvar("viewsize", "100", CvarFlags::default());
+        for (name, value) in [
+            ("skill", "1"),
+            ("deathmatch", "0"),
+            ("coop", "0"),
+            ("samelevel", "0"),
+            ("noexit", "0"),
+            ("registered", "1"),
+        ] {
+            console.register_cvar(name, value, CvarFlags::default());
+        }
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -554,7 +808,24 @@ impl Engine {
                 effects: Effects::default(),
                 palette: None,
                 next_parms: None,
+                next_flags: 0.0,
+                level: Level::default(),
                 map: None,
+                hud: Hud::new(),
+                menu: Menu::new(),
+                console_view: ConsoleView::new(),
+                pictures: PictureBank::default(),
+                paused: false,
+                kick: ViewKick::default(),
+                level_pending: None,
+                level_wait: 0,
+                commands: Vec::new(),
+                ui_scale: 0.0,
+                crosshair: false,
+                gamma: 1.0,
+                rate_text: String::new(),
+                menu_settings: MenuSettings::new(),
+                user_directory,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
@@ -562,6 +833,7 @@ impl Engine {
             size,
             window: None,
             fps: FpsMeter::new(),
+            has_config,
         })
     }
 
@@ -574,6 +846,14 @@ impl Engine {
             }
         }
         self.console.execute(&mut self.world);
+        self.follow_settings();
+        // With no game, there's always something to type at.
+        if self.world.client.is_none()
+            && !self.world.menu.is_open()
+            && !self.world.console_view.is_open()
+        {
+            self.world.console_view.set_open(true);
+        }
         self.world.look.set_scale(self.look_scale());
         let vsync = self.cvar_number("vid_vsync") != 0.0;
         if let Some(renderer) = &mut self.world.renderer {
@@ -584,47 +864,143 @@ impl Engine {
             .cvar("fov")
             .map_or(90.0, engine_console::Cvar::number);
         let seconds = 1.0 / f64::from(self.clock.rate().hertz());
-        self.world.map_time += seconds;
-        #[expect(
-            clippy::cast_possible_truncation,
-            reason = "a tick's length needs no more than f32"
-        )]
-        self.world.run_tick(seconds as f32);
+        if self.world.is_running() {
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a tick's length needs no more than f32"
+            )]
+            self.world.run_tick(seconds as f32);
+        }
         let (prints, level) = self.world.take_server_news();
         for text in prints {
             self.console.print(text);
         }
-        if let Some(level) = level {
-            match self.world.load_map(&level) {
+        for command in std::mem::take(&mut self.world.commands) {
+            self.console.add(&command);
+        }
+        if level.is_some() {
+            self.world.level_pending = level;
+            self.world.level_wait = 0;
+        }
+        self.change_level();
+        self.show_output();
+    }
+
+    /// Changes level, once the plaque has had a frame to show.
+    fn change_level(&mut self) {
+        if self.world.level_wait < PLAQUE_FRAMES {
+            return;
+        }
+        if let Some(level) = self.world.level_pending.take() {
+            match self.world.load_map(&level, &self.console) {
                 Ok(()) => self.console.print(format!("loaded {level}")),
                 Err(error) => self
                     .console
                     .print(format!("couldn't load {level}: {error}")),
             }
         }
-        self.show_output();
     }
 
-    /// Runs what a key is bound to. Escape is reserved until there's a menu.
-    fn key(&mut self, name: &str, pressed: bool) {
-        if name == "ESCAPE" {
-            if pressed {
-                let captured = self.cvar_number("m_capture") != 0.0;
-                self.console.add(if captured {
-                    "m_capture 0"
-                } else {
-                    "m_capture 1"
-                });
+    /// Copies what's drawn and heard from the cvars.
+    fn follow_settings(&mut self) {
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "settings need no more than f32"
+        )]
+        let number = |engine: &Self, name: &str| engine.cvar_number(name) as f32;
+        self.world.ui_scale = number(self, "ui_scale");
+        self.world.crosshair = number(self, "crosshair") != 0.0;
+        self.world.gamma = number(self, "gamma").clamp(0.3, 2.0);
+        self.world.buttons.always_run = number(self, "cl_alwaysrun") != 0.0;
+        for name in MENU_SETTINGS {
+            let value = number(self, name);
+            self.world.menu_settings.insert(name, value);
+        }
+    }
+
+    /// Takes a key, which goes to what's on top, as `Key_Event`.
+    fn key(&mut self, name: &str, pressed: bool, repeat: bool) {
+        let key = canonical_key(name);
+        if key == "SHIFT" {
+            self.world.console_view.set_shift(pressed);
+        }
+        if !pressed {
+            // Key ups always go to the game, so nothing stays held.
+            if let Some(command) = self.world.bindings.release(&key) {
+                self.console.add(&command);
             }
             return;
         }
-        if pressed {
-            if let Some(command) = self.world.bindings.press(name) {
-                self.console.add(command);
+        if self.world.menu.is_open() {
+            let mut menu = std::mem::take(&mut self.world.menu);
+            menu.key(
+                &key,
+                &mut MenuActions {
+                    console: &mut self.console,
+                    world: &mut self.world,
+                },
+            );
+            self.world.menu = menu;
+        } else if self.world.console_view.is_open() {
+            self.console_key(&key);
+        } else if key == "ESCAPE" {
+            if !repeat {
+                self.console.add("togglemenu");
             }
-        } else if let Some(command) = self.world.bindings.release(name) {
-            self.console.add(&command);
+        } else if !repeat && let Some(command) = self.world.bindings.press(&key) {
+            self.console.add(command);
         }
+    }
+
+    /// Takes a key while the console is open.
+    fn console_key(&mut self, key: &str) {
+        match key {
+            "ESCAPE" => self.console.add("togglemenu"),
+            "`" | "~" => self.console.add("toggleconsole"),
+            "TAB" => self.complete(),
+            "MWHEELUP" => {
+                let _nothing = self.world.console_view.key("PGUP");
+            }
+            "MWHEELDOWN" => {
+                let _nothing = self.world.console_view.key("PGDN");
+            }
+            _ => {
+                if let Some(line) = self.world.console_view.key(key) {
+                    self.console.add(&line);
+                }
+            }
+        }
+    }
+
+    /// Completes what's being typed, as far as every match agrees.
+    fn complete(&mut self) {
+        let typed = self.world.console_view.input().trim_start().to_owned();
+        if typed.is_empty() || typed.contains(' ') {
+            return;
+        }
+        let matches = self.console.completions(&typed);
+        let Some(first) = matches.first() else {
+            return;
+        };
+        let shared = matches.iter().fold(first.len(), |shared, name| {
+            first
+                .bytes()
+                .zip(name.bytes())
+                .take(shared)
+                .take_while(|(a, b)| a == b)
+                .count()
+        });
+        let mut completed = first[..shared].to_owned();
+        if let [_one] = matches.as_slice() {
+            completed.push(' ');
+        } else {
+            for name in &matches {
+                self.world
+                    .console_view
+                    .print(&format!("  {name}"), f64::NEG_INFINITY);
+            }
+        }
+        self.world.console_view.set_input(&completed);
     }
 
     /// The look scale from the cvars.
@@ -653,6 +1029,7 @@ impl Engine {
         let mut output = std::io::stdout().lock();
         for line in lines {
             let _ignored = writeln!(output, "{line}");
+            self.world.console_view.print(&line, self.world.map_time);
         }
         let _ignored = output.flush();
     }
@@ -666,7 +1043,9 @@ impl PlatformApp for Engine {
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add("exec quake.rc");
-        self.console.add(MOVE_BINDINGS);
+        if !self.has_config {
+            self.console.add(MOVE_BINDINGS);
+        }
         Ok(())
     }
 
@@ -687,33 +1066,51 @@ impl PlatformApp for Engine {
     fn input(&mut self, event: &InputEvent, time: Duration) {
         match *event {
             InputEvent::Motion { x, y } => {
-                self.world.look.motion(x, y);
+                let held = self
+                    .world
+                    .client
+                    .as_ref()
+                    .is_some_and(|client| client.predicted().frozen);
+                if !held {
+                    self.world.look.motion(x, y);
+                }
                 self.world.motion_events += 1;
             }
             InputEvent::Key {
                 name,
                 pressed,
-                repeat: false,
-            } => self.key(name, pressed),
+                repeat,
+            } => self.key(name, pressed, repeat),
             InputEvent::Button {
                 button: MouseButton::Left,
                 pressed: true,
             } if self.cvar_number("m_capture") == 0.0 => self.console.add("m_capture 1"),
+            InputEvent::Wheel { lines } => {
+                let name = if lines > 0.0 {
+                    "MWHEELUP"
+                } else {
+                    "MWHEELDOWN"
+                };
+                self.key(name, true, false);
+                self.key(name, false, false);
+            }
             InputEvent::Button { button, pressed } => {
                 let name = match button {
                     MouseButton::Left => "MOUSE1",
                     MouseButton::Right => "MOUSE2",
                     MouseButton::Middle => "MOUSE3",
                 };
-                self.key(name, pressed);
+                self.key(name, pressed, false);
             }
-            InputEvent::FocusLost => self.world.buttons = Buttons::default(),
+            InputEvent::FocusLost => {
+                self.world.buttons.release();
+                self.console.add("m_capture 0");
+            }
             InputEvent::Resized { width, height } => {
                 if let Some(renderer) = &mut self.world.renderer {
                     renderer.resize(width, height);
                 }
             }
-            _ => {}
         }
         if self.cvar_number("show_input") != 0.0 && !matches!(event, InputEvent::Motion { .. }) {
             self.console
@@ -727,30 +1124,46 @@ impl PlatformApp for Engine {
         if frame.reduced {
             self.fps.reset();
         } else if let Some(rate) = self.fps.frame(frame.delta) {
-            let text = if self.cvar_number("show_fps") != 0.0 {
+            self.world.rate_text = if self.cvar_number("show_fps") != 0.0 {
                 format!("{rate} FPS")
             } else {
                 String::new()
             };
-            if let Some(renderer) = &mut self.world.renderer {
-                renderer.set_overlay_text(&text);
-            }
         }
         if !frame.reduced {
             let since_service = frame
                 .now
                 .saturating_sub(self.last_service.unwrap_or(frame.now));
             let tick_seconds = 1.0 / f64::from(self.clock.rate().hertz());
-            let fraction = self.clock.fraction_after(since_service);
+            // With the game stopped, what's drawn has to stay put.
+            let fraction = if self.world.is_running() {
+                self.clock.fraction_after(since_service)
+            } else {
+                1.0
+            };
+            let leftover = if self.world.is_running() {
+                fraction * tick_seconds
+            } else {
+                0.0
+            };
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "a frame's timing needs no more than f32"
             )]
-            let picture = self.world.view(
-                (fraction * tick_seconds) as f32,
+            let (leftover, fraction, seconds) = (
+                leftover as f32,
                 fraction as f32,
                 frame.delta.as_secs_f64() as f32,
             );
+            let mut picture = self.world.view(leftover, fraction, seconds);
+            let forced = self.world.client.is_none();
+            self.world.console_view.update(seconds, forced);
+            let size = self
+                .world
+                .renderer
+                .as_ref()
+                .map_or(self.size, Renderer::size);
+            picture.quads = self.world.overlay(size);
             if let Some(renderer) = &mut self.world.renderer
                 && let Err(error) = renderer.draw(&picture.view, picture.drawables())
             {
@@ -759,6 +1172,7 @@ impl PlatformApp for Engine {
                 return FrameOutcome::Stop;
             }
         }
+        self.world.level_wait = self.world.level_wait.saturating_add(1);
         #[expect(
             clippy::cast_possible_truncation,
             reason = "volumes need no more than f32"
@@ -782,6 +1196,8 @@ impl PlatformApp for Engine {
 
     fn mouse_capture(&self) -> bool {
         self.cvar_number("m_capture") != 0.0
+            && self.world.is_playing_screen()
+            && self.world.client.is_some()
     }
 
     fn notice(&mut self, message: String) {
@@ -790,6 +1206,7 @@ impl PlatformApp for Engine {
 
     fn stopping(&mut self) {
         self.show_output();
+        saves::write_config(&self.console, &self.world);
         self.world.renderer = None;
         self.window = None;
     }

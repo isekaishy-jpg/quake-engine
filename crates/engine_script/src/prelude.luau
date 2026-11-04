@@ -37,6 +37,7 @@ local ENGINE_FIELDS = {
 	ideal_yaw = true,
 	yaw_speed = true,
 	dead = true,
+	frozen = true,
 }
 
 -- Map fields that aren't text.
@@ -260,6 +261,31 @@ function exists(entity)
 	return entity ~= nil and entity ~= world and entity ~= no_world
 end
 
+-- What a saved game reads and fills in.
+function saved_entities()
+	return entities
+end
+
+function no_world_entity()
+	return no_world
+end
+
+function restored_entity(id, removed)
+	if removed then
+		return setmetatable({ _id = id }, Entity)
+	end
+	local entity = entities[id] or wrap(id)
+	table.clear(entity)
+	return entity
+end
+
+function random_seed(value)
+	if value then
+		random_state = value
+	end
+	return random_state
+end
+
 -- The next entity after `from` whose `field` is `value`, or the world.
 function find_entity(from, field, value)
 	return ent(find(if exists(from) then from else nil, field, value))
@@ -410,8 +436,36 @@ function sprint(_entity, message)
 	engine.print(message)
 end
 
--- The screen's flash on a pickup, which arrives with the status bar.
-function bonus_flash(_entity) end
+function bprint(message)
+	engine.print(message)
+end
+
+function centerprint(_entity, message)
+	engine.centerprint(message)
+end
+
+function stuffcmd(_entity, text)
+	engine.stuffcmd(text)
+end
+
+function localcmd(text)
+	engine.localcmd(text)
+end
+
+-- What the host set for this level. A game reads these with `cvar`.
+local level_settings = {}
+
+function cvar(name)
+	return level_settings[name] or 0
+end
+
+-- Takes what the host set. A game adds to this with `level_started`.
+function start_level(name, settings, flags)
+	level_settings = settings
+	if level_started then
+		level_started(name, flags)
+	end
+end
 
 -- The forward, right and up directions of `angles`, from `AngleVectors`.
 function makevectors(angles)

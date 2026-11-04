@@ -1,5 +1,7 @@
 //! The slot table that holds entities (proposal 0026).
 
+use serde::{Deserialize, Serialize};
+
 /// How long a slot stays empty before reuse, from `ED_Alloc`.
 const REUSE_DELAY: f64 = 0.5;
 
@@ -7,7 +9,7 @@ const REUSE_DELAY: f64 = 0.5;
 const STARTUP_TIME: f64 = 2.0;
 
 /// An entity, which stops matching once it's removed.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct EntityId {
     /// The slot.
     index: u32,
@@ -34,7 +36,7 @@ impl EntityId {
 }
 
 /// One place in the table.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 struct Slot<T> {
     /// How many times it's been used.
     generation: u32,
@@ -46,7 +48,7 @@ struct Slot<T> {
 
 /// A table that keeps slot order, and reuses the lowest free slot once it's
 /// been free long enough, as the original's entity list does.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SlotTable<T> {
     /// The slots.
     slots: Vec<Slot<T>>,

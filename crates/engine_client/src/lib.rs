@@ -14,10 +14,10 @@ mod view;
 
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
-pub use client::{Client, DrawnEntity};
+pub use client::{Client, DrawnEntity, ScreenEvent};
 pub use effects::{BeamPiece, DynamicLight, EffectSource, Effects, MAX_LIGHTS};
 pub use input::Buttons;
 pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};
 pub use particles::{Particle, Particles, Trail};
-pub use view::{StepSmoother, VIEW_HEIGHT, view_bob};
+pub use view::{StepSmoother, VIEW_HEIGHT, ViewKick, dead_roll, view_bob, view_idle, view_roll};

@@ -109,6 +109,38 @@ impl<C> Console<C> {
         self.cvars.get(&name.to_lowercase())
     }
 
+    /// Every command, alias and cvar name starting with `prefix`, sorted.
+    #[must_use]
+    pub fn completions(&self, prefix: &str) -> Vec<String> {
+        let prefix = prefix.to_lowercase();
+        let mut names: Vec<String> = self
+            .commands
+            .keys()
+            .chain(self.aliases.keys())
+            .chain(self.cvars.keys())
+            .filter(|name| name.starts_with(&prefix))
+            .cloned()
+            .collect();
+        names.sort();
+        names.dedup();
+        names
+    }
+
+    /// Every cvar that's kept between runs, as its name and value.
+    pub fn saved_cvars(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.cvars
+            .iter()
+            .filter(|(_, cvar)| cvar.flags().saved)
+            .map(|(name, cvar)| (name.as_str(), cvar.value()))
+    }
+
+    /// Every alias, as its name and text.
+    pub fn aliases(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.aliases
+            .iter()
+            .map(|(name, text)| (name.as_str(), text.as_str()))
+    }
+
     /// Adds `text` after everything already buffered.
     pub fn add(&mut self, text: &str) {
         self.buffer.push_str(text);

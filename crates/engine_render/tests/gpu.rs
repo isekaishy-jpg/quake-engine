@@ -5,6 +5,7 @@ mod common;
 use std::sync::Arc;
 
 use common::map;
+use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
@@ -32,9 +33,11 @@ fn view_from_above() -> View {
         origin: Vec3::new(64.0, 64.0, 64.0),
         yaw: 0.0,
         pitch: 89.9,
+        roll: 0.0,
         fov: 90.0,
         time: 0.0,
         styles: [1.0; 64],
+        gamma: 1.0,
     }
 }
 
@@ -128,32 +131,42 @@ fn what_is_left_of_the_view_is_at_the_left_of_the_picture() {
 }
 
 #[test]
-fn overlay_text_appears_in_the_top_right_corner_only() {
+fn a_picture_draws_where_its_quad_is_and_blends_over_the_view() {
     let Some(mut renderer) = renderer() else {
         return;
     };
     let view = view_from_above();
-    renderer.set_overlay_text("88");
-    let capture = renderer
-        .capture(&view, Drawables::default(), 320, 180)
-        .expect("capture");
-    let white = |x: std::ops::Range<usize>, y: std::ops::Range<usize>| {
-        let pixels = capture.rgba.as_chunks::<4>().0;
-        y.flat_map(|row| x.clone().map(move |column| row * 320 + column))
-            .filter(|&at| pixels[at][..3] == [255, 255, 255])
-            .count()
+    let image = Image {
+        width: 2,
+        height: 1,
+        rgba: vec![255, 0, 0, 255, 0, 0, 0, 0],
     };
-    assert!(white(280..320, 0..30) > 0, "the corner shows it");
-    assert_eq!(white(0..280, 0..180), 0, "the rest doesn't");
-    renderer.set_overlay_text("");
-    let capture = renderer
-        .capture(&view, Drawables::default(), 320, 180)
-        .expect("capture");
-    let pixels = capture.rgba.as_chunks::<4>().0;
-    assert!(
-        pixels.iter().all(|pixel| pixel[..3] != [255, 255, 255]),
-        "it goes away"
-    );
+    let picture = renderer.add_picture(&image).expect("upload");
+    let quads = [
+        Quad {
+            picture,
+            place: [0.0, 0.0, 32.0, 16.0],
+            source: [0.0, 0.0, 1.0, 1.0],
+            color: [1.0, 1.0, 1.0, 1.0],
+        },
+        Quad {
+            picture: 0,
+            place: [32.0, 16.0, 64.0, 32.0],
+            source: [0.0, 0.0, 1.0, 1.0],
+            color: [0.0, 0.0, 1.0, 0.5],
+        },
+    ];
+    let drawables = Drawables {
+        quads: &quads,
+        ..Drawables::default()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 32).expect("capture");
+    let pixel = |x: usize, y: usize| capture.rgba.as_chunks::<4>().0[y * 64 + x];
+    assert_eq!(pixel(4, 4)[..3], [255, 0, 0], "the opaque half");
+    let clear = pixel(60, 4);
+    assert_eq!(pixel(24, 4), clear, "the clear half shows what's behind");
+    assert!(pixel(48, 24)[2] > 100, "a solid colour blends");
+    assert_eq!(pixel(4, 24), clear, "nothing else changes");
 }
 
 /// A model is drawn with its position added, and not at all unless listed.

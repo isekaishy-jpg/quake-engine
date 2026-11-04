@@ -288,7 +288,12 @@ function trigger_teleport(self)
 	end
 end
 
-function trigger_skill_touch(_self, _other) end
+function trigger_skill_touch(self, other)
+	if other.classname ~= "player" then
+		return
+	end
+	localcmd("skill " .. self.message)
+end
 
 function trigger_setskill(self)
 	InitTrigger(self)

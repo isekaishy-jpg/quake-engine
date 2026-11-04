@@ -68,6 +68,24 @@ impl Bindings {
         self.keys.get(&canonical_key(key)).map(String::as_str)
     }
 
+    /// The keys that run `command`, at most two, from `M_FindKeysForCommand`.
+    #[must_use]
+    pub fn keys_for(&self, command: &str) -> Vec<String> {
+        self.keys
+            .iter()
+            .filter(|(_, bound)| bound.starts_with(command))
+            .map(|(key, _)| key.clone())
+            .take(2)
+            .collect()
+    }
+
+    /// Every binding, by canonical key name.
+    pub fn iter(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.keys
+            .iter()
+            .map(|(key, command)| (key.as_str(), command.as_str()))
+    }
+
     /// The command to run when `key` goes down.
     #[must_use]
     pub fn press(&self, key: &str) -> Option<&str> {

@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite, TextureKind};
@@ -21,11 +22,9 @@ use vulkane::safe::{
 };
 
 use crate::alias::{ALIAS_PUSH_SIZE, POSE_CORNER_BYTES, pose_bytes, push_bytes, uv_bytes};
+use crate::canvas::{MAX_QUADS, QuadBatch, VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
 use crate::matrix::view_projection;
-use crate::overlay::{
-    ATLAS_HEIGHT, ATLAS_WIDTH, MAX_VERTICES, VERTEX_FLOATS, font_atlas, overlay_vertices,
-};
 use crate::renderer::{Capture, Drawables, Target, View};
 use crate::sprite::{
     LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE, ViewAxes,
@@ -68,8 +67,8 @@ const ALIAS_SHADER: &str = include_str!("shaders/alias.wgsl");
 /// The shader of sprites and particles.
 const SPRITE_SHADER: &str = include_str!("shaders/sprite.wgsl");
 
-/// The overlay's shader.
-const OVERLAY_SHADER: &str = include_str!("shaders/overlay.wgsl");
+/// The canvas's shader.
+const CANVAS_SHADER: &str = include_str!("shaders/canvas.wgsl");
 
 /// What [`Backend`] needs to draw a loaded map.
 pub(crate) struct Scene<'a> {
@@ -145,28 +144,32 @@ struct GpuMap {
     _atlas: GpuImage,
 }
 
-/// The text over the picture.
-struct OverlayPass {
-    /// The pipeline.
-    pipeline: GraphicsPipeline,
-    /// Its layout.
-    layout: PipelineLayout,
-    /// The font's set.
+/// A flat picture on the GPU.
+struct GpuPicture {
+    /// Its set.
     set: DescriptorSet,
     /// Kept alive for the set.
     _pool: DescriptorPool,
     /// Kept alive for the set.
-    _set_layout: DescriptorSetLayout,
-    /// Kept alive for the set.
-    _sampler: Sampler,
-    /// Kept alive for the set.
-    _font: GpuImage,
-    /// The vertices, rewritten only when the text or size changes.
+    _image: GpuImage,
+}
+
+/// What's drawn over the view.
+struct CanvasPass {
+    /// The pipeline.
+    pipeline: GraphicsPipeline,
+    /// Its layout.
+    layout: PipelineLayout,
+    /// The layout of a picture's set.
+    set_layout: DescriptorSetLayout,
+    /// How pictures are read.
+    sampler: Sampler,
+    /// Every picture, where the first is solid white.
+    pictures: Vec<GpuPicture>,
+    /// The vertices, rewritten every frame.
     vertices: GpuBuffer,
-    /// How many vertices to draw.
-    count: u32,
-    /// What the vertices were built for.
-    built_for: Option<(String, (u32, u32))>,
+    /// What to draw this frame.
+    batches: Vec<QuadBatch>,
 }
 
 /// A model on the GPU.
@@ -267,9 +270,8 @@ pub(crate) struct Backend {
     /// The loaded map.
     map: Option<GpuMap>,
     /// The text to show.
-    overlay_text: String,
     /// What draws it, set up just after the rest.
-    overlay: Option<OverlayPass>,
+    canvas: Option<CanvasPass>,
     /// The frame uniforms.
     uniforms: GpuBuffer,
     /// The frame set layout.
@@ -452,9 +454,14 @@ fn depth_image(
 )]
 fn frame_bytes(view: &View, aspect: f32, lights: &[LightDraw]) -> Vec<u8> {
     let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
-    let matrix = view_projection(view.origin, view.yaw, view.pitch, view.fov, aspect);
+    let matrix = view_projection(
+        view.origin,
+        [view.yaw, view.pitch, view.roll],
+        view.fov,
+        aspect,
+    );
     let eye = [view.origin.x, view.origin.y, view.origin.z, 1.0];
-    let params = [view.time, aspect, lights.len() as f32, 0.0];
+    let params = [view.time, aspect, lights.len() as f32, view.gamma];
     let mut positions = [0.0; MAX_LIGHT_DRAWS * 4];
     let mut cuts = [0.0; MAX_LIGHT_DRAWS];
     for ((light, position), cut) in lights
@@ -594,8 +601,7 @@ impl Backend {
             wanted_size: size,
             resized: false,
             map: None,
-            overlay_text: String::new(),
-            overlay: None,
+            canvas: None,
             uniforms,
             frame_layout,
             texture_layout,
@@ -621,18 +627,21 @@ impl Backend {
             device,
             _instance: instance,
         };
-        backend.overlay = Some(backend.make_overlay()?);
+        backend.canvas = Some(backend.make_canvas()?);
+        let _white = backend.add_picture(1, 1, &[255, 255, 255, 255])?;
         backend.rebuild_window()?;
         Ok(backend)
     }
 
-    /// Sets up the overlay's font and pipeline.
-    fn make_overlay(&self) -> Result<OverlayPass, RenderError> {
-        let font = font_atlas();
-        let image = self.upload_image(
-            &[(ATLAS_WIDTH, ATLAS_HEIGHT, font.as_slice())],
-            Format::R8G8B8A8_UNORM,
-        )?;
+    /// The size of what's being drawn to, in pixels.
+    pub(crate) fn size(&self) -> (u32, u32) {
+        self.window
+            .as_ref()
+            .map_or(self.wanted_size, |window| window.extent)
+    }
+
+    /// Sets up the canvas's pipeline.
+    fn make_canvas(&self) -> Result<CanvasPass, RenderError> {
         let sampler = Sampler::new(
             &self.device,
             SamplerCreateInfo {
@@ -654,6 +663,62 @@ impl Backend {
                 binding(1, DescriptorType::SAMPLER),
             ],
         )?;
+        let layout = PipelineLayout::new(&self.device, &[&set_layout])?;
+        let spirv = vulkane::safe::naga::compile_wgsl(CANVAS_SHADER)
+            .map_err(|error| RenderError(error.to_string()))?;
+        let shader = ShaderModule::from_spirv(&self.device, &spirv)?;
+        let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
+        let attribute = |location, format, offset| VertexInputAttribute {
+            location,
+            binding: 0,
+            format,
+            offset,
+        };
+        let pipeline = GraphicsPipelineBuilder::new(&layout, &self.present_pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+            .vertex_input(
+                &[VertexInputBinding {
+                    binding: 0,
+                    stride,
+                    input_rate: InputRate::VERTEX,
+                }],
+                &[
+                    attribute(0, Format::R32G32_SFLOAT, 0),
+                    attribute(1, Format::R32G32_SFLOAT, 8),
+                    attribute(2, Format::R32G32B32A32_SFLOAT, 16),
+                ],
+            )
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(false, false)
+            .alpha_blending(true)
+            .build(&self.device)?;
+        let vertices = host_buffer(
+            &self.device,
+            &self.physical,
+            MAX_QUADS * 6 * VERTEX_FLOATS * 4,
+            BufferUsage::VERTEX_BUFFER,
+        )?;
+        Ok(CanvasPass {
+            pipeline,
+            layout,
+            set_layout,
+            sampler,
+            pictures: Vec::new(),
+            vertices,
+            batches: Vec::new(),
+        })
+    }
+
+    /// Uploads a flat picture of RGBA pixels, and returns its number.
+    pub(crate) fn add_picture(
+        &mut self,
+        width: u32,
+        height: u32,
+        rgba: &[u8],
+    ) -> Result<u32, RenderError> {
+        let image = self.upload_image(&[(width, height, rgba)], Format::R8G8B8A8_UNORM)?;
         let pool = DescriptorPool::new(
             &self.device,
             1,
@@ -668,99 +733,44 @@ impl Backend {
                 },
             ],
         )?;
-        let set = pool.allocate(&set_layout)?;
+        let canvas = self
+            .canvas
+            .as_mut()
+            .ok_or_else(|| RenderError("no canvas".to_owned()))?;
+        let set = pool.allocate(&canvas.set_layout)?;
         set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-        set.write_sampler(1, &sampler);
-        let layout = PipelineLayout::new(&self.device, &[&set_layout])?;
-        let spirv = vulkane::safe::naga::compile_wgsl(OVERLAY_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
-        let shader = ShaderModule::from_spirv(&self.device, &spirv)?;
-        let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
-        let pipeline = GraphicsPipelineBuilder::new(&layout, &self.present_pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
-            .vertex_input(
-                &[VertexInputBinding {
-                    binding: 0,
-                    stride,
-                    input_rate: InputRate::VERTEX,
-                }],
-                &[
-                    VertexInputAttribute {
-                        location: 0,
-                        binding: 0,
-                        format: Format::R32G32_SFLOAT,
-                        offset: 0,
-                    },
-                    VertexInputAttribute {
-                        location: 1,
-                        binding: 0,
-                        format: Format::R32G32_SFLOAT,
-                        offset: 8,
-                    },
-                ],
-            )
-            .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
-            .depth_test(false, false)
-            .alpha_blending(true)
-            .build(&self.device)?;
-        let vertices = host_buffer(
-            &self.device,
-            &self.physical,
-            MAX_VERTICES * VERTEX_FLOATS * 4,
-            BufferUsage::VERTEX_BUFFER,
-        )?;
-        Ok(OverlayPass {
-            pipeline,
-            layout,
+        set.write_sampler(1, &canvas.sampler);
+        canvas.pictures.push(GpuPicture {
             set,
             _pool: pool,
-            _set_layout: set_layout,
-            _sampler: sampler,
-            _font: image,
-            vertices,
-            count: 0,
-            built_for: None,
-        })
+            _image: image,
+        });
+        Ok(u32::try_from(canvas.pictures.len() - 1).unwrap_or(u32::MAX))
     }
 
-    /// Sets the overlay's text.
-    pub(crate) fn set_overlay_text(&mut self, text: &str) {
-        text.clone_into(&mut self.overlay_text);
-    }
-
-    /// Rebuilds the overlay's vertices if its text or size changed.
-    fn upload_overlay(&mut self, size: (u32, u32)) -> Result<(), RenderError> {
-        let Some(overlay) = &mut self.overlay else {
+    /// Writes this frame's canvas.
+    fn upload_canvas(&mut self, quads: &[Quad], size: (u32, u32)) -> Result<(), RenderError> {
+        let Some(canvas) = &mut self.canvas else {
             return Ok(());
         };
-        let current = overlay
-            .built_for
-            .as_ref()
-            .is_some_and(|(text, built)| *text == self.overlay_text && *built == size);
-        if current {
-            return Ok(());
-        }
-        let floats = overlay_vertices(&self.overlay_text, size);
-        let mut mapped = overlay.vertices.memory.map()?;
+        let (floats, batches) = canvas_vertices(quads, size);
+        let mut mapped = canvas.vertices.memory.map()?;
         let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
         for (value, chunk) in floats.iter().zip(target) {
             *chunk = value.to_le_bytes();
         }
         drop(mapped);
-        overlay.count = u32::try_from(floats.len() / VERTEX_FLOATS).unwrap_or(0);
-        overlay.built_for = Some((self.overlay_text.clone(), size));
+        canvas.batches = batches;
         Ok(())
     }
 
-    /// Records the overlay's one draw.
-    fn record_overlay(
+    /// Records the canvas.
+    fn record_canvas(
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        overlay: Option<&OverlayPass>,
+        canvas: Option<&CanvasPass>,
         size: (u32, u32),
     ) {
-        let Some(overlay) = overlay.filter(|overlay| overlay.count > 0) else {
+        let Some(canvas) = canvas.filter(|canvas| !canvas.batches.is_empty()) else {
             return;
         };
         #[expect(
@@ -769,10 +779,15 @@ impl Backend {
         )]
         rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
         rec.set_scissor(0, 0, size.0, size.1);
-        rec.bind_graphics_pipeline(&overlay.pipeline);
-        rec.bind_graphics_descriptor_sets(&overlay.layout, 0, &[&overlay.set]);
-        rec.bind_vertex_buffers(0, &[(&overlay.vertices.buffer, 0)]);
-        rec.draw(overlay.count, 1, 0, 0);
+        rec.bind_graphics_pipeline(&canvas.pipeline);
+        rec.bind_vertex_buffers(0, &[(&canvas.vertices.buffer, 0)]);
+        for batch in &canvas.batches {
+            let Some(picture) = canvas.pictures.get(batch.picture as usize) else {
+                continue;
+            };
+            rec.bind_graphics_descriptor_sets(&canvas.layout, 0, &[&picture.set]);
+            rec.draw(batch.count, 1, batch.first, 0);
+        }
     }
 
     /// The pipeline for models. Each pose is a vertex buffer at its own offset,
@@ -1328,6 +1343,7 @@ impl Backend {
         &mut self,
         view: &View,
         scene: Option<&Scene<'_>>,
+        quads: &[Quad],
     ) -> Result<(), RenderError> {
         self.wait_for_frame()?;
         if self.resized || self.window.is_none() {
@@ -1350,7 +1366,7 @@ impl Backend {
         )]
         let aspect = extent.0 as f32 / extent.1 as f32;
         self.upload_frame(view, scene, aspect)?;
-        self.upload_overlay(extent)?;
+        self.upload_canvas(quads, extent)?;
         let Some(window) = &self.window else {
             return Ok(());
         };
@@ -1372,7 +1388,7 @@ impl Backend {
             if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
                 recorder.record(&mut rec, scene, view, extent);
             }
-            Self::record_overlay(&mut rec, self.overlay.as_ref(), extent);
+            Self::record_canvas(&mut rec, self.canvas.as_ref(), extent);
             rec.end_render_pass();
             rec.end()?;
         }
@@ -1403,6 +1419,7 @@ impl Backend {
         &mut self,
         view: &View,
         scene: Option<&Scene<'_>>,
+        quads: &[Quad],
         width: u32,
         height: u32,
     ) -> Result<Capture, RenderError> {
@@ -1442,7 +1459,7 @@ impl Backend {
         )]
         let aspect = width as f32 / height as f32;
         self.upload_frame(view, scene, aspect)?;
-        self.upload_overlay((width, height))?;
+        self.upload_canvas(quads, (width, height))?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
                 rec.begin_render_pass_ext(
@@ -1459,7 +1476,7 @@ impl Backend {
                 if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
                     recorder.record(rec, scene, view, (width, height));
                 }
-                Self::record_overlay(rec, self.overlay.as_ref(), (width, height));
+                Self::record_canvas(rec, self.canvas.as_ref(), (width, height));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(
                     &color.image,

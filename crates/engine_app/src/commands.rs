@@ -7,12 +7,20 @@ use std::io::BufWriter;
 use engine_assets::AssetError;
 use engine_console::{Args, Console};
 use engine_render::Capture;
+use fixture_quake::Screen;
 
-use crate::app::World;
+use crate::app::{MOVE_BINDINGS, World};
+use crate::saves;
+use crate::screen::MenuActions;
 
 /// The movement buttons, as the console sees them.
-const BUTTONS: [&str; 9] = [
+const BUTTONS: [&str; 14] = [
     "attack",
+    "left",
+    "right",
+    "lookup",
+    "lookdown",
+    "strafe",
     "forward",
     "back",
     "moveleft",
@@ -45,6 +53,35 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("screenshot", screenshot);
     console.register("setpos", setpos);
     console.register("noclip", noclip);
+    console.register("changelevel", changelevel);
+    console.register("restart", restart);
+    console.register("newgame", newgame);
+    console.register("reset_defaults", reset_defaults);
+    console.register("togglemenu", togglemenu);
+    console.register("toggleconsole", toggleconsole);
+    console.register("clear", clear);
+    console.register("menu_main", open_menu);
+    console.register("menu_save", open_menu);
+    console.register("menu_load", open_menu);
+    console.register("menu_options", open_menu);
+    console.register("menu_keys", open_menu);
+    console.register("menu_video", open_menu);
+    console.register("menu_quit", open_menu);
+    console.register("help", open_menu);
+    console.register("bf", bonus_flash);
+    console.register("pause", pause);
+    console.register("centerview", centerview);
+    console.register("+showscores", show_scores);
+    console.register("-showscores", hide_scores);
+    console.register("startdemos", start_screen);
+    console.register("save", save);
+    console.register("load", load);
+    for command in ["kill", "god", "notarget", "give"] {
+        console.register(command, game_command);
+    }
+    for ignored in ["+mlook", "-mlook", "+klook", "-klook", "sizeup", "sizedown"] {
+        console.register(ignored, nothing);
+    }
     for button in BUTTONS {
         console.register(&format!("+{button}"), button_down);
         console.register(&format!("-{button}"), button_up);
@@ -148,13 +185,151 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
     }
 }
 
-/// `map name`: loads a map and starts at its first spawn point.
+/// `map name`: starts a new game on a map.
 fn map(console: &mut Console<World>, world: &mut World, args: &Args) {
-    match world.load_map(args.get(1)) {
+    match world.new_game(args.get(1), console) {
         Ok(()) => console.print(format!("loaded {}", args.get(1))),
         Err(error) => console.print(format!("couldn't load {}: {error}", args.get(1))),
     }
 }
+
+/// `changelevel name`: goes to a map as if the level had ended there, with
+/// what the player has.
+fn changelevel(console: &mut Console<World>, world: &mut World, args: &Args) {
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("changelevel {}", args.get(1)));
+    } else {
+        console.print("changelevel needs a game running");
+    }
+}
+
+/// `restart`: starts the level again.
+fn restart(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    let (name, parms, flags) = (
+        world.level.name.clone(),
+        world.level.parms.clone(),
+        world.level.flags,
+    );
+    if !name.is_empty() {
+        world.carry(parms, flags);
+        if let Err(error) = world.load_map(&name, console) {
+            console.print(format!("couldn't load {name}: {error}"));
+        }
+    }
+}
+
+/// `newgame`: starts again from the first map.
+fn newgame(console: &mut Console<World>, _world: &mut World, _args: &Args) {
+    console.add("map start");
+}
+
+/// `reset_defaults`: goes back to the game's settings, and this engine's keys.
+fn reset_defaults(console: &mut Console<World>, _world: &mut World, _args: &Args) {
+    console.add("exec default.cfg");
+    console.add(MOVE_BINDINGS);
+}
+
+/// `togglemenu`: opens or closes the menus.
+fn togglemenu(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if world.console_view.is_open() && world.client.is_some() {
+        world.console_view.set_open(false);
+        return;
+    }
+    let mut menu = std::mem::take(&mut world.menu);
+    menu.toggle(&mut MenuActions { console, world });
+    world.menu = menu;
+}
+
+/// `toggleconsole`: opens or closes the console.
+fn toggleconsole(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.menu.close();
+    let open = !world.console_view.is_open() || world.client.is_none();
+    world.console_view.set_open(open);
+}
+
+/// `clear`: empties the console.
+fn clear(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.console_view.clear();
+}
+
+/// Opens the menu screen a command is named for.
+fn open_menu(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let screen = match args.get(0) {
+        "menu_save" => Screen::Save,
+        "menu_load" => Screen::Load,
+        "menu_options" => Screen::Options,
+        "menu_keys" => Screen::Keys,
+        "menu_video" => Screen::Video,
+        "menu_quit" => Screen::Quit,
+        "help" => Screen::Help,
+        _ => Screen::Main,
+    };
+    let mut menu = std::mem::take(&mut world.menu);
+    menu.open(screen, &mut MenuActions { console, world });
+    world.menu = menu;
+}
+
+/// `bf`: flashes the view.
+fn bonus_flash(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.hud.bonus_flash();
+}
+
+/// `pause`: stops the game, or starts it again.
+fn pause(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.paused = !world.paused && world.client.is_some();
+}
+
+/// `centerview`: looks straight ahead.
+fn centerview(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    let yaw = world.look.yaw();
+    world.look.set_view(yaw, 0.0);
+}
+
+/// `+showscores`: holds the scores open.
+fn show_scores(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.hud.set_show_scores(true);
+}
+
+/// `-showscores`: lets the scores go.
+fn hide_scores(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.hud.set_show_scores(false);
+}
+
+/// `startdemos`: the last line of `quake.rc`. Stock demos can't play here, so
+/// with no game running this opens the menus.
+fn start_screen(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if world.client.is_none() {
+        console.add("menu_main");
+    }
+}
+
+/// `save name`: saves the game.
+fn save(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let name = args.get(1);
+    match saves::save(world, name) {
+        Ok(()) => console.print(format!("saved {name}")),
+        Err(error) => console.print(format!("couldn't save {name}: {error}")),
+    }
+}
+
+/// `load name`: goes back to a saved game.
+fn load(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let name = args.get(1);
+    match saves::load(world, name) {
+        Ok(()) => console.print(format!("loaded {name}")),
+        Err(error) => console.print(format!("couldn't load {name}: {error}")),
+    }
+}
+
+/// Passes a command to the game's scripts, through the server.
+fn game_command(_console: &mut Console<World>, world: &mut World, args: &Args) {
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("{} {}", args.get(0), args.rest()));
+    }
+}
+
+/// Accepts a command the original has and this engine doesn't need.
+fn nothing(_console: &mut Console<World>, _world: &mut World, _args: &Args) {}
 
 /// `bind key [command]`: sets a binding, or shows it.
 fn bind(console: &mut Console<World>, world: &mut World, args: &Args) {
@@ -212,12 +387,14 @@ fn write_png(capture: &Capture, path: &str) -> Result<(), Box<dyn Error>> {
 
 /// `screenshot path`: writes the current view to a PNG file.
 fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
-    let path = args.get(1);
-    if path.is_empty() {
-        console.print("screenshot <path>");
-        return;
-    }
-    let picture = world.view(0.0, 1.0, 0.0);
+    let default_path = saves::screenshot_path(&world.user_directory);
+    let path = if args.get(1).is_empty() {
+        default_path.as_str()
+    } else {
+        args.get(1)
+    };
+    let mut picture = world.view(0.0, 1.0, 0.0);
+    picture.quads = world.overlay((SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT));
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;

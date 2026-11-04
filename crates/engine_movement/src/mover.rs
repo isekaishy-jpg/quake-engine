@@ -496,6 +496,9 @@ pub fn player_move(
     world: Collision<'_>,
     touched: &mut Vec<u32>,
 ) {
+    if state.frozen {
+        return;
+    }
     // The dead lie where they fell.
     let still = UserCommand {
         forward: 0.0,

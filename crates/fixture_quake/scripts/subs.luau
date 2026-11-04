@@ -174,9 +174,15 @@ movedist = 0
 intermission_running = 0
 intermission_exittime = 0
 
--- The game's closing text, which is printed until there's a screen for it.
+-- The screen's flash on a pickup.
+function bonus_flash(self)
+	stuffcmd(self, "bf")
+end
+
+-- The game's closing text, typed out over the last view.
 function finale(text)
-	engine.print(text)
+	engine.intermission(2)
+	engine.centerprint(text)
 end
 
 -- The entity that set off the current chain of events.
@@ -184,11 +190,6 @@ activator = nil
 
 -- The world entity, set by worldspawn.
 world = nil
-
--- Prints to the player, until text can be drawn.
-function centerprint(_entity, message)
-	engine.print(message)
-end
 
 function objerror(message)
 	error(message)

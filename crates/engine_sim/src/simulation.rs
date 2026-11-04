@@ -9,6 +9,7 @@ use engine_core::player::{PlayerState, UserCommand};
 use engine_map::Map;
 use engine_movement::{MoveVars, player_move};
 use engine_physics::CollisionWorld;
+use serde::{Deserialize, Serialize};
 
 use crate::flight::{FLAG_ON_GROUND, MoveKind};
 use crate::table::{EntityId, SlotTable};
@@ -40,7 +41,7 @@ const FLAG_ITEM: u32 = 256;
 const EFFECT_MUZZLE_FLASH: u8 = 2;
 
 /// How an entity blocks others.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Solid {
     /// It doesn't.
     #[default]
@@ -56,7 +57,7 @@ pub enum Solid {
 }
 
 /// How an entity moves.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum MoveType {
     /// It doesn't, by itself.
     #[default]
@@ -80,7 +81,7 @@ pub enum MoveType {
 }
 
 /// What the engine knows about an entity. Game fields live in the script.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
     /// Its position.
     pub origin: Vec3,
@@ -155,6 +156,43 @@ pub enum Callback {
     },
     /// `id` crossed the surface of a liquid.
     Splash(EntityId),
+}
+
+/// What a saved game keeps of a simulation (proposal 0044).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SavedSimulation {
+    /// Every entity.
+    entities: SlotTable<Entity>,
+    /// The player's entity.
+    player_id: EntityId,
+    /// The player.
+    player: PlayerState,
+    /// Game time in seconds.
+    time: f64,
+    /// The player's last yaw and pitch.
+    view: (f32, f32),
+    /// Whether the player's jump button is down.
+    jump_down: bool,
+    /// Whether the player's attack button is down.
+    attack_down: bool,
+    /// The impulse waiting to be handled, or 0.
+    impulse: u8,
+    /// Model names, where a shape's number is its place here plus one.
+    shapes: Vec<String>,
+    /// The number of the player's weapon model, or 0 for none.
+    weapon_model: u16,
+    /// The frame the player's weapon shows.
+    weapon_frame: u16,
+    /// Whether the player's weapon is hidden from their own view.
+    weapon_hidden: bool,
+    /// How far the view is knocked, in degrees.
+    punch: Vec3,
+    /// The state of `rand`.
+    seed: u32,
+    /// When monsters last took a look at where the player can be seen from.
+    last_check: f64,
+    /// The leaves the player can be seen from.
+    player_view: Vec<bool>,
 }
 
 /// The game's state.
@@ -255,6 +293,84 @@ impl Simulation {
             seed: 1,
             last_check: 0.0,
             player_view: Vec::new(),
+        }
+    }
+
+    /// What a saved game keeps. Naming every field means a new one can't be
+    /// forgotten here.
+    #[must_use]
+    pub fn save(&self) -> SavedSimulation {
+        let Self {
+            map: _,
+            entities,
+            player_id,
+            player,
+            vars: _,
+            last_command: _,
+            time,
+            touched: _,
+            view,
+            collision: _,
+            jump_down,
+            attack_down,
+            impulse,
+            shapes,
+            shapes_sent: _,
+            weapon_model,
+            weapon_frame,
+            weapon_hidden,
+            punch,
+            seed,
+            last_check,
+            player_view,
+        } = self;
+        SavedSimulation {
+            entities: entities.clone(),
+            player_id: *player_id,
+            player: *player,
+            time: *time,
+            view: *view,
+            jump_down: *jump_down,
+            attack_down: *attack_down,
+            impulse: *impulse,
+            shapes: shapes.clone(),
+            weapon_model: *weapon_model,
+            weapon_frame: *weapon_frame,
+            weapon_hidden: *weapon_hidden,
+            punch: *punch,
+            seed: *seed,
+            last_check: *last_check,
+            player_view: player_view.clone(),
+        }
+    }
+
+    /// A simulation of `map` as it was saved. Its commands count from the
+    /// start again, and the client hears every model's name.
+    #[must_use]
+    pub fn restored(map: Arc<Map>, saved: SavedSimulation) -> Self {
+        Self {
+            map,
+            entities: saved.entities,
+            player_id: saved.player_id,
+            player: saved.player,
+            vars: MoveVars::default(),
+            last_command: 0,
+            time: saved.time,
+            touched: Vec::new(),
+            view: saved.view,
+            collision: None,
+            jump_down: saved.jump_down,
+            attack_down: saved.attack_down,
+            impulse: saved.impulse,
+            shapes: saved.shapes,
+            shapes_sent: 0,
+            weapon_model: saved.weapon_model,
+            weapon_frame: saved.weapon_frame,
+            weapon_hidden: saved.weapon_hidden,
+            punch: saved.punch,
+            seed: saved.seed,
+            last_check: saved.last_check,
+            player_view: saved.player_view,
         }
     }
 
@@ -360,6 +476,14 @@ impl Simulation {
     /// Marks the player as dead or alive.
     pub fn set_dead(&mut self, dead: bool) {
         self.player.dead = dead;
+    }
+
+    /// Holds the player still, or lets them go.
+    pub fn set_frozen(&mut self, frozen: bool) {
+        self.player.frozen = frozen;
+        if frozen {
+            self.player.velocity = Vec3::ZERO;
+        }
     }
 
     /// Ends every muzzle flash, which only lasts for one snapshot.
@@ -895,7 +1019,7 @@ impl Simulation {
             }
         }
         self.monster_touches(&mut touches);
-        if !self.player.noclip && !self.player.dead {
+        if !self.player.noclip && !self.player.dead && !self.player.frozen {
             let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
             let low = self.player.origin + PLAYER_MINS - margin;
             let high = self.player.origin + PLAYER_MAXS + margin;

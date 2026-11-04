@@ -57,6 +57,7 @@ engine_render = { path = "crates/engine_render" }
 engine_script = { path = "crates/engine_script" }
 engine_server = { path = "crates/engine_server" }
 engine_sim = { path = "crates/engine_sim" }
+engine_ui = { path = "crates/engine_ui" }
 engine_core = { path = "crates/engine_core" }
 engine_platform = { path = "crates/engine_platform" }
 fixture_quake = { path = "crates/fixture_quake" }
@@ -68,6 +69,9 @@ mlua = { version = "=0.12.2", features = ["luau", "vendored"] }
 box3d-rust = { path = "vendor/box3d" }
 # Proposal 0017: BSP parsing, private to `fixture_quake`.
 qbsp = { version = "=0.17.0", default-features = false }
+# Proposal 0044: what saved games are made of, and how they're written.
+serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
+serde_json = { version = "=1.0.154", default-features = false, features = ["std", "float_roundtrip"] }
 # Proposal 0019: writing screenshots, private to `engine_app`.
 png = { version = "=0.18.0", default-features = false }
 # Proposal 0016: the Vulkan backend, private to `engine_render`. The patched

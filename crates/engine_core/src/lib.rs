@@ -2,6 +2,7 @@
 //!
 //! May depend on nothing. See proposal 0008.
 
+pub mod canvas;
 pub mod entity;
 pub mod math;
 pub mod player;

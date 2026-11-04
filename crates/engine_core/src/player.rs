@@ -1,9 +1,11 @@
 //! A player's state and input, as plain values that any system can carry.
 
+use serde::{Deserialize, Serialize};
+
 use crate::math::Vec3;
 
 /// What liquid a player is in.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Liquid {
     /// None.
     #[default]
@@ -17,7 +19,7 @@ pub enum Liquid {
 }
 
 /// Everything that decides how a player moves next (proposal 0023).
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerState {
     /// The centre of the player's box.
     pub origin: Vec3,
@@ -39,6 +41,9 @@ pub struct PlayerState {
     pub ground_model: Option<u32>,
     /// Whether the player is dead, and can't move.
     pub dead: bool,
+    /// Whether the player is held still, looking out from their origin, as in
+    /// an intermission.
+    pub frozen: bool,
 }
 
 /// One numbered slice of player input.

@@ -322,17 +322,8 @@ function finale_1(self)
 	finale("")
 	pl = find_entity(world, "classname", "player")
 	while exists(pl) do
-		pl.view_ofs = vector.zero
-		pl.angles = pos.mangle
-		-- Turn this way immediately.
-		engine.set_view(pos.mangle.y, pos.mangle.x)
 		pl.map = self.map
-		pl.nextthink = time() + 0.5
-		pl.takedamage = DAMAGE_NO
-		pl.solid = SOLID_NOT
-		pl.movetype = MOVETYPE_NONE
-		pl.modelindex = 0
-		setorigin(pl, pos.origin)
+		hold_at_camera(pl, pos)
 		pl = find_entity(pl, "classname", "player")
 	end
 	-- make fake versions of all players as standins, and move the real

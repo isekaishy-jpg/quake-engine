@@ -2,8 +2,10 @@
 
 use std::ops::{Add, Mul, Sub};
 
+use serde::{Deserialize, Serialize};
+
 /// A point or direction. Z is up, as in the map data.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Vec3 {
     /// Forward at yaw 0.
     pub x: f32,

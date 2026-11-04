@@ -5,6 +5,8 @@ mod app;
 mod commands;
 mod models;
 mod options;
+mod saves;
+mod screen;
 mod sounds;
 
 use std::io::Write;

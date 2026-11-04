@@ -8,6 +8,7 @@ rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+serde.workspace = true
 engine_core.workspace = true
 engine_map.workspace = true
 engine_script.workspace = true

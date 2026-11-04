@@ -183,10 +183,12 @@ local function s_explode(self, frame)
 	if frame == 5 then
 		self.think = SUB_Remove
 	else
-		self.think = function(me)
-			s_explode(me, frame + 1)
-		end
+		self.think = s_explode_next
 	end
+end
+
+function s_explode_next(self)
+	s_explode(self, self.frame + 1)
 end
 
 function s_explode1(self)

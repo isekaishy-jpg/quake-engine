@@ -242,8 +242,11 @@ pub struct FormatRule {
     pub users: &'static [&'static str],
 }
 
-/// The format libraries. None yet.
-pub const FORMAT_RULES: &[FormatRule] = &[];
+/// The format libraries.
+pub const FORMAT_RULES: &[FormatRule] = &[FormatRule {
+    dependency: "serde_json",
+    users: &["engine_app"],
+}];
 
 /// The edition every workspace package uses.
 pub const REQUIRED_EDITION: &str = "2024";

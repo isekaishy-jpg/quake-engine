@@ -37,6 +37,7 @@ fn snapshot() -> Snapshot {
             jump_held: true,
             noclip: true,
             dead: true,
+            frozen: false,
             ground_model: Some(4),
         },
         instances: vec![ModelInstance {
@@ -61,6 +62,8 @@ fn snapshot() -> Snapshot {
         player_entity: 7,
         player_effects: 2,
         punch: Vec3::new(-2.0, 0.0, 0.0),
+        time: 0.0,
+        stats: Vec::new(),
     }
 }
 

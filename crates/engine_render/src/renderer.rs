@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
@@ -35,12 +36,16 @@ pub struct View {
     pub yaw: f32,
     /// The pitch in degrees. Positive looks down.
     pub pitch: f32,
+    /// The roll in degrees.
+    pub roll: f32,
     /// The horizontal field of view in degrees, at 4:3.
     pub fov: f32,
     /// Seconds of map time.
     pub time: f32,
     /// Light style brightnesses, where 1 is normal.
     pub styles: [f32; STYLE_COUNT],
+    /// What the world's colours are raised to, where 1 leaves them alone.
+    pub gamma: f32,
 }
 
 /// Everything in a frame besides the map itself.
@@ -56,6 +61,8 @@ pub struct Drawables<'a> {
     pub particles: &'a [ParticleDraw],
     /// The dynamic lights.
     pub lights: &'a [LightDraw],
+    /// What's drawn flat over all of that, in order.
+    pub quads: &'a [Quad],
 }
 
 /// Pixels read back from the renderer.
@@ -152,9 +159,20 @@ impl Renderer {
         self.backend.add_sprite(sprite)
     }
 
-    /// Sets the text in the corner of the picture. Empty hides it.
-    pub fn set_overlay_text(&mut self, text: &str) {
-        self.backend.set_overlay_text(text);
+    /// The size of the window's picture, in pixels.
+    #[must_use]
+    pub fn size(&self) -> (u32, u32) {
+        self.backend.size()
+    }
+
+    /// Uploads a flat picture, and returns the number to draw it by.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn add_picture(&mut self, image: &Image) -> Result<u32, RenderError> {
+        self.backend
+            .add_picture(image.width, image.height, &image.rgba)
     }
 
     /// Chooses whether frames wait for the display. Waiting paces them
@@ -194,7 +212,7 @@ impl Renderer {
     /// Returns [`RenderError`] if the device fails.
     pub fn draw(&mut self, view: &View, drawables: Drawables<'_>) -> Result<(), RenderError> {
         let scene = Self::scene(self.loaded.as_mut(), view, drawables);
-        self.backend.draw(view, scene.as_ref())
+        self.backend.draw(view, scene.as_ref(), drawables.quads)
     }
 
     /// Draws `view` off-screen and returns the pixels.
@@ -210,7 +228,8 @@ impl Renderer {
         height: u32,
     ) -> Result<Capture, RenderError> {
         let scene = Self::scene(self.loaded.as_mut(), view, drawables);
-        self.backend.capture(view, scene.as_ref(), width, height)
+        self.backend
+            .capture(view, scene.as_ref(), drawables.quads, width, height)
     }
 
     /// Counts for the current visible set.

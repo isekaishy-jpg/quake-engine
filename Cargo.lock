@@ -495,8 +495,11 @@ dependencies = [
  "engine_platform",
  "engine_render",
  "engine_server",
+ "engine_ui",
  "fixture_quake",
  "png",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -529,6 +532,9 @@ version = "0.0.0-alpha"
 [[package]]
 name = "engine_core"
 version = "0.0.0-alpha"
+dependencies = [
+ "serde",
+]
 
 [[package]]
 name = "engine_map"
@@ -586,6 +592,7 @@ dependencies = [
  "engine_map",
  "engine_sim",
  "mlua",
+ "serde",
 ]
 
 [[package]]
@@ -598,6 +605,7 @@ dependencies = [
  "engine_physics",
  "engine_script",
  "engine_sim",
+ "serde",
 ]
 
 [[package]]
@@ -608,11 +616,15 @@ dependencies = [
  "engine_map",
  "engine_movement",
  "engine_physics",
+ "serde",
 ]
 
 [[package]]
 name = "engine_ui"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+]
 
 [[package]]
 name = "equivalent"
