@@ -43,6 +43,15 @@ publish = false
 # Proposal 0008: typed `cargo metadata` access for the crate-graph rule test.
 cargo_metadata = { version = "=0.23.1", default-features = false }
 
+# Engine crates.
+engine_assets = { path = "crates/engine_assets" }
+engine_console = { path = "crates/engine_console" }
+engine_core = { path = "crates/engine_core" }
+engine_platform = { path = "crates/engine_platform" }
+fixture_quake = { path = "crates/fixture_quake" }
+# Proposal 0011: the application host, private to `engine_platform`.
+solapp = { path = "crates/solapp" }
+
 # Lints beyond the defaults, enabled one by one (proposal 0005).
 [workspace.lints.rust]
 elided_lifetimes_in_paths = "warn"

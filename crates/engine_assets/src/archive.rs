@@ -1,0 +1,23 @@
+//! Anything that holds files.
+
+use crate::error::AssetError;
+
+/// A source of files. Paths are normalized by [`crate::normalize_path`].
+pub trait Archive: Send + Sync {
+    /// A name to show for this archive.
+    fn label(&self) -> &str;
+
+    /// Every file it holds.
+    fn paths(&self) -> Vec<String>;
+
+    /// Whether it holds `path`.
+    fn contains(&self, path: &str) -> bool;
+
+    /// Reads `path`.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError::NotFound`] if it isn't here, and other errors if
+    /// reading fails.
+    fn read(&self, path: &str) -> Result<Vec<u8>, AssetError>;
+}
