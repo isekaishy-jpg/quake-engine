@@ -41,6 +41,7 @@ These ran against the Steam data, read in place.
 - The regular client's settings have a low-pass filter on, at 6833 Hz. Run through Kira's interpolation, Quake's sounds have under 1% of their energy above 5.5 kHz, and a filter like that changes them by at most 0.2 dB, so it isn't copied.
 - `ambient_level` is still the original's 0.3, until it's been set by ear.
 - Once, before finding 10, the engine took over 30 s to quit under heavy load. It didn't happen again, and the cause isn't known.
+- This is a port with fixes on top. [Real sound features](../research/plan.md#real-sound-features) are planned to replace it.
 - Sounds stay where they started, as in WinQuake, so a lift's hum doesn't rise with it. Following entities needs entity numbers in snapshots.
 - Sound names travel as text in each message, which a precache table replaces before online play.
 - Weapons, monsters, pain, death and drowning have no sounds until those exist.

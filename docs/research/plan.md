@@ -66,3 +66,17 @@ One item each, covering fit, version, licence, how it's integrated, and how it's
 ## Later
 
 External servers, relay and NAT traversal, Linux dedicated servers, Theora video.
+
+### Real sound features
+
+What increment 5 does to sound is a port with fixes on top, not an audio design. Volume falloff, stereo, ambient levels and mixing should become real features, researched properly against what's normal now, which should cover and go past these stopgaps.
+
+| Today's stopgap | What should replace it |
+|---|---|
+| A straight line of volume over distance, in `spatial.rs` | Real attenuation curves, per kind of sound. `kira` has spatial tracks, with listeners, distances and attenuation functions |
+| Stereo worked out by hand | The same spatial tracks, and whatever surround or binaural the output allows |
+| Sounds stay where they started | Sounds that follow what made them, once entities reach the client |
+| Water and wind measured to a box around each face, at one `ambient_level` | Sound from the surfaces themselves, with a level set per kind of sound |
+| Sounds pass through walls | Occlusion, and reverb that suits the room |
+| One track for effects, with a cap on each ear and no limiter | A proper mix, with buses, ducking and a limiter or compressor on the output |
+| Fixed levels from 1996 | Settings the player can change, per bus |
