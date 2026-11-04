@@ -28,10 +28,10 @@ Status: accepted, 2026-11-03, increment 1.
 - **Future extension:** with a renderer:
   - `engine_platform` subclasses the window and sets `DWMWA_HAS_ICONIC_BITMAP`.
   - It sets `DWMWA_FORCE_ICONIC_REPRESENTATION` when the window is minimized and clears it on restore, so a visible window keeps the automatic live view.
-  - A request means a preview is showing. The renderer draws one small image off-screen, with no swapchain, and the platform answers with the matching call.
-  - The preview doesn't need to be smooth, only enough to show it's alive. It refreshes at a low rate, starting from about 10 a second, which also respects Microsoft's warning about refreshing often.
-  - Invalidating asks Windows to request again. If no request comes, the preview has closed and drawing stops, so nothing is drawn between previews.
-  - The thumbnail is drawn at the size Windows asks for. Peek has no size in its message, and a minimized window's client area may read as zero, so it uses the last restored size as its limit.
+  - While minimized, the renderer keeps drawing to one small off-screen image, with no swapchain, at a low rate, starting from about 10 a second. Poor frame rate and quality are fine, since the preview is tiny.
+  - The latest image is always ready, so a request is answered at once and Windows has no reason to fall back to its default. There's no need to know when a preview opens or closes.
+  - Each new image invalidates the last, so Windows asks again if a preview is showing. The low rate respects Microsoft's warning about refreshing often.
+  - The thumbnail takes that image, scaled to fit the size Windows asks for. Peek takes the same image, within the last restored size, because a minimized window's client area may read as zero.
   - The [open questions](../research/open-questions.md) cover what needs measuring.
 
 ## Review
