@@ -21,7 +21,7 @@ Status: accepted, 2026-11-03, increment 2.
 - When the view leaf changes, the visible faces are rebuilt into one index buffer, grouped by texture. Brush models are always included.
 - Four pipelines share one layout: lit, cutout, liquid and sky.
 - One frame is in flight. The renderer waits for the last frame at the start of the next, not at the end.
-- Mailbox is preferred, with FIFO as the fallback. The `vid_vsync` cvar selects FIFO, which paces frames evenly at the cost of some latency.
+- Mailbox is preferred, with FIFO as the fallback. The `vid_vsync` cvar selects FIFO, which paces frames evenly. It stays off by default, by the human's decision, because it adds input lag.
 - `capture` draws the same scene to an off-screen image and returns its pixels. It's used for `screenshot`, for tests with no window, and later for small preview images.
 - The window handle reaches the renderer as `engine_core::window::NativeWindow`. `engine_platform::Window` holds the `solapp` lease for as long as the renderer lives.
 - `fov` is horizontal at 4:3 and widens with the window.
@@ -32,7 +32,7 @@ Status: accepted, 2026-11-03, increment 2.
 - **Selected approach:** the above.
 - **Tradeoffs:** one frame in flight is simple and leaves some GPU overlap unused. It's fine at Quake's scale, and easy to raise later.
 - **Acceptance criteria:** tests cover mesh building, atlas packing and matrices with no GPU. A GPU test draws a small synthetic map off-screen, and skips with no Vulkan device. Real maps draw correctly in captures.
-- **Future extension:** alias models, dynamic lights and particles add pipelines. The reduced mode can draw through `capture`.
+- **Future extension:** alias models, dynamic lights and particles add pipelines. A texture filter setting, with anisotropic filtering, is later work. The reduced mode can draw through `capture`.
 
 ## Review
 

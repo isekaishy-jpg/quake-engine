@@ -41,6 +41,7 @@ These ran against the Steam data, read in place.
 - The picture may be darker than people remember, because it follows the software renderer's sums with no gamma setting. `gamma` is unknown to the console.
 - Reduced mode still draws nothing. The previews work without it, so it stays as it is unless a preview falls short.
 - Exit was slow three times, over 8 s twice and 5.2 s once, all soon after builds. Five later runs took 150 to 470 ms, and shutdown stages measured 105 ms. The cause isn't known.
-- Some blur remained in mouse look for the human, which hasn't been measured.
+- Motion is settled for now, by the human's decision. Strafing and mouse look are substantially better. What remains may be the panel or texture filtering, and a filtering setting is later rendering work.
+- Vsync stays off by default, by the human's decision, because it adds input lag.
 - Debug builds ran at around 160 frames a second. Release speed wasn't measured.
 - Increment 3 is next: collision, movement, and client and server over loopback.
