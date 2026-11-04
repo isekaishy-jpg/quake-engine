@@ -86,8 +86,8 @@ pub(crate) struct World {
     pub(crate) music_track: Option<u8>,
     /// Where sounds are heard from.
     listener: Listener,
-    /// The volume, music volume and mute last given to `audio`.
-    audio_settings: Option<(f32, f32, bool)>,
+    /// The volume, music volume, ambient level and mute last given to `audio`.
+    audio_settings: Option<(f32, f32, f32, bool)>,
     /// How much water and sky can be heard.
     ambience: Option<AmbientSounds>,
 }
@@ -198,11 +198,14 @@ impl World {
     }
 
     /// Moves sound on by `seconds`, at these volumes.
-    fn update_audio(&mut self, seconds: f64, volume: f32, music_volume: f32, muted: bool) {
-        if self.audio_settings != Some((volume, music_volume, muted)) {
-            self.audio_settings = Some((volume, music_volume, muted));
+    fn update_audio(&mut self, seconds: f64, levels: (f32, f32, f32), muted: bool) {
+        let (volume, music_volume, ambient_level) = levels;
+        let settings = (volume, music_volume, ambient_level, muted);
+        if self.audio_settings != Some(settings) {
+            self.audio_settings = Some(settings);
             self.audio.set_volume(volume);
             self.audio.set_music_volume(music_volume);
+            self.audio.set_ambient_level(ambient_level);
             self.audio.set_muted(muted);
         }
         let origin = self.listener.origin;
@@ -323,6 +326,7 @@ impl Engine {
         console.register_cvar("vid_vsync", "0", saved);
         console.register_cvar("volume", "0.7", saved);
         console.register_cvar("bgmvolume", "1", saved);
+        console.register_cvar("ambient_level", "0.3", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -564,8 +568,11 @@ impl PlatformApp for Engine {
         )]
         self.world.update_audio(
             frame.delta.as_secs_f64(),
-            self.cvar_number("volume") as f32,
-            self.cvar_number("bgmvolume") as f32,
+            (
+                self.cvar_number("volume") as f32,
+                self.cvar_number("bgmvolume") as f32,
+                self.cvar_number("ambient_level") as f32,
+            ),
             frame.reduced,
         );
         if self.world.quit {

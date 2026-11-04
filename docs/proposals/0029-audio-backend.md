@@ -29,10 +29,10 @@ Status: accepted, 2026-11-04, increment 5.
 
 ## Proposal
 
-- **Selected approach:** the above, keeping Quake's override rules, falloff and stereo, as they're part of how the game sounds.
-- **Direct upgrades:** 128 dynamic channels, statics with no limit, float mixing and resampling, and volume changes smoothed over 15 ms instead of stepped.
+- **Selected approach:** the above, keeping Quake's override rules and falloff, as they're part of how the game sounds.
+- **Direct upgrades:** constant power stereo, since the original adds to the near ear, doubling a sound beside the listener and changing its loudness as they turn. Also 128 dynamic channels, statics with no limit, float mixing and resampling, and volume changes smoothed over 15 ms instead of stepped.
 - **Tradeoffs:** each sound's volume is sent to the mixer each frame it changes. Statics only hold a voice while audible, so a loop restarts when it's heard again, which can't be noticed.
-- **Acceptance criteria:** tests cover the stereo law, the pan conversion, channel override, stealing, the player's priority, looping, the same sound starting twice, the cap on each ear, and adding up statics. A real output plays when one exists, and the engine runs without one.
+- **Acceptance criteria:** tests cover the stereo, that turning leaves loudness alone, the pan conversion, channel override, stealing, the player's priority, looping, the same sound starting twice, the cap on each ear, and adding up statics. A real output plays when one exists, and the engine runs without one.
 - **Future extension:** a replacement for `spatial.rs` can add sounds that follow entities, occlusion or reverb, since nothing else knows the law. Kira's effects can hang off the effects track.
 
 ## Review

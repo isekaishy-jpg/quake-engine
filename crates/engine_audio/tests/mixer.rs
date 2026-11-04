@@ -46,7 +46,31 @@ fn a_sound_ahead_is_equal_in_both_ears_and_fades_with_distance() {
 fn a_sound_to_the_right_is_only_in_the_right_ear() {
     let (left, right) = stereo_volumes(Vec3::new(0.0, -500.0, 0.0), &listener(), 1.0, 1.0);
     assert!(left.abs() < 1e-5);
-    assert!((right - 1.0).abs() < 1e-5);
+    assert!((right - 0.5 * std::f32::consts::SQRT_2).abs() < 1e-5);
+}
+
+#[test]
+fn turning_never_changes_how_loud_a_sound_is() {
+    let power = |x: f32, y: f32| {
+        let (left, right) = stereo_volumes(Vec3::new(x, y, 0.0), &listener(), 0.5, 1.0);
+        left * left + right * right
+    };
+    let ahead = power(100.0, 0.0);
+    for (x, y) in [
+        (0.0, 100.0),
+        (0.0, -100.0),
+        (-100.0, 0.0),
+        (60.0, 80.0),
+        (-80.0, 60.0),
+    ] {
+        assert!((power(x, y) - ahead).abs() < 1e-5, "{x} {y}");
+    }
+}
+
+#[test]
+fn a_sound_beside_the_listener_is_not_doubled_in_the_near_ear() {
+    let (_, right) = stereo_volumes(Vec3::new(0.0, -50.0, 0.0), &listener(), 0.5, 3.0);
+    assert!(right < 0.61, "{right}");
 }
 
 #[test]
@@ -316,4 +340,16 @@ fn a_sound_right_beside_the_listener_stops_at_full_volume() {
     let playing = audio.playing();
     assert!((playing[0].right - 1.0).abs() < f32::EPSILON);
     assert!(playing[0].left < 0.1);
+}
+
+#[test]
+fn the_ambient_level_can_be_changed_while_playing() {
+    let mut audio = Audio::silent();
+    let wind = clip(&mut audio, 1, true);
+    audio.set_ambient_clips(None, Some(wind));
+    audio.update(listener(), 10.0, [0, 255]);
+    assert!((audio.ambient_volumes()[1] - 0.3).abs() < 1e-4);
+    audio.set_ambient_level(0.15);
+    audio.update(listener(), 10.0, [0, 255]);
+    assert!((audio.ambient_volumes()[1] - 0.15).abs() < 1e-4);
 }

@@ -23,8 +23,10 @@ impl Default for Listener {
     }
 }
 
-/// The volume in the left and right ears, from `SND_Spatialize`. A sound dead
-/// ahead has `volume` in both, and one to the side up to twice that in one.
+/// The volume in the left and right ears. The fade with distance is
+/// `SND_Spatialize`'s, but where that adds to the near ear, which doubles a
+/// sound beside the listener, this shares the same power between the ears. So
+/// a sound is as loud whichever way the listener turns.
 #[must_use]
 pub fn stereo_volumes(
     source: Vec3,
@@ -40,7 +42,11 @@ pub fn stereo_volumes(
         0.0
     };
     let fade = volume * (1.0 - distance * attenuation / NOMINAL_CLIP_DISTANCE);
-    ((fade * (1.0 - dot)).max(0.0), (fade * (1.0 + dot)).max(0.0))
+    let fade = fade.max(0.0);
+    (
+        fade * (1.0 - dot).max(0.0).sqrt(),
+        fade * (1.0 + dot).max(0.0).sqrt(),
+    )
 }
 
 /// The amplitude and pan from -1 to 1 that give these volumes through an

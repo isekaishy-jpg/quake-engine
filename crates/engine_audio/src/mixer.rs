@@ -12,9 +12,6 @@ use crate::spatial::{Listener, stereo_volumes};
 /// How many sounds can start from entities at once. The original had 8.
 const DYNAMIC_CHANNELS: usize = 128;
 
-/// `ambient_level`: how much of a leaf's level is heard.
-const AMBIENT_SHARE: f32 = 0.3;
-
 /// `ambient_fade`: how fast ambient sounds change, out of 255, each second.
 const AMBIENT_FADE: f32 = 100.0;
 
@@ -146,6 +143,8 @@ pub struct Audio {
     listener: Listener,
     /// How loud music is.
     music_volume: f32,
+    /// `ambient_level`: how much of a leaf's level is heard.
+    ambient_level: f32,
     /// Picks how far a repeated sound skips.
     seed: u32,
 }
@@ -176,6 +175,7 @@ impl Audio {
             ambients: [Ambient::default(), Ambient::default()],
             listener: Listener::default(),
             music_volume: 1.0,
+            ambient_level: 0.3,
             seed: 1,
         }
     }
@@ -371,7 +371,7 @@ impl Audio {
             let Some(clip) = ambient.clip else {
                 continue;
             };
-            let mut wanted = AMBIENT_SHARE * f32::from(level);
+            let mut wanted = self.ambient_level * f32::from(level);
             if wanted < AMBIENT_FLOOR {
                 wanted = 0.0;
             }
@@ -463,6 +463,11 @@ impl Audio {
         if let Some(output) = &mut self.output {
             output.set_effects_volume(volume);
         }
+    }
+
+    /// Sets how much of a leaf's level is heard, from 0 to 1.
+    pub fn set_ambient_level(&mut self, level: f32) {
+        self.ambient_level = level;
     }
 
     /// Sets how loud music is, from 0 to 1.
