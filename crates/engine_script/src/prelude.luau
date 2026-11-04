@@ -32,6 +32,7 @@ local ENGINE_FIELDS = {
 	button0 = true,
 	impulse = true,
 	v_angle = true,
+	punchangle = true,
 	dead = true,
 }
 

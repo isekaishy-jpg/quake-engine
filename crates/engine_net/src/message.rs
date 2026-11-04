@@ -78,6 +78,12 @@ pub struct Snapshot {
     pub weapon_model: u16,
     /// The frame it shows.
     pub weapon_frame: u16,
+    /// The player's entity, which isn't among `entities`.
+    pub player_entity: u64,
+    /// The player's effect bits.
+    pub player_effects: u8,
+    /// How far the view is knocked, in degrees of pitch, yaw and roll.
+    pub punch: Vec3,
 }
 
 /// A message to the server.
@@ -475,9 +481,13 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         out.extend_from_slice(&instance.model.to_le_bytes());
         put_vec3(out, instance.origin);
         out.extend_from_slice(&[u8::from(instance.visible), u8::from(instance.solid)]);
+        out.extend_from_slice(&instance.frame.to_le_bytes());
     }
     out.extend_from_slice(&snapshot.weapon_model.to_le_bytes());
     out.extend_from_slice(&snapshot.weapon_frame.to_le_bytes());
+    out.extend_from_slice(&snapshot.player_entity.to_le_bytes());
+    out.push(snapshot.player_effects);
+    put_vec3(out, snapshot.punch);
     let count = u32::try_from(snapshot.entities.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&count.to_le_bytes());
     for entity in &snapshot.entities {
@@ -534,10 +544,14 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             origin: reader.vec3()?,
             visible: reader.flag()?,
             solid: reader.flag()?,
+            frame: u16::from_le_bytes(reader.take()?),
         });
     }
     let weapon_model = u16::from_le_bytes(reader.take()?);
     let weapon_frame = u16::from_le_bytes(reader.take()?);
+    let player_entity = u64::from_le_bytes(reader.take()?);
+    let player_effects = reader.byte()?;
+    let punch = reader.vec3()?;
     let count = usize::try_from(reader.u32()?).ok()?;
     if count > MAX_ENTITIES {
         return None;
@@ -571,5 +585,8 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
         boxes,
         weapon_model,
         weapon_frame,
+        player_entity,
+        player_effects,
+        punch,
     })
 }

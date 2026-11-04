@@ -181,6 +181,7 @@ function spawn_tfog(org)
 	s.origin = org
 	s.nextthink = time() + 0.2
 	s.think = play_teleport
+	temp_entity(TE_TELEPORT, org)
 end
 
 function teleport_touch(self, other)

@@ -3,10 +3,15 @@
 struct Frame {
     view_projection: mat4x4<f32>,
     eye: vec4<f32>,
-    // x is the time in seconds.
+    // x is the time in seconds, y the width over the height, and z how many
+    // dynamic lights there are.
     params: vec4<f32>,
     // 64 light style brightnesses, four to an entry.
     styles: array<vec4<f32>, 16>,
+    // Each dynamic light's position, then its radius.
+    lights: array<vec4<f32>, 32>,
+    // Each dynamic light's least light, four to an entry.
+    light_cuts: array<vec4<f32>, 8>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;
@@ -58,10 +63,31 @@ fn layer(in: VertexOut, slot: f32, style: u32) -> vec3<f32> {
     return sample * frame.styles[style / 4u][style % 4u];
 }
 
+// Light from `R_AddDynamicLights`, on the same scale as a light map sample.
+// Its plane is worked out from the pixel, since each face is flat.
+fn dynamic_light(world: vec3<f32>) -> f32 {
+    let normal = normalize(cross(dpdx(world), dpdy(world)));
+    var total = 0.0;
+    let count = u32(frame.params.z);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let light = frame.lights[index];
+        let cut = frame.light_cuts[index / 4u][index % 4u];
+        let offset = world - light.xyz;
+        let height = abs(dot(offset, normal));
+        let reach = light.w - height;
+        let across = sqrt(max(dot(offset, offset) - height * height, 0.0));
+        // The original's edge is blurred by its 16 unit light map samples.
+        let edge = clamp((reach - cut - across) / 16.0, 0.0, 1.0);
+        total = total + max(reach - across, 0.0) * edge;
+    }
+    return total / 255.0;
+}
+
 // All the light on a pixel. A sample of one half leaves a texture unchanged.
 fn light(in: VertexOut) -> vec3<f32> {
-    return 2.0 * (layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
-        + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w));
+    let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
+        + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
+    return min(2.0 * (baked + vec3<f32>(dynamic_light(in.world))), vec3<f32>(2.0));
 }
 
 @fragment
@@ -74,10 +100,11 @@ fn fs_solid(in: VertexOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_cutout(in: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(surface, surface_sampler, in.uv);
+    let lit = texel.rgb * light(in);
     if texel.a < 0.5 {
         discard;
     }
-    return vec4<f32>(texel.rgb * light(in), 1.0);
+    return vec4<f32>(lit, 1.0);
 }
 
 @fragment

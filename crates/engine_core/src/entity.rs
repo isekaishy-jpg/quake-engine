@@ -13,6 +13,8 @@ pub struct ModelInstance {
     pub visible: bool,
     /// Whether it blocks movement.
     pub solid: bool,
+    /// Its frame. Anything but 0 shows its textures' alternates.
+    pub frame: u16,
 }
 
 /// An entity the client draws, by its model.

@@ -5,11 +5,12 @@ use std::sync::Arc;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map};
+use engine_map::{AliasModel, Map, Sprite};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
 use crate::error::RenderError;
+use crate::sprite::{LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
 use crate::world::{WorldMesh, build_world};
 
@@ -40,6 +41,21 @@ pub struct View {
     pub time: f32,
     /// Light style brightnesses, where 1 is normal.
     pub styles: [f32; STYLE_COUNT],
+}
+
+/// Everything in a frame besides the map itself.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Drawables<'a> {
+    /// Where brush models are.
+    pub instances: &'a [ModelInstance],
+    /// The other models.
+    pub entities: &'a [EntityDraw],
+    /// The sprites.
+    pub sprites: &'a [SpriteDraw],
+    /// The particles.
+    pub particles: &'a [ParticleDraw],
+    /// The dynamic lights.
+    pub lights: &'a [LightDraw],
 }
 
 /// Pixels read back from the renderer.
@@ -127,6 +143,15 @@ impl Renderer {
         self.backend.add_model(model)
     }
 
+    /// Uploads a sprite, and returns the number to draw it by.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn add_sprite(&mut self, sprite: Arc<Sprite>) -> Result<u32, RenderError> {
+        self.backend.add_sprite(sprite)
+    }
+
     /// Sets the text in the corner of the picture. Empty hides it.
     pub fn set_overlay_text(&mut self, text: &str) {
         self.backend.set_overlay_text(text);
@@ -147,8 +172,7 @@ impl Renderer {
     fn scene<'a>(
         loaded: Option<&'a mut LoadedMap>,
         view: &View,
-        instances: &'a [ModelInstance],
-        entities: &'a [EntityDraw],
+        drawables: Drawables<'a>,
     ) -> Option<Scene<'a>> {
         let loaded = loaded?;
         let changed = loaded
@@ -158,8 +182,7 @@ impl Renderer {
             map: &loaded.map,
             mesh: &loaded.mesh,
             visible: &loaded.visible,
-            instances,
-            entities,
+            drawables,
             changed,
         })
     }
@@ -169,13 +192,8 @@ impl Renderer {
     /// # Errors
     ///
     /// Returns [`RenderError`] if the device fails.
-    pub fn draw(
-        &mut self,
-        view: &View,
-        instances: &[ModelInstance],
-        entities: &[EntityDraw],
-    ) -> Result<(), RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view, instances, entities);
+    pub fn draw(&mut self, view: &View, drawables: Drawables<'_>) -> Result<(), RenderError> {
+        let scene = Self::scene(self.loaded.as_mut(), view, drawables);
         self.backend.draw(view, scene.as_ref())
     }
 
@@ -187,12 +205,11 @@ impl Renderer {
     pub fn capture(
         &mut self,
         view: &View,
-        instances: &[ModelInstance],
-        entities: &[EntityDraw],
+        drawables: Drawables<'_>,
         width: u32,
         height: u32,
     ) -> Result<Capture, RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view, instances, entities);
+        let scene = Self::scene(self.loaded.as_mut(), view, drawables);
         self.backend.capture(view, scene.as_ref(), width, height)
     }
 

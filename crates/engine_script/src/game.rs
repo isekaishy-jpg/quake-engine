@@ -195,6 +195,7 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "frame" => Value::Number(f64::from(entity.frame)),
         "skin" => Value::Number(f64::from(entity.skin)),
         "effects" => Value::Number(f64::from(entity.effects)),
+        "punchangle" => vector(sim.punch()),
         "weaponframe" => Value::Number(f64::from(sim.weapon_frame())),
         "weaponmodel" => Value::String(lua.create_string(sim.weapon_model_name())?),
         "view" => {
@@ -249,6 +250,7 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
     match field {
         "origin" => sim.set_origin(id, as_vec3(value)?),
         "velocity" => sim.set_velocity(id, as_vec3(value)?),
+        "punchangle" => sim.set_punch(as_vec3(value)?),
         "weaponmodel" => {
             let name = if let Value::String(name) = value {
                 name.to_string_lossy()

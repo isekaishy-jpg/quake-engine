@@ -9,7 +9,8 @@ use std::time::Duration;
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT, view_bob,
+    AmbientSounds, Bindings, Buttons, Client, DrawnEntity, EffectSource, Effects, Look, LookScale,
+    StepSmoother, VIEW_HEIGHT, view_bob,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::entity::ModelInstance;
@@ -22,12 +23,15 @@ use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{EntityDraw, Renderer, Target, View};
+use engine_render::{
+    Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw, Target,
+    View,
+};
 use engine_server::{Level, Server};
 use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point};
 
 use crate::commands;
-use crate::models::ModelBank;
+use crate::models::{DrawLists, Lighting, ModelBank};
 use crate::options::Options;
 use crate::sounds::SoundBank;
 
@@ -59,6 +63,35 @@ struct AudioLevels {
 
 /// How far the eye sits above a dead player's middle.
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
+
+/// A frame's picture.
+pub(crate) struct Picture {
+    /// The view.
+    pub(crate) view: View,
+    /// Where brush models are.
+    instances: Vec<ModelInstance>,
+    /// The other models.
+    entities: Vec<EntityDraw>,
+    /// The sprites.
+    sprites: Vec<SpriteDraw>,
+    /// The particles.
+    particles: Vec<ParticleDraw>,
+    /// The dynamic lights.
+    lights: Vec<LightDraw>,
+}
+
+impl Picture {
+    /// What's in it, as the renderer wants it.
+    pub(crate) fn drawables(&self) -> Drawables<'_> {
+        Drawables {
+            instances: &self.instances,
+            entities: &self.entities,
+            sprites: &self.sprites,
+            particles: &self.particles,
+            lights: &self.lights,
+        }
+    }
+}
 
 /// The state console commands work on.
 pub(crate) struct World {
@@ -110,6 +143,10 @@ pub(crate) struct World {
     ambience: Option<AmbientSounds>,
     /// Models loaded so far.
     pub(crate) models: ModelBank,
+    /// What the client shows of what's happening.
+    pub(crate) effects: Effects,
+    /// The colours particles are given in.
+    palette: Option<Palette>,
     /// What the player carries into the next level.
     next_parms: Option<Vec<f64>>,
     /// The map, for the light on models.
@@ -153,6 +190,8 @@ impl World {
         self.audio.set_ambient_clips(water, sky);
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         self.models.clear_numbers();
+        self.effects = Effects::default();
+        self.palette = Some(palette);
         self.map = Some(Arc::clone(&map));
         if let Some(renderer) = &mut self.renderer {
             renderer.load_map(map)?;
@@ -198,8 +237,11 @@ impl World {
                 self.renderer.as_mut(),
             );
         }
-        let _effects = client.take_effects();
-        let sounds = client.take_sounds();
+        for effect in client.take_effects() {
+            self.effects.start(&effect);
+        }
+        let mut sounds = client.take_sounds();
+        sounds.extend(self.effects.take_sounds());
         let static_sounds = client.take_static_sounds();
         let music = client.take_music();
         for sound in sounds {
@@ -265,29 +307,76 @@ impl World {
         (prints.unwrap_or_default(), level)
     }
 
-    /// The view, `leftover` seconds past the last tick. `frame_seconds` is
+    /// Follows what's on the client for effects, and returns the lights
+    /// shining now.
+    fn update_effects(
+        &mut self,
+        time: f32,
+        drawn: &[DrawnEntity],
+        player: EffectSource,
+    ) -> Vec<LightDraw> {
+        self.effects.update(time);
+        let mut sources: Vec<EffectSource> = drawn
+            .iter()
+            .map(|entity| EffectSource {
+                id: entity.state.id,
+                origin: entity.state.origin,
+                angles: entity.state.angles,
+                effects: entity.state.effects,
+                model_flags: self.models.flags(entity.state.model),
+            })
+            .collect();
+        sources.push(player);
+        self.effects.follow(&sources);
+        self.effects
+            .lights()
+            .map(|light| LightDraw {
+                origin: light.origin,
+                radius: light.radius,
+                min_light: light.min_light,
+            })
+            .collect()
+    }
+
+    /// The particles to draw, in their colours.
+    fn particle_draws(&self) -> Vec<ParticleDraw> {
+        let Some(palette) = &self.palette else {
+            return Vec::new();
+        };
+        self.effects
+            .particles()
+            .live()
+            .iter()
+            .map(|particle| {
+                let [red, green, blue] = palette.color(particle.color);
+                ParticleDraw {
+                    origin: particle.origin,
+                    color: ParticleColor { red, green, blue },
+                }
+            })
+            .collect()
+    }
+
+    /// The picture, `leftover` seconds past the last tick. `frame_seconds` is
     /// the time since the last view, for smoothing.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "angles and map time need no more than f32 for drawing"
     )]
-    pub(crate) fn view(
-        &mut self,
-        leftover: f32,
-        fraction: f32,
-        frame_seconds: f32,
-    ) -> (View, Vec<ModelInstance>, Vec<EntityDraw>) {
+    pub(crate) fn view(&mut self, leftover: f32, fraction: f32, frame_seconds: f32) -> Picture {
         let command = self.command();
         let mut origin = Vec3::ZERO;
         let mut instances = Vec::new();
-        let mut entities = Vec::new();
+        let mut lists = DrawLists::default();
+        let mut lights = Vec::new();
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
+        let mut punch = Vec3::ZERO;
+        let time = self.map_time as f32;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
             let body = state.origin + client.ground_lag(&state, fraction);
             let step = self.step.update(body.z, state.on_ground, frame_seconds);
             let speed = Vec3::new(state.velocity.x, state.velocity.y, 0.0).length();
-            let time = self.map_time as f32;
             let bob = view_bob(time, speed);
             let eye = if state.dead {
                 DEAD_VIEW_HEIGHT
@@ -302,11 +391,35 @@ impl World {
             };
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
-            if let Some(map) = &self.map {
-                for entity in client.draw_entities(fraction) {
-                    self.models.draw(&entity, map, &styles, time, &mut entities);
+            punch = client.punch(fraction);
+            let drawn = client.draw_entities(fraction);
+            let (model, frame) = client.weapon();
+            let player = EffectSource {
+                id: client.player_entity(),
+                origin: body,
+                angles: Vec3::new(self.look.pitch() as f32, self.look.yaw() as f32, 0.0),
+                effects: client.player_effects(),
+                model_flags: 0,
+            };
+            lights = self.update_effects(time + leftover, &drawn, player);
+            if let Some(map) = self.map.clone() {
+                let lighting = Lighting {
+                    map: &map,
+                    styles: &styles,
+                    lights: &lights,
+                    time,
+                };
+                for entity in &drawn {
+                    self.models.draw(entity, &lighting, &mut lists);
                 }
-                let (model, frame) = client.weapon();
+                for piece in self.effects.beam_pieces(player.id, body) {
+                    self.models.draw_beam(
+                        &piece,
+                        &self.filesystem,
+                        self.renderer.as_mut(),
+                        &mut lists,
+                    );
+                }
                 let yaw = self.look.yaw() as f32;
                 let pitch = self.look.pitch() as f32;
                 let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
@@ -314,26 +427,32 @@ impl World {
                 let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
                 // From `V_CalcRefdef`, with the status bar's 2 units.
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
-                let light = map.light_at(state.origin, &styles);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
-                entities.extend(self.models.draw_weapon(
+                lists.entities.extend(self.models.draw_weapon(
                     u32::from(model),
                     frame,
                     (placed, angles),
-                    light,
-                    time,
+                    state.origin,
+                    &lighting,
                 ));
             }
         }
         let view = View {
             origin,
-            yaw: self.look.yaw() as f32,
-            pitch: self.look.pitch() as f32,
+            yaw: self.look.yaw() as f32 + punch.y,
+            pitch: self.look.pitch() as f32 + punch.x,
             fov: self.fov,
             time: self.map_time as f32,
             styles,
         };
-        (view, instances, entities)
+        Picture {
+            view,
+            instances,
+            entities: lists.entities,
+            sprites: lists.sprites,
+            particles: self.particle_draws(),
+            lights,
+        }
     }
 }
 
@@ -433,6 +552,8 @@ impl Engine {
                 audio_settings: None,
                 ambience: None,
                 models: ModelBank::default(),
+                effects: Effects::default(),
+                palette: None,
                 next_parms: None,
                 map: None,
             },
@@ -626,13 +747,13 @@ impl PlatformApp for Engine {
                 clippy::cast_possible_truncation,
                 reason = "a frame's timing needs no more than f32"
             )]
-            let (view, instances, entities) = self.world.view(
+            let picture = self.world.view(
                 (fraction * tick_seconds) as f32,
                 fraction as f32,
                 frame.delta.as_secs_f64() as f32,
             );
             if let Some(renderer) = &mut self.world.renderer
-                && let Err(error) = renderer.draw(&view, &instances, &entities)
+                && let Err(error) = renderer.draw(&picture.view, picture.drawables())
             {
                 self.console.print(format!("renderer: {error}"));
                 self.show_output();

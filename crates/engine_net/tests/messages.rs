@@ -43,6 +43,7 @@ fn snapshot() -> Snapshot {
             model: 3,
             origin: Vec3::new(7.0, 8.0, 9.0),
             visible: true,
+            frame: 3,
             solid: false,
         }],
         entities: vec![EntityState {
@@ -57,6 +58,9 @@ fn snapshot() -> Snapshot {
         boxes: vec![(Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0))],
         weapon_model: 3,
         weapon_frame: 5,
+        player_entity: 7,
+        player_effects: 2,
+        punch: Vec3::new(-2.0, 0.0, 0.0),
     }
 }
 

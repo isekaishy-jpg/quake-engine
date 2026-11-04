@@ -16,6 +16,9 @@ use crate::table::{EntityId, SlotTable};
 /// can't move further than this at once.
 const MAX_COMMAND_SECONDS: f32 = 0.1;
 
+/// How fast the view recovers from a knock, in degrees a second.
+const PUNCH_RECOVERY: f32 = 10.0;
+
 /// The smallest corner of the player's box, from `PutClientInServer`.
 const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
 
@@ -180,6 +183,8 @@ pub struct Simulation {
     weapon_model: u16,
     /// The frame the player's weapon shows.
     weapon_frame: u16,
+    /// How far the view is knocked, in degrees.
+    punch: Vec3,
 }
 
 /// Whether two boxes overlap.
@@ -226,6 +231,7 @@ impl Simulation {
             shapes_sent: 0,
             weapon_model: 0,
             weapon_frame: 0,
+            punch: Vec3::ZERO,
         }
     }
 
@@ -278,6 +284,17 @@ impl Simulation {
         } else {
             self.shape_number(name)
         };
+    }
+
+    /// How far the view is knocked, in degrees.
+    #[must_use]
+    pub fn punch(&self) -> Vec3 {
+        self.punch
+    }
+
+    /// Knocks the view.
+    pub fn set_punch(&mut self, punch: Vec3) {
+        self.punch = punch;
     }
 
     /// The frame the player's weapon shows.
@@ -491,6 +508,7 @@ impl Simulation {
                     origin: entity.origin,
                     visible: entity.visible,
                     solid,
+                    frame: entity.frame,
                 })
             })
             .collect()
@@ -505,6 +523,9 @@ impl Simulation {
         self.view = (command.yaw, command.pitch);
         let mut command = *command;
         command.seconds = command.seconds.clamp(0.0, MAX_COMMAND_SECONDS);
+        // `DropPunchAngle`.
+        let knock = self.punch.length();
+        self.punch = self.punch.normalized() * (knock - PUNCH_RECOVERY * command.seconds).max(0.0);
         let instances = self.instances();
         let boxes = self.solid_boxes();
         player_move(

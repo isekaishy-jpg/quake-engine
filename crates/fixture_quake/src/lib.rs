@@ -13,6 +13,7 @@ mod items;
 mod mdl;
 mod pak;
 mod scripts;
+mod spr;
 mod texture;
 mod wav;
 
@@ -22,5 +23,6 @@ pub use items::parse_item_bsp;
 pub use mdl::parse_mdl;
 pub use pak::PakArchive;
 pub use scripts::SCRIPTS;
+pub use spr::parse_spr;
 pub use texture::{Palette, texture_kind};
 pub use wav::parse_wav;

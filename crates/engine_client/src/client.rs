@@ -79,6 +79,14 @@ pub struct Client {
     tick: u32,
     /// The player's weapon model and frame.
     weapon: (u16, u16),
+    /// The player's entity.
+    player_entity: u64,
+    /// The player's effect bits.
+    player_effects: u8,
+    /// The view's knock in the latest snapshot.
+    punch: Vec3,
+    /// The view's knock in the snapshot before it.
+    previous_punch: Vec3,
     /// Model names waiting to be loaded.
     model_names: Vec<(u16, String)>,
     /// Effects from the server, waiting to be shown.
@@ -118,6 +126,10 @@ impl Client {
             frame_changes: HashMap::new(),
             tick: 0,
             weapon: (0, 0),
+            player_entity: 0,
+            player_effects: 0,
+            punch: Vec3::ZERO,
+            previous_punch: Vec3::ZERO,
             model_names: Vec::new(),
             effects: Vec::new(),
             sounds: Vec::new(),
@@ -207,6 +219,25 @@ impl Client {
     #[must_use]
     pub fn weapon(&self) -> (u16, u16) {
         self.weapon
+    }
+
+    /// The player's entity.
+    #[must_use]
+    pub fn player_entity(&self) -> u64 {
+        self.player_entity
+    }
+
+    /// The player's effect bits.
+    #[must_use]
+    pub fn player_effects(&self) -> u8 {
+        self.player_effects
+    }
+
+    /// How far the view is knocked, in degrees, `fraction` of the way from the
+    /// last snapshot but one to the last.
+    #[must_use]
+    pub fn punch(&self, fraction: f32) -> Vec3 {
+        self.previous_punch.lerp(self.punch, fraction)
     }
 
     /// Takes the effects that have happened.
@@ -319,6 +350,10 @@ impl Client {
                     self.boxes = snapshot.boxes;
                     self.note_entities(snapshot.tick, snapshot.entities);
                     self.weapon = (snapshot.weapon_model, snapshot.weapon_frame);
+                    self.player_entity = snapshot.player_entity;
+                    self.player_effects = snapshot.player_effects;
+                    self.previous_punch = self.punch;
+                    self.punch = snapshot.punch;
                     let mut predicted = snapshot.player;
                     let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
                     for command in &pending {

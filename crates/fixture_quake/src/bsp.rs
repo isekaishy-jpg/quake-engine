@@ -68,6 +68,7 @@ fn missing_texture(name: &str) -> Texture {
             rgba,
         }],
         animation: None,
+        alternate: None,
     }
 }
 
@@ -104,6 +105,7 @@ fn import_texture(source: &BspMipTexture, palette: &Palette) -> Texture {
         kind,
         mips,
         animation: None,
+        alternate: None,
     }
 }
 
@@ -112,13 +114,37 @@ fn animation_key(name: &str) -> Option<(char, String)> {
     let mut characters = name.strip_prefix('+')?.chars();
     let frame = characters.next()?.to_ascii_lowercase();
     frame
-        .is_ascii_digit()
+        .is_ascii_alphanumeric()
         .then(|| (frame, characters.as_str().to_ascii_lowercase()))
 }
 
-/// Links the numbered frames of each animation, as `Mod_LoadTextures` does.
-/// The lettered `+a` frames are a brush entity's alternate state, so they
-/// aren't part of the cycle.
+/// Makes `frames` a cycle, if there's more than one.
+fn link_cycle(textures: &mut [Texture], frames: &[u32]) {
+    if frames.len() < 2 {
+        return;
+    }
+    for (position, &texture) in frames.iter().enumerate() {
+        if let Some(texture) = textures.get_mut(usize::try_from(texture).unwrap_or(usize::MAX)) {
+            texture.animation = Some(Animation {
+                frames: frames.to_vec(),
+                position: index(position),
+            });
+        }
+    }
+}
+
+/// Points every texture of `frames` at `other`.
+fn link_alternate(textures: &mut [Texture], frames: &[u32], other: u32) {
+    for &texture in frames {
+        if let Some(texture) = textures.get_mut(usize::try_from(texture).unwrap_or(usize::MAX)) {
+            texture.alternate = Some(other);
+        }
+    }
+}
+
+/// Links the frames of each animation, as `Mod_LoadTextures` does. The numbered
+/// `+0` frames are one cycle and the lettered `+a` frames another, and a brush
+/// entity swaps between the two by its frame.
 fn link_animations(textures: &mut [Texture]) {
     let mut groups: BTreeMap<String, BTreeMap<char, u32>> = BTreeMap::new();
     for (position, texture) in textures.iter().enumerate() {
@@ -130,18 +156,15 @@ fn link_animations(textures: &mut [Texture]) {
         }
     }
     for frames in groups.values() {
-        let frames: Vec<u32> = frames.values().copied().collect();
-        if frames.len() < 2 {
-            continue;
-        }
-        for (position, &texture) in frames.iter().enumerate() {
-            if let Some(texture) = textures.get_mut(usize::try_from(texture).unwrap_or(usize::MAX))
-            {
-                texture.animation = Some(Animation {
-                    frames: frames.clone(),
-                    position: index(position),
-                });
-            }
+        let (numbers, letters): (Vec<_>, Vec<_>) =
+            frames.iter().partition(|(frame, _)| frame.is_ascii_digit());
+        let numbers: Vec<u32> = numbers.into_iter().map(|(_, texture)| *texture).collect();
+        let letters: Vec<u32> = letters.into_iter().map(|(_, texture)| *texture).collect();
+        link_cycle(textures, &numbers);
+        link_cycle(textures, &letters);
+        if let (Some(&number), Some(&letter)) = (numbers.first(), letters.first()) {
+            link_alternate(textures, &numbers, letter);
+            link_alternate(textures, &letters, number);
         }
     }
 }

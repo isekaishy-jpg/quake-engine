@@ -7,8 +7,14 @@ use std::sync::Arc;
 use common::map;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
-use engine_map::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
-use engine_render::{Capture, EntityDraw, Renderer, Target, View};
+use engine_map::{
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, Sprite, SpriteFacing, SpriteFrame,
+    SpriteImage,
+};
+use engine_render::{
+    Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw,
+    Target, View,
+};
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
 /// failure fails the test, so a broken shader can't pass as a missing device.
@@ -29,6 +35,22 @@ fn view_from_above() -> View {
         fov: 90.0,
         time: 0.0,
         styles: [1.0; 64],
+    }
+}
+
+/// Only `instances`.
+fn with_instance(instances: &[ModelInstance]) -> Drawables<'_> {
+    Drawables {
+        instances,
+        ..Drawables::default()
+    }
+}
+
+/// Only `entities`.
+fn with_entity(entities: &[EntityDraw]) -> Drawables<'_> {
+    Drawables {
+        entities,
+        ..Drawables::default()
     }
 }
 
@@ -67,11 +89,15 @@ fn what_is_above_the_view_is_at_the_top_of_the_picture() {
     let mut view = view_from_above();
     view.origin = Vec3::new(-32.0, 64.0, -48.0);
     view.pitch = 0.0;
-    let capture = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let capture = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     assert!(lit_pixels(&capture, 0..32) > 0, "the top half shows it");
     assert_eq!(lit_pixels(&capture, 32..64), 0, "the bottom half doesn't");
     view.origin.z = 48.0;
-    let capture = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let capture = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     assert_eq!(lit_pixels(&capture, 0..32), 0, "the top half doesn't");
     assert!(lit_pixels(&capture, 32..64) > 0, "the bottom half shows it");
 }
@@ -86,7 +112,9 @@ fn what_is_left_of_the_view_is_at_the_left_of_the_picture() {
     let mut view = view_from_above();
     view.origin = Vec3::new(-32.0, -96.0, 48.0);
     view.pitch = 0.0;
-    let capture = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let capture = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     let lit_at = |columns: std::ops::Range<usize>| {
         let pixels = capture.rgba.as_chunks::<4>().0;
         pixels
@@ -107,7 +135,7 @@ fn overlay_text_appears_in_the_top_right_corner_only() {
     let view = view_from_above();
     renderer.set_overlay_text("88");
     let capture = renderer
-        .capture(&view, &[], &[], 320, 180)
+        .capture(&view, Drawables::default(), 320, 180)
         .expect("capture");
     let white = |x: std::ops::Range<usize>, y: std::ops::Range<usize>| {
         let pixels = capture.rgba.as_chunks::<4>().0;
@@ -119,7 +147,7 @@ fn overlay_text_appears_in_the_top_right_corner_only() {
     assert_eq!(white(0..280, 0..180), 0, "the rest doesn't");
     renderer.set_overlay_text("");
     let capture = renderer
-        .capture(&view, &[], &[], 320, 180)
+        .capture(&view, Drawables::default(), 320, 180)
         .expect("capture");
     let pixels = capture.rgba.as_chunks::<4>().0;
     assert!(
@@ -140,27 +168,30 @@ fn a_brush_model_draws_where_its_instance_is() {
     renderer.load_map(Arc::new(two)).expect("load");
     let view = view_from_above();
     let lit = |capture: &Capture| centre(capture)[1] > 32;
-    let empty = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let empty = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     assert!(!lit(&empty), "unlisted");
     let mut instance = ModelInstance {
         model: 1,
         origin: Vec3::ZERO,
         visible: true,
+        frame: 0,
         solid: true,
     };
     let shown = renderer
-        .capture(&view, &[instance], &[], 64, 64)
+        .capture(&view, with_instance(&[instance]), 64, 64)
         .expect("capture");
     assert!(lit(&shown), "in place");
     instance.origin = Vec3::new(1000.0, 0.0, 0.0);
     let moved = renderer
-        .capture(&view, &[instance], &[], 64, 64)
+        .capture(&view, with_instance(&[instance]), 64, 64)
         .expect("capture");
     assert!(!lit(&moved), "moved away");
     instance.origin = Vec3::ZERO;
     instance.visible = false;
     let hidden = renderer
-        .capture(&view, &[instance], &[], 64, 64)
+        .capture(&view, with_instance(&[instance]), 64, 64)
         .expect("capture");
     assert!(!lit(&hidden), "hidden");
 }
@@ -171,7 +202,7 @@ fn a_capture_has_the_size_asked_for() {
         return;
     };
     let capture = renderer
-        .capture(&view_from_above(), &[], &[], 32, 16)
+        .capture(&view_from_above(), Drawables::default(), 32, 16)
         .expect("capture");
     assert_eq!((capture.width, capture.height), (32, 16));
     assert_eq!(capture.rgba.len(), 32 * 16 * 4);
@@ -186,7 +217,7 @@ fn a_lit_white_surface_shows_its_doubled_light() {
     };
     renderer.load_map(Arc::new(map(1))).expect("load");
     let capture = renderer
-        .capture(&view_from_above(), &[], &[], 64, 64)
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
         .expect("capture");
     let [r, g, b, _] = centre(&capture);
     assert_eq!(r, 255, "400 of 255 clamps");
@@ -202,7 +233,9 @@ fn a_dark_style_darkens_the_surface() {
     renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.styles[0] = 0.0;
-    let capture = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let capture = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     assert_eq!(centre(&capture)[..3], [0, 0, 0]);
 }
 
@@ -214,7 +247,9 @@ fn a_view_with_the_surface_behind_shows_the_clear_colour() {
     renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.pitch = -89.9;
-    let capture = renderer.capture(&view, &[], &[], 64, 64).expect("capture");
+    let capture = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
     assert!(centre(&capture)[0] < 16);
 }
 
@@ -264,7 +299,7 @@ fn a_model_draws_where_it_is_with_its_light() {
     renderer.load_map(Arc::new(map(1))).expect("load");
     let number = renderer.add_model(Arc::new(triangle())).expect("add");
     let lit = renderer
-        .capture(&view_from_above(), &[], &[draw_of(number)], 64, 64)
+        .capture(&view_from_above(), with_entity(&[draw_of(number)]), 64, 64)
         .expect("capture");
     let [r, ..] = centre(&lit);
     assert!(
@@ -276,7 +311,7 @@ fn a_model_draws_where_it_is_with_its_light() {
         ..draw_of(number)
     };
     let dark = renderer
-        .capture(&view_from_above(), &[], &[dim], 64, 64)
+        .capture(&view_from_above(), with_entity(&[dim]), 64, 64)
         .expect("capture");
     assert!((98..=102).contains(&centre(&dark)[0]));
     let away = EntityDraw {
@@ -284,7 +319,7 @@ fn a_model_draws_where_it_is_with_its_light() {
         ..draw_of(number)
     };
     let gone = renderer
-        .capture(&view_from_above(), &[], &[away], 64, 64)
+        .capture(&view_from_above(), with_entity(&[away]), 64, 64)
         .expect("capture");
     assert_ne!(centre(&gone)[0], r);
 }
@@ -301,7 +336,7 @@ fn a_model_kept_in_front_shows_through_what_is_nearer() {
         ..draw_of(number)
     };
     let hidden = renderer
-        .capture(&view_from_above(), &[], &[below], 64, 64)
+        .capture(&view_from_above(), with_entity(&[below]), 64, 64)
         .expect("capture");
     assert_eq!(centre(&hidden)[0], 255, "the map's square is nearer");
     let in_front = EntityDraw {
@@ -309,7 +344,191 @@ fn a_model_kept_in_front_shows_through_what_is_nearer() {
         ..below
     };
     let shown = renderer
-        .capture(&view_from_above(), &[], &[in_front], 64, 64)
+        .capture(&view_from_above(), with_entity(&[in_front]), 64, 64)
         .expect("capture");
     assert!((198..=202).contains(&centre(&shown)[0]));
+}
+
+/// A magenta sprite 32 units square, with a hole in its top half.
+fn half_sprite() -> Sprite {
+    let mut rgba = [255, 0, 255, 255].repeat(32 * 32);
+    rgba[..32 * 16 * 4].fill(0);
+    Sprite {
+        facing: SpriteFacing::View,
+        images: vec![SpriteImage {
+            left: -16,
+            top: 16,
+            width: 32,
+            height: 32,
+            rgba,
+        }],
+        frames: vec![SpriteFrame {
+            first_image: 0,
+            image_count: 1,
+            image_ends: Vec::new(),
+        }],
+    }
+}
+
+/// A view looking along x at the point `(100, 0, 0)`.
+fn level_view() -> View {
+    View {
+        origin: Vec3::ZERO,
+        yaw: 0.0,
+        pitch: 0.0,
+        ..view_from_above()
+    }
+}
+
+/// How many pixels in `rows` are magenta.
+fn magenta(capture: &Capture, rows: std::ops::Range<u32>) -> usize {
+    let row_bytes = capture.width as usize * 4;
+    let bytes = &capture.rgba[rows.start as usize * row_bytes..rows.end as usize * row_bytes];
+    bytes
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .filter(|pixel| pixel[..3] == [255, 0, 255])
+        .count()
+}
+
+/// A sprite stands the right way up, facing the view, with holes in it.
+#[test]
+fn a_sprite_faces_the_view_and_keeps_its_holes() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let number = renderer
+        .add_sprite(Arc::new(half_sprite()))
+        .expect("sprite");
+    let sprites = [SpriteDraw {
+        sprite: number,
+        image: 0,
+        origin: Vec3::new(100.0, 0.0, 0.0),
+        angles: Vec3::ZERO,
+    }];
+    let drawables = Drawables {
+        sprites: &sprites,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&level_view(), drawables, 64, 64)
+        .expect("capture");
+    assert_eq!(magenta(&capture, 0..32), 0, "the top is a hole");
+    assert!(magenta(&capture, 32..64) > 20, "the bottom shows");
+}
+
+/// A particle is a square of its own colour, at its own place.
+#[test]
+fn a_particle_shows_its_colour() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let particles = [ParticleDraw {
+        origin: Vec3::new(100.0, 0.0, 0.0),
+        color: ParticleColor {
+            red: 255,
+            green: 0,
+            blue: 255,
+        },
+    }];
+    let drawables = Drawables {
+        particles: &particles,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&level_view(), drawables, 240, 240)
+        .expect("capture");
+    assert_eq!(&centre(&capture)[..3], [255, 0, 255]);
+    let pixels = magenta(&capture, 0..240);
+    assert!(
+        (4..=16).contains(&pixels),
+        "2.56 pixels from the middle: {pixels}"
+    );
+}
+
+/// A dynamic light adds to the light on a surface, near it and not far off.
+#[test]
+fn a_dynamic_light_brightens_what_it_reaches() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = view_from_above();
+    let plain = centre(
+        &renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture"),
+    );
+    let light_at = |origin| LightDraw {
+        origin,
+        radius: 200.0,
+        min_light: 0.0,
+    };
+    let near = [light_at(Vec3::new(64.0, 64.0, 16.0))];
+    let lit = centre(
+        &renderer
+            .capture(
+                &view,
+                Drawables {
+                    lights: &near,
+                    ..Drawables::default()
+                },
+                64,
+                64,
+            )
+            .expect("capture"),
+    );
+    assert!(lit[2] > plain[2] + 50, "{plain:?} to {lit:?}");
+    let far = [light_at(Vec3::new(64.0, 64.0, 500.0))];
+    let unlit = centre(
+        &renderer
+            .capture(
+                &view,
+                Drawables {
+                    lights: &far,
+                    ..Drawables::default()
+                },
+                64,
+                64,
+            )
+            .expect("capture"),
+    );
+    assert_eq!(unlit, plain);
+}
+
+/// A brush entity with a frame shows its texture's alternate, as a used button
+/// does, and the world never does.
+#[test]
+fn a_frame_swaps_a_brush_model_to_its_alternate_texture() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut two = map(2);
+    two.tree.leaves[1].face_count = 0;
+    two.tree.leaf_faces.clear();
+    let mut other = two.textures[0].clone();
+    other.mips[0].rgba.fill(0);
+    two.textures.push(other);
+    two.textures[0].alternate = Some(1);
+    renderer.load_map(Arc::new(two)).expect("load");
+    let view = view_from_above();
+    let mut instance = ModelInstance {
+        model: 1,
+        origin: Vec3::ZERO,
+        visible: true,
+        solid: true,
+        frame: 0,
+    };
+    let plain = renderer
+        .capture(&view, with_instance(&[instance]), 64, 64)
+        .expect("capture");
+    assert!(centre(&plain)[1] > 32, "lit");
+    instance.frame = 1;
+    let used = renderer
+        .capture(&view, with_instance(&[instance]), 64, 64)
+        .expect("capture");
+    assert!(centre(&used)[1] < 8, "the black alternate");
 }

@@ -146,6 +146,11 @@ impl Server {
             boxes: simulation.solid_boxes(),
             weapon_model: simulation.weapon_model(),
             weapon_frame: simulation.weapon_frame(),
+            player_entity: simulation.player_id().to_bits(),
+            player_effects: simulation
+                .entity(simulation.player_id())
+                .map_or(0, |entity| entity.effects),
+            punch: simulation.punch(),
         };
         self.transport
             .send(ServerMessage::Snapshot(snapshot).encode());

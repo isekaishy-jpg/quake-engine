@@ -29,7 +29,8 @@ impl Palette {
     }
 
     /// The colour of `index`.
-    fn color(&self, index: u8) -> [u8; 3] {
+    #[must_use]
+    pub fn color(&self, index: u8) -> [u8; 3] {
         self.colors[usize::from(index)]
     }
 

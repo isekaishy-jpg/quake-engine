@@ -2,10 +2,9 @@
 
 use std::sync::Arc;
 
-use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, TextureKind};
+use engine_map::{AliasModel, Map, Sprite, TextureKind};
 use vulkane::safe::{
     AccessFlags, ApiVersion, AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, Buffer,
     BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
@@ -21,15 +20,17 @@ use vulkane::safe::{
     VertexInputBinding, WaitSemaphore,
 };
 
-use crate::alias::{
-    ALIAS_PUSH_SIZE, EntityDraw, POSE_CORNER_BYTES, pose_bytes, push_bytes, uv_bytes,
-};
+use crate::alias::{ALIAS_PUSH_SIZE, POSE_CORNER_BYTES, pose_bytes, push_bytes, uv_bytes};
 use crate::error::RenderError;
 use crate::matrix::view_projection;
 use crate::overlay::{
     ATLAS_HEIGHT, ATLAS_WIDTH, MAX_VERTICES, VERTEX_FLOATS, font_atlas, overlay_vertices,
 };
-use crate::renderer::{Capture, Target, View};
+use crate::renderer::{Capture, Drawables, Target, View};
+use crate::sprite::{
+    LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE, ViewAxes,
+    sprite_axes, sprite_push_bytes, write_particle,
+};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, Vertex, WorldMesh};
 
@@ -48,8 +49,9 @@ const MODEL_OFFSET_SIZE: u32 = 16;
 /// The `VK_INDEX_TYPE_UINT32` value.
 const INDEX_TYPE_U32: u32 = 1;
 
-/// Bytes in the frame uniforms: a matrix, two vectors and 64 styles.
-const FRAME_SIZE: usize = 64 + 16 + 16 + 256;
+/// Bytes in the frame uniforms: a matrix, two vectors, 64 styles, and each
+/// light's vector and least light.
+const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20;
 
 /// Texture frames per second, from `R_TextureAnimation`.
 const ANIMATION_RATE: f32 = 5.0;
@@ -63,6 +65,9 @@ const WORLD_SHADER: &str = include_str!("shaders/world.wgsl");
 /// The overlay shader.
 const ALIAS_SHADER: &str = include_str!("shaders/alias.wgsl");
 
+/// The shader of sprites and particles.
+const SPRITE_SHADER: &str = include_str!("shaders/sprite.wgsl");
+
 /// The overlay's shader.
 const OVERLAY_SHADER: &str = include_str!("shaders/overlay.wgsl");
 
@@ -74,10 +79,8 @@ pub(crate) struct Scene<'a> {
     pub(crate) mesh: &'a WorldMesh,
     /// What's visible.
     pub(crate) visible: &'a VisibleSet,
-    /// Where brush models are.
-    pub(crate) instances: &'a [ModelInstance],
-    /// The other models to draw.
-    pub(crate) entities: &'a [EntityDraw],
+    /// Everything else in the frame.
+    pub(crate) drawables: Drawables<'a>,
     /// Whether `visible` changed since it was last uploaded.
     pub(crate) changed: bool,
 }
@@ -182,7 +185,47 @@ struct GpuAlias {
     _pool: DescriptorPool,
 }
 
-/// The four pipelines.
+/// A sprite on the GPU.
+struct GpuSprite {
+    /// The sprite, for its pictures' sizes.
+    sprite: Arc<Sprite>,
+    /// A descriptor set for each picture.
+    sets: Vec<DescriptorSet>,
+    /// Kept alive for the sets.
+    _images: Vec<GpuImage>,
+    /// Kept alive for the sets.
+    _pool: DescriptorPool,
+}
+
+/// The layouts of the pipelines.
+struct Layouts {
+    /// The world's.
+    world: PipelineLayout,
+    /// Models'.
+    alias: PipelineLayout,
+    /// Sprites'.
+    sprite: PipelineLayout,
+    /// Particles'.
+    particle: PipelineLayout,
+}
+
+/// What recording a frame needs.
+struct Recorder<'a> {
+    /// The layouts.
+    layouts: &'a Layouts,
+    /// The pipelines.
+    pipelines: &'a Pipelines,
+    /// Every model.
+    models: &'a [GpuAlias],
+    /// Every sprite.
+    sprites: &'a [GpuSprite],
+    /// The particles to draw.
+    particles: &'a GpuBuffer,
+    /// The map.
+    map: &'a GpuMap,
+}
+
+/// The pipelines.
 struct Pipelines {
     /// Lit surfaces.
     solid: GraphicsPipeline,
@@ -194,6 +237,10 @@ struct Pipelines {
     sky: GraphicsPipeline,
     /// Alias models.
     alias: GraphicsPipeline,
+    /// Sprites.
+    sprite: GraphicsPipeline,
+    /// Particles.
+    particle: GraphicsPipeline,
 }
 
 impl Pipelines {
@@ -229,12 +276,14 @@ pub(crate) struct Backend {
     frame_layout: DescriptorSetLayout,
     /// The texture set layout.
     texture_layout: DescriptorSetLayout,
-    /// The set used with no map.
-    pipeline_layout: PipelineLayout,
-    /// The layout of model pipelines.
-    alias_layout: PipelineLayout,
+    /// The layouts of the pipelines.
+    layouts: Layouts,
     /// Every model uploaded.
     models: Vec<GpuAlias>,
+    /// Every sprite uploaded.
+    sprites: Vec<GpuSprite>,
+    /// The particles to draw, rewritten each frame.
+    particles: GpuBuffer,
     /// The pipelines.
     pipelines: Pipelines,
     /// The pass ending ready to present.
@@ -396,13 +445,35 @@ fn depth_image(
     device_image(device, physical, image, true)
 }
 
-/// Writes `view`'s uniforms into `out`.
-fn frame_bytes(view: &View, aspect: f32) -> Vec<u8> {
+/// `view`'s uniforms, with `lights`.
+#[expect(
+    clippy::cast_precision_loss,
+    reason = "there are at most a few dozen lights"
+)]
+fn frame_bytes(view: &View, aspect: f32, lights: &[LightDraw]) -> Vec<u8> {
+    let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
     let matrix = view_projection(view.origin, view.yaw, view.pitch, view.fov, aspect);
     let eye = [view.origin.x, view.origin.y, view.origin.z, 1.0];
-    let params = [view.time, 0.0, 0.0, 0.0];
+    let params = [view.time, aspect, lights.len() as f32, 0.0];
+    let mut positions = [0.0; MAX_LIGHT_DRAWS * 4];
+    let mut cuts = [0.0; MAX_LIGHT_DRAWS];
+    for ((light, position), cut) in lights
+        .iter()
+        .zip(positions.as_chunks_mut::<4>().0)
+        .zip(&mut cuts)
+    {
+        *position = [light.origin.x, light.origin.y, light.origin.z, light.radius];
+        *cut = light.min_light;
+    }
     let mut out = Vec::with_capacity(FRAME_SIZE);
-    for value in matrix.iter().chain(&eye).chain(&params).chain(&view.styles) {
+    for value in matrix
+        .iter()
+        .chain(&eye)
+        .chain(&params)
+        .chain(&view.styles)
+        .chain(&positions)
+        .chain(&cuts)
+    {
         out.extend_from_slice(&value.to_le_bytes());
     }
     out
@@ -476,26 +547,24 @@ impl Backend {
                 image_binding(1, DescriptorType::SAMPLER),
             ],
         )?;
-        let pipeline_layout = PipelineLayout::with_push_constants(
-            &device,
-            &[&frame_layout, &texture_layout],
-            &[PushConstantRange {
-                stage_flags: ShaderStageFlags::VERTEX,
-                offset: 0,
-                size: MODEL_OFFSET_SIZE,
-            }],
-        )?;
-        let alias_layout = PipelineLayout::with_push_constants(
-            &device,
-            &[&frame_layout, &texture_layout],
-            &[PushConstantRange {
-                stage_flags: ShaderStageFlags::VERTEX,
-                offset: 0,
-                size: ALIAS_PUSH_SIZE,
-            }],
-        )?;
-        let pipelines =
-            Self::make_pipelines(&device, &pipeline_layout, &alias_layout, &present_pass)?;
+        let textured_layout = |size| {
+            PipelineLayout::with_push_constants(
+                &device,
+                &[&frame_layout, &texture_layout],
+                &[PushConstantRange {
+                    stage_flags: ShaderStageFlags::VERTEX,
+                    offset: 0,
+                    size,
+                }],
+            )
+        };
+        let layouts = Layouts {
+            world: textured_layout(MODEL_OFFSET_SIZE)?,
+            alias: textured_layout(ALIAS_PUSH_SIZE)?,
+            sprite: textured_layout(SPRITE_PUSH_SIZE)?,
+            particle: PipelineLayout::new(&device, &[&frame_layout])?,
+        };
+        let pipelines = Self::make_pipelines(&device, &layouts, &present_pass)?;
         let texture_sampler = Sampler::new_mipmapped(
             &device,
             SamplerCreateInfo {
@@ -511,6 +580,12 @@ impl Backend {
         )?;
         let light_sampler = Sampler::new(&device, SamplerCreateInfo::default())?;
         let uniforms = host_buffer(&device, &physical, FRAME_SIZE, BufferUsage::UNIFORM_BUFFER)?;
+        let particles = host_buffer(
+            &device,
+            &physical,
+            MAX_PARTICLE_DRAWS * PARTICLE_BYTES,
+            BufferUsage::VERTEX_BUFFER,
+        )?;
         let command_pool = CommandPool::new(&device, queue_family)?;
         let available = Semaphore::binary(&device)?;
         let mut backend = Self {
@@ -524,9 +599,10 @@ impl Backend {
             uniforms,
             frame_layout,
             texture_layout,
-            pipeline_layout,
-            alias_layout,
+            layouts,
             models: Vec::new(),
+            sprites: Vec::new(),
+            particles,
             pipelines,
             present_pass,
             capture_pass,
@@ -786,56 +862,94 @@ impl Backend {
         Ok(u32::try_from(self.models.len() - 1).unwrap_or(u32::MAX))
     }
 
-    /// Records the draw calls of the models in `scene`.
-    fn record_models(
-        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        layout: &PipelineLayout,
-        pipelines: &Pipelines,
-        models: &[GpuAlias],
-        map: &GpuMap,
-        scene: &Scene<'_>,
-    ) {
-        if scene.entities.is_empty() {
-            return;
+    /// Uploads a sprite, and returns its number.
+    pub(crate) fn add_sprite(&mut self, sprite: Arc<Sprite>) -> Result<u32, RenderError> {
+        let sets = u32::try_from(sprite.images.len().max(1)).unwrap_or(u32::MAX);
+        let pool = DescriptorPool::new(
+            &self.device,
+            sets,
+            &[
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: sets,
+                },
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLER,
+                    descriptor_count: sets,
+                },
+            ],
+        )?;
+        let mut images = Vec::with_capacity(sprite.images.len());
+        let mut image_sets = Vec::with_capacity(sprite.images.len());
+        for picture in &sprite.images {
+            let levels = [(picture.width, picture.height, picture.rgba.as_slice())];
+            let image = self.upload_image(&levels, Format::R8G8B8A8_UNORM)?;
+            let set = pool.allocate(&self.texture_layout)?;
+            set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            set.write_sampler(1, &self.texture_sampler);
+            image_sets.push(set);
+            images.push(image);
         }
-        rec.bind_graphics_pipeline(&pipelines.alias);
-        for draw in scene.entities {
-            let Some(gpu) = models.get(draw.model as usize) else {
-                continue;
-            };
-            let skin = gpu
-                .skin_sets
-                .get(draw.skin as usize)
-                .or(gpu.skin_sets.first());
-            let Some(skin) = skin else {
-                continue;
-            };
-            let corners = gpu.model.corners.len();
-            let pose_size = (corners * POSE_CORNER_BYTES) as u64;
-            rec.bind_vertex_buffers(
-                0,
-                &[
-                    (&gpu.poses.buffer, u64::from(draw.pose) * pose_size),
-                    (&gpu.poses.buffer, u64::from(draw.next_pose) * pose_size),
-                    (&gpu.uvs.buffer, 0),
-                ],
-            );
-            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, skin]);
-            rec.push_constants(
-                layout,
-                ShaderStageFlags::VERTEX,
-                0,
-                &push_bytes(draw, &gpu.model),
-            );
-            rec.draw(u32::try_from(corners).unwrap_or(0), 1, 0, 0);
-        }
+        self.sprites.push(GpuSprite {
+            sprite,
+            sets: image_sets,
+            _images: images,
+            _pool: pool,
+        });
+        Ok(u32::try_from(self.sprites.len() - 1).unwrap_or(u32::MAX))
     }
 
-    /// The four pipelines, which differ in their fragment stage.
+    /// The pipelines of sprites and particles.
+    fn make_effect_pipelines(
+        device: &Device,
+        layouts: &Layouts,
+        pass: &RenderPass,
+    ) -> Result<(GraphicsPipeline, GraphicsPipeline), RenderError> {
+        let spirv = vulkane::safe::naga::compile_wgsl(SPRITE_SHADER)
+            .map_err(|error| RenderError(error.to_string()))?;
+        let shader = ShaderModule::from_spirv(device, &spirv)?;
+        let sprite = GraphicsPipelineBuilder::new(&layouts.sprite, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_sprite")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_sprite")
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .build(device)?;
+        let particle = GraphicsPipelineBuilder::new(&layouts.particle, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+            .vertex_input(
+                &[VertexInputBinding {
+                    binding: 0,
+                    stride: u32::try_from(PARTICLE_BYTES).unwrap_or(0),
+                    input_rate: InputRate::INSTANCE,
+                }],
+                &[
+                    VertexInputAttribute {
+                        location: 0,
+                        binding: 0,
+                        format: Format::R32G32B32_SFLOAT,
+                        offset: 0,
+                    },
+                    VertexInputAttribute {
+                        location: 1,
+                        binding: 0,
+                        format: Format::R8G8B8A8_UNORM,
+                        offset: 12,
+                    },
+                ],
+            )
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, false)
+            .build(device)?;
+        Ok((sprite, particle))
+    }
+
+    /// The pipelines, most of which differ only in their fragment stage.
     fn make_pipelines(
         device: &Device,
-        layout: &PipelineLayout,
-        alias_layout: &PipelineLayout,
+        layouts: &Layouts,
         pass: &RenderPass,
     ) -> Result<Pipelines, RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(WORLD_SHADER)
@@ -860,7 +974,7 @@ impl Backend {
             attribute(4, Format::R8G8B8A8_UINT, 32),
         ];
         let pipeline = |entry| {
-            GraphicsPipelineBuilder::new(layout, pass)
+            GraphicsPipelineBuilder::new(&layouts.world, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
                 .stage(GraphicsShaderStage::Fragment, &shader, entry)
                 .vertex_input(&bindings, &attributes)
@@ -869,12 +983,15 @@ impl Backend {
                 .depth_test(true, true)
                 .build(device)
         };
+        let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass)?;
         Ok(Pipelines {
             solid: pipeline("fs_solid")?,
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,
             sky: pipeline("fs_sky")?,
-            alias: Self::make_alias_pipeline(device, alias_layout, pass)?,
+            alias: Self::make_alias_pipeline(device, &layouts.alias, pass)?,
+            sprite,
+            particle,
         })
     }
 
@@ -1167,8 +1284,18 @@ impl Backend {
         scene: Option<&Scene<'_>>,
         aspect: f32,
     ) -> Result<(), RenderError> {
-        let bytes = frame_bytes(view, aspect);
+        let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
+        let bytes = frame_bytes(view, aspect, lights);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
+        if let Some(scene) = scene
+            && !scene.drawables.particles.is_empty()
+        {
+            let mut mapped = self.particles.memory.map()?;
+            let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<PARTICLE_BYTES>();
+            for (particle, chunk) in scene.drawables.particles.iter().zip(target) {
+                write_particle(particle, chunk);
+            }
+        }
         if let (Some(scene), Some(map)) = (scene, &mut self.map)
             && scene.changed
         {
@@ -1181,71 +1308,16 @@ impl Backend {
         Ok(())
     }
 
-    /// Records the draw calls of `scene`.
-    fn record_world(
-        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        layout: &PipelineLayout,
-        pipelines: &Pipelines,
-        map: &GpuMap,
-        scene: &Scene<'_>,
-        time: f32,
-        size: (u32, u32),
-    ) {
-        #[expect(
-            clippy::cast_precision_loss,
-            reason = "window sizes are far below 2^24"
-        )]
-        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
-        rec.set_scissor(0, 0, size.0, size.1);
-        rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
-        rec.bind_index_buffer(&map.indices.buffer, 0, INDEX_TYPE_U32);
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "time is never negative, and the frame count wraps by design"
-        )]
-        let step = (time * ANIMATION_RATE) as u32;
-        let mut bound = None;
-        let mut draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-                        batch: u32,
-                        first: u32,
-                        count: u32| {
-            let Some(batch) = scene.mesh.batches.get(batch as usize) else {
-                return;
-            };
-            let texture = animated_texture(scene.map, batch.texture, step);
-            let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
-                return;
-            };
-            if bound != Some(batch.kind) {
-                rec.bind_graphics_pipeline(pipelines.get(batch.kind));
-                bound = Some(batch.kind);
-            }
-            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, set]);
-            rec.draw_indexed(count, 1, first, 0, 0);
-        };
-        rec.push_constants(
-            layout,
-            ShaderStageFlags::VERTEX,
-            0,
-            &offset_bytes(Vec3::ZERO),
-        );
-        for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
-            if count > 0 {
-                draw(rec, batch, first, count);
-            }
-        }
-        for instance in scene.instances.iter().filter(|instance| instance.visible) {
-            let Some(ranges) = scene.mesh.model_ranges.get(instance.model as usize) else {
-                continue;
-            };
-            let bytes = offset_bytes(instance.origin);
-            rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
-            for range in ranges {
-                let first = scene.mesh.world_index_count + range.first;
-                draw(rec, range.batch, first, range.count);
-            }
-        }
+    /// What recording a frame needs, once there's a map.
+    fn recorder(&self) -> Option<Recorder<'_>> {
+        Some(Recorder {
+            layouts: &self.layouts,
+            pipelines: &self.pipelines,
+            models: &self.models,
+            sprites: &self.sprites,
+            particles: &self.particles,
+            map: self.map.as_ref()?,
+        })
     }
 
     /// Draws to the window.
@@ -1294,24 +1366,8 @@ impl Backend {
                     },
                 ],
             );
-            if let (Some(scene), Some(map)) = (scene, &self.map) {
-                Self::record_world(
-                    &mut rec,
-                    &self.pipeline_layout,
-                    &self.pipelines,
-                    map,
-                    scene,
-                    view.time,
-                    extent,
-                );
-                Self::record_models(
-                    &mut rec,
-                    &self.alias_layout,
-                    &self.pipelines,
-                    &self.models,
-                    map,
-                    scene,
-                );
+            if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
+                recorder.record(&mut rec, scene, view, extent);
             }
             Self::record_overlay(&mut rec, self.overlay.as_ref(), extent);
             rec.end_render_pass();
@@ -1397,24 +1453,8 @@ impl Backend {
                         },
                     ],
                 );
-                if let (Some(scene), Some(map)) = (scene, &self.map) {
-                    Self::record_world(
-                        rec,
-                        &self.pipeline_layout,
-                        &self.pipelines,
-                        map,
-                        scene,
-                        view.time,
-                        (width, height),
-                    );
-                    Self::record_models(
-                        rec,
-                        &self.alias_layout,
-                        &self.pipelines,
-                        &self.models,
-                        map,
-                        scene,
-                    );
+                if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
+                    recorder.record(rec, scene, view, (width, height));
                 }
                 Self::record_overlay(rec, self.overlay.as_ref(), (width, height));
                 rec.end_render_pass();
@@ -1445,6 +1485,191 @@ impl Backend {
     }
 }
 
+impl Recorder<'_> {
+    /// Records everything in `scene`.
+    fn record(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        view: &View,
+        size: (u32, u32),
+    ) {
+        self.record_world(rec, scene, view.time, size);
+        self.record_models(rec, scene);
+        self.record_sprites(rec, scene, view);
+        self.record_particles(rec, scene);
+    }
+
+    /// Records the world and brush models.
+    fn record_world(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        time: f32,
+        size: (u32, u32),
+    ) {
+        let map = self.map;
+        let layout = &self.layouts.world;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
+        rec.bind_index_buffer(&map.indices.buffer, 0, INDEX_TYPE_U32);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "time is never negative, and the frame count wraps by design"
+        )]
+        let step = (time * ANIMATION_RATE) as u32;
+        let mut bound = None;
+        let mut draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+                        batch: u32,
+                        first: u32,
+                        count: u32,
+                        frame: u16| {
+            let Some(batch) = scene.mesh.batches.get(batch as usize) else {
+                return;
+            };
+            let texture = animated_texture(scene.map, batch.texture, step, frame);
+            let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
+                return;
+            };
+            if bound != Some(batch.kind) {
+                rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
+                bound = Some(batch.kind);
+            }
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, set]);
+            rec.draw_indexed(count, 1, first, 0, 0);
+        };
+        rec.push_constants(
+            layout,
+            ShaderStageFlags::VERTEX,
+            0,
+            &offset_bytes(Vec3::ZERO),
+        );
+        for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
+            if count > 0 {
+                draw(rec, batch, first, count, 0);
+            }
+        }
+        for instance in scene
+            .drawables
+            .instances
+            .iter()
+            .filter(|instance| instance.visible)
+        {
+            let Some(ranges) = scene.mesh.model_ranges.get(instance.model as usize) else {
+                continue;
+            };
+            let bytes = offset_bytes(instance.origin);
+            rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
+            for range in ranges {
+                let first = scene.mesh.world_index_count + range.first;
+                draw(rec, range.batch, first, range.count, instance.frame);
+            }
+        }
+    }
+
+    /// Records the models.
+    fn record_models(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+    ) {
+        if scene.drawables.entities.is_empty() {
+            return;
+        }
+        let layout = &self.layouts.alias;
+        rec.bind_graphics_pipeline(&self.pipelines.alias);
+        for draw in scene.drawables.entities {
+            let Some(gpu) = self.models.get(draw.model as usize) else {
+                continue;
+            };
+            let skin = gpu
+                .skin_sets
+                .get(draw.skin as usize)
+                .or(gpu.skin_sets.first());
+            let Some(skin) = skin else {
+                continue;
+            };
+            let corners = gpu.model.corners.len();
+            let pose_size = (corners * POSE_CORNER_BYTES) as u64;
+            rec.bind_vertex_buffers(
+                0,
+                &[
+                    (&gpu.poses.buffer, u64::from(draw.pose) * pose_size),
+                    (&gpu.poses.buffer, u64::from(draw.next_pose) * pose_size),
+                    (&gpu.uvs.buffer, 0),
+                ],
+            );
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&self.map.frame_set, skin]);
+            rec.push_constants(
+                layout,
+                ShaderStageFlags::VERTEX,
+                0,
+                &push_bytes(draw, &gpu.model),
+            );
+            rec.draw(u32::try_from(corners).unwrap_or(0), 1, 0, 0);
+        }
+    }
+
+    /// Records the sprites.
+    fn record_sprites(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        view: &View,
+    ) {
+        if scene.drawables.sprites.is_empty() {
+            return;
+        }
+        let layout = &self.layouts.sprite;
+        let axes = ViewAxes::new(view.pitch, view.yaw, 0.0);
+        rec.bind_graphics_pipeline(&self.pipelines.sprite);
+        for draw in scene.drawables.sprites {
+            let Some(gpu) = self.sprites.get(draw.sprite as usize) else {
+                continue;
+            };
+            let at = draw.image as usize;
+            let (Some(picture), Some(set)) = (gpu.sprite.images.get(at), gpu.sets.get(at)) else {
+                continue;
+            };
+            let facing = gpu.sprite.facing;
+            let to_sprite = draw.origin - view.origin;
+            let Some(turned) = sprite_axes(facing, &axes, to_sprite, draw.angles) else {
+                continue;
+            };
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&self.map.frame_set, set]);
+            rec.push_constants(
+                layout,
+                ShaderStageFlags::VERTEX,
+                0,
+                &sprite_push_bytes(draw, picture, turned),
+            );
+            rec.draw(6, 1, 0, 0);
+        }
+    }
+
+    /// Records the particles.
+    fn record_particles(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+    ) {
+        let count = scene.drawables.particles.len().min(MAX_PARTICLE_DRAWS);
+        if count == 0 {
+            return;
+        }
+        rec.bind_graphics_pipeline(&self.pipelines.particle);
+        rec.bind_graphics_descriptor_sets(&self.layouts.particle, 0, &[&self.map.frame_set]);
+        rec.bind_vertex_buffers(0, &[(&self.particles.buffer, 0)]);
+        rec.draw(6, u32::try_from(count).unwrap_or(0), 0, 0);
+    }
+}
+
 /// A model's position, as push constant bytes.
 fn offset_bytes(origin: Vec3) -> [u8; MODEL_OFFSET_SIZE as usize] {
     let mut bytes = [0; MODEL_OFFSET_SIZE as usize];
@@ -1459,8 +1684,14 @@ fn offset_bytes(origin: Vec3) -> [u8; MODEL_OFFSET_SIZE as usize] {
     bytes
 }
 
-/// The texture to show for `texture` at animation `step`.
-fn animated_texture(map: &Map, texture: u32, step: u32) -> u32 {
+/// The texture to show for `texture` at animation `step`, on something showing
+/// `frame`, from `R_TextureAnimation`.
+fn animated_texture(map: &Map, texture: u32, step: u32, frame: u16) -> u32 {
+    let base = map.textures.get(texture as usize);
+    let texture = base
+        .filter(|_| frame != 0)
+        .and_then(|base| base.alternate)
+        .unwrap_or(texture);
     map.textures
         .get(texture as usize)
         .and_then(|texture| texture.animation.as_ref())

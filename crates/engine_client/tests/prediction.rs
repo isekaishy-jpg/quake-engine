@@ -56,6 +56,9 @@ fn answer(server: &mut Loopback, acknowledged: u32, player: PlayerState) {
         boxes: Vec::new(),
         weapon_model: 0,
         weapon_frame: 0,
+        player_entity: 0,
+        player_effects: 0,
+        punch: Vec3::ZERO,
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -210,6 +213,7 @@ fn instance(z: f32) -> ModelInstance {
         model: 1,
         origin: Vec3::new(0.0, 0.0, z),
         visible: true,
+        frame: 0,
         solid: true,
     }
 }
@@ -228,6 +232,9 @@ fn snapshot_with(server: &mut Loopback, tick: u32, instances: Vec<ModelInstance>
         boxes: Vec::new(),
         weapon_model: 0,
         weapon_frame: 0,
+        player_entity: 0,
+        player_effects: 0,
+        punch: Vec3::ZERO,
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -336,6 +343,9 @@ fn snapshot_of(server: &mut Loopback, tick: u32, entities: Vec<EntityState>) {
         boxes: Vec::new(),
         weapon_model: 2,
         weapon_frame: 5,
+        player_entity: 0,
+        player_effects: 0,
+        punch: Vec3::ZERO,
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }

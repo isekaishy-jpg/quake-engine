@@ -18,6 +18,7 @@ pub(crate) fn map(models: u32) -> Map {
                 rgba: [255, 255, 255, 255].repeat(64 * 64),
             }],
             animation: None,
+            alternate: None,
         }],
         light: vec![[200, 100, 50]; 81],
         lit: true,

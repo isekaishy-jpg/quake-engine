@@ -109,6 +109,7 @@ end
 
 function W_FireShotgun(self)
 	sound(self, CHAN_WEAPON, "weapons/guncock.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-2, 0, 0)
 	self.ammo_shells -= 1
 	self.currentammo = self.ammo_shells
 	FireBullets(self, 6, aim(self, 100000), vector.create(0.04, 0.04, 0))
@@ -120,6 +121,7 @@ function W_FireSuperShotgun(self)
 		return
 	end
 	sound(self, CHAN_WEAPON, "weapons/shotgn2.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-4, 0, 0)
 	self.ammo_shells -= 2
 	self.currentammo = self.ammo_shells
 	FireBullets(self, 14, aim(self, 100000), vector.create(0.14, 0.08, 0))
@@ -174,6 +176,7 @@ function W_FireRocket(self)
 	self.ammo_rockets -= 1
 	self.currentammo = self.ammo_rockets
 	sound(self, CHAN_WEAPON, "weapons/sgun1.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-2, 0, 0)
 	local missile = spawn()
 	missile.owner = self
 	missile.movetype = MOVETYPE_FLYMISSILE
@@ -230,6 +233,7 @@ function W_FireLightning(self)
 		sound(self, CHAN_WEAPON, "weapons/lhit.wav", 1, ATTN_NORM)
 		self.t_width = time() + 0.6
 	end
+	self.punchangle = vector.create(-2, 0, 0)
 	self.ammo_cells -= 1
 	self.currentammo = self.ammo_cells
 	local org = self.origin + vector.create(0, 0, 16)
@@ -262,6 +266,7 @@ function W_FireGrenade(self)
 	self.ammo_rockets -= 1
 	self.currentammo = self.ammo_rockets
 	sound(self, CHAN_WEAPON, "weapons/grenade.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-2, 0, 0)
 	local missile = spawn()
 	missile.owner = self
 	missile.movetype = MOVETYPE_BOUNCE
@@ -305,8 +310,49 @@ function launch_spike(self, org, dir)
 	return spike
 end
 
+-- From enforcer.qc, because traps fire them too.
+function Laser_Touch(self, other)
+	if other == self.owner then
+		return
+	end
+	if pointcontents(self.origin) == CONTENT_SKY then
+		remove(self)
+		return
+	end
+	sound(self, CHAN_WEAPON, "enforcer/enfstop.wav", 1, ATTN_STATIC)
+	local org = self.origin - normalize(self.velocity) * 8
+	if (other.health or 0) ~= 0 then
+		SpawnBlood(org, self.velocity * 0.2, 15)
+		T_Damage(other, self, self.owner, 15)
+	else
+		temp_entity(TE_GUNSHOT, org)
+	end
+	remove(self)
+end
+
+function LaunchLaser(self, org, vec)
+	if self.classname == "monster_enforcer" then
+		sound(self, CHAN_WEAPON, "enforcer/enfire.wav", 1, ATTN_NORM)
+	end
+	local laser = spawn()
+	laser.owner = self
+	laser.movetype = MOVETYPE_FLY
+	laser.solid = SOLID_BBOX
+	laser.effects = EF_DIMLIGHT
+	setmodel(laser, "progs/laser.mdl")
+	setsize(laser, vector.zero, vector.zero)
+	setorigin(laser, org)
+	laser.velocity = normalize(vec) * 600
+	laser.angles = vectoangles(laser.velocity)
+	laser.nextthink = time() + 5
+	laser.think = SUB_Remove
+	laser.touch = Laser_Touch
+	return laser
+end
+
 function W_FireSuperSpikes(self)
 	sound(self, CHAN_WEAPON, "weapons/spike2.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-2, 0, 0)
 	self.attack_finished = time() + 0.2
 	self.ammo_nails -= 2
 	self.currentammo = self.ammo_nails
@@ -328,6 +374,7 @@ function W_FireSpikes(self, ox)
 		return
 	end
 	sound(self, CHAN_WEAPON, "weapons/rocket1i.wav", 1, ATTN_NORM)
+	self.punchangle = vector.create(-2, 0, 0)
 	self.attack_finished = time() + 0.2
 	self.ammo_nails -= 1
 	self.currentammo = self.ammo_nails

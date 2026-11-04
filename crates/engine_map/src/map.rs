@@ -52,6 +52,9 @@ pub struct Texture {
     pub mips: Vec<MipLevel>,
     /// Its animation, if it has one.
     pub animation: Option<Animation>,
+    /// The texture to show instead on a brush entity with a frame set, as a
+    /// used button does.
+    pub alternate: Option<u32>,
 }
 
 /// One texture axis: a texel coordinate is `dot(point, axis) + offset`.

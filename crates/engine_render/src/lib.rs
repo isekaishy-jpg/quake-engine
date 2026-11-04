@@ -13,6 +13,7 @@ mod error;
 mod matrix;
 mod overlay;
 mod renderer;
+mod sprite;
 mod visible;
 mod world;
 
@@ -21,6 +22,10 @@ pub use atlas::Atlas;
 pub use error::RenderError;
 pub use matrix::view_projection;
 pub use overlay::overlay_vertices;
-pub use renderer::{Capture, Renderer, Statistics, Target, View};
+pub use renderer::{Capture, Drawables, Renderer, Statistics, Target, View};
+pub use sprite::{
+    LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, ParticleColor, ParticleDraw, SpriteDraw,
+    ViewAxes, sprite_axes, sprite_push_bytes,
+};
 pub use visible::VisibleSet;
 pub use world::{Batch, BatchKind, ModelRange, Vertex, WorldMesh, build_world};

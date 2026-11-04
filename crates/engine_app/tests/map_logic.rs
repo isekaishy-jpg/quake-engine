@@ -601,6 +601,7 @@ fn a_teleport_hums_and_plays_a_sound_at_each_end() {
     assert_eq!(game.static_sounds[0].name, "ambience/hum1.wav");
     assert_eq!(game.sounds.len(), 2);
     assert!(game.sounds[0].name.starts_with("misc/r_tele"));
+    assert_eq!(game.temps(11), 2, "a splash at each end");
 }
 
 #[test]
@@ -674,6 +675,9 @@ fn a_button_opens_the_door_it_targets() {
         game.instance(1).origin.z > 5.0,
         "pressing it opened the door"
     );
+    assert_eq!(game.instance(2).frame, 1, "it shows it's been used");
+    game.wait(2.0);
+    assert_eq!(game.instance(2).frame, 0, "until it comes back");
 }
 
 #[test]
@@ -1143,4 +1147,127 @@ fn lava_burns() {
         assert(player.health == 95)
         "#,
     );
+}
+
+#[test]
+fn firing_knocks_the_view_and_it_recovers() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(1, attack());
+    let punch = game.latest.as_ref().expect("a snapshot").punch;
+    assert!(punch.x < -1.5, "{punch:?}");
+    game.wait(0.3);
+    let punch = game.latest.as_ref().expect("a snapshot").punch;
+    assert!(punch.x.abs() < f32::EPSILON, "{punch:?}");
+}
+
+#[test]
+fn a_shot_flashes_on_the_player() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    let latest = game.latest.as_ref().expect("a snapshot");
+    assert_eq!(latest.player_effects, 0);
+    let mut flashes = 0;
+    for _ in 0..6 {
+        game.run(1, attack());
+        let latest = game.latest.as_ref().expect("a snapshot");
+        flashes += usize::from(latest.player_effects & 2 != 0);
+    }
+    assert_eq!(flashes, 1, "for one snapshot");
+}
+
+/// A barrel on the floor at x = 100.
+const BARREL: &[(&str, &str)] = &[("classname", "misc_explobox"), ("origin", "84 -16 -200")];
+
+#[test]
+fn a_barrel_stands_on_the_floor_and_goes_off_when_hit() {
+    let map = map(&[], &[BARREL]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"local barrel = find_all("classname", "misc_explobox")[1]
+        assert(barrel.origin.z < -250, "it drops")"#,
+    );
+    game.run(2, impulse(9));
+    game.run(1, attack());
+    game.wait(0.3);
+    game.check(
+        r#"assert(#find_all("classname", "misc_explobox") == 0, "it's gone")
+        assert(#find_all("classname", "explo_box") == 1, "it's exploding")
+        assert(player.health < 100)"#,
+    );
+    assert_eq!(game.temps(3), 1, "the rocket");
+    assert!(
+        game.effects
+            .iter()
+            .any(|effect| matches!(effect, Effect::Particles { count: 255, .. })),
+        "the barrel's burst"
+    );
+}
+
+#[test]
+fn a_spike_trap_fires_when_used_and_a_shooter_on_its_own() {
+    let trap: &[(&str, &str)] = &[
+        ("classname", "trap_spikeshooter"),
+        ("origin", "-100 0 -200"),
+        ("targetname", "t"),
+    ];
+    let shooter: &[(&str, &str)] = &[
+        ("classname", "trap_shooter"),
+        ("origin", "0 200 -200"),
+        ("wait", "0.25"),
+        ("angle", "90"),
+    ];
+    let map = map(&[], &[trap, shooter]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.6);
+    let shots = sound_names(&game)
+        .iter()
+        .filter(|name| **name == "weapons/spike2.wav")
+        .count();
+    assert_eq!(shots, 2, "the shooter, every quarter of a second");
+    game.check(
+        r#"local trap = find_all("classname", "trap_spikeshooter")[1]
+        local before = #find_all("classname", "spike")
+        trap.use(trap)
+        assert(#find_all("classname", "spike") == before + 1, "the trap")"#,
+    );
+}
+
+#[test]
+fn bubbles_rise_and_burst() {
+    let bubbles: &[(&str, &str)] = &[("classname", "air_bubbles"), ("origin", "100 0 -200")];
+    let map = map(&[], &[bubbles]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(2.0);
+    game.check(
+        r#"local bubble = find_all("classname", "bubble")[1]
+        assert(bubble ~= nil and bubble.origin.z > -200, "it rises")"#,
+    );
+    game.wait(15.0);
+    let count = game.latest.as_ref().expect("a snapshot").entities.len();
+    assert!(count < 30, "they don't pile up: {count}");
+}
+
+#[test]
+fn a_fireball_is_thrown_up_and_goes_when_it_lands() {
+    let fireball: &[(&str, &str)] = &[
+        ("classname", "misc_fireball"),
+        ("origin", "0 0 -200"),
+        ("speed", "300"),
+    ];
+    let world: &[(&str, &str)] = &[("classname", "worldspawn")];
+    let map = map(&[], &[world, fireball]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    let (mut flying, mut landed) = (0, 0);
+    for _ in 0..120 {
+        game.wait(0.1);
+        let count = game.latest.as_ref().expect("a snapshot").entities.len();
+        flying += usize::from(count > 0);
+        landed += usize::from(flying > 0 && count == 0);
+    }
+    assert!(flying > 0, "it throws them");
+    assert!(landed > 0, "and they go when they land");
 }

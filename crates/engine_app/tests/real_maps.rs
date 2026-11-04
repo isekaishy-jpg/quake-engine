@@ -17,7 +17,8 @@ use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::{
-    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_mdl, parse_wav, spawn_point,
+    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_mdl, parse_spr, parse_wav,
+    spawn_point,
 };
 
 /// A small random number generator, so a failure repeats.
@@ -542,4 +543,119 @@ fn every_model_in_the_game_parses() {
     }
     println!("{models} models, {spinners} spin");
     assert_eq!(models, 79);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_sprite_in_the_game_parses() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut sprites = 0;
+    for path in filesystem.list("progs/") {
+        if !path.ends_with(".spr") {
+            continue;
+        }
+        let bytes = filesystem.read(&path).expect("it reads");
+        let sprite = parse_spr(&bytes, &palette).unwrap_or_else(|| panic!("{path} parses"));
+        for frame in &sprite.frames {
+            let end = frame.first_image + frame.image_count;
+            assert!(end as usize <= sprite.images.len(), "{path}'s frames fit");
+        }
+        sprites += 1;
+    }
+    assert_eq!(sprites, 3);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn buttons_have_textures_for_when_they_are_used() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let map = load(&filesystem, "e1m1", &palette);
+    let linked: Vec<&str> = map
+        .textures
+        .iter()
+        .filter(|texture| texture.alternate.is_some())
+        .map(|texture| texture.name.as_str())
+        .collect();
+    println!("{linked:?}");
+    assert!(
+        linked
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("+0basebtn"))
+    );
+    assert!(
+        linked
+            .iter()
+            .any(|name| name.eq_ignore_ascii_case("+abasebtn"))
+    );
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_class_on_every_map_has_a_function() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut classes = std::collections::BTreeSet::new();
+    let mut names: Vec<String> = filesystem
+        .list("maps/")
+        .into_iter()
+        .filter(|path| path.ends_with(".bsp") && !path.contains("/b_"))
+        .collect();
+    names.sort();
+    for path in names {
+        let name = path.trim_start_matches("maps/").trim_end_matches(".bsp");
+        for entity in &load(&filesystem, name, &palette).entities {
+            if let Some(class) = entity.get("classname") {
+                classes.insert(class.to_owned());
+            }
+        }
+    }
+    let map = load(&filesystem, "start", &palette);
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        &map,
+        Vec3::ZERO,
+        SCRIPTS,
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("the scripts load");
+    let source: String = classes
+        .iter()
+        .map(|name| {
+            format!(
+                "if {name} == nil then engine.print(\"{name}\") end
+"
+            )
+        })
+        .collect();
+    server.exec(&source).expect("it runs");
+    server.tick();
+    let mut found = Vec::new();
+    while let Some(bytes) = client.receive() {
+        if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes) {
+            found.push(text);
+        }
+    }
+    println!("{} classes, none for {found:?}", classes.len());
+    // Spawn points are looked up, and don't run.
+    let expected = [
+        "info_player",
+        "info_intermission",
+        "monster_",
+        "event_lightning",
+        "trigger_monsterjump",
+    ];
+    let missing: Vec<&String> = found
+        .iter()
+        .filter(|name| !expected.iter().any(|known| name.starts_with(known)))
+        .collect();
+    assert!(missing.is_empty(), "{missing:?}");
 }
