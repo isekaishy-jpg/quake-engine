@@ -21,13 +21,14 @@ These ran against the Steam data, read in place.
 | Random player for 5 minutes each on `start`, `e1m1`, `e1m3`, `e2m1`, `e4m3`, `dm3`, `dm6` | 0 ticks in solid, over 53,000 units travelled on each |
 | Random player for 1 minute on BSP2 `hub` and `mge1m1` | 0 ticks in solid |
 | Jump height and stop distance | Within 1 and 1.5 units of the pre-research's 43.7 and 63.8, in tests |
+| Hands-on test by the human | Movement seems fine and feels crisp |
 | The real engine on `e1m1` | Keys walk down the stairs from the start and noclip moves exactly 200 units in 0.5 s, through client, loopback and server |
 
 `cargo xtask check` passes.
 
 ## Remaining
 
-- Nobody has played this by hand yet. How movement feels, and whether the render tick shows bumps when input changes, needs a human.
+- The render tick's bump when input changes is left as it is, by the human's decision. It's barely visible at 200 frames a second and movement feels crisp, so a blend isn't worth its cost. It may need another look on slow machines.
 - Doors, lifts and other brush models aren't solid. They arrive with entities in increment 4, and nothing else in the world moves yet.
 - There's no view bob, damage, falling sound or drowning.
 - The map loads for both sides directly. A map change message arrives with online play.
