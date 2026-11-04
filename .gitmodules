@@ -1,0 +1,6 @@
+[submodule "reference/quake"]
+	path = reference/quake
+	url = https://github.com/id-Software/Quake.git
+[submodule "reference/quake-tools"]
+	path = reference/quake-tools
+	url = https://github.com/id-Software/Quake-Tools.git
