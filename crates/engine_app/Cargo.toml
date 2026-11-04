@@ -1,0 +1,16 @@
+[package]
+name = "engine_app"
+description = "The executable: the composition root that wires every system together"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "quake-engine"
+path = "src/main.rs"
+
+[dependencies]
+
+[lints]
+workspace = true

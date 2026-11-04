@@ -1,0 +1,78 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/engine_app",
+    "crates/engine_assets",
+    "crates/engine_audio",
+    "crates/engine_client",
+    "crates/engine_console",
+    "crates/engine_core",
+    "crates/engine_map",
+    "crates/engine_movement",
+    "crates/engine_net",
+    "crates/engine_physics",
+    "crates/engine_platform",
+    "crates/engine_render",
+    "crates/engine_script",
+    "crates/engine_server",
+    "crates/engine_sim",
+    "crates/engine_ui",
+    "crates/fixture_quake",
+    "crates/solapp",
+    "crates/solcache",
+    "crates/solcache/examples/solworker",
+    "crates/solworker",
+    "xtask",
+]
+default-members = ["crates/engine_app"]
+
+# Patched third-party sources used by the Sol crates. They are dependencies,
+# not engine code (proposal 0009).
+exclude = ["vendor/winit", "vendor/micropool"]
+
+# Cargo's SemVer spelling of the product version: `0.0.0-alpha` is the product
+# version `0.0.0a` (proposal 0007).
+[workspace.package]
+version = "0.0.0-alpha"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+# Every dependency is declared once here, pinned exactly, and inherited.
+[workspace.dependencies]
+# Proposal 0008: typed `cargo metadata` access for the crate-graph rule test.
+cargo_metadata = { version = "=0.23.1", default-features = false }
+
+# Lints beyond the defaults, enabled one by one (proposal 0005).
+[workspace.lints.rust]
+elided_lifetimes_in_paths = "warn"
+missing_docs = "warn"
+trivial_casts = "warn"
+trivial_numeric_casts = "warn"
+unreachable_pub = "warn"
+unsafe_code = "deny"
+unused_import_braces = "warn"
+unused_lifetimes = "warn"
+unused_qualifications = "warn"
+
+[workspace.lints.clippy]
+allow_attributes = "warn"
+allow_attributes_without_reason = "warn"
+cast_lossless = "warn"
+cast_possible_truncation = "warn"
+cast_possible_wrap = "warn"
+cast_sign_loss = "warn"
+dbg_macro = "warn"
+missing_errors_doc = "warn"
+missing_panics_doc = "warn"
+print_stderr = "warn"
+print_stdout = "warn"
+self_named_module_files = "warn"
+todo = "warn"
+undocumented_unsafe_blocks = "warn"
+unimplemented = "warn"
+unwrap_used = "warn"
+wildcard_imports = "warn"
+
+[profile.bench]
+debug = 1

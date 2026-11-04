@@ -1,0 +1,12 @@
+[package]
+name = "engine_script"
+description = "The Luau host: runs game scripts for the simulation."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+
+[lints]
+workspace = true

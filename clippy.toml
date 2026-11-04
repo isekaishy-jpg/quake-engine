@@ -1,0 +1,3 @@
+# Tests may unwrap or expect: a failed test is the intended report.
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true

@@ -1,0 +1,10 @@
+[package]
+name = "solcache"
+version = "0.1.0"
+edition = "2024"
+publish = false
+rust-version = "1.98"
+readme = "pubdocs/README.md"
+description = "Reusable resource ownership, accounting and caching foundations"
+
+[dependencies]

@@ -1,0 +1,5 @@
+# `cargo xtask <command>` runs the repository automation in `xtask/`. It builds
+# into its own target directory, because `cargo xtask check` rebuilds `xtask`
+# in `target/`, and Windows forbids replacing a running executable.
+[alias]
+xtask = "run --quiet --package xtask --target-dir target/xtask --"
