@@ -8,6 +8,7 @@ Status: review record, 2026-11-04. Reviewed: proposals 0022 to 0024, and the cha
 | 2 | A ray ignores a hit at its very start, so one starting exactly on a wall could pass through it | The hull tree catches this and finds the surface by halving, with a test |
 | 3 | The first comparison with Quake's trace reported misses over 1 unit. The margin is measured from the surface, and a shallow ray covers a long way inside it, so the test was measuring the wrong thing | The test measures distance from the surface |
 | 4 | `engine_movement` used `Contents` from `engine_map`, which its crate rule forbids | `engine_physics` has its own `PointContents` |
+| 5 | `engine_movement`'s tests also needed `engine_map`, which the crate-graph test refused. The commit script ran on past that failure | The tests moved to `engine_sim`, which may use both, and the check passed before the last commit was amended |
 
 ## Verified
 
