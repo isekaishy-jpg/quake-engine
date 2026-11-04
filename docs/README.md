@@ -18,9 +18,15 @@
     - [0007: versions and build numbers](proposals/0007-versions-and-build-numbers.md)
     - [0008: crate boundaries and their permanent test](proposals/0008-crate-boundaries.md)
     - [0009: the Sol crates as repository crates](proposals/0009-sol-crates.md)
+  - Increment 1:
+    - [0010: the main loop and fixed tick](proposals/0010-main-loop.md)
+    - [0011: the platform host boundary](proposals/0011-platform-host.md)
+    - [0012: the console, commands and cvars](proposals/0012-console.md)
+    - [0013: the filesystem and packs](proposals/0013-filesystem-and-packs.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
+  - [0003: increment 1](reviews/0003-increment-1.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

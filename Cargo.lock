@@ -241,6 +241,13 @@ checksum = "d8b14ccef22fc6f5a8f4d7d768562a182c04ce9a3b3157b91390b52ddfdf1a76"
 [[package]]
 name = "engine_app"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_assets",
+ "engine_console",
+ "engine_core",
+ "engine_platform",
+ "fixture_quake",
+]
 
 [[package]]
 name = "engine_assets"
@@ -281,6 +288,9 @@ version = "0.0.0-alpha"
 [[package]]
 name = "engine_platform"
 version = "0.0.0-alpha"
+dependencies = [
+ "solapp",
+]
 
 [[package]]
 name = "engine_render"
@@ -327,6 +337,9 @@ checksum = "aedcfb3409746eddb02b9e19ebda1c3394f759a152e48ee875a0844d1b955484"
 [[package]]
 name = "fixture_quake"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_assets",
+]
 
 [[package]]
 name = "foreign-types"
