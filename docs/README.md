@@ -42,6 +42,10 @@
     - [0026: entities and moving brushes](proposals/0026-entities-and-movers.md)
     - [0027: porting QuakeC, map logic](proposals/0027-quakec-port-map-logic.md)
     - [0028: moving brushes on the client](proposals/0028-moving-brushes-on-the-client.md)
+  - Increment 5:
+    - [0029: the audio backend](proposals/0029-audio-backend.md)
+    - [0030: sound data](proposals/0030-sound-data.md)
+    - [0031: sounds in the game](proposals/0031-sounds-in-the-game.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -50,6 +54,7 @@
   - [0005: increment 2](reviews/0005-increment-2.md)
   - [0006: increment 3](reviews/0006-increment-3.md)
   - [0007: increment 4](reviews/0007-increment-4.md)
+  - [0008: increment 5](reviews/0008-increment-5.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC
