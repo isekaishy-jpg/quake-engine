@@ -8,13 +8,14 @@ use std::time::Duration;
 
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
-use engine_client::{Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT};
+use engine_client::{
+    AmbientSounds, Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT,
+};
 use engine_console::{Console, CvarFlags};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
-use engine_map::Map;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_platform::{
@@ -87,8 +88,8 @@ pub(crate) struct World {
     listener: Listener,
     /// The volume, music volume and mute last given to `audio`.
     audio_settings: Option<(f32, f32, bool)>,
-    /// The map, for the ambient levels of its leaves.
-    map: Option<Arc<Map>>,
+    /// How much water and sky can be heard.
+    ambience: Option<AmbientSounds>,
 }
 
 impl World {
@@ -122,7 +123,7 @@ impl World {
             .sounds
             .clip("ambience/wind2.wav", &self.filesystem, &mut self.audio);
         self.audio.set_ambient_clips(water, sky);
-        self.map = Some(Arc::clone(&map));
+        self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         if let Some(renderer) = &mut self.renderer {
             renderer.load_map(map)?;
         }
@@ -204,10 +205,11 @@ impl World {
             self.audio.set_music_volume(music_volume);
             self.audio.set_muted(muted);
         }
-        let levels = self.map.as_ref().map_or([0, 0], |map| {
-            let leaf = map.tree.leaf(map.tree.leaf_at(self.listener.origin));
-            leaf.map_or([0, 0], |leaf| [leaf.ambient[0], leaf.ambient[1]])
-        });
+        let origin = self.listener.origin;
+        let levels = self
+            .ambience
+            .as_mut()
+            .map_or([0, 0], |ambience| ambience.levels(origin));
         self.audio.update(self.listener, seconds, levels);
     }
 
@@ -351,7 +353,7 @@ impl Engine {
                 music_track: None,
                 listener: Listener::default(),
                 audio_settings: None,
-                map: None,
+                ambience: None,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,

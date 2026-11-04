@@ -1,5 +1,7 @@
 //! Channels: who plays, who gets replaced, and how loud each one is.
 
+use std::time::Duration;
+
 use engine_core::math::Vec3;
 use engine_core::sound::{Clip, SoundStart, StaticSound};
 
@@ -469,6 +471,12 @@ impl Audio {
         if let Some(output) = &mut self.output {
             output.set_music_volume(volume);
         }
+    }
+
+    /// The longest gap between the audio thread's turns since last asked.
+    #[must_use]
+    pub fn longest_gap(&self) -> Option<Duration> {
+        self.output.as_ref().map(Output::longest_gap)
     }
 
     /// Silences everything, or lets it back.

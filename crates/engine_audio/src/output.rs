@@ -2,9 +2,12 @@
 
 use std::io::Cursor;
 use std::sync::Arc;
-use std::time::Duration;
+use std::sync::atomic::{AtomicU32, Ordering};
+use std::time::{Duration, Instant};
 
 use engine_core::sound::Clip;
+use kira::effect::{Effect, EffectBuilder};
+use kira::info::Info;
 use kira::sound::FromFileError;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
@@ -41,6 +44,45 @@ fn decibels(amplitude: f32) -> Decibels {
         Decibels::SILENCE
     } else {
         Decibels(20.0 * amplitude.log10())
+    }
+}
+
+/// Times the gaps between the audio thread's turns, on that thread. A gap
+/// longer than the device's buffer is a dropout, and the thread's own load
+/// can't show one, since it's only counted once the thread gets to run.
+struct GapWatch {
+    /// When the last turn started.
+    last: Option<Instant>,
+    /// The longest gap since last asked, in microseconds.
+    longest: Arc<AtomicU32>,
+}
+
+impl Effect for GapWatch {
+    fn on_start_processing(&mut self) {
+        let now = Instant::now();
+        if let Some(last) = self.last {
+            let gap = now.duration_since(last).as_micros();
+            let gap = u32::try_from(gap).unwrap_or(u32::MAX);
+            self.longest.fetch_max(gap, Ordering::Relaxed);
+        }
+        self.last = Some(now);
+    }
+
+    fn process(&mut self, _input: &mut [Frame], _dt: f64, _info: &Info<'_>) {}
+}
+
+/// Adds a [`GapWatch`] to a track.
+struct GapWatchBuilder(Arc<AtomicU32>);
+
+impl EffectBuilder for GapWatchBuilder {
+    type Handle = ();
+
+    fn build(self) -> (Box<dyn Effect>, Self::Handle) {
+        let watch = GapWatch {
+            last: None,
+            longest: self.0,
+        };
+        (Box::new(watch), ())
     }
 }
 
@@ -97,6 +139,8 @@ pub(crate) struct Output {
     effects: TrackHandle,
     /// The music playing.
     music: Option<StreamingSoundHandle<FromFileError>>,
+    /// The longest gap between the audio thread's turns, in microseconds.
+    longest_gap: Arc<AtomicU32>,
 }
 
 impl Output {
@@ -104,13 +148,16 @@ impl Output {
     pub(crate) fn open() -> Option<Self> {
         let mut manager =
             AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok()?;
-        let effects = manager
-            .add_sub_track(TrackBuilder::new().sound_capacity(MAX_VOICES))
-            .ok()?;
+        let longest_gap = Arc::new(AtomicU32::new(0));
+        let track = TrackBuilder::new()
+            .sound_capacity(MAX_VOICES)
+            .with_effect(GapWatchBuilder(Arc::clone(&longest_gap)));
+        let effects = manager.add_sub_track(track).ok()?;
         Some(Self {
             manager,
             effects,
             music: None,
+            longest_gap,
         })
     }
 
@@ -153,6 +200,11 @@ impl Output {
         self.manager
             .main_track()
             .set_volume(volume, tween(MUTE_FADE));
+    }
+
+    /// The longest gap between the audio thread's turns since last asked.
+    pub(crate) fn longest_gap(&self) -> Duration {
+        Duration::from_micros(u64::from(self.longest_gap.swap(0, Ordering::Relaxed)))
     }
 
     /// The most of the audio thread's time used since last asked, from 0 to 1.

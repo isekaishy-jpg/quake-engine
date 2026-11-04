@@ -13,6 +13,7 @@ Status: accepted, 2026-11-04, increment 5.
 - `SND_PickChannel` replaces a sound on the same entity and channel, except on channel 0. Otherwise it takes the channel with the least left to play, and never takes a player's sound for anyone else's.
 - `SND_PaintChannelFrom8` caps each ear of a channel at 255. `S_Update` adds statics of the same sound into one channel first, so several torches sound like one louder torch, and never past full volume.
 - Kira's documentation warns that the `dev` profile performs poorly, and asks for optimized audio crates.
+- `cpal` only raises its audio thread's priority with its `realtime` feature, which `kira` turns on by default and this proposal first left out. Windows takes a program's priority boost away when it loses focus, so on a busy machine an ordinary thread starves just as the player alt-tabs.
 - A looped WAV on a dynamic channel plays until it's replaced. Door and lift movement sounds rely on this: the stop sound replaces the loop on the same channel.
 
 ## Design
@@ -22,7 +23,8 @@ Status: accepted, 2026-11-04, increment 5.
 - `spatial.rs` holds that maths, as pure functions.
 - Channel logic runs the same with no output, so tests can check it, and so a machine with no sound device still plays.
 - Statics that play one clip share a voice, which also saves mixing them.
-- `kira`, `cpal` and the decoders are optimized in the `dev` profile.
+- `kira`, `cpal` and the decoders are optimized in the `dev` profile, and the audio thread runs at real-time priority.
+- `output.rs` times the gaps between the audio thread's turns, since its load can't show a turn that came late. `stats` shows both.
 - Sound effects share a track, which `volume` sets. Music plays beside it, which `bgmvolume` sets.
 
 ## Proposal
