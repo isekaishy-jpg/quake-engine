@@ -144,7 +144,7 @@ impl Server {
             instances: simulation.instances(),
             entities: simulation.entity_states(),
             boxes: simulation.solid_boxes(),
-            weapon_model: simulation.weapon_model(),
+            weapon_model: simulation.shown_weapon_model(),
             weapon_frame: simulation.weapon_frame(),
             player_entity: simulation.player_id().to_bits(),
             player_effects: simulation

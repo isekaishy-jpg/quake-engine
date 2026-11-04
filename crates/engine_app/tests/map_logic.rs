@@ -1543,3 +1543,104 @@ fn a_monster_on_a_teleport_arrives_and_frags_what_is_there() {
         assert(grunt.origin.x > 100, "it's there: " .. tostring(grunt.origin))"#,
     );
 }
+
+/// Whether firing `weapon`, by its impulse, for `seconds` at a switch ten units
+/// thick presses it. Explosives go off a little way down the room.
+fn shot_switch_is_pressed(weapon: u8, seconds: f64) -> bool {
+    let (mins, maxs) = (
+        Vec3::new(120.0, -64.0, -280.0),
+        Vec3::new(130.0, 64.0, -180.0),
+    );
+    let button: &[(&str, &str)] = &[
+        ("classname", "func_button"),
+        ("model", "*1"),
+        ("health", "1"),
+        ("wait", "-1"),
+        ("angle", "0"),
+    ];
+    let map = map(&[(mins, maxs)], &[button]);
+    let mut game = Game::new(&map, at_floor(60.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(9));
+    game.run(2, impulse(weapon));
+    game.wait(0.1);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "test durations are short"
+    )]
+    let ticks = (seconds * 72.0) as u32;
+    game.run(ticks, attack());
+    game.wait(1.0);
+    game.instance(1).frame == 1
+}
+
+#[test]
+fn every_weapon_can_press_a_shot_switch() {
+    for weapon in [1, 2, 3, 4, 5, 7, 8] {
+        assert!(shot_switch_is_pressed(weapon, 0.6), "weapon {weapon}");
+    }
+}
+
+#[test]
+fn an_explosion_nearby_presses_a_shot_switch() {
+    let (mins, maxs) = (
+        Vec3::new(120.0, -64.0, -280.0),
+        Vec3::new(130.0, 64.0, -180.0),
+    );
+    let button: &[(&str, &str)] = &[
+        ("classname", "func_button"),
+        ("model", "*1"),
+        ("health", "1"),
+        ("wait", "-1"),
+        ("angle", "0"),
+    ];
+    let map = map(&[(mins, maxs)], &[button]);
+    let mut game = Game::new(&map, at_floor(-200.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"local blast = spawn()
+        blast.origin = vector.create(60, 0, -230)
+        T_RadiusDamage(blast, player, 120, nil)"#,
+    );
+    game.wait(1.0);
+    assert_eq!(game.instance(1).frame, 1);
+}
+
+#[test]
+fn a_touch_button_does_not_mind_being_shot() {
+    let (mins, maxs) = (
+        Vec3::new(120.0, -64.0, -280.0),
+        Vec3::new(130.0, 64.0, -180.0),
+    );
+    let button: &[(&str, &str)] = &[
+        ("classname", "func_button"),
+        ("model", "*1"),
+        ("wait", "-1"),
+        ("angle", "0"),
+    ];
+    let map = map(&[(mins, maxs)], &[button]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(36, attack());
+    game.wait(1.0);
+    assert_eq!(game.instance(1).frame, 0);
+}
+
+#[test]
+fn the_ring_of_shadows_hides_the_gun_until_it_runs_out() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    let model = |game: &Game| game.latest.as_ref().expect("a snapshot").weapon_model;
+    assert_ne!(model(&game), 0);
+    game.check(
+        r#"player.items = bit32.bor(player.items, IT_INVISIBILITY)
+        player.invisible_finished = time() + 0.2
+        player.invisible_time = 1"#,
+    );
+    game.wait(0.1);
+    assert_eq!(model(&game), 0);
+    game.wait(0.3);
+    assert_ne!(model(&game), 0);
+}

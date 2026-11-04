@@ -276,6 +276,7 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
         "weaponframe" => sim.set_weapon_frame(small_number(value)?),
         "impulse" => sim.set_impulse(u8::try_from(small_number(value)?).unwrap_or(0)),
         "dead" => sim.set_dead(matches!(value, Value::Boolean(true))),
+        "weaponhidden" => sim.set_weapon_hidden(matches!(value, Value::Boolean(true))),
         _ => {
             let number = as_number(value);
             let Some(entity) = sim.entity_mut(id) else {

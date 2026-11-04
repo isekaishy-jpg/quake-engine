@@ -194,6 +194,8 @@ pub struct Simulation {
     weapon_model: u16,
     /// The frame the player's weapon shows.
     weapon_frame: u16,
+    /// Whether the player's weapon is hidden from their own view.
+    weapon_hidden: bool,
     /// How far the view is knocked, in degrees.
     punch: Vec3,
     /// The state of `rand`.
@@ -248,6 +250,7 @@ impl Simulation {
             shapes_sent: 0,
             weapon_model: 0,
             weapon_frame: 0,
+            weapon_hidden: false,
             punch: Vec3::ZERO,
             seed: 1,
             last_check: 0.0,
@@ -337,6 +340,21 @@ impl Simulation {
     #[must_use]
     pub fn weapon_model(&self) -> u16 {
         self.weapon_model
+    }
+
+    /// The number of the model the player sees, which is 0 for none.
+    #[must_use]
+    pub fn shown_weapon_model(&self) -> u16 {
+        if self.weapon_hidden {
+            0
+        } else {
+            self.weapon_model
+        }
+    }
+
+    /// Hides the player's weapon from their own view, or shows it again.
+    pub fn set_weapon_hidden(&mut self, hidden: bool) {
+        self.weapon_hidden = hidden;
     }
 
     /// Marks the player as dead or alive.

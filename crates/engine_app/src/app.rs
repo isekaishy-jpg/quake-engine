@@ -432,7 +432,6 @@ impl World {
                     u32::from(model),
                     frame,
                     (placed, angles),
-                    state.origin,
                     &lighting,
                 ));
             }

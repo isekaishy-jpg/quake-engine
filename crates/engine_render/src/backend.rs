@@ -10,7 +10,7 @@ use vulkane::safe::{
     BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
     CommandPool, CullMode, DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorSetLayout,
     DescriptorSetLayoutBinding, DescriptorType, Device, DeviceCreateInfo, DeviceExtensions,
-    DeviceMemory, Fence, Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder,
+    DeviceMemory, Fence, Format, Framebuffer, FrontFace, GraphicsPipeline, GraphicsPipelineBuilder,
     GraphicsShaderStage, Image, Image2dCreateInfo, ImageBarrier, ImageLayout, ImageUsage,
     ImageView, InputRate, Instance, InstanceCreateInfo, InstanceExtensions, MemoryPropertyFlags,
     PhysicalDevice, PipelineLayout, PipelineStage, PresentMode, PushConstantRange, Queue,
@@ -815,7 +815,10 @@ impl Backend {
                 ],
             )
             .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
+            // Quake's triangles wind clockwise. A weapon sits close enough for
+            // the near plane to open it up, and this keeps its inside hidden.
+            .cull_mode(CullMode::BACK)
+            .front_face(FrontFace::CLOCKWISE)
             .depth_test(true, true)
             .build(device)
             .map_err(RenderError::from)

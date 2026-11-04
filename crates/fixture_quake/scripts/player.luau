@@ -315,6 +315,8 @@ function CheckPowerups(self)
 	if self.health <= 0 then
 		return
 	end
+	-- From `R_DrawViewModel`: the invisible can't see their own gun.
+	self.weaponhidden = bit32.band(self.items, IT_INVISIBILITY) ~= 0
 	if (self.invisible_finished or 0) ~= 0 and (self.invisible_sound or 0) < time() then
 		sound(self, CHAN_AUTO, "items/inv3.wav", 0.5, ATTN_IDLE)
 		self.invisible_sound = time() + random() * 3 + 1

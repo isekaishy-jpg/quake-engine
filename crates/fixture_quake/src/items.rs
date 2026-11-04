@@ -74,7 +74,8 @@ fn model_of_texture(map: &Map, number: u32, mins: Vec3, scale: Vec3) -> Option<A
         let [first, second, third, ..] = points else {
             continue;
         };
-        let normal = (*second - *first).cross(*third - *first).normalized();
+        // Faces wind clockwise from the front.
+        let normal = (*third - *first).cross(*second - *first).normalized();
         for fan in 1..points.len().saturating_sub(1) {
             for point in [points[0], points[fan], points[fan + 1]] {
                 corners.push(AliasCorner {

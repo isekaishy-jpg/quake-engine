@@ -241,14 +241,13 @@ impl ModelBank {
         }
     }
 
-    /// What to draw for the player's weapon, `model` at `frame`, with the eye
-    /// at `eye` and the body at `body`.
+    /// What to draw for the player's weapon, `model` at `frame`, lit where it
+    /// is, as `R_DrawViewModel`.
     pub(crate) fn draw_weapon(
         &self,
         model: u32,
         frame: u16,
         placed: (Vec3, Vec3),
-        body: Vec3,
         lighting: &Lighting<'_>,
     ) -> Option<EntityDraw> {
         let Asset::Models(parts) = self.by_number.get(&model)?.as_ref() else {
@@ -262,7 +261,7 @@ impl ModelBank {
             .map_or(0, |frame| frame.pose_at(lighting.time));
         let light = lighting
             .map
-            .light_at(body, lighting.styles)
+            .light_at(placed.0, lighting.styles)
             .max(MIN_WEAPON_LIGHT)
             + lighting.dynamic_at(placed.0);
         let (ambient, shade) = Lighting::split(light);

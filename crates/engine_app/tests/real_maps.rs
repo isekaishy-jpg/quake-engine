@@ -11,14 +11,14 @@ use engine_assets::FileSystem;
 use engine_audio::Audio;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
-use engine_map::{ClipChild, Map, Tree};
+use engine_map::{AliasCorner, AliasModel, ClipChild, Map, Tree};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::{
-    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_mdl, parse_spr, parse_wav,
-    spawn_point,
+    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_item_bsp, parse_mdl, parse_spr,
+    parse_wav, spawn_point,
 };
 
 /// A small random number generator, so a failure repeats.
@@ -663,6 +663,184 @@ fn every_monster_wakes_fights_and_dies_without_errors() {
     println!("{monsters} monsters, {failures} maps with errors");
     assert_eq!(failures, 0);
     assert!(monsters > 1000);
+}
+
+/// Lua that fires a line at every shootable brush from all sides, as a shot
+/// does, and hurts what it finds. It prints what nothing could reach.
+const SHOOT_EVERYTHING: &str = r#"
+    local player = find_all("classname", "player")[1]
+    local directions = {
+        vector.create(1, 0, 0), vector.create(-1, 0, 0), vector.create(0, 1, 0),
+        vector.create(0, -1, 0), vector.create(0, 0, 1), vector.create(0, 0, -1),
+    }
+    shot_things = {}
+    for _, class in { "func_button", "func_door", "door", "func_door_secret" } do
+        for _, thing in find_all("classname", class) do
+            if thing.takedamage ~= 0 and thing.movetype == MOVETYPE_PUSH then
+                local middle = (thing.absmin + thing.absmax) * 0.5
+                local hit = false
+                for _, direction in directions do
+                    for _, distance in { 24, 48, 96, 192 } do
+                        local start = middle + direction * distance
+                        if pointcontents(start) ~= CONTENT_SOLID then
+                            traceline(start, middle, false, player)
+                            -- Some switches wait behind a door.
+                            hit = hit or trace_ent == thing or trace_ent.classname == "door"
+                        end
+                    end
+                end
+                if hit then
+                    table.insert(shot_things, { thing, thing.origin })
+                    -- Secret doors have too much health to kill, and answer to pain.
+                    T_Damage(thing, player, player, if thing.th_die then thing.health else 4)
+                else
+                    engine.print("unreachable " .. class .. " " .. tostring(thing.model))
+                end
+            end
+        end
+    end
+    engine.print("shot " .. #shot_things)
+"#;
+
+/// Lua that prints what didn't answer being shot.
+const SHOT_RESULTS: &str = r#"
+    for _, pair in shot_things do
+        local thing = pair[1]
+        local moved = vector.magnitude(thing.origin - pair[2]) >= 1
+        -- A door can be a switch with no room to move, which only changes state.
+        if not moved and thing.state == STATE_BOTTOM then
+            engine.print("no answer from " .. thing.classname .. " " .. tostring(thing.model))
+        end
+    end
+"#;
+
+/// What shooting everything shootable on `map` printed.
+fn shoot_everything(map: &Arc<Map>) -> Vec<String> {
+    let world = Rc::new(CollisionWorld::new(Arc::clone(map)));
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        map,
+        spawn_point(map).origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("the scripts load");
+    let mut prints = Vec::new();
+    let mut run = |server: &mut Server, ticks: u32| {
+        for _ in 0..ticks {
+            server.tick();
+            while let Some(bytes) = client.receive() {
+                if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes) {
+                    prints.push(text);
+                }
+            }
+        }
+    };
+    run(&mut server, 72);
+    server.exec(SHOOT_EVERYTHING).expect("shooting");
+    run(&mut server, 12);
+    server.exec(SHOT_RESULTS).expect("results");
+    run(&mut server, 1);
+    prints
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_shootable_thing_can_be_hit_and_answers() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut shot = 0;
+    let mut wrong = Vec::new();
+    for path in filesystem.list("maps/") {
+        let Some(name) = path
+            .strip_prefix("maps/")
+            .and_then(|p| p.strip_suffix(".bsp"))
+            .filter(|name| !name.starts_with("b_"))
+        else {
+            continue;
+        };
+        for text in shoot_everything(&load(&filesystem, name, &palette)) {
+            if let Some(count) = text.strip_prefix("shot ") {
+                shot += count.trim().parse::<u32>().expect("a count");
+            } else if text.contains("script error")
+                || text.contains("unreachable")
+                || text.contains("no answer")
+            {
+                wrong.push(format!("{name}: {text}"));
+            }
+        }
+    }
+    println!("{shot} shot, wrong: {wrong:#?}");
+    assert!(shot > 50, "{shot}");
+    assert!(wrong.is_empty());
+}
+
+/// How many of a model's triangles wind clockwise from outside, and how many
+/// have normals pointing out, of how many there are.
+fn outward_triangles(model: &AliasModel) -> (usize, usize, usize) {
+    let pose = &model.poses[0];
+    let point = |corner: &AliasCorner| {
+        let [x, y, z] = pose[corner.vertex as usize].position;
+        Vec3::new(
+            f32::from(x) * model.scale.x,
+            f32::from(y) * model.scale.y,
+            f32::from(z) * model.scale.z,
+        )
+    };
+    let all: Vec<Vec3> = model.corners.iter().map(point).collect();
+    #[expect(clippy::cast_precision_loss, reason = "a few hundred corners")]
+    let share = 1.0 / all.len() as f32;
+    let middle = all.iter().fold(Vec3::ZERO, |sum, at| sum + *at * share);
+    let (mut wound, mut facing, mut total) = (0, 0, 0);
+    for corners in model.corners.as_chunks::<3>().0 {
+        let [a, b, c] = [point(&corners[0]), point(&corners[1]), point(&corners[2])];
+        let out = (a + b + c) * (1.0 / 3.0) - middle;
+        // Clockwise from outside means this cross product points inwards.
+        wound += usize::from((b - a).cross(c - a).dot(out) < 0.0);
+        let [x, y, z] = pose[corners[0].vertex as usize].normal.map(f32::from);
+        facing += usize::from(Vec3::new(x, y, z).dot(out) > 0.0);
+        total += 1;
+    }
+    (wound, facing, total)
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn item_boxes_wind_and_face_like_models_do() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    for name in [
+        "maps/b_shell0.bsp",
+        "maps/b_nail0.bsp",
+        "maps/b_rock0.bsp",
+        "maps/b_batt0.bsp",
+        "maps/b_bh25.bsp",
+        "maps/b_explob.bsp",
+    ] {
+        let bytes = filesystem.read(name).expect("it reads");
+        let parts = parse_item_bsp(&bytes, &palette).expect("it parses");
+        // Each part is one texture, so look at the whole box together.
+        let mut whole = parts[0].clone();
+        for part in &parts[1..] {
+            let first = u32::try_from(whole.poses[0].len()).expect("small");
+            whole.poses[0].extend_from_slice(&part.poses[0]);
+            whole
+                .corners
+                .extend(part.corners.iter().map(|corner| AliasCorner {
+                    vertex: corner.vertex + first,
+                    uv: corner.uv,
+                }));
+        }
+        let (wound, facing, total) = outward_triangles(&whole);
+        println!("{name}: {wound} wound and {facing} facing out of {total}");
+        assert_eq!(wound, total, "{name} winds clockwise from outside");
+        assert_eq!(facing, total, "{name}'s normals point out");
+    }
 }
 
 #[test]

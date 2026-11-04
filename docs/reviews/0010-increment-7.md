@@ -16,6 +16,10 @@ Status: review record, 2026-11-04. Reviewed: proposals 0037 and 0038, and the ch
 | 10 | Crucified zombies can't be hurt, which looked like a failure | They never call `walkmonster_start`, as in the original, and the test allows for it |
 | 11 | Telefragging Shub-Niggurath on `end` stopped with `no info_intermission`. A class with no function is removed, and the original gives spawn points empty ones so they can be found | They have them too, and the test of classes now allows no exceptions |
 | 12 | `finale_1` runs as Shub-Niggurath's death, and writes to a global `other` left over from whatever ran last | It sets the player's angles and view directly |
+| 13 | Asked to check how weapons display. Models were drawn with no culling, where the original culls. A weapon is close enough for the near plane to open it, so its inside showed, as a jagged plate and a red slash across the nailgun | Models cull their backs, with a test, and the nailgun's artifacts are gone in captures |
+| 14 | Measuring the item boxes before trusting culling on them found they wind correctly, but every normal pointed inwards, so they've been lit from the wrong side since increment 6 | Fixed, and all six boxes measured have every triangle wound and facing outwards |
+| 15 | The gun was lit at the player's body, where `R_DrawViewModel` uses the gun's own position | It's lit where it is |
+| 16 | The Ring of Shadows left the gun on screen, where the original hides it | The script hides it, with a test |
 
 ## Verified
 
@@ -28,13 +32,17 @@ These ran against the Steam data, read in place.
 | Every class on every map | All 88 have a function |
 | Every sound scripts ask for | None missing |
 | A soldier in `e1m1`, captured over a few seconds | It sees the player and comes on, and dies to the shotgun, and its backpack can be picked up |
-| 56 logic tests | Sight, walls, attacks, deaths, gibs, backpacks, paths, plats, falling, teleports and aiming |
+| Every shootable button and door in `id1` | 73 can be hit by a line and answer. One waits behind a door, and `e4m5` has a door that's only a switch, with no room to move |
+| A real shot at the switch on `e1m2`, and pressing a button on `e1m1`, captured | Both change to their used textures |
+| All eight weapons, captured one at a time | Each shows its own model |
+| 60 logic tests | Sight, walls, attacks, deaths, gibs, backpacks, paths, plats, falling, teleports, aiming, every weapon on a shot switch, and blast damage on one |
 
 `cargo xtask check` passes.
 
 ## Remaining
 
 - Nobody has played this yet, so how monsters feel is still to judge.
-- Most monsters have only been run by tests. Only the soldier has been watched.
+- Most monsters have only been run by tests. Only the soldier and a dog have been looked at.
+- Weapons were checked against the source and the data, not side by side with the original.
 - Obituaries, the intermission, and the end of the game's text screen wait for increment 8. `finale` prints for now, and killing Shub-Niggurath moves the player but can't yet hold them still.
 - Mission pack monsters aren't in.

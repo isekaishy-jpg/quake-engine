@@ -269,7 +269,7 @@ fn triangle() -> AliasModel {
         skin_width: 1,
         skin_height: 1,
         skins: vec![vec![200, 200, 200, 255]],
-        corners: vec![corner(0), corner(1), corner(2)],
+        corners: vec![corner(0), corner(2), corner(1)],
         poses: vec![vec![vertex(0, 0), vertex(100, 0), vertex(50, 100)]],
         frames: vec![AliasFrame {
             first_pose: 0,
@@ -531,4 +531,24 @@ fn a_frame_swaps_a_brush_model_to_its_alternate_texture() {
         .capture(&view, with_instance(&[instance]), 64, 64)
         .expect("capture");
     assert!(centre(&used)[1] < 8, "the black alternate");
+}
+
+/// The far side of a model isn't drawn, so a weapon the near plane cuts open
+/// doesn't show its inside.
+#[test]
+fn a_model_is_only_seen_from_outside() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let mut inside_out = triangle();
+    inside_out.corners.swap(1, 2);
+    let number = renderer.add_model(Arc::new(inside_out)).expect("model");
+    let capture = renderer
+        .capture(&view_from_above(), with_entity(&[draw_of(number)]), 64, 64)
+        .expect("capture");
+    let plain = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert_eq!(centre(&capture), centre(&plain));
 }

@@ -33,6 +33,7 @@ local ENGINE_FIELDS = {
 	impulse = true,
 	v_angle = true,
 	punchangle = true,
+	weaponhidden = true,
 	ideal_yaw = true,
 	yaw_speed = true,
 	dead = true,
