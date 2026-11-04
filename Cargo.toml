@@ -28,7 +28,7 @@ default-members = ["crates/engine_app"]
 
 # Patched third-party sources used by the Sol crates. They are dependencies,
 # not engine code (proposal 0009).
-exclude = ["vendor/winit", "vendor/micropool", "vendor/vulkane"]
+exclude = ["vendor/winit", "vendor/micropool", "vendor/vulkane", "vendor/box3d"]
 
 # Cargo's SemVer spelling of the product version: `0.0.0-alpha` is the product
 # version `0.0.0a` (proposal 0007).
@@ -48,10 +48,17 @@ engine_assets = { path = "crates/engine_assets" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
 engine_map = { path = "crates/engine_map" }
+engine_movement = { path = "crates/engine_movement" }
+engine_net = { path = "crates/engine_net" }
+engine_physics = { path = "crates/engine_physics" }
 engine_render = { path = "crates/engine_render" }
+engine_server = { path = "crates/engine_server" }
+engine_sim = { path = "crates/engine_sim" }
 engine_core = { path = "crates/engine_core" }
 engine_platform = { path = "crates/engine_platform" }
 fixture_quake = { path = "crates/fixture_quake" }
+# Proposal 0022: collision, private to `engine_physics`.
+box3d-rust = { path = "vendor/box3d" }
 # Proposal 0017: BSP parsing, private to `fixture_quake`.
 qbsp = { version = "=0.17.0", default-features = false }
 # Proposal 0019: writing screenshots, private to `engine_app`.

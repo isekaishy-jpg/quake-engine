@@ -1,0 +1,10 @@
+/target
+node_modules/
+demo/dist/
+demo/.dev-cache/
+demo/public/pkg/
+nul
+bun.lock
+
+.worktrees/
+
