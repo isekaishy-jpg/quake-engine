@@ -37,6 +37,9 @@ pub struct Level {
     pub flags: f64,
     /// The host's settings the game can read.
     pub settings: Vec<(String, f64)>,
+    /// The host's name and colours.
+    #[serde(default)]
+    pub host: SeatInfo,
 }
 
 /// What's been said to the client that a new one would need to hear again.
@@ -125,8 +128,8 @@ impl Server {
         game.start_level(&level.name, &level.settings, level.flags);
         game.spawn_map(&map.entities);
         let host = simulation.borrow().player_id();
-        game.connect_player(host, &level.name, level.parms.as_deref(), "player");
-        let mut seat = Seat::new(transport, SeatInfo::default());
+        game.connect_player(host, &level.name, level.parms.as_deref(), &level.host.name);
+        let mut seat = Seat::new(transport, level.host.clone());
         seat.player = Some(host);
         let mut server = Self {
             seats: vec![seat],
@@ -169,7 +172,7 @@ impl Server {
         let _anything_so_far = game.take_outbox();
         let host = simulation.borrow().player_id();
         let origin = simulation.borrow().player().origin;
-        let mut seat = Seat::new(transport, SeatInfo::default());
+        let mut seat = Seat::new(transport, saved.level.host.clone());
         seat.player = Some(host);
         let mut server = Self {
             seats: vec![seat],
@@ -193,8 +196,7 @@ impl Server {
     /// Takes in someone who's connected, who's told which map to load and
     /// gets a player when they've loaded it.
     pub fn add_seat(&mut self, mut seat: Seat) {
-        seat.player = None;
-        seat.shapes_told = 0;
+        seat.start_level();
         seat.send(&ServerMessage::Level(self.level.name.clone()));
         self.seats.push(seat);
     }
@@ -208,13 +210,6 @@ impl Server {
     #[must_use]
     pub fn seat_count(&self) -> usize {
         self.seats.len()
-    }
-
-    /// Says who the host is, for the scores.
-    pub fn set_host_info(&mut self, info: SeatInfo) {
-        if let Some(host) = self.seats.first_mut() {
-            host.info = info;
-        }
     }
 
     /// Tells seat `index` what a client that's just arrived needs to hear.

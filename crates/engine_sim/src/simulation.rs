@@ -1,5 +1,6 @@
 //! Entities, players and pusher physics.
 
+use std::collections::VecDeque;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -17,6 +18,10 @@ use crate::table::{EntityId, SlotTable};
 /// The longest a single command may claim to last, in seconds, so a client
 /// can't move further than this at once.
 const MAX_COMMAND_SECONDS: f32 = 0.1;
+
+/// The furthest a shot can look into the past, in seconds, so nobody can be
+/// shot from long after they've reached cover.
+const MAX_REWIND: f64 = 0.25;
 
 /// How fast the view recovers from a knock, in degrees a second.
 const PUNCH_RECOVERY: f32 = 10.0;
@@ -186,6 +191,12 @@ pub(crate) struct Player {
     /// Brush models they hit since last asked.
     #[serde(skip)]
     touched: Vec<u32>,
+    /// The game time of what they were looking at, or 0 if it's now.
+    #[serde(skip)]
+    view_time: f64,
+    /// Where they've been lately, oldest first, with when.
+    #[serde(skip)]
+    past: VecDeque<(f64, Vec3)>,
 }
 
 impl Player {
@@ -207,7 +218,30 @@ impl Player {
             weapon_hidden: false,
             punch: Vec3::ZERO,
             touched: Vec::new(),
+            view_time: 0.0,
+            past: VecDeque::new(),
         }
+    }
+
+    /// Where they were at `time`, between the two places recorded around it,
+    /// from `G_TimeShiftClient`.
+    fn at_time(&self, time: f64) -> Option<Vec3> {
+        let after = self.past.iter().position(|(when, _)| *when >= time)?;
+        let (to_time, to) = self.past[after];
+        let Some(&(from_time, from)) = after.checked_sub(1).and_then(|i| self.past.get(i)) else {
+            return Some(to);
+        };
+        let span = to_time - from_time;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a blend needs no more than f32"
+        )]
+        let fraction = if span > 0.0 {
+            ((time - from_time) / span) as f32
+        } else {
+            1.0
+        };
+        Some(from.lerp(to, fraction))
     }
 }
 
@@ -257,6 +291,8 @@ pub struct Simulation {
     pub(crate) check_index: usize,
     /// The leaves that player can be seen from.
     pub(crate) player_view: Vec<bool>,
+    /// Where players are taken to be, while a shot looks into the past.
+    rewound: Vec<(EntityId, Vec3)>,
 }
 
 /// Whether two boxes overlap.
@@ -285,6 +321,7 @@ impl Simulation {
             last_check: 0.0,
             check_index: 0,
             player_view: Vec::new(),
+            rewound: Vec::new(),
         };
         let _first = simulation.add_player(origin);
         simulation
@@ -351,6 +388,7 @@ impl Simulation {
             last_check,
             check_index,
             player_view,
+            rewound: _,
         } = self;
         SavedSimulation {
             entities: entities.clone(),
@@ -384,6 +422,7 @@ impl Simulation {
             last_check: saved.last_check,
             check_index: saved.check_index,
             player_view: saved.player_view,
+            rewound: Vec::new(),
         }
     }
 
@@ -544,6 +583,7 @@ impl Simulation {
     /// Notes a player's buttons, for scripts to see before the move runs.
     pub fn set_buttons(&mut self, id: EntityId, command: &UserCommand) {
         if let Some(player) = self.slot_mut(id) {
+            player.view_time = command.view_time;
             player.jump_down = command.jump;
             player.attack_down = command.attack;
             if command.impulse != 0 {
@@ -649,6 +689,9 @@ impl Simulation {
     /// An entity's position, which for a player is the player's.
     #[must_use]
     pub fn origin(&self, id: EntityId) -> Option<Vec3> {
+        if let Some((_, origin)) = self.rewound.iter().find(|(player, _)| *player == id) {
+            return Some(*origin);
+        }
         if let Some(player) = self.slot(id) {
             return Some(player.state.origin);
         }
@@ -1045,9 +1088,39 @@ impl Simulation {
         }
     }
 
-    /// Moves the clock on by `seconds`.
+    /// Moves the clock on by `seconds`, and notes where players are.
     pub fn end_tick(&mut self, seconds: f64) {
         self.time += seconds;
+        self.rewound.clear();
+        let oldest = self.time - MAX_REWIND - 2.0 * seconds;
+        let time = self.time;
+        for player in &mut self.players {
+            player.past.push_back((time, player.state.origin));
+            while player.past.front().is_some_and(|(when, _)| *when < oldest) {
+                let _old = player.past.pop_front();
+            }
+        }
+    }
+
+    /// Takes other players back to where `shooter` saw them, up to a limit,
+    /// until [`Simulation::end_rewind`] (proposal 0048).
+    pub fn rewind(&mut self, shooter: EntityId) {
+        let view_time = self.slot(shooter).map_or(0.0, |player| player.view_time);
+        if view_time <= 0.0 {
+            return;
+        }
+        let time = view_time.max(self.time - MAX_REWIND).min(self.time);
+        self.rewound = self
+            .players
+            .iter()
+            .filter(|player| player.id != shooter)
+            .filter_map(|player| Some((player.id, player.at_time(time)?)))
+            .collect();
+    }
+
+    /// Puts players back after a shot.
+    pub fn end_rewind(&mut self) {
+        self.rewound.clear();
     }
 
     /// Touches from players since last asked: brush models hit, then triggers

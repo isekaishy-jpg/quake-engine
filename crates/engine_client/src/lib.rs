@@ -11,6 +11,7 @@ mod lightstyle;
 mod look;
 mod particles;
 mod view;
+mod view_clock;
 
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
@@ -21,3 +22,4 @@ pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};
 pub use particles::{Particle, Particles, Trail};
 pub use view::{StepSmoother, VIEW_HEIGHT, ViewKick, dead_roll, view_bob, view_idle, view_roll};
+pub use view_clock::ViewClock;

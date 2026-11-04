@@ -565,6 +565,22 @@ impl Game {
         Self::register_walking(lua, simulation, engine)?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "rewind",
+            lua.create_function(move |_, id: f64| {
+                sim.borrow_mut().rewind(id_from(id));
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "end_rewind",
+            lua.create_function(move |_, ()| {
+                sim.borrow_mut().end_rewind();
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "droptofloor",
             lua.create_function(move |_, id: f64| Ok(sim.borrow_mut().drop_to_floor(id_from(id))))?,
         )?;

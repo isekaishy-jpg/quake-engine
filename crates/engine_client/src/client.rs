@@ -2,6 +2,7 @@
 
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
+use std::time::Duration;
 
 use engine_core::entity::{Effect, EntityState, ModelInstance};
 use engine_core::math::Vec3;
@@ -15,6 +16,7 @@ use engine_net::{
 use engine_physics::CollisionWorld;
 
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
+use crate::view_clock::ViewClock;
 
 /// Further than this in a tick is a teleport, and isn't blended.
 const MAX_BLENDED_MOVE: f32 = 200.0;
@@ -141,6 +143,8 @@ pub struct Client {
     level: Option<String>,
     /// The latest scores.
     scores: Vec<PlayerScore>,
+    /// The time others are drawn at.
+    clock: ViewClock,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -185,6 +189,7 @@ impl Client {
             history: VecDeque::with_capacity(SNAPSHOT_HISTORY),
             level: None,
             scores: Vec::new(),
+            clock: ViewClock::default(),
             touched: Vec::new(),
         }
     }
@@ -243,6 +248,7 @@ impl Client {
     pub fn draw_entities(&self, fraction: f32) -> Vec<DrawnEntity> {
         self.entities
             .iter()
+            .filter(|entity| entity.id != self.player_entity)
             .map(|entity| {
                 let mut state = *entity;
                 if let Some(from) = self.previous_entities.get(&entity.id)
@@ -260,6 +266,58 @@ impl Client {
                     state,
                     from_frame,
                     blend,
+                }
+            })
+            .collect()
+    }
+
+    /// Entities as they should be drawn online, `seconds` since the last
+    /// frame: a little in the past, between the snapshots either side of it,
+    /// so they move evenly however snapshots arrive.
+    pub fn draw_entities_buffered(&mut self, seconds: f64) -> Vec<DrawnEntity> {
+        let time = self.clock.advance(seconds, self.time);
+        let after = self
+            .history
+            .iter()
+            .position(|snapshot| snapshot.time >= time);
+        let pair = after.and_then(|index| {
+            let before = index.checked_sub(1)?;
+            Some((self.history.get(before)?, self.history.get(index)?))
+        });
+        let Some((before, after)) = pair else {
+            return self.draw_entities(1.0);
+        };
+        let span = after.time - before.time;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a blend needs no more than f32"
+        )]
+        let fraction = if span > 0.0 {
+            ((time - before.time) / span) as f32
+        } else {
+            1.0
+        };
+        let old: HashMap<u64, &EntityState> = before
+            .entities
+            .iter()
+            .map(|entity| (entity.id, entity))
+            .collect();
+        after
+            .entities
+            .iter()
+            .filter(|entity| entity.id != self.player_entity)
+            .map(|entity| {
+                let mut state = *entity;
+                if let Some(from) = old.get(&entity.id)
+                    && (entity.origin - from.origin).length() < MAX_BLENDED_MOVE
+                {
+                    state.origin = from.origin.lerp(entity.origin, fraction);
+                    state.angles = blend_angles(from.angles, entity.angles, fraction);
+                }
+                DrawnEntity {
+                    state,
+                    from_frame: old.get(&entity.id).map_or(entity.frame, |from| from.frame),
+                    blend: fraction,
                 }
             })
             .collect()
@@ -364,6 +422,7 @@ impl Client {
     pub fn send_command(&mut self, mut command: UserCommand, seconds: f32) {
         command.sequence = self.next_sequence;
         command.seconds = seconds;
+        command.view_time = self.clock.time();
         self.next_sequence = self.next_sequence.wrapping_add(1);
         let mut predicted = self.predicted;
         self.run_on(&mut predicted, &command);
@@ -377,6 +436,22 @@ impl Client {
         let seen = self.history.back().map_or(0, |snapshot| snapshot.tick);
         self.transport
             .send_unreliable(ClientMessage::Move(commands, seen).encode());
+    }
+
+    /// Hears from the network, `elapsed` since last time.
+    pub fn update_network(&mut self, elapsed: Duration) {
+        self.transport.update(elapsed);
+    }
+
+    /// Sends what's waiting.
+    pub fn flush_network(&mut self) {
+        self.transport.flush();
+    }
+
+    /// Gives up the connection, for the next level's client.
+    #[must_use]
+    pub fn into_transport(self) -> Box<dyn Transport> {
+        self.transport
     }
 
     /// Takes a level the server wants loaded.

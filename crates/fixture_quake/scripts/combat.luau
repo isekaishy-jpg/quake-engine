@@ -113,6 +113,11 @@ function T_Damage(targ, inflictor, attacker, damage)
 		return
 	end
 
+	-- Team play damage avoidance.
+	if teamplay == 1 and (targ.team or 0) > 0 and targ.team == ent(attacker).team then
+		return
+	end
+
 	targ.health = (targ.health or 0) - take
 	if targ.health <= 0 then
 		Killed(targ, attacker)

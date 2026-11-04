@@ -8,7 +8,7 @@ use engine_client::{BeamPiece, DrawnEntity};
 use engine_core::math::Vec3;
 use engine_map::{AliasModel, Map, Sprite};
 use engine_render::{EntityDraw, LightDraw, Renderer, SpriteDraw};
-use fixture_quake::{Palette, parse_item_bsp, parse_mdl, parse_spr};
+use fixture_quake::{Palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
 
 /// How fast bonus items spin, in degrees a second.
 const SPIN_SPEED: f32 = 100.0;
@@ -95,12 +95,36 @@ pub(crate) struct ModelBank {
     by_name: HashMap<String, Option<Arc<Asset>>>,
     /// The server's numbers, in this game.
     by_number: HashMap<u32, Arc<Asset>>,
+    /// The names of those numbers.
+    names: HashMap<u32, String>,
+    /// Models in a player's colours, by number and colours.
+    colored: HashMap<(u32, u8), Arc<Asset>>,
 }
 
 impl ModelBank {
     /// Forgets the server's numbers, for a new level.
     pub(crate) fn clear_numbers(&mut self) {
         self.by_number.clear();
+        self.names.clear();
+        self.colored.clear();
+    }
+
+    /// Loads model `number` in `colors`, the first time.
+    pub(crate) fn prepare_colors(
+        &mut self,
+        number: u16,
+        colors: u8,
+        filesystem: &FileSystem,
+        renderer: Option<&mut Renderer>,
+    ) {
+        let key = (u32::from(number), colors);
+        if self.colored.contains_key(&key) {
+            return;
+        }
+        let name = self.names.get(&key.0).cloned().unwrap_or_default();
+        if let Some(asset) = load_colored(&name, colors, filesystem, renderer) {
+            self.colored.insert(key, asset);
+        }
     }
 
     /// The asset called `name`, loading it if this is the first time.
@@ -130,6 +154,7 @@ impl ModelBank {
     ) {
         if let Some(asset) = self.asset(name, filesystem, renderer) {
             self.by_number.insert(number, asset);
+            self.names.insert(number, name.to_owned());
         }
     }
 
@@ -154,15 +179,18 @@ impl ModelBank {
         }
     }
 
-    /// Adds what to draw for `entity`.
+    /// Adds what to draw for `entity`, in `colors` if it wears any.
     pub(crate) fn draw(
         &self,
         entity: &DrawnEntity,
+        colors: Option<u8>,
         lighting: &Lighting<'_>,
         lists: &mut DrawLists,
     ) {
         let state = &entity.state;
-        let Some(asset) = self.by_number.get(&u32::from(state.model)) else {
+        let number = u32::from(state.model);
+        let colored = colors.and_then(|colors| self.colored.get(&(number, colors)));
+        let Some(asset) = colored.or_else(|| self.by_number.get(&number)) else {
             return;
         };
         let parts = match asset.as_ref() {
@@ -278,6 +306,21 @@ impl ModelBank {
             in_front: true,
         })
     }
+}
+
+/// Loads the model `name` in `colors`, and hands it to `renderer`.
+fn load_colored(
+    name: &str,
+    colors: u8,
+    filesystem: &FileSystem,
+    renderer: Option<&mut Renderer>,
+) -> Option<Arc<Asset>> {
+    let renderer = renderer?;
+    let palette = Palette::parse(&filesystem.read("gfx/palette.lmp").ok()?)?;
+    let bytes = filesystem.read(name).ok()?;
+    let model = Arc::new(parse_colored_mdl(&bytes, &palette, colors)?);
+    let number = renderer.add_model(Arc::clone(&model)).ok()?;
+    Some(Arc::new(Asset::Models(vec![Loaded { number, model }])))
 }
 
 /// Loads `name`, and hands it to `renderer`.

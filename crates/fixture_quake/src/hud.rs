@@ -5,6 +5,8 @@
 use engine_core::canvas::{CHARACTER_SIZE, Canvas};
 use engine_map::Contents;
 
+use crate::texture::Palette;
+
 /// `STAT_HEALTH`.
 const STAT_HEALTH: usize = 0;
 /// `STAT_AMMO`.
@@ -25,8 +27,10 @@ const STAT_SECRETS: usize = 13;
 const STAT_MONSTERS: usize = 14;
 /// The items, which the original sends apart from its stats.
 const STAT_ITEMS: usize = 15;
+/// Whether this is deathmatch.
+const STAT_DEATHMATCH: usize = 16;
 /// How many stats there are.
-const STAT_COUNT: usize = 16;
+const STAT_COUNT: usize = 17;
 
 /// `IT_SHOTGUN`, the first of seven weapons.
 const IT_SHOTGUN: u32 = 1;
@@ -111,6 +115,19 @@ const SLIME_SHIFT: Shift = Shift::new([0, 25, 5], 150.0);
 /// `cshift_lava`.
 const LAVA_SHIFT: Shift = Shift::new([255, 80, 0], 150.0);
 
+/// A line of the scores.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Score {
+    /// The player's name.
+    pub name: String,
+    /// Their frags.
+    pub frags: i32,
+    /// Their shirt in the high four bits, and pants in the low.
+    pub colors: u8,
+    /// Whether this is the player looking.
+    pub own: bool,
+}
+
 /// What's over the view at the end of a level.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Intermission {
@@ -192,6 +209,10 @@ pub struct Hud {
     show_scores: bool,
     /// The level's title.
     level_title: String,
+    /// Everyone's scores, best first.
+    scores: Vec<Score>,
+    /// The colours players can wear.
+    shirts: [[u8; 3]; 16],
 }
 
 impl Default for Hud {
@@ -209,6 +230,8 @@ impl Default for Hud {
             completed_time: 0.0,
             show_scores: false,
             level_title: String::new(),
+            scores: Vec::new(),
+            shirts: [[0; 3]; 16],
         }
     }
 }
@@ -328,6 +351,70 @@ impl Hud {
         (self.stats[STAT_MONSTERS], self.stats[STAT_TOTAL_MONSTERS])
     }
 
+    /// Takes the colours players can wear from `palette`, from
+    /// `Sbar_ColorForMap`.
+    pub fn set_palette(&mut self, palette: &Palette) {
+        for (index, shirt) in (0u8..).zip(&mut self.shirts) {
+            *shirt = palette.color(index * 16 + 8);
+        }
+    }
+
+    /// Takes everyone's scores.
+    pub fn set_scores(&mut self, mut scores: Vec<Score>) {
+        scores.sort_by_key(|score| std::cmp::Reverse(score.frags));
+        self.scores = scores;
+    }
+
+    /// The colour of `index` as the canvas wants it.
+    fn shirt(&self, index: u8) -> [f32; 4] {
+        let [red, green, blue] = self.shirts[usize::from(index & 15)].map(f32::from);
+        [red / 255.0, green / 255.0, blue / 255.0, 1.0]
+    }
+
+    /// Draws everyone's name, frags and colours, from `Sbar_DeathmatchOverlay`.
+    fn draw_ranking(&self, canvas: &mut Canvas<'_>) {
+        let left = ((canvas.width() - 320.0) / 2.0).floor();
+        let top = ((canvas.height() - 200.0) / 2.0).floor();
+        if let Some((width, _height)) = canvas.size_of("gfx/ranking.lmp") {
+            let x = left + ((320.0 - width) / 2.0).floor();
+            canvas.picture("gfx/ranking.lmp", x, top + 8.0);
+        }
+        let x = left + 80.0;
+        let mut y = top + 40.0;
+        for score in &self.scores {
+            canvas.fill([x, y, x + 40.0, y + 4.0], self.shirt(score.colors >> 4));
+            canvas.fill([x, y + 4.0, x + 40.0, y + 8.0], self.shirt(score.colors));
+            let frags = format!("{:3}", score.frags);
+            canvas.text(x + 8.0, y, frags.as_bytes());
+            if score.own {
+                canvas.character(x - 8.0, y, 12);
+            }
+            canvas.text(x + 64.0, y, score.name.as_bytes());
+            y += 10.0;
+        }
+    }
+
+    /// Draws the best scores on the bar, from `Sbar_DrawFrags`.
+    fn draw_frags(&self, canvas: &mut Canvas<'_>, x: f32, top: f32) {
+        for (slot, score) in (0u8..).zip(self.scores.iter().take(4)) {
+            let left = x + (23.0 + 4.0 * f32::from(slot)) * 8.0;
+            canvas.fill(
+                [left + 10.0, top + 1.0, left + 38.0, top + 5.0],
+                self.shirt(score.colors >> 4),
+            );
+            canvas.fill(
+                [left + 10.0, top + 5.0, left + 38.0, top + 8.0],
+                self.shirt(score.colors),
+            );
+            let frags = format!("{:3}", score.frags);
+            canvas.text(left + 12.0, top, frags.as_bytes());
+            if score.own {
+                canvas.character(left + 6.0, top, 16);
+                canvas.character(left + 32.0, top, 17);
+            }
+        }
+    }
+
     /// Holds the scores open, or lets them go.
     pub fn set_show_scores(&mut self, show: bool) {
         self.show_scores = show;
@@ -404,6 +491,9 @@ impl Hud {
     /// over it, which the end of level screens wait for.
     pub fn draw(&self, canvas: &mut Canvas<'_>, playing: bool) {
         match self.intermission {
+            Intermission::Results if playing && self.stats[STAT_DEATHMATCH] != 0 => {
+                self.draw_ranking(canvas);
+            }
             Intermission::Results if playing => self.draw_results(canvas),
             Intermission::Finale if playing => {
                 Self::draw_finale_title(canvas);
@@ -470,9 +560,15 @@ impl Hud {
     fn draw_bar(&self, canvas: &mut Canvas<'_>) {
         let (x, y) = Self::bar_origin(canvas);
         self.draw_inventory(canvas, x, y);
+        if self.scores.len() > 1 {
+            self.draw_frags(canvas, x, y - BAR_HEIGHT);
+        }
         if self.show_scores || self.is_dead() {
             canvas.picture("scorebar", x, y);
             self.draw_solo_scores(canvas, x, y);
+            if self.stats[STAT_DEATHMATCH] != 0 {
+                self.draw_ranking(canvas);
+            }
             return;
         }
         canvas.picture("sbar", x, y);

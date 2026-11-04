@@ -1,6 +1,7 @@
 //! Moving bytes between client and server.
 
 use std::sync::mpsc::{self, Receiver, Sender};
+use std::time::Duration;
 
 /// Something that carries messages to the other side.
 pub trait Transport {
@@ -20,6 +21,17 @@ pub trait Transport {
     fn is_connected(&self) -> bool {
         true
     }
+
+    /// Whether messages can flow yet, since a connection takes time to open.
+    fn is_ready(&self) -> bool {
+        true
+    }
+
+    /// Hears from the network, `elapsed` since last time.
+    fn update(&mut self, _elapsed: Duration) {}
+
+    /// Sends what's waiting.
+    fn flush(&mut self) {}
 }
 
 /// One end of a connection inside this process.

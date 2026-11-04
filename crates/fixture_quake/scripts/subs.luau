@@ -159,6 +159,7 @@ set_field_defaults({
 -- This is a single player game, for now.
 deathmatch = 0
 coop = 0
+teamplay = 0
 
 -- The last thing fired.
 newmis = nil
@@ -208,7 +209,12 @@ local SPAWNFLAG_NOT_HARD = 1024
 -- The difficulty, from 0 to 3.
 skill = 1
 
+local SPAWNFLAG_NOT_DEATHMATCH = 2048
+
 function spawn_filter(self)
+	if deathmatch ~= 0 then
+		return bit32.band(self.spawnflags, SPAWNFLAG_NOT_DEATHMATCH) == 0
+	end
 	local flag = if skill == 0
 		then SPAWNFLAG_NOT_EASY
 		elseif skill == 1 then SPAWNFLAG_NOT_MEDIUM

@@ -28,6 +28,12 @@ function level_started(name, flags)
 	mapname = name
 	serverflags = flags
 	skill = math.clamp(rint(cvar("skill")), 0, 3)
+	deathmatch = cvar("deathmatch")
+	coop = cvar("coop")
+	teamplay = cvar("teamplay")
+	if coop ~= 0 then
+		deathmatch = 0
+	end
 end
 
 -- The camera for the end of a level, from `FindIntermission`.
@@ -202,14 +208,99 @@ function trigger_changelevel(self)
 	self.touch = changelevel_touch
 end
 
--- Called by ClientKill and PlayerDeathThink. One player restarts the level.
-function respawn(_self)
-	engine.restart()
+-- Dead bodies stay where they fell, a few at a time, from `InitBodyQue`.
+bodyque_head = nil
+
+function InitBodyQue()
+	local first = spawn()
+	first.classname = "bodyque"
+	local last = first
+	for _ = 1, 3 do
+		local body = spawn()
+		body.classname = "bodyque"
+		last.next_body = body
+		last = body
+	end
+	last.next_body = first
+	bodyque_head = first
+end
+
+function bodyque(_self) end
+
+function CopyToBodyQue(entity)
+	if bodyque_head == nil then
+		InitBodyQue()
+	end
+	local body = bodyque_head
+	body.angles = entity.angles
+	setmodel(body, entity.model)
+	body.frame = entity.frame
+	body.movetype = MOVETYPE_TOSS
+	body.velocity = entity.velocity
+	body.flags = 0
+	setorigin(body, entity.origin)
+	setsize(body, entity.mins, entity.maxs)
+	bodyque_head = body.next_body
+end
+
+-- Called by ClientKill and PlayerDeathThink.
+function respawn(self)
+	if coop ~= 0 then
+		-- Make a copy of the dead body for appearance's sake.
+		CopyToBodyQue(self)
+		-- Get the spawn parms as they were at level start.
+		parms = self.start_parms or parms
+		PutClientInServer(self)
+	elseif deathmatch ~= 0 then
+		CopyToBodyQue(self)
+		SetNewParms()
+		PutClientInServer(self)
+	else
+		-- Restart the entire server.
+		engine.restart()
+	end
 end
 
 function ClientKill(self)
 	bprint(self.netname .. " suicides")
+	set_suicide_frame(self)
+	self.frags = (self.frags or 0) - 2
 	respawn(self)
+end
+
+-- Goes to the next level for deathmatch, from `NextLevel`.
+function NextLevel()
+	local exit = find(nil, "classname", "trigger_changelevel")
+	if exit == nil or mapname == "start" then
+		-- Go back to the same map with no trigger_changelevel.
+		exit = spawn()
+		exit.map = mapname
+	end
+	nextmap = exit.map
+	if (exit.nextthink or 0) < time() then
+		exit.think = execute_changelevel
+		exit.nextthink = time() + 0.1
+	end
+end
+
+-- Exits deathmatch games on their limits, from `CheckRules`.
+function CheckRules(self)
+	if intermission_running ~= 0 then
+		return
+	end
+	local timelimit = cvar("timelimit") * 60
+	local fraglimit = cvar("fraglimit")
+	if timelimit ~= 0 and time() >= timelimit then
+		NextLevel()
+	elseif fraglimit ~= 0 and (self.frags or 0) >= fraglimit then
+		NextLevel()
+	end
+end
+
+function ClientDisconnect(self)
+	bprint(self.netname .. " left the game with " .. tostring(self.frags or 0) .. " frags")
+	sound(self, CHAN_BODY, "player/tornoff2.wav", 1, ATTN_NONE)
+	set_suicide_frame(self)
 end
 
 -- What each monster did to the player.
@@ -231,6 +322,37 @@ local MONSTER_OBITUARIES = {
 	monster_wizard = " was scragged by a Scrag",
 	monster_zombie = " joins the Zombies",
 }
+
+-- What each weapon says about a kill, as before and after the killer's name.
+local WEAPON_OBITUARIES = {
+	[IT_AXE] = { " was ax-murdered by ", "" },
+	[IT_SHOTGUN] = { " chewed on ", "'s boomstick" },
+	[IT_SUPER_SHOTGUN] = { " ate 2 loads of ", "'s buckshot" },
+	[IT_NAILGUN] = { " was nailed by ", "" },
+	[IT_SUPER_NAILGUN] = { " was punctured by ", "" },
+}
+
+-- How one player killed another.
+local function kill_message(targ, attacker)
+	local weapon = attacker.weapon
+	local gibbed = targ.health < -40
+	if weapon == IT_GRENADE_LAUNCHER then
+		if gibbed then
+			return targ.netname .. " was gibbed by " .. attacker.netname .. "'s grenade"
+		end
+		return targ.netname .. " eats " .. attacker.netname .. "'s pineapple"
+	elseif weapon == IT_ROCKET_LAUNCHER then
+		if gibbed then
+			return targ.netname .. " was gibbed by " .. attacker.netname .. "'s rocket"
+		end
+		return targ.netname .. " rides " .. attacker.netname .. "'s rocket"
+	elseif weapon == IT_LIGHTNING then
+		local ending = if attacker.waterlevel > 1 then "'s discharge" else "'s shaft"
+		return targ.netname .. " accepts " .. attacker.netname .. ending
+	end
+	local words = WEAPON_OBITUARIES[weapon] or { " was killed by ", "" }
+	return targ.netname .. words[1] .. attacker.netname .. words[2]
+end
 
 -- How a player killed themselves.
 local function killed_self(targ)
@@ -283,7 +405,7 @@ local function death_message(targ, attacker)
 	return " died"
 end
 
--- Called when anything dies. Another player's kills wait for online play.
+-- Called when anything dies, and keeps the score.
 function ClientObituary(targ, attacker)
 	if targ.classname ~= "player" then
 		return
@@ -291,11 +413,18 @@ function ClientObituary(targ, attacker)
 	attacker = ent(attacker)
 	if attacker.classname == "teledeath" then
 		bprint(targ.netname .. " was telefragged by " .. attacker.owner.netname)
+		attacker.owner.frags = (attacker.owner.frags or 0) + 1
 	elseif attacker.classname == "teledeath2" then
 		bprint("Satan's power deflects " .. targ.netname .. "'s telefrag")
+		targ.frags = (targ.frags or 0) - 1
 	elseif attacker == targ then
+		targ.frags = (targ.frags or 0) - 1
 		bprint(targ.netname .. killed_self(targ))
+	elseif attacker.classname == "player" then
+		attacker.frags = (attacker.frags or 0) + 1
+		bprint(kill_message(targ, attacker))
 	else
+		targ.frags = (targ.frags or 0) - 1
 		bprint(targ.netname .. death_message(targ, attacker))
 	end
 end
@@ -371,6 +500,7 @@ function ClientData(self)
 		found_secrets,
 		killed_monsters,
 		bit32.bor(self.items or 0, bit32.lshift(serverflags, 28)),
+		deathmatch,
 	}
 end
 
@@ -469,6 +599,7 @@ function PlayerPreThink(self)
 		-- Intermission or finale.
 		return
 	end
+	CheckRules(self)
 	if self.deadflag == DEAD_DYING then
 		return
 	end
@@ -523,6 +654,7 @@ end
 -- The engine readies the player once the map has spawned.
 function ClientConnect(self, name, saved, netname)
 	self.netname = netname or "player"
+	self.frags = self.frags or 0
 	if world then
 		world.model = "maps/" .. name .. ".bsp"
 		engine.level_title(world.message or "")
@@ -532,7 +664,13 @@ function ClientConnect(self, name, saved, netname)
 	else
 		SetNewParms()
 	end
+	self.start_parms = parms
+	bprint(self.netname .. " entered the game")
 	PutClientInServer(self)
+	-- A client connecting during an intermission can cause problems.
+	if intermission_running ~= 0 then
+		ExitIntermission()
+	end
 end
 
 -- Places that are looked up, which have to stay in the world to be found.

@@ -4,6 +4,7 @@ use std::collections::VecDeque;
 
 use engine_net::{ServerMessage, Snapshot, Transport, delta_from};
 use engine_sim::EntityId;
+use serde::{Deserialize, Serialize};
 
 /// The most seconds of movement a client can have in hand, so a client can't
 /// save up time, or move faster than the clock, by sending commands in bursts.
@@ -19,7 +20,7 @@ const SNAPSHOT_HISTORY: usize = 64;
 const TIMEOUT_SECONDS: f64 = 10.0;
 
 /// Who someone says they are.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct SeatInfo {
     /// Their name.
     pub name: String,
@@ -94,6 +95,14 @@ impl Seat {
             let _oldest = self.history.pop_front();
         }
         self.history.push_back(snapshot);
+    }
+
+    /// Forgets what they've seen, since a new level starts from nothing.
+    pub(crate) fn start_level(&mut self) {
+        self.history.clear();
+        self.seen = 0;
+        self.player = None;
+        self.shapes_told = 0;
     }
 
     /// Notes the last snapshot they received.

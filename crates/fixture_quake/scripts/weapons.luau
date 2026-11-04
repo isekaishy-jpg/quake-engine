@@ -546,13 +546,13 @@ function W_Attack(self)
 		sound(self, CHAN_WEAPON, "weapons/ax1.wav", 1, ATTN_NORM)
 		local r = random()
 		if r < 0.25 then
-			player_axe(self, 1)
+			player_axe(self, 1, 119)
 		elseif r < 0.5 then
-			player_axe(self, 5)
+			player_axe(self, 5, 125)
 		elseif r < 0.75 then
-			player_axe(self, 1)
+			player_axe(self, 1, 131)
 		else
-			player_axe(self, 5)
+			player_axe(self, 5, 137)
 		end
 		self.attack_finished = time() + 0.5
 	elseif weapon == IT_SHOTGUN then
@@ -608,6 +608,9 @@ function W_ChangeWeapon(self)
 end
 
 function CheatCommand(self)
+	if deathmatch ~= 0 or coop ~= 0 then
+		return
+	end
 	self.ammo_rockets = 100
 	self.ammo_nails = 200
 	self.ammo_shells = 100
@@ -651,6 +654,9 @@ function CycleWeaponCommand(self)
 end
 
 function QuadCheat(self)
+	if deathmatch ~= 0 or coop ~= 0 then
+		return
+	end
 	self.super_time = 1
 	self.super_damage_finished = time() + 30
 	self.items = bit32.bor(self.items, IT_QUAD)
@@ -664,7 +670,7 @@ function ImpulseCommands(self)
 		CheatCommand(self)
 	elseif impulse == 10 then
 		CycleWeaponCommand(self)
-	elseif impulse == 11 then
+	elseif impulse == 11 and deathmatch == 0 and coop == 0 then
 		serverflags = serverflags * 2 + 1
 	elseif impulse == 255 then
 		QuadCheat(self)
@@ -690,3 +696,17 @@ function SuperDamageSound(self)
 		sound(self, CHAN_BODY, "items/damage3.wav", 1, ATTN_NORM)
 	end
 end
+
+-- Instant weapons hit what the player saw, not where it's since moved to.
+local function aimed_at_what_was_seen(fire)
+	return function(self, ...)
+		engine.rewind(rawget(self, "_id"))
+		fire(self, ...)
+		engine.end_rewind()
+	end
+end
+
+W_FireAxe = aimed_at_what_was_seen(W_FireAxe)
+W_FireShotgun = aimed_at_what_was_seen(W_FireShotgun)
+W_FireSuperShotgun = aimed_at_what_was_seen(W_FireSuperShotgun)
+W_FireLightning = aimed_at_what_was_seen(W_FireLightning)

@@ -56,7 +56,35 @@ function DecodeLevelParms(self)
 	self.armortype = parms[9] * 0.01
 end
 
--- Gets the player ready. The engine has already put them at the spawn point.
+-- The entity to spawn at, from `SelectSpawnPoint`. A map with none leaves the
+-- player where the engine put them.
+lastspawn = nil
+
+function SelectSpawnPoint(_self)
+	if coop ~= 0 then
+		lastspawn = find(lastspawn, "classname", "info_player_coop")
+		lastspawn = lastspawn or find(nil, "classname", "info_player_start")
+		if lastspawn then
+			return lastspawn
+		end
+	elseif deathmatch ~= 0 then
+		lastspawn = find(lastspawn, "classname", "info_player_deathmatch")
+		lastspawn = lastspawn or find(nil, "classname", "info_player_deathmatch")
+		if lastspawn then
+			return lastspawn
+		end
+	end
+	if serverflags ~= 0 then
+		-- Return with a rune to start.
+		local spot = find(nil, "classname", "info_player_start2")
+		if spot then
+			return spot
+		end
+	end
+	return ent(find(nil, "classname", "info_player_start"))
+end
+
+-- Gets the player ready.
 function PutClientInServer(self)
 	self.classname = "player"
 	self.takedamage = DAMAGE_AIM
@@ -81,28 +109,84 @@ function PutClientInServer(self)
 	self.th_pain = player_pain
 	self.th_die = PlayerDie
 	self.deadflag = DEAD_NO
+	self.dead = false
+	self.pausetime = 0
+	self.view_ofs = vector.create(0, 0, 22)
+	setmodel(self, "progs/player.mdl")
 	setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
-	-- Returning with a rune lands somewhere else, from `SelectSpawnPoint`.
-	if serverflags ~= 0 then
-		local spot = find_entity(world, "classname", "info_player_start2")
-		if exists(spot) then
-			setorigin(self, spot.origin + vector.create(0, 0, 1))
-			set_view(self, spot.angles.y, 0)
-		end
+	self.velocity = vector.zero
+	local spot = SelectSpawnPoint(self)
+	if exists(spot) then
+		setorigin(self, spot.origin + vector.create(0, 0, 1))
+		set_view(self, spot.angles.y, 0)
+	end
+	player_stand1(self)
+	if deathmatch ~= 0 or coop ~= 0 then
+		local forward = makevectors(self.angles)
+		spawn_tfog(self.origin + forward * 20)
+		spawn_tdeath(self.origin, self)
 	end
 end
 
--- Stands the weapon down.
-function player_run(self)
+-- The first frame of each of `player.mdl`'s sequences, from `player.qc`.
+local FRAME_AXRUN = 0
+local FRAME_ROCKRUN = 6
+local FRAME_STAND = 12
+local FRAME_AXSTND = 17
+local FRAME_AXPAIN = 29
+local FRAME_PAIN = 35
+local FRAME_AXDETH = 41
+local FRAME_DEATHS = { { 50, 11 }, { 61, 9 }, { 70, 15 }, { 85, 9 }, { 94, 9 } }
+local FRAME_NAILATT = 103
+local FRAME_LIGHT = 105
+local FRAME_ROCKATT = 107
+local FRAME_SHOTATT = 113
+
+function player_stand1(self)
+	animate(self, FRAME_AXSTND, player_stand1)
 	self.weaponframe = 0
-	self.think = nil
-	self.nextthink = 0
+	if self.velocity.x ~= 0 or self.velocity.y ~= 0 then
+		self.walkframe = 0
+		player_run(self)
+		return
+	end
+	local walkframe = self.walkframe or 0
+	if self.weapon == IT_AXE then
+		if walkframe >= 12 then
+			walkframe = 0
+		end
+		self.frame = FRAME_AXSTND + walkframe
+	else
+		if walkframe >= 5 then
+			walkframe = 0
+		end
+		self.frame = FRAME_STAND + walkframe
+	end
+	self.walkframe = walkframe + 1
 end
 
--- Runs `frames` of the weapon, a tenth of a second each, then stands it down.
--- `fire` is the step that strikes, if any.
-local function weapon_frames(self, frames, step, fire)
+function player_run(self)
+	animate(self, FRAME_ROCKRUN, player_run)
+	self.weaponframe = 0
+	if self.velocity.x == 0 and self.velocity.y == 0 then
+		self.walkframe = 0
+		player_stand1(self)
+		return
+	end
+	local walkframe = self.walkframe or 0
+	if walkframe == 6 then
+		walkframe = 0
+	end
+	local first = if self.weapon == IT_AXE then FRAME_AXRUN else FRAME_ROCKRUN
+	self.frame = first + walkframe
+	self.walkframe = walkframe + 1
+end
+
+-- Runs `frames` of the weapon, a tenth of a second each, with the body from
+-- `body` on, then stands it down. `fire` is the step that strikes, if any.
+local function weapon_frames(self, frames, step, fire, body)
 	self.weaponframe = frames[step]
+	self.frame = body + step - 1
 	if step == fire then
 		W_FireAxe(self)
 	end
@@ -110,6 +194,7 @@ local function weapon_frames(self, frames, step, fire)
 	self.weapon_steps = frames
 	self.weapon_step = step
 	self.weapon_strike = fire
+	self.weapon_body = body
 	self.think = weapon_frames_next
 end
 
@@ -117,7 +202,27 @@ function weapon_frames_next(self)
 	if self.weapon_step == #self.weapon_steps then
 		player_run(self)
 	else
-		weapon_frames(self, self.weapon_steps, self.weapon_step + 1, self.weapon_strike)
+		local step = self.weapon_step + 1
+		weapon_frames(self, self.weapon_steps, step, self.weapon_strike, self.weapon_body)
+	end
+end
+
+-- Runs `count` frames of the body from `first`, then `after`.
+local function body_frames(self, first, count, after)
+	self.body_frame = first
+	self.body_last = first + count - 1
+	self.body_after = after
+	body_frames_next(self)
+end
+
+function body_frames_next(self)
+	self.frame = self.body_frame
+	self.body_frame += 1
+	self.nextthink = time() + 0.1
+	if self.frame == self.body_last then
+		self.think = self.body_after
+	else
+		self.think = body_frames_next
 	end
 end
 
@@ -127,21 +232,22 @@ end
 
 function player_shot(self)
 	muzzle_flash(self)
-	weapon_frames(self, { 1, 2, 3, 4, 5, 6 }, 1, nil)
+	weapon_frames(self, { 1, 2, 3, 4, 5, 6 }, 1, nil, FRAME_SHOTATT)
 end
 
 function player_rocket(self)
 	muzzle_flash(self)
-	weapon_frames(self, { 1, 2, 3, 4, 5, 6 }, 1, nil)
+	weapon_frames(self, { 1, 2, 3, 4, 5, 6 }, 1, nil, FRAME_ROCKATT)
 end
 
 -- The axe has two swings, starting on frame 1 or 5.
-function player_axe(self, first)
-	weapon_frames(self, { first, first + 1, first + 2, first + 3 }, 1, 3)
+function player_axe(self, first, body)
+	weapon_frames(self, { first, first + 1, first + 2, first + 3 }, 1, 3, body)
 end
 
 -- Fires for as long as the button is down, a tenth of a second a shot.
-local function held_fire(self, wrap, fire, next_think)
+local function held_fire(self, wrap, fire, next_think, body)
+	self.frame = body
 	muzzle_flash(self)
 	self.nextthink = time() + 0.1
 	self.think = next_think
@@ -161,17 +267,17 @@ end
 function player_nail1(self)
 	held_fire(self, 9, function(me)
 		W_FireSpikes(me, 4)
-	end, player_nail2)
+	end, player_nail2, FRAME_NAILATT)
 end
 
 function player_nail2(self)
 	held_fire(self, 9, function(me)
 		W_FireSpikes(me, -4)
-	end, player_nail1)
+	end, player_nail1, FRAME_NAILATT + 1)
 end
 
 function player_light1(self)
-	held_fire(self, 5, W_FireLightning, player_light1)
+	held_fire(self, 5, W_FireLightning, player_light1, FRAME_LIGHT)
 end
 
 local function PainSound(self)
@@ -206,6 +312,11 @@ end
 
 function player_pain(self, _attacker, _damage)
 	PainSound(self)
+	if self.weaponframe ~= 0 or (self.invisible_finished or 0) > time() then
+		return
+	end
+	local first = if self.weapon == IT_AXE then FRAME_AXPAIN else FRAME_PAIN
+	body_frames(self, first, 6, player_run)
 end
 
 local function DeathSound(self)
@@ -264,25 +375,48 @@ function PlayerDie(self)
 	self.invincible_finished = 0
 	self.super_damage_finished = 0
 	self.radsuit_finished = 0
+	if deathmatch ~= 0 or coop ~= 0 then
+		DropBackpack(self)
+	end
 	self.weaponmodel = ""
 	self.deadflag = DEAD_DYING
 	self.solid = SOLID_NOT
 	self.dead = true
+	self.view_ofs = vector.create(0, 0, -8)
 	if self.health < -40 then
 		ThrowGib(self, "progs/gib1.mdl", self.health)
 		ThrowGib(self, "progs/gib2.mdl", self.health)
 		ThrowGib(self, "progs/gib3.mdl", self.health)
 		local sample = if random() < 0.5 then "player/gib.wav" else "player/udeath.wav"
 		sound(self, CHAN_VOICE, sample, 1, ATTN_NONE)
-	else
-		DeathSound(self)
+		ThrowHead(self, "progs/h_player.mdl", self.health)
+		self.nextthink = time() + 1
+		self.think = PlayerDead
+		return
 	end
-	self.nextthink = time() + 1
-	self.think = PlayerDead
+	DeathSound(self)
+	if self.weapon == IT_AXE then
+		body_frames(self, FRAME_AXDETH, 9, PlayerDead)
+		return
+	end
+	local death = FRAME_DEATHS[math.min(1 + math.floor(random() * 6), 5)]
+	body_frames(self, death[1], death[2], PlayerDead)
 end
 
 function PlayerDead(self)
+	self.nextthink = -1
 	self.deadflag = DEAD_DEAD
+end
+
+-- Used by the kill command and leaving, from `set_suicide_frame`.
+function set_suicide_frame(self)
+	if self.model ~= "progs/player.mdl" then
+		return
+	end
+	self.frame = FRAME_DEATHS[1][1] + FRAME_DEATHS[1][2] - 1
+	self.solid = SOLID_NOT
+	self.deadflag = DEAD_DEAD
+	self.nextthink = -1
 end
 
 function PlayerDeathThink(self)
@@ -331,7 +465,14 @@ function CheckPowerups(self)
 		return
 	end
 	-- From `R_DrawViewModel`: the invisible can't see their own gun.
-	self.weaponhidden = bit32.band(self.items, IT_INVISIBILITY) ~= 0
+	local invisible = bit32.band(self.items, IT_INVISIBILITY) ~= 0
+	self.weaponhidden = invisible
+	-- Others only see their eyes.
+	if invisible ~= (self.showing_eyes or false) then
+		self.showing_eyes = invisible
+		engine.set_model(rawget(self, "_id"), if invisible then "progs/eyes.mdl" else "progs/player.mdl")
+		setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
+	end
 	if (self.invisible_finished or 0) ~= 0 and (self.invisible_sound or 0) < time() then
 		sound(self, CHAN_AUTO, "items/inv3.wav", 0.5, ATTN_IDLE)
 		self.invisible_sound = time() + random() * 3 + 1

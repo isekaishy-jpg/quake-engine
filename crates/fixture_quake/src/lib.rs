@@ -23,9 +23,9 @@ mod wav;
 
 pub use bsp::{MapError, SpawnPoint, import_map, parse_entities, spawn_point, without_stray_tail};
 pub use game::{mount_game, mount_music};
-pub use hud::{Hud, Intermission};
+pub use hud::{Hud, Intermission, Score};
 pub use items::parse_item_bsp;
-pub use mdl::parse_mdl;
+pub use mdl::{parse_colored_mdl, parse_mdl};
 pub use menu::{Menu, MenuHost, SAVE_SLOTS, Screen};
 pub use pak::PakArchive;
 pub use scripts::SCRIPTS;

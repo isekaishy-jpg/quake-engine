@@ -107,10 +107,17 @@ impl Game {
             self.server.tick();
             while let Some(bytes) = self.client.receive() {
                 match ServerMessage::decode(&bytes).expect("valid") {
-                    ServerMessage::Snapshot(snapshot) => self.latest = Some(snapshot),
+                    ServerMessage::Snapshot(mut snapshot) => {
+                        // Others see the player, but tests are about the rest.
+                        let own = snapshot.player_entity;
+                        snapshot.entities.retain(|entity| entity.id != own);
+                        self.latest = Some(snapshot);
+                    }
                     ServerMessage::Print(text) => {
                         assert!(!text.contains("script error"), "{text}");
-                        self.prints.push(text);
+                        if !text.ends_with("entered the game") {
+                            self.prints.push(text);
+                        }
                     }
                     ServerMessage::SetView { yaw, pitch } => self.views.push((yaw, pitch)),
                     ServerMessage::Sound(sound) => self.sounds.push(sound),
@@ -1655,7 +1662,7 @@ fn stats_follow_the_player() {
     game.check("player.health = 62 player.ammo_shells = 17 W_SetCurrentAmmo(player)");
     game.wait(0.05);
     let stats = game.latest.as_ref().expect("a snapshot").stats.clone();
-    assert_eq!(stats.len(), 16);
+    assert_eq!(stats.len(), 17);
     assert_eq!(stats[0], 62, "health");
     assert_eq!(stats[3], 17, "the weapon's ammo");
     assert_eq!(stats[6], 17, "shells");

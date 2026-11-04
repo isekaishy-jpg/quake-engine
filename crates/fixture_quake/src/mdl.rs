@@ -120,18 +120,50 @@ fn read_frames(
     Some((poses, frames))
 }
 
-/// Reads the skins as RGBA, taking the first of any group.
+/// The palette rows a skin's shirt and pants are painted in, from `TOP_RANGE`
+/// and `BOTTOM_RANGE`.
+const SHIRT_ROW: u8 = 16;
+
+/// The row of the pants.
+const PANTS_ROW: u8 = 96;
+
+/// What each palette index becomes for `colors`, from `CL_NewTranslation`. The
+/// artists made the rows from 128 up run backwards.
+fn translation(colors: u8) -> [u8; 256] {
+    let mut table = [0; 256];
+    for (index, entry) in (0u8..=255).zip(&mut table) {
+        *entry = index;
+    }
+    for (first, row) in [(SHIRT_ROW, colors >> 4), (PANTS_ROW, colors & 15)] {
+        let start = row * 16;
+        for step in 0..16u8 {
+            table[usize::from(first + step)] = if start < 128 {
+                start + step
+            } else {
+                start + 15 - step
+            };
+        }
+    }
+    table
+}
+
+/// Reads the skins as RGBA, taking the first of any group, with each index
+/// swapped through `table`.
 fn read_skins(
     reader: &mut Reader<'_>,
     count: usize,
     size: usize,
-    width: u32,
-    height: u32,
+    (width, height): (u32, u32),
     palette: &Palette,
+    table: &[u8; 256],
 ) -> Option<Vec<Vec<u8>>> {
     let expand = |indices: &[u8]| {
+        let swapped: Vec<u8> = indices
+            .iter()
+            .map(|&index| table[usize::from(index)])
+            .collect();
         palette
-            .expand(indices, width, height, TextureKind::Solid)
+            .expand(&swapped, width, height, TextureKind::Solid)
             .rgba
     };
     let mut skins = Vec::with_capacity(count);
@@ -152,6 +184,13 @@ fn read_skins(
 /// 224 up are fullbright, as on the world.
 #[must_use]
 pub fn parse_mdl(bytes: &[u8], palette: &Palette) -> Option<AliasModel> {
+    parse_colored_mdl(bytes, palette, 0)
+}
+
+/// Reads an MDL with its shirt and pants in `colors`, as the high and low four
+/// bits. Colours of 0 and 1 paint them as they were drawn.
+#[must_use]
+pub fn parse_colored_mdl(bytes: &[u8], palette: &Palette, colors: u8) -> Option<AliasModel> {
     let mut reader = Reader { bytes };
     if reader.take(4)? != MAGIC || reader.i32()? != VERSION {
         return None;
@@ -173,7 +212,15 @@ pub fn parse_mdl(bytes: &[u8], palette: &Palette) -> Option<AliasModel> {
         return None;
     }
     let size = usize::try_from(width.checked_mul(height)?).ok()?;
-    let skins = read_skins(&mut reader, skin_count, size, width, height, palette)?;
+    let table = translation(if colors == 0 { 0x16 } else { colors });
+    let skins = read_skins(
+        &mut reader,
+        skin_count,
+        size,
+        (width, height),
+        palette,
+        &table,
+    )?;
 
     let points = reader.take(vertices.checked_mul(12)?)?;
     let point = |index: usize| -> Option<(bool, f32, f32)> {

@@ -6,6 +6,7 @@ use std::io::BufWriter;
 
 use engine_assets::AssetError;
 use engine_console::{Args, Console};
+use engine_net::{DEFAULT_PORT, NetClient, NetServer};
 use engine_render::Capture;
 use fixture_quake::Screen;
 
@@ -74,6 +75,10 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("+showscores", show_scores);
     console.register("-showscores", hide_scores);
     console.register("startdemos", start_screen);
+    console.register("host", host);
+    console.register("connect", connect);
+    console.register("disconnect", disconnect);
+    console.register("say", say);
     console.register("save", save);
     console.register("load", load);
     for command in ["kill", "god", "notarget", "give"] {
@@ -300,6 +305,56 @@ fn hide_scores(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 fn start_screen(console: &mut Console<World>, world: &mut World, _args: &Args) {
     if world.client.is_none() {
         console.add("menu_main");
+    }
+}
+
+/// `host [port]`: lets others join the game running here.
+fn host(console: &mut Console<World>, world: &mut World, args: &Args) {
+    if world.server.is_none() {
+        console.print("host needs a game running: start a map first");
+        return;
+    }
+    let port = args.get(1).parse().unwrap_or(DEFAULT_PORT);
+    let players = console
+        .cvar("maxplayers")
+        .map_or(8.0, engine_console::Cvar::number);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a few players"
+    )]
+    let players = players.clamp(1.0, 16.0) as usize;
+    match NetServer::bind(port, players) {
+        Ok(server) => {
+            console.print(format!("hosting on port {}", server.port()));
+            world.net_server = Some(server);
+        }
+        Err(error) => console.print(format!("couldn't host: {error}")),
+    }
+}
+
+/// `connect address`: joins a game.
+fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
+    match NetClient::connect(args.get(1)) {
+        Ok(client) => {
+            console.print(format!("connecting to {}", args.get(1)));
+            world.begin_connection(Box::new(client));
+        }
+        Err(error) => console.print(format!("couldn't connect: {error}")),
+    }
+}
+
+/// `disconnect`: leaves the game.
+fn disconnect(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.leave_game();
+}
+
+/// `say text`: tells everyone.
+fn say(console: &mut Console<World>, world: &mut World, args: &Args) {
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("say {}", args.rest()));
+    } else {
+        console.print("say needs a game running");
     }
 }
 

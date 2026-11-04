@@ -7,8 +7,10 @@
 
 mod delta;
 mod message;
+mod online;
 mod transport;
 
 pub use delta::{apply_delta, delta_baseline, delta_from};
 pub use message::{ClientMessage, PlayerInfo, PlayerScore, ServerMessage, Snapshot};
+pub use online::{DEFAULT_PORT, NetClient, NetError, NetServer};
 pub use transport::{Loopback, Transport, loopback};

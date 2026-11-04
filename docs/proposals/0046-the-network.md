@@ -25,7 +25,7 @@ Status: accepted, 2026-11-04, increment 9.
 
 - **Selected approach:** the above, unsecured, for direct connections.
 - **Tradeoffs:** without tokens, traffic isn't encrypted and anyone who reaches the port can join. The record allows this for LAN and development. It has to change before this is used on open servers.
-- **Acceptance criteria:** two clients play over real UDP in one test, through a transport that loses a fifth of its packets. Deltas are a small part of a full snapshot on a real map. Malformed messages don't hurt the server. Traffic is measured, which the record lists as unknown.
+- **Acceptance criteria:** real connections should lose well under 5% of packets, and the human considers even that too high. So 2% each way is the normal case tested, and 5% is the most the game is designed to play well at. A run at 20% is kept only as a margin, to show nothing breaks, and isn't a target. Deltas are a small part of a full snapshot on a real map. Malformed messages don't hurt the server. Traffic is measured, which the record lists as unknown.
 - **Future extension:** connect tokens, relay and NAT traversal with the later server work, and `renet_steam` if that's ever wanted.
 
 ## Review

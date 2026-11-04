@@ -9,6 +9,8 @@ publish.workspace = true
 
 [dependencies]
 engine_core.workspace = true
+renet.workspace = true
+renet_netcode.workspace = true
 
 [lints]
 workspace = true

@@ -1,5 +1,6 @@
 //! The running engine: the main loop's two halves.
 
+use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -22,7 +23,7 @@ use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
 use engine_map::{Contents, Map};
-use engine_net::loopback;
+use engine_net::{NetServer, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
@@ -31,10 +32,11 @@ use engine_render::{
     Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw, Target,
     View,
 };
-use engine_server::{Level, Server};
+use engine_server::{Level, Seat, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
-    Hud, Intermission, Menu, Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point,
+    Hud, Intermission, Menu, Palette, SCRIPTS, Score, import_map, mount_game, mount_music,
+    spawn_point,
 };
 
 use crate::commands;
@@ -80,14 +82,20 @@ struct AudioLevels {
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
 /// Settings a game can read, which go to it as each level starts.
-const LEVEL_SETTINGS: [&str; 6] = [
+const LEVEL_SETTINGS: [&str; 9] = [
     "skill",
     "deathmatch",
     "coop",
+    "teamplay",
+    "fraglimit",
+    "timelimit",
     "samelevel",
     "noexit",
     "registered",
 ];
+
+/// How long a connection may take to open, in seconds.
+const CONNECT_SECONDS: f64 = 10.0;
 
 /// A frame's picture.
 pub(crate) struct Picture {
@@ -213,6 +221,14 @@ pub(crate) struct World {
     pub(crate) menu_settings: MenuSettings,
     /// Where configs and saves go.
     pub(crate) user_directory: PathBuf,
+    /// Listens for others, while hosting.
+    pub(crate) net_server: Option<NetServer>,
+    /// A connection being opened.
+    pub(crate) connecting: Option<Box<dyn Transport>>,
+    /// How long that's been going, in seconds.
+    connect_time: f64,
+    /// Who this player is.
+    pub(crate) identity: SeatInfo,
 }
 
 impl World {
@@ -238,14 +254,21 @@ impl World {
         !self.menu.is_open() && !self.console_view.is_open()
     }
 
+    /// Whether other people are involved, so the game can't stop for one.
+    pub(crate) fn is_online(&self) -> bool {
+        self.net_server.is_some() || (self.client.is_some() && self.server.is_none())
+    }
+
     /// Whether the game moves on, as `_Host_Frame` decides.
     pub(crate) fn is_running(&self) -> bool {
-        self.is_playing_screen() && !self.paused && self.level_pending.is_none()
+        self.level_pending.is_none()
+            && (self.is_online() || (self.is_playing_screen() && !self.paused))
     }
 
     /// Whether the game can be saved now, from `Host_Savegame_f`.
     pub(crate) fn can_save(&self) -> bool {
         self.server.is_some()
+            && !self.is_online()
             && self.level_pending.is_none()
             && self.hud.intermission() == Intermission::None
             && !self.hud.is_dead()
@@ -269,7 +292,12 @@ impl World {
             parms: self.next_parms.take(),
             flags: self.next_flags,
             settings: Self::level_settings(console),
+            host: self.identity.clone(),
         };
+        let seats = self
+            .server
+            .as_mut()
+            .map_or_else(Vec::new, Server::take_seats);
         let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
         let (client_end, server_end) = loopback();
         self.server = Some(Server::new(
@@ -281,11 +309,127 @@ impl World {
             TICK_SECONDS,
             level.clone(),
         )?);
+        if let Some(server) = &mut self.server {
+            for seat in seats {
+                server.add_seat(seat);
+            }
+        }
         self.level = level;
         self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
         self.after_load(&map, palette)
+    }
+
+    /// Starts connecting to a server, leaving any game going.
+    pub(crate) fn begin_connection(&mut self, transport: Box<dyn Transport>) {
+        self.leave_game();
+        self.connecting = Some(transport);
+        self.connect_time = 0.0;
+    }
+
+    /// Leaves whatever game is going.
+    pub(crate) fn leave_game(&mut self) {
+        if let Some(net_server) = &mut self.net_server {
+            net_server.close();
+            net_server.flush();
+        }
+        self.net_server = None;
+        self.connecting = None;
+        self.client = None;
+        self.server = None;
+        self.map = None;
+        self.level = Level::default();
+        self.level_pending = None;
+        self.audio.stop_sounds();
+        self.effects = Effects::default();
+    }
+
+    /// Loads the map a server named, and tells it so.
+    fn join_level(
+        &mut self,
+        name: &str,
+        transport: Box<dyn Transport>,
+    ) -> Result<(), Box<dyn std::error::Error>> {
+        let bsp = self.filesystem.read(&format!("maps/{name}.bsp"))?;
+        let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
+        let palette = self.filesystem.read("gfx/palette.lmp")?;
+        let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
+        let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
+        let start = spawn_point(&map);
+        let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+        let mut client = Client::new(transport, collision, start.origin);
+        client.send_info(&self.identity.name, self.identity.colors);
+        client.send_ready();
+        client.flush_network();
+        self.client = Some(client);
+        self.step = StepSmoother::default();
+        self.after_load(&map, palette)
+    }
+
+    /// Hears from the network, and lets anyone who's arrived in.
+    fn update_network(&mut self, seconds: f64, console: &mut Console<Self>) {
+        let elapsed = Duration::from_secs_f64(seconds);
+        if let Some(net_server) = &mut self.net_server {
+            net_server.update(elapsed);
+            while let Some(transport) = net_server.take_arrival() {
+                if let Some(server) = &mut self.server {
+                    server.add_seat(Seat::new(transport, SeatInfo::default()));
+                }
+            }
+        }
+        if let Some(client) = &mut self.client {
+            client.update_network(elapsed);
+        }
+        self.update_connecting(seconds, elapsed, console);
+        let lost = self.server.is_none()
+            && self
+                .client
+                .as_ref()
+                .is_some_and(|client| !client.is_connected());
+        if lost {
+            console.print("the server has gone");
+            self.leave_game();
+        }
+    }
+
+    /// Waits for a connection to name its level.
+    fn update_connecting(&mut self, seconds: f64, elapsed: Duration, console: &mut Console<Self>) {
+        let Some(mut transport) = self.connecting.take() else {
+            return;
+        };
+        transport.update(elapsed);
+        transport.flush();
+        self.connect_time += seconds;
+        let level =
+            std::iter::from_fn(|| transport.receive()).find_map(
+                |bytes| match ServerMessage::decode(&bytes) {
+                    Some(ServerMessage::Level(name)) => Some(name),
+                    _ => None,
+                },
+            );
+        if let Some(level) = level {
+            if let Err(error) = self.join_level(&level, transport) {
+                console.print(format!("couldn't load {level}: {error}"));
+                self.leave_game();
+            }
+        } else if !transport.is_connected() || self.connect_time > CONNECT_SECONDS {
+            console.print("couldn't connect");
+        } else {
+            self.connecting = Some(transport);
+        }
+    }
+
+    /// Follows the server to a new level.
+    fn follow_level(&mut self, console: &mut Console<Self>) {
+        let wanted = self.client.as_mut().and_then(Client::take_level);
+        if let (Some(name), None) = (wanted, &self.server)
+            && let Some(client) = self.client.take()
+            && let Err(error) = self.join_level(&name, client.into_transport())
+        {
+            console.print(format!("couldn't load {name}: {error}"));
+            self.leave_game();
+        }
     }
 
     /// The settings a level starts with.
@@ -308,6 +452,7 @@ impl World {
         let map = Arc::clone(map);
         self.map_time = 0.0;
         self.hud = Hud::new();
+        self.hud.set_palette(&palette);
         self.kick = ViewKick::default();
         self.paused = false;
         self.menu.close();
@@ -332,14 +477,19 @@ impl World {
         Ok(())
     }
 
-    /// A command for the current input.
+    /// A command for the current input. With a menu over a game that can't
+    /// stop, the player just stands there.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "f32 keeps angles to a few thousandths of a degree"
     )]
     fn command(&self) -> UserCommand {
-        self.buttons
-            .command(self.look.yaw() as f32, self.look.pitch() as f32)
+        let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
+        if self.is_playing_screen() {
+            self.buttons.command(yaw, pitch)
+        } else {
+            Buttons::default().command(yaw, pitch)
+        }
     }
 
     /// Runs one tick of the game.
@@ -347,15 +497,33 @@ impl World {
         self.turn_view(seconds);
         let command = self.command();
         self.buttons.impulse = 0;
-        if let (Some(client), Some(server)) = (&mut self.client, &mut self.server) {
-            client.send_command(command, seconds);
-            server.tick();
-            client.receive();
+        if let Some(client) = &mut self.client {
+            if let Some(server) = &mut self.server {
+                client.send_command(command, seconds);
+                server.tick();
+                client.receive();
+            } else {
+                client.receive();
+                client.send_command(command, seconds);
+            }
             if let Some((yaw, pitch)) = client.take_view() {
                 self.look.set_view(f64::from(yaw), f64::from(pitch));
             }
             self.map_time = client.time();
             self.hud.set_stats(client.stats(), client.time());
+            let own = client.player_entity();
+            self.hud.set_scores(
+                client
+                    .scores()
+                    .iter()
+                    .map(|score| Score {
+                        name: score.name.clone(),
+                        frags: score.frags,
+                        colors: score.colors,
+                        own: score.entity == own,
+                    })
+                    .collect(),
+            );
             let events = client.take_events();
             self.show_events(events);
         }
@@ -576,6 +744,7 @@ impl World {
         let mut lights = Vec::new();
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
         let mut punch = Vec3::ZERO;
+        let online = self.is_online();
         let mut sway = (0.0, 0.0, 0.0);
         let mut roll = 0.0;
         let time = self.map_time as f32;
@@ -613,7 +782,16 @@ impl World {
                 roll = 0.0;
                 sway = view_idle(time);
             }
-            let drawn = client.draw_entities(fraction);
+            let drawn = if online {
+                client.draw_entities_buffered(f64::from(frame_seconds))
+            } else {
+                client.draw_entities(fraction)
+            };
+            let wearing: HashMap<u64, u8> = client
+                .scores()
+                .iter()
+                .map(|score| (score.entity, score.colors))
+                .collect();
             let (model, frame) = client.weapon();
             let player = EffectSource {
                 id: client.player_entity(),
@@ -631,7 +809,16 @@ impl World {
                     time,
                 };
                 for entity in &drawn {
-                    self.models.draw(entity, &lighting, &mut lists);
+                    let colors = wearing.get(&entity.state.id).copied();
+                    if let Some(colors) = colors {
+                        self.models.prepare_colors(
+                            entity.state.model,
+                            colors,
+                            &self.filesystem,
+                            self.renderer.as_mut(),
+                        );
+                    }
+                    self.models.draw(entity, colors, &lighting, &mut lists);
                 }
                 for piece in self.effects.beam_pieces(player.id, body) {
                     self.models.draw_beam(
@@ -763,10 +950,17 @@ impl Engine {
         console.register_cvar("crosshair", "0", saved);
         console.register_cvar("cl_alwaysrun", "1", saved);
         console.register_cvar("viewsize", "100", CvarFlags::default());
+        console.register_cvar("name", "player", saved);
+        console.register_cvar("topcolor", "0", saved);
+        console.register_cvar("bottomcolor", "0", saved);
+        console.register_cvar("maxplayers", "8", saved);
         for (name, value) in [
             ("skill", "1"),
             ("deathmatch", "0"),
             ("coop", "0"),
+            ("teamplay", "0"),
+            ("fraglimit", "0"),
+            ("timelimit", "0"),
             ("samelevel", "0"),
             ("noexit", "0"),
             ("registered", "1"),
@@ -826,6 +1020,10 @@ impl Engine {
                 rate_text: String::new(),
                 menu_settings: MenuSettings::new(),
                 user_directory,
+                net_server: None,
+                connecting: None,
+                connect_time: 0.0,
+                identity: SeatInfo::default(),
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
@@ -864,12 +1062,20 @@ impl Engine {
             .cvar("fov")
             .map_or(90.0, engine_console::Cvar::number);
         let seconds = 1.0 / f64::from(self.clock.rate().hertz());
+        self.world.update_network(seconds, &mut self.console);
         if self.world.is_running() {
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "a tick's length needs no more than f32"
             )]
             self.world.run_tick(seconds as f32);
+        }
+        self.world.follow_level(&mut self.console);
+        if let Some(client) = &mut self.world.client {
+            client.flush_network();
+        }
+        if let Some(net_server) = &mut self.world.net_server {
+            net_server.flush();
         }
         let (prints, level) = self.world.take_server_news();
         for text in prints {
@@ -912,6 +1118,24 @@ impl Engine {
         self.world.crosshair = number(self, "crosshair") != 0.0;
         self.world.gamma = number(self, "gamma").clamp(0.3, 2.0);
         self.world.buttons.always_run = number(self, "cl_alwaysrun") != 0.0;
+        let name = self
+            .console
+            .cvar("name")
+            .map_or("player", engine_console::Cvar::value)
+            .to_owned();
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "colours are from 0 to 13"
+        )]
+        let colors =
+            ((number(self, "topcolor") as u8 & 15) << 4) | (number(self, "bottomcolor") as u8 & 15);
+        if name != self.world.identity.name || colors != self.world.identity.colors {
+            if let Some(client) = &mut self.world.client {
+                client.send_info(&name, colors);
+            }
+            self.world.identity = SeatInfo { name, colors };
+        }
         for name in MENU_SETTINGS {
             let value = number(self, name);
             self.world.menu_settings.insert(name, value);

@@ -34,12 +34,38 @@ function StartItem(self)
 	self.think = PlaceItem
 end
 
--- Takes an item out of play, and fires what it targets.
-local function taken(self, other)
+-- Brings an item back, from `SUB_regen`.
+function SUB_regen(self)
+	self.model = self.mdl
+	self.solid = SOLID_TRIGGER
+	sound(self, CHAN_VOICE, "items/itembk2.wav", 1, ATTN_NORM)
+	setorigin(self, self.origin)
+end
+
+-- Takes an item out of play, and fires what it targets. In deathmatch it comes
+-- back after `seconds`, if it does.
+local function taken(self, other, seconds)
 	self.model = ""
 	self.solid = SOLID_NOT
+	if seconds and deathmatch == 1 then
+		self.nextthink = time() + seconds
+		self.think = SUB_regen
+	end
 	activator = other
 	SUB_UseTargets(self)
+end
+
+-- From `RankForWeapon`.
+local function RankForWeapon(weapon)
+	local ranks = {
+		[IT_LIGHTNING] = 1,
+		[IT_ROCKET_LAUNCHER] = 2,
+		[IT_SUPER_NAILGUN] = 3,
+		[IT_GRENADE_LAUNCHER] = 4,
+		[IT_SUPER_SHOTGUN] = 5,
+		[IT_NAILGUN] = 6,
+	}
+	return ranks[weapon] or 7
 end
 
 -- Adds health to an entity, up to its limit unless `ignore` is set.
@@ -71,6 +97,10 @@ function item_megahealth_rot(self)
 		return
 	end
 	other.items -= bit32.band(other.items, IT_SUPERHEALTH)
+	if deathmatch == 1 then
+		self.nextthink = time() + 20
+		self.think = SUB_regen
+	end
 end
 
 function health_touch(self, other)
@@ -94,6 +124,12 @@ function health_touch(self, other)
 		self.nextthink = time() + 5
 		self.think = item_megahealth_rot
 		self.owner = other
+	elseif deathmatch ~= 2 then
+		-- Deathmatch 2 is the silly old rules.
+		if deathmatch ~= 0 then
+			self.nextthink = time() + 20
+		end
+		self.think = SUB_regen
 	end
 	activator = other
 	SUB_UseTargets(self)
@@ -142,7 +178,7 @@ function armor_touch(self, other)
 	sprint(other, "You got armor")
 	sound(other, CHAN_ITEM, "items/armor1.wav", 1, ATTN_NORM)
 	bonus_flash(other)
-	taken(self, other)
+	taken(self, other, 20)
 end
 
 local function armor(skin)
@@ -184,15 +220,23 @@ function weapon_touch(self, other)
 	if weapon == nil then
 		objerror("weapon_touch: unknown classname")
 	end
+	local leave = deathmatch == 2 or coop ~= 0
+	if leave and bit32.band(other.items, weapon[1]) ~= 0 then
+		return
+	end
 	other[weapon[2]] += weapon[3]
 	sprint(other, "You got the " .. self.netname)
 	sound(other, CHAN_ITEM, "weapons/pkup.wav", 1, ATTN_NORM)
 	bonus_flash(other)
 	bound_other_ammo(other)
 	other.items = bit32.bor(other.items, weapon[1])
-	other.weapon = weapon[1]
+	if deathmatch == 0 or RankForWeapon(weapon[1]) < RankForWeapon(other.weapon) then
+		other.weapon = weapon[1]
+	end
 	W_SetCurrentAmmo(other)
-	taken(self, other)
+	if not leave then
+		taken(self, other, 30)
+	end
 end
 
 local function floor_weapon(model, name)
@@ -239,7 +283,7 @@ function ammo_touch(self, other)
 		other.weapon = W_BestWeapon(other)
 	end
 	W_SetCurrentAmmo(other)
-	taken(self, other)
+	taken(self, other, 30)
 end
 
 local WEAPON_BIG2 = 1
@@ -305,7 +349,13 @@ function key_touch(self, other)
 	sound(other, CHAN_ITEM, self.noise, 1, ATTN_NORM)
 	bonus_flash(other)
 	other.items = bit32.bor(other.items, self.items)
-	taken(self, other)
+	if coop ~= 0 then
+		-- Everyone needs the key.
+		activator = other
+		SUB_UseTargets(self)
+	else
+		taken(self, other)
+	end
 end
 
 local KEY_SOUNDS = { [0] = "misc/medkey.wav", "misc/runekey.wav", "misc/basekey.wav" }
@@ -391,7 +441,8 @@ function powerup_touch(self, other)
 		other.super_time = 1
 		other.super_damage_finished = time() + 30
 	end
-	taken(self, other)
+	local long = class == "item_artifact_invulnerability" or class == "item_artifact_invisibility"
+	taken(self, other, if long then 300 else 60)
 end
 
 local function powerup(sample, model, name, item)

@@ -5,7 +5,7 @@ mod common;
 use std::rc::Rc;
 
 use common::room;
-use engine_client::{Buttons, Client, LightStyles, StepSmoother};
+use engine_client::{Buttons, Client, LightStyles, StepSmoother, ViewClock};
 use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
@@ -480,4 +480,48 @@ fn model_names_wait_to_be_taken() {
         [(3, "progs/flame.mdl".to_owned())]
     );
     assert!(client.take_model_names().is_empty());
+}
+
+#[test]
+fn the_view_clock_starts_two_ticks_behind() {
+    let mut clock = ViewClock::default();
+    let time = clock.advance(0.0, 10.0);
+    assert!((time - (10.0 - 2.0 / 72.0)).abs() < 1e-9);
+}
+
+#[test]
+fn the_view_clock_moves_evenly_through_uneven_snapshots() {
+    let mut clock = ViewClock::default();
+    let mut newest = 10.0;
+    let mut last = clock.advance(0.0, newest);
+    let frame = 1.0 / 144.0;
+    for frame_number in 0..1440 {
+        // Snapshots come in bursts, two ticks at once every other tick.
+        if frame_number % 4 == 0 {
+            newest += 2.0 / 72.0;
+        }
+        let time = clock.advance(frame, newest);
+        let step = time - last;
+        assert!(step >= 0.0, "time never runs back");
+        assert!(step < frame * 1.2, "and never jumps: {step}");
+        last = time;
+    }
+    assert!(newest - last < 0.1, "it keeps up");
+}
+
+#[test]
+fn the_view_clock_jumps_after_a_long_gap() {
+    let mut clock = ViewClock::default();
+    let _first = clock.advance(0.0, 10.0);
+    let time = clock.advance(0.01, 20.0);
+    assert!(time > 19.9);
+}
+
+#[test]
+fn the_view_clock_never_passes_the_newest_snapshot() {
+    let mut clock = ViewClock::default();
+    let _first = clock.advance(0.0, 10.0);
+    for _ in 0..100 {
+        assert!(clock.advance(0.05, 10.0) <= 10.0);
+    }
 }

@@ -63,6 +63,9 @@ engine_platform = { path = "crates/engine_platform" }
 fixture_quake = { path = "crates/fixture_quake" }
 # Proposal 0029: audio, private to `engine_audio`. The fixture parses WAV itself.
 kira = { version = "=0.12.6", default-features = false, features = ["cpal", "cpal-realtime", "ogg", "vorbis"] }
+# Proposal 0046: the network, private to `engine_net`.
+renet = { version = "=2.0.1", default-features = false }
+renet_netcode = { version = "=2.0.1" }
 # Proposal 0025: Luau, private to `engine_script`.
 mlua = { version = "=0.12.2", features = ["luau", "vendored"] }
 # Proposal 0022: collision, private to `engine_physics`.
