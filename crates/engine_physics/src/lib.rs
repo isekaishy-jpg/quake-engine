@@ -5,8 +5,10 @@
 //!
 //! May depend on `engine_core`, `engine_map`. See proposal 0008.
 
+mod hull;
 mod solids;
 mod world;
 
+pub use hull::enter_box;
 pub use solids::build_solids;
 pub use world::{Collision, CollisionWorld, DIST_EPSILON, PointContents, Trace};

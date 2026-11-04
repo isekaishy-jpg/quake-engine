@@ -496,6 +496,15 @@ pub fn player_move(
     world: Collision<'_>,
     touched: &mut Vec<u32>,
 ) {
+    // The dead lie where they fell.
+    let still = UserCommand {
+        forward: 0.0,
+        side: 0.0,
+        up: 0.0,
+        jump: false,
+        ..*command
+    };
+    let command = if state.dead { &still } else { command };
     let (yaw_sin, yaw_cos) = command.yaw.to_radians().sin_cos();
     let (pitch_sin, pitch_cos) = command.pitch.to_radians().sin_cos();
     Mover {

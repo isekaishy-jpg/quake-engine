@@ -37,6 +37,8 @@ pub struct PlayerState {
     pub noclip: bool,
     /// The brush model the player is standing on, if any.
     pub ground_model: Option<u32>,
+    /// Whether the player is dead, and can't move.
+    pub dead: bool,
 }
 
 /// One numbered slice of player input.
@@ -58,4 +60,8 @@ pub struct UserCommand {
     pub up: f32,
     /// Whether jump is held.
     pub jump: bool,
+    /// Whether attack is held.
+    pub attack: bool,
+    /// A number sent to the game, such as a weapon to change to, or 0.
+    pub impulse: u8,
 }

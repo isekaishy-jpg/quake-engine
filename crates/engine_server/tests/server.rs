@@ -10,7 +10,7 @@ use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
-use engine_server::Server;
+use engine_server::{Level, Server};
 
 /// A server, and the client's end.
 fn setup() -> (Server, Loopback) {
@@ -18,8 +18,16 @@ fn setup() -> (Server, Loopback) {
     let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (client_end, server_end) = loopback();
     let origin = Vec3::new(0.0, 0.0, -255.0);
-    let server =
-        Server::new(Box::new(server_end), world, &map, origin, &[], 1.0 / 72.0).expect("server");
+    let server = Server::new(
+        Box::new(server_end),
+        world,
+        &map,
+        origin,
+        &[],
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("server");
     (server, client_end)
 }
 

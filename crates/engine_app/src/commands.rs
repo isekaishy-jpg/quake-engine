@@ -11,7 +11,8 @@ use engine_render::Capture;
 use crate::app::World;
 
 /// The movement buttons, as the console sees them.
-const BUTTONS: [&str; 8] = [
+const BUTTONS: [&str; 9] = [
+    "attack",
     "forward",
     "back",
     "moveleft",
@@ -35,6 +36,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("dir", dir);
     console.register("exec", exec);
     console.register("stuffcmds", stuffcmds);
+    console.register("impulse", impulse);
     console.register("stats", stats);
     console.register("map", map);
     console.register("bind", bind);
@@ -247,6 +249,11 @@ fn setpos(console: &mut Console<World>, world: &mut World, args: &Args) {
     if let (Some(yaw), Some(pitch)) = (number(4), number(5)) {
         world.look.set_view(f64::from(yaw), f64::from(pitch));
     }
+}
+
+/// `impulse`: sends a number to the game with the next command.
+fn impulse(_console: &mut Console<World>, world: &mut World, args: &Args) {
+    world.buttons.impulse = args.get(1).parse().unwrap_or(0);
 }
 
 /// `noclip`: flies through walls, through the server.

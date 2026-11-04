@@ -3,7 +3,7 @@
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use engine_core::entity::{EntityState, ModelInstance};
+use engine_core::entity::{Effect, EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -67,6 +67,8 @@ pub struct Client {
     prints: Vec<String>,
     /// A view the server wants, waiting to be applied.
     view: Option<(f32, f32)>,
+    /// Solid boxes in the latest snapshot.
+    boxes: Vec<(Vec3, Vec3)>,
     /// Entities in the latest snapshot.
     entities: Vec<EntityState>,
     /// Entities in the snapshot before it, by id.
@@ -79,6 +81,8 @@ pub struct Client {
     weapon: (u16, u16),
     /// Model names waiting to be loaded.
     model_names: Vec<(u16, String)>,
+    /// Effects from the server, waiting to be shown.
+    effects: Vec<Effect>,
     /// Sounds from the server, waiting to be played.
     sounds: Vec<SoundStart>,
     /// Sounds at fixed places, waiting to be added.
@@ -108,12 +112,14 @@ impl Client {
             styles: LightStyles::new(),
             prints: Vec::new(),
             view: None,
+            boxes: Vec::new(),
             entities: Vec::new(),
             previous_entities: HashMap::new(),
             frame_changes: HashMap::new(),
             tick: 0,
             weapon: (0, 0),
             model_names: Vec::new(),
+            effects: Vec::new(),
             sounds: Vec::new(),
             static_sounds: Vec::new(),
             music: None,
@@ -124,7 +130,7 @@ impl Client {
     /// Runs `command` on `state`, against the latest brush model positions.
     fn run_on(&mut self, state: &mut PlayerState, command: &UserCommand) {
         self.touched.clear();
-        let collision = self.world.with(&self.instances);
+        let collision = self.world.with(&self.instances).with_boxes(&self.boxes);
         player_move(state, command, &self.vars, collision, &mut self.touched);
     }
 
@@ -201,6 +207,11 @@ impl Client {
     #[must_use]
     pub fn weapon(&self) -> (u16, u16) {
         self.weapon
+    }
+
+    /// Takes the effects that have happened.
+    pub fn take_effects(&mut self) -> Vec<Effect> {
+        std::mem::take(&mut self.effects)
     }
 
     /// Takes the model names the server has given.
@@ -305,6 +316,7 @@ impl Client {
                         .retain(|command| command.sequence > snapshot.acknowledged);
                     self.previous_instances =
                         std::mem::replace(&mut self.instances, snapshot.instances);
+                    self.boxes = snapshot.boxes;
                     self.note_entities(snapshot.tick, snapshot.entities);
                     self.weapon = (snapshot.weapon_model, snapshot.weapon_frame);
                     let mut predicted = snapshot.player;
@@ -318,6 +330,7 @@ impl Client {
                     self.styles.set(index, &pattern);
                 }
                 Some(ServerMessage::Print(text)) => self.prints.push(text),
+                Some(ServerMessage::Effect(effect)) => self.effects.push(effect),
                 Some(ServerMessage::ModelName { number, name }) => {
                     self.model_names.push((number, name));
                 }

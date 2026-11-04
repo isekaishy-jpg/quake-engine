@@ -33,3 +33,30 @@ pub struct EntityState {
     /// Its pitch, yaw and roll in degrees.
     pub angles: Vec3,
 }
+
+/// A short-lived effect, which only the client knows about after it's sent.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Effect {
+    /// One of the original's temporary entities, by its number.
+    Temp {
+        /// Which one.
+        kind: u8,
+        /// Where it is.
+        origin: Vec3,
+        /// Where a beam ends.
+        end: Vec3,
+        /// The entity a beam comes from.
+        entity: u64,
+    },
+    /// A puff of particles.
+    Particles {
+        /// Where they start.
+        origin: Vec3,
+        /// How they move.
+        direction: Vec3,
+        /// Their palette colour.
+        color: u8,
+        /// How many.
+        count: u8,
+    },
+}

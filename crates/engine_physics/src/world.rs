@@ -15,6 +15,7 @@ use engine_core::math::Vec3;
 use engine_core::player::Liquid;
 use engine_map::{ClipChild, Contents, Map};
 
+use crate::hull::{HullRoot, enter_box, trace_hull};
 use crate::solids::build_solids;
 
 /// How far short of a surface a trace stops, from `pmovetst.c`. It keeps the
@@ -34,6 +35,12 @@ const SEARCH_STEPS: u32 = 24;
 /// How far around a model's bounds a trace still checks it, which covers the
 /// growth of the hull.
 const MODEL_BOUNDS_MARGIN: f32 = 64.0;
+
+/// The smallest corner of a player's box.
+const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
+
+/// The largest corner of a player's box.
+const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
 /// The result of a trace.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -124,6 +131,16 @@ pub struct Collision<'a> {
     instances: &'a [ModelInstance],
     /// A model to pass through.
     ignored: Option<u32>,
+    /// Solid boxes, as their corners.
+    boxes: &'a [(Vec3, Vec3)],
+}
+
+impl std::fmt::Debug for CollisionWorld {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("CollisionWorld")
+            .field("solid_count", &self.solid_count)
+            .finish_non_exhaustive()
+    }
 }
 
 impl CollisionWorld {
@@ -181,6 +198,7 @@ impl CollisionWorld {
             world: self,
             instances,
             ignored: None,
+            boxes: &[],
         }
     }
 
@@ -202,6 +220,14 @@ impl CollisionWorld {
         self.with(&[]).trace(start, end)
     }
 
+    /// What the map holds at `point`, with sky told apart from open air.
+    #[must_use]
+    pub fn map_contents(&self, point: Vec3) -> Contents {
+        let tree = &self.map.tree;
+        tree.leaf(tree.leaf_at(point))
+            .map_or(Contents::Solid, |leaf| leaf.contents)
+    }
+
     /// The solids of model `number`.
     fn model(&self, number: u32) -> Option<&ModelSolids> {
         self.models
@@ -220,6 +246,83 @@ impl<'a> Collision<'a> {
         }
     }
 
+    /// The same collision, with solid boxes in the way too.
+    #[must_use]
+    pub fn with_boxes(self, boxes: &'a [(Vec3, Vec3)]) -> Self {
+        Self { boxes, ..self }
+    }
+
+    /// Moves a box of any size from `start` towards `end`, through the world
+    /// and moving models. The hull comes from its size, as `SV_HullForEntity`
+    /// chooses. Entities are a job for whoever knows them.
+    #[must_use]
+    pub fn move_box(&self, start: Vec3, mins: Vec3, maxs: Vec3, end: Vec3) -> Trace {
+        let width = maxs.x - mins.x;
+        let (hull, hull_mins) = if width < 3.0 {
+            (None, mins)
+        } else if width <= 32.0 {
+            (Some(0), Vec3::new(-16.0, -16.0, -24.0))
+        } else {
+            (Some(1), Vec3::new(-32.0, -32.0, -24.0))
+        };
+        let shift = hull_mins - mins;
+        let map = &self.world.map;
+        let root_of = |number: u32| {
+            let model = map.models.get(usize::try_from(number).ok()?)?;
+            match hull {
+                None => model.root.map(HullRoot::Point),
+                Some(hull) => Some(HullRoot::Clip(model.hulls[hull])),
+            }
+        };
+        let mut best = Trace {
+            fraction: 1.0,
+            end,
+            normal: Vec3::ZERO,
+            start_solid: false,
+            all_solid: false,
+            model: None,
+        };
+        if let Some(root) = root_of(0) {
+            let trace = trace_hull(&map.tree, root, start - shift, end - shift);
+            best = Trace {
+                fraction: trace.fraction,
+                end: trace.end + shift,
+                normal: trace.normal,
+                start_solid: trace.start_solid,
+                all_solid: trace.all_solid,
+                model: None,
+            };
+        }
+        let solid = self.instances.iter().filter(|instance| {
+            instance.solid && instance.model != 0 && Some(instance.model) != self.ignored
+        });
+        for instance in solid {
+            let Some(root) = root_of(instance.model) else {
+                continue;
+            };
+            let offset = shift + instance.origin;
+            let trace = trace_hull(&map.tree, root, start - offset, end - offset);
+            if trace.all_solid || trace.start_solid || trace.fraction < best.fraction {
+                best = Trace {
+                    fraction: trace.fraction,
+                    end: trace.end + offset,
+                    normal: trace.normal,
+                    start_solid: trace.start_solid || best.start_solid,
+                    all_solid: trace.all_solid,
+                    model: Some(instance.model),
+                };
+            }
+        }
+        best
+    }
+
+    /// The boxes grown by a player's size, so a player's centre can't enter.
+    fn player_boxes(&self) -> impl Iterator<Item = (Vec3, Vec3)> {
+        self.boxes
+            .iter()
+            .map(|(low, high)| (*low - PLAYER_MAXS, *high - PLAYER_MINS))
+    }
+
     /// The moving models that can stop a player.
     fn solid_instances(&self) -> impl Iterator<Item = (&'a ModelInstance, &'a ModelSolids)> {
         let ignored = self.ignored;
@@ -236,6 +339,17 @@ impl<'a> Collision<'a> {
     #[must_use]
     pub fn in_solid(&self, point: Vec3) -> bool {
         let tree = &self.world.map.tree;
+        let in_box = self.player_boxes().any(|(low, high)| {
+            point.x >= low.x
+                && point.y >= low.y
+                && point.z >= low.z
+                && point.x <= high.x
+                && point.y <= high.y
+                && point.z <= high.z
+        });
+        if in_box {
+            return true;
+        }
         let in_world = self
             .world
             .model(0)
@@ -277,6 +391,13 @@ impl<'a> Collision<'a> {
             .model(0)
             .and_then(|world| cast(&world.world, start, delta))
             .map(|(fraction, normal)| (fraction, normal, None));
+        for (low, high) in self.player_boxes() {
+            if let Some((fraction, normal, false)) = enter_box(start, end, low, high)
+                && best.is_none_or(|(nearest, _, _)| fraction < nearest)
+            {
+                best = Some((fraction, normal, None));
+            }
+        }
         let margin = Vec3::new(
             MODEL_BOUNDS_MARGIN,
             MODEL_BOUNDS_MARGIN,

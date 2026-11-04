@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 
-use crate::tree::{ClipChild, Tree};
+use crate::tree::{ClipChild, NodeChild, Tree};
 
 /// How a texture is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -128,6 +128,8 @@ pub struct Model {
     pub mins: Vec3,
     /// The largest corner of its bounds.
     pub maxs: Vec3,
+    /// The root of its drawing tree, which points move through.
+    pub root: Option<NodeChild>,
     /// The roots of its clipping hulls, for players and for large monsters.
     pub hulls: [ClipChild; 2],
 }

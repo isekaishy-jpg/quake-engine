@@ -1,5 +1,6 @@
 //! Entities, the player and pusher physics.
 
+use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::entity::{EntityState, ModelInstance};
@@ -25,6 +26,15 @@ const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 /// reach this much further.
 const LINK_MARGIN: f32 = 1.0;
 
+/// How much wider items are than their boxes.
+const ITEM_MARGIN: f32 = 15.0;
+
+/// `FL_ITEM`.
+const FLAG_ITEM: u32 = 256;
+
+/// `EF_MUZZLEFLASH`, which lasts for one snapshot.
+const EFFECT_MUZZLE_FLASH: u8 = 2;
+
 /// How an entity blocks others.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Solid {
@@ -33,6 +43,10 @@ pub enum Solid {
     Not,
     /// It notices being touched, but doesn't block.
     Trigger,
+    /// A solid box.
+    Bbox,
+    /// A solid box that others slide off.
+    SlideBox,
     /// A solid brush model.
     Bsp,
 }
@@ -45,6 +59,20 @@ pub enum MoveType {
     None,
     /// It follows its velocity on its own clock, and pushes what's in the way.
     Push,
+    /// The player, who moves by commands.
+    Walk,
+    /// A monster, which moves in steps.
+    Step,
+    /// It flies, with no gravity.
+    Fly,
+    /// It falls.
+    Toss,
+    /// It goes through everything.
+    Noclip,
+    /// It flies, and hits monsters from further away.
+    FlyMissile,
+    /// It falls and bounces.
+    Bounce,
 }
 
 /// What the engine knows about an entity. Game fields live in the script.
@@ -74,6 +102,16 @@ pub struct Entity {
     pub effects: u8,
     /// Its pitch, yaw and roll in degrees.
     pub angles: Vec3,
+    /// How fast those change, in degrees a second.
+    pub angular_velocity: Vec3,
+    /// Who made it, which it doesn't hit.
+    pub owner: Option<EntityId>,
+    /// The original's flag bits.
+    pub flags: u32,
+    /// Whether it was in a liquid when last checked.
+    pub in_water: bool,
+    /// Whether it's been checked at all.
+    pub water_known: bool,
     /// Whether the model is drawn.
     pub visible: bool,
     /// A pusher's own clock, in seconds.
@@ -98,9 +136,11 @@ pub enum Callback {
     Touch {
         /// What was touched.
         id: EntityId,
-        /// What touched it.
-        other: EntityId,
+        /// What touched it, or `None` for the world.
+        other: Option<EntityId>,
     },
+    /// `id` crossed the surface of a liquid.
+    Splash(EntityId),
 }
 
 /// The game's state.
@@ -124,8 +164,14 @@ pub struct Simulation {
     touched: Vec<u32>,
     /// The player's last yaw and pitch.
     view: (f32, f32),
+    /// The collision scripts' traces use.
+    collision: Option<Rc<CollisionWorld>>,
     /// Whether the player's jump button is down.
     jump_down: bool,
+    /// Whether the player's attack button is down.
+    attack_down: bool,
+    /// The impulse waiting to be handled, or 0.
+    impulse: u8,
     /// Model names, where a shape's number is its place here plus one.
     shapes: Vec<String>,
     /// How many of those the server has passed on.
@@ -172,7 +218,10 @@ impl Simulation {
             time: 0.0,
             touched: Vec::new(),
             view: (0.0, 0.0),
+            collision: None,
             jump_down: false,
+            attack_down: false,
+            impulse: 0,
             shapes: Vec::new(),
             shapes_sent: 0,
             weapon_model: 0,
@@ -248,6 +297,20 @@ impl Simulation {
         self.weapon_model
     }
 
+    /// Marks the player as dead or alive.
+    pub fn set_dead(&mut self, dead: bool) {
+        self.player.dead = dead;
+    }
+
+    /// Ends every muzzle flash, which only lasts for one snapshot.
+    pub fn clear_muzzle_flashes(&mut self) {
+        for id in self.entities.ids() {
+            if let Some(entity) = self.entities.get_mut(id) {
+                entity.effects &= !EFFECT_MUZZLE_FLASH;
+            }
+        }
+    }
+
     /// Every entity that shows a model.
     #[must_use]
     pub fn entity_states(&self) -> Vec<EntityState> {
@@ -272,10 +335,40 @@ impl Simulation {
         self.jump_down
     }
 
-    /// Notes whether the player's jump button is down, for scripts to see
-    /// before the move runs.
-    pub fn set_jump_down(&mut self, down: bool) {
-        self.jump_down = down;
+    /// Notes the player's buttons, for scripts to see before the move runs.
+    pub fn set_buttons(&mut self, command: &UserCommand) {
+        self.jump_down = command.jump;
+        self.attack_down = command.attack;
+        if command.impulse != 0 {
+            self.impulse = command.impulse;
+        }
+    }
+
+    /// Whether the player's attack button is down.
+    #[must_use]
+    pub fn attack_down(&self) -> bool {
+        self.attack_down
+    }
+
+    /// The impulse waiting to be handled, or 0.
+    #[must_use]
+    pub fn impulse(&self) -> u8 {
+        self.impulse
+    }
+
+    /// Sets the impulse waiting to be handled.
+    pub fn set_impulse(&mut self, impulse: u8) {
+        self.impulse = impulse;
+    }
+
+    /// Sets the collision scripts' traces use.
+    pub fn set_world(&mut self, world: Rc<CollisionWorld>) {
+        self.collision = Some(world);
+    }
+
+    /// The collision scripts' traces use.
+    pub(crate) fn collision(&self) -> Option<&Rc<CollisionWorld>> {
+        self.collision.as_ref()
     }
 
     /// The player's last yaw and pitch.
@@ -413,11 +506,12 @@ impl Simulation {
         let mut command = *command;
         command.seconds = command.seconds.clamp(0.0, MAX_COMMAND_SECONDS);
         let instances = self.instances();
+        let boxes = self.solid_boxes();
         player_move(
             &mut self.player,
             &command,
             &self.vars,
-            world.with(&instances),
+            world.with(&instances).with_boxes(&boxes),
             &mut self.touched,
         );
     }
@@ -442,6 +536,7 @@ impl Simulation {
             return callbacks;
         };
         if id == self.player_id {
+            self.run_think(id, &entity, seconds, &mut callbacks);
             return callbacks;
         }
         match entity.move_type {
@@ -464,17 +559,59 @@ impl Simulation {
                     callbacks.push(Callback::Think(id));
                 }
             }
-            MoveType::None => {
-                let think_time = entity.next_think;
-                if think_time > 0.0 && think_time <= self.time + seconds {
-                    if let Some(entity) = self.entities.get_mut(id) {
-                        entity.next_think = 0.0;
-                    }
-                    callbacks.push(Callback::Think(id));
-                }
+            MoveType::None | MoveType::Walk | MoveType::Step => {
+                self.run_think(id, &entity, seconds, &mut callbacks);
+            }
+            MoveType::Noclip => {
+                self.run_think(id, &entity, seconds, &mut callbacks);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a tick needs no more than f32"
+                )]
+                self.drift(id, seconds as f32);
+            }
+            MoveType::Fly | MoveType::Toss | MoveType::FlyMissile | MoveType::Bounce => {
+                self.run_think(id, &entity, seconds, &mut callbacks);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a tick needs no more than f32"
+                )]
+                self.fly(id, seconds as f32, world, &mut callbacks);
             }
         }
         callbacks
+    }
+
+    /// `SV_RunThink`.
+    fn run_think(
+        &mut self,
+        id: EntityId,
+        entity: &Entity,
+        seconds: f64,
+        callbacks: &mut Vec<Callback>,
+    ) {
+        let think_time = entity.next_think;
+        if think_time > 0.0 && think_time <= self.time + seconds {
+            if let Some(entity) = self.entities.get_mut(id) {
+                entity.next_think = 0.0;
+            }
+            callbacks.push(Callback::Think(id));
+        }
+    }
+
+    /// Everything solid but brush models.
+    pub(crate) fn solid_entities(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.entities
+            .iter()
+            .filter(|(_, entity)| matches!(entity.solid, Solid::Bbox | Solid::SlideBox))
+    }
+
+    /// The first entity `test` accepts.
+    pub(crate) fn entity_ids_with(&self, test: impl Fn(&Entity) -> bool) -> Option<EntityId> {
+        self.entities
+            .iter()
+            .find(|(_, entity)| test(entity))
+            .map(|(id, _)| id)
     }
 
     /// `SV_PushMove`, for the one thing that can be pushed: the player.
@@ -548,24 +685,36 @@ impl Simulation {
         for model in touched {
             for (id, entity) in self.entities.iter() {
                 if entity.model == Some(model) && entity.solid == Solid::Bsp {
-                    touches.push(Callback::Touch { id, other: player });
+                    touches.push(Callback::Touch {
+                        id,
+                        other: Some(player),
+                    });
                 }
             }
         }
-        if !self.player.noclip {
+        if !self.player.noclip && !self.player.dead {
             let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
             let low = self.player.origin + PLAYER_MINS - margin;
             let high = self.player.origin + PLAYER_MAXS + margin;
             for (id, entity) in self.entities.iter() {
+                // `SV_LinkEdict` makes items extra wide.
+                let wide = if entity.flags & FLAG_ITEM != 0 {
+                    Vec3::new(ITEM_MARGIN, ITEM_MARGIN, 0.0)
+                } else {
+                    margin
+                };
                 let touching = entity.solid == Solid::Trigger
                     && boxes_touch(
                         low,
                         high,
-                        entity.origin + entity.mins - margin,
-                        entity.origin + entity.maxs + margin,
+                        entity.origin + entity.mins - wide,
+                        entity.origin + entity.maxs + wide,
                     );
                 if touching {
-                    touches.push(Callback::Touch { id, other: player });
+                    touches.push(Callback::Touch {
+                        id,
+                        other: Some(player),
+                    });
                 }
             }
         }

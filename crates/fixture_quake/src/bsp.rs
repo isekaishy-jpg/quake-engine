@@ -483,6 +483,7 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
             face_count: model.num_faces,
             mins: vec3(model.bound.min) - SPREAD,
             maxs: vec3(model.bound.max) + SPREAD,
+            root: Some(node_child(model.hulls.root)),
             hulls: model.hulls.for_size.map_or([ClipChild::Empty; 2], |hulls| {
                 [clip_child(hulls.small), clip_child(hulls.large)]
             }),

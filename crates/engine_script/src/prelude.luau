@@ -27,6 +27,12 @@ local ENGINE_FIELDS = {
 	effects = true,
 	weaponmodel = true,
 	weaponframe = true,
+	flags = true,
+	avelocity = true,
+	button0 = true,
+	impulse = true,
+	v_angle = true,
+	dead = true,
 }
 
 -- Map fields that aren't text.
@@ -35,15 +41,52 @@ local NUMBER_FIELDS = {
 	sounds = true, height = true, delay = true, style = true, count = true, t_length = true,
 	t_width = true, worldtype = true, angle = true, volume = true,
 }
-local VECTOR_FIELDS = { origin = true, angles = true, mangle = true, mins = true, maxs = true }
+local VECTOR_FIELDS = {
+	origin = true,
+	angles = true,
+	mangle = true,
+	mins = true,
+	maxs = true,
+	velocity = true,
+	avelocity = true,
+}
+
+-- Fields that hold functions, which a map's text can't.
+local FUNCTION_FIELDS = {
+	think = true,
+	touch = true,
+	use = true,
+	blocked = true,
+	th_die = true,
+	th_pain = true,
+}
+
+-- Engine fields a map can set from its text, which are numbers.
+local MAP_NUMBER_FIELDS = {
+	solid = true,
+	movetype = true,
+	nextthink = true,
+	frame = true,
+	skin = true,
+	effects = true,
+	flags = true,
+}
 
 local entities = {}
 
 local Entity = {}
 
+-- Fields the engine has to hear about every time. A metamethod only sees a write
+-- to a key that isn't there, so these live under other names.
+local WATCHED_FIELDS = { model = "_model", owner = "_owner" }
+
 function Entity.__index(entity, key)
 	if ENGINE_FIELDS[key] then
 		return engine.get(rawget(entity, "_id"), key)
+	end
+	local watched = WATCHED_FIELDS[key]
+	if watched then
+		return rawget(entity, watched)
 	end
 	return nil
 end
@@ -51,8 +94,19 @@ end
 function Entity.__newindex(entity, key, value)
 	if ENGINE_FIELDS[key] then
 		engine.set(rawget(entity, "_id"), key, value)
-	else
+		return
+	end
+	local watched = WATCHED_FIELDS[key]
+	if watched == nil then
 		rawset(entity, key, value)
+		return
+	end
+	rawset(entity, watched, value)
+	if key == "owner" then
+		engine.set_owner(rawget(entity, "_id"), value and rawget(value, "_id"))
+	else
+		-- An empty model hides what's there, as `SV_WriteEntitiesToClient` does.
+		engine.set(rawget(entity, "_id"), "visible", value ~= nil and value ~= "")
 	end
 end
 
@@ -108,7 +162,7 @@ function find_all(field, value)
 end
 
 function setmodel(entity, model)
-	rawset(entity, "model", model)
+	entity.model = model
 	if model then
 		engine.set_model(rawget(entity, "_id"), model)
 	end
@@ -145,6 +199,102 @@ function random()
 	return random_state / 2147483647
 end
 
+-- What `makevectors` last worked out.
+v_forward = vector.create(1, 0, 0)
+v_right = vector.create(0, -1, 0)
+v_up = vector.create(0, 0, 1)
+
+-- What `traceline` last found.
+trace_fraction = 1
+trace_endpos = vector.zero
+trace_plane_normal = vector.zero
+trace_ent = nil
+
+-- Stands in for the world in a map that has none.
+local no_world = {}
+
+function traceline(start, finish, nomonsters, ignore)
+	local fraction, endpos, normal, hit = engine.traceline(
+		start,
+		finish,
+		nomonsters,
+		ignore and rawget(ignore, "_id")
+	)
+	trace_fraction = fraction
+	trace_endpos = endpos
+	trace_plane_normal = normal
+	trace_ent = hit and entities[hit] or world or no_world
+end
+
+function pointcontents(point)
+	return engine.pointcontents(point)
+end
+
+function droptofloor(entity)
+	return engine.droptofloor(rawget(entity, "_id"))
+end
+
+function normalize(value)
+	if value == vector.zero then
+		return value
+	end
+	return vector.normalize(value)
+end
+
+-- Pitch and yaw of a direction, from `PF_vectoangles`.
+function vectoangles(value)
+	local yaw, pitch = 0, 0
+	if value.x == 0 and value.y == 0 then
+		pitch = if value.z > 0 then 90 else 270
+	else
+		yaw = math.floor(math.deg(math.atan2(value.y, value.x)))
+		if yaw < 0 then
+			yaw += 360
+		end
+		local forward = math.sqrt(value.x * value.x + value.y * value.y)
+		pitch = math.floor(math.deg(math.atan2(value.z, forward)))
+		if pitch < 0 then
+			pitch += 360
+		end
+	end
+	return vector.create(pitch, yaw, 0)
+end
+
+-- Everything solid within `radius` of `origin`, from `PF_findradius`.
+function findradius(origin, radius)
+	local found = {}
+	for _, id in engine.ids() do
+		local entity = entities[id]
+		if entity and entity.solid ~= 0 then
+			local middle = entity.origin + (entity.mins + entity.maxs) * 0.5
+			if vector.magnitude(origin - middle) <= radius then
+				table.insert(found, entity)
+			end
+		end
+	end
+	return found
+end
+
+-- The direction to fire in. Aiming at monsters arrives with them.
+function aim(_entity, _speed)
+	return v_forward
+end
+
+function temp_entity(kind, origin, finish, from)
+	engine.temp_entity(kind, origin, finish or origin, from and rawget(from, "_id"))
+end
+
+function particle(origin, direction, color, count)
+	engine.particle(origin, direction, color, count)
+end
+
+function sprint(_entity, message)
+	engine.print(message)
+end
+
+-- The screen's flash on a pickup, which arrives with the status bar.
+function bonus_flash(_entity) end
+
 -- The forward, right and up directions of `angles`, from `AngleVectors`.
 function makevectors(angles)
 	local pitch = math.rad(angles.x)
@@ -156,6 +306,7 @@ function makevectors(angles)
 	local forward = vector.create(cp * cy, cp * sy, -sp)
 	local right = vector.create(-sr * sp * cy + cr * sy, -sr * sp * sy - cr * cy, -sr * cp)
 	local up = vector.create(cr * sp * cy + sr * sy, cr * sp * sy - sr * cy, cr * cp)
+	v_forward, v_right, v_up = forward, right, up
 	return forward, right, up
 end
 
@@ -177,8 +328,10 @@ local function fill(entity, fields)
 			entity[key] = parse_vector(value)
 		elseif NUMBER_FIELDS[key] then
 			rawset(entity, key, tonumber(value) or 0)
-		elseif key ~= "_id" then
-			rawset(entity, key, value)
+		elseif MAP_NUMBER_FIELDS[key] then
+			entity[key] = tonumber(value) or 0
+		elseif key ~= "_id" and not ENGINE_FIELDS[key] and not FUNCTION_FIELDS[key] then
+			entity[key] = value
 		end
 	end
 	for key in NUMBER_FIELDS do
@@ -216,8 +369,14 @@ function dispatch(kind, id, other_id)
 	if entity == nil then
 		return
 	end
+	if kind == "splash" then
+		if entity_splash then
+			entity_splash(entity)
+		end
+		return
+	end
 	local callback = rawget(entity, kind)
 	if callback then
-		callback(entity, entities[other_id])
+		callback(entity, other_id and entities[other_id] or world)
 	end
 end

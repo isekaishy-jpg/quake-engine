@@ -15,7 +15,7 @@ use engine_map::{ClipChild, Map, Tree};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
-use engine_server::Server;
+use engine_server::{Level, Server};
 use fixture_quake::{
     Palette, SCRIPTS, import_map, mount_game, mount_music, parse_mdl, parse_wav, spawn_point,
 };
@@ -245,6 +245,7 @@ fn run_scripts(map: &Arc<Map>, seconds: u32) -> (Vec<String>, usize) {
         origin,
         SCRIPTS,
         1.0 / 72.0,
+        Level::default(),
     )
     .expect("the scripts load");
     let mut errors = Vec::new();
@@ -348,6 +349,7 @@ fn fire_everything_listening(
         origin,
         SCRIPTS,
         1.0 / 72.0,
+        Level::default(),
     )
     .expect("the scripts load");
     let mut errors = Vec::new();

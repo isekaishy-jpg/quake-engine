@@ -23,7 +23,7 @@ use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
 use engine_render::{EntityDraw, Renderer, Target, View};
-use engine_server::Server;
+use engine_server::{Level, Server};
 use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point};
 
 use crate::commands;
@@ -56,6 +56,9 @@ struct AudioLevels {
     /// `ambient_water`.
     water: f32,
 }
+
+/// How far the eye sits above a dead player's middle.
+const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
 /// The state console commands work on.
 pub(crate) struct World {
@@ -107,6 +110,8 @@ pub(crate) struct World {
     ambience: Option<AmbientSounds>,
     /// Models loaded so far.
     pub(crate) models: ModelBank,
+    /// What the player carries into the next level.
+    next_parms: Option<Vec<f64>>,
     /// The map, for the light on models.
     map: Option<Arc<Map>>,
 }
@@ -129,6 +134,10 @@ impl World {
             start.origin,
             SCRIPTS,
             TICK_SECONDS,
+            Level {
+                name: name.to_owned(),
+                parms: self.next_parms.take(),
+            },
         )?);
         self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
@@ -164,6 +173,7 @@ impl World {
     /// Runs one tick of the game.
     fn run_tick(&mut self, seconds: f32) {
         let command = self.command();
+        self.buttons.impulse = 0;
         if let (Some(client), Some(server)) = (&mut self.client, &mut self.server) {
             client.send_command(command, seconds);
             server.tick();
@@ -188,6 +198,7 @@ impl World {
                 self.renderer.as_mut(),
             );
         }
+        let _effects = client.take_effects();
         let sounds = client.take_sounds();
         let static_sounds = client.take_static_sounds();
         let music = client.take_music();
@@ -248,6 +259,9 @@ impl World {
     fn take_server_news(&mut self) -> (Vec<String>, Option<String>) {
         let prints = self.client.as_mut().map(Client::take_prints);
         let level = self.server.as_mut().and_then(Server::take_next_level);
+        if level.is_some() {
+            self.next_parms = self.server.as_mut().and_then(Server::take_parms);
+        }
         (prints.unwrap_or_default(), level)
     }
 
@@ -275,7 +289,12 @@ impl World {
             let speed = Vec3::new(state.velocity.x, state.velocity.y, 0.0).length();
             let time = self.map_time as f32;
             let bob = view_bob(time, speed);
-            origin = body + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step + bob);
+            let eye = if state.dead {
+                DEAD_VIEW_HEIGHT
+            } else {
+                VIEW_HEIGHT
+            };
+            origin = body + Vec3::new(0.0, 0.0, eye + step + bob);
             let (sin, cos) = self.look.yaw().to_radians().sin_cos();
             self.listener = Listener {
                 origin,
@@ -284,12 +303,9 @@ impl World {
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
             if let Some(map) = &self.map {
-                entities.extend(
-                    client
-                        .draw_entities(fraction)
-                        .iter()
-                        .filter_map(|entity| self.models.draw(entity, map, &styles, time)),
-                );
+                for entity in client.draw_entities(fraction) {
+                    self.models.draw(&entity, map, &styles, time, &mut entities);
+                }
                 let (model, frame) = client.weapon();
                 let yaw = self.look.yaw() as f32;
                 let pitch = self.look.pitch() as f32;
@@ -417,6 +433,7 @@ impl Engine {
                 audio_settings: None,
                 ambience: None,
                 models: ModelBank::default(),
+                next_parms: None,
                 map: None,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),

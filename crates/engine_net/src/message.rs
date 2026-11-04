@@ -1,6 +1,6 @@
 //! What client and server say to each other.
 
-use engine_core::entity::{EntityState, ModelInstance};
+use engine_core::entity::{Effect, EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -38,6 +38,12 @@ const TAG_MUSIC: u8 = 9;
 /// The tag of a model's name.
 const TAG_MODEL_NAME: u8 = 10;
 
+/// The tag of a temporary entity.
+const TAG_TEMP: u8 = 11;
+
+/// The tag of particles.
+const TAG_PARTICLES: u8 = 12;
+
 /// The most entities a snapshot may list.
 const MAX_ENTITIES: usize = 8192;
 
@@ -66,6 +72,8 @@ pub struct Snapshot {
     pub instances: Vec<ModelInstance>,
     /// Entities with other models.
     pub entities: Vec<EntityState>,
+    /// Solid boxes, as their corners.
+    pub boxes: Vec<(Vec3, Vec3)>,
     /// The number of the player's weapon model, or 0 for none.
     pub weapon_model: u16,
     /// The frame it shows.
@@ -101,6 +109,8 @@ pub enum ServerMessage {
     StaticSound(StaticSound),
     /// A music track plays.
     Music(u8),
+    /// Something short-lived happens.
+    Effect(Effect),
     /// A model's number is given its name.
     ModelName {
         /// The number snapshots use.
@@ -229,7 +239,11 @@ impl ClientMessage {
                 ] {
                     put_f32(&mut out, value);
                 }
-                out.push(u8::from(command.jump));
+                out.extend_from_slice(&[
+                    u8::from(command.jump),
+                    u8::from(command.attack),
+                    command.impulse,
+                ]);
             }
             Self::Console(text) => {
                 out.push(TAG_CONSOLE);
@@ -255,6 +269,8 @@ impl ClientMessage {
                     side: reader.f32()?,
                     up: reader.f32()?,
                     jump: reader.flag()?,
+                    attack: reader.flag()?,
+                    impulse: reader.byte()?,
                 };
                 reader.finished().then_some(Self::Move(command))
             }
@@ -303,6 +319,27 @@ impl ServerMessage {
                 out.extend_from_slice(sound.name.as_bytes());
             }
             Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
+            Self::Effect(Effect::Temp {
+                kind,
+                origin,
+                end,
+                entity,
+            }) => {
+                out.extend_from_slice(&[TAG_TEMP, *kind]);
+                put_vec3(&mut out, *origin);
+                put_vec3(&mut out, *end);
+                out.extend_from_slice(&entity.to_le_bytes());
+            }
+            Self::Effect(Effect::Particles {
+                origin,
+                direction,
+                color,
+                count,
+            }) => {
+                out.extend_from_slice(&[TAG_PARTICLES, *color, *count]);
+                put_vec3(&mut out, *origin);
+                put_vec3(&mut out, *direction);
+            }
             Self::ModelName { number, name } => {
                 out.push(TAG_MODEL_NAME);
                 out.extend_from_slice(&number.to_le_bytes());
@@ -331,6 +368,27 @@ impl ServerMessage {
             }
             TAG_SOUND => decode_sound(rest).map(Self::Sound),
             TAG_STATIC_SOUND => decode_static_sound(rest).map(Self::StaticSound),
+            TAG_TEMP => {
+                let mut reader = Reader { bytes: rest };
+                let effect = Effect::Temp {
+                    kind: reader.byte()?,
+                    origin: reader.vec3()?,
+                    end: reader.vec3()?,
+                    entity: u64::from_le_bytes(reader.take()?),
+                };
+                reader.finished().then_some(Self::Effect(effect))
+            }
+            TAG_PARTICLES => {
+                let mut reader = Reader { bytes: rest };
+                let (color, count) = (reader.byte()?, reader.byte()?);
+                let effect = Effect::Particles {
+                    origin: reader.vec3()?,
+                    direction: reader.vec3()?,
+                    color,
+                    count,
+                };
+                reader.finished().then_some(Self::Effect(effect))
+            }
             TAG_MODEL_NAME => {
                 let mut reader = Reader { bytes: rest };
                 let number = u16::from_le_bytes(reader.take()?);
@@ -408,6 +466,7 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         liquid_number(player.liquid),
         u8::from(player.jump_held),
         u8::from(player.noclip),
+        u8::from(player.dead),
     ]);
     out.extend_from_slice(&player.ground_model.unwrap_or(NO_MODEL).to_le_bytes());
     let count = u32::try_from(snapshot.instances.len()).unwrap_or(u32::MAX);
@@ -429,6 +488,12 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         put_vec3(out, entity.origin);
         put_vec3(out, entity.angles);
     }
+    let count = u32::try_from(snapshot.boxes.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for (low, high) in &snapshot.boxes {
+        put_vec3(out, *low);
+        put_vec3(out, *high);
+    }
 }
 
 /// Reads a snapshot.
@@ -444,6 +509,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
     let liquid = liquid_from(reader.byte()?)?;
     let jump_held = reader.flag()?;
     let noclip = reader.flag()?;
+    let dead = reader.flag()?;
     let ground = reader.u32()?;
     let player = PlayerState {
         origin,
@@ -454,6 +520,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
         water_jump_time,
         jump_held,
         noclip,
+        dead,
         ground_model: (ground != NO_MODEL).then_some(ground),
     };
     let count = usize::try_from(reader.u32()?).ok()?;
@@ -487,12 +554,21 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             angles: reader.vec3()?,
         });
     }
+    let count = usize::try_from(reader.u32()?).ok()?;
+    if count > MAX_ENTITIES {
+        return None;
+    }
+    let mut boxes = Vec::with_capacity(count);
+    for _ in 0..count {
+        boxes.push((reader.vec3()?, reader.vec3()?));
+    }
     reader.finished().then_some(Snapshot {
         tick,
         acknowledged,
         player,
         instances,
         entities,
+        boxes,
         weapon_model,
         weapon_frame,
     })

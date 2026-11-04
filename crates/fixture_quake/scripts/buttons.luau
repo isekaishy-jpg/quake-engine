@@ -31,6 +31,10 @@ function button_return(self)
 	self.state = STATE_DOWN
 	SUB_CalcMove(self, self.pos1, self.speed, button_done)
 	self.frame = 0
+	if self.health ~= 0 then
+		-- It can be shot again.
+		self.takedamage = DAMAGE_YES
+	end
 end
 
 function button_blocked(_self, _other) end
@@ -46,6 +50,13 @@ end
 
 function button_use(self, _other)
 	self.enemy = activator
+	button_fire(self)
+end
+
+function button_killed(self)
+	self.enemy = damage_attacker
+	self.health = self.max_health
+	self.takedamage = DAMAGE_NO
 	button_fire(self)
 end
 
@@ -77,8 +88,13 @@ function func_button(self)
 	self.blocked = button_blocked
 	self.use = button_use
 
-	-- Shot buttons wait for combat, so a button with health can be touched.
-	self.touch = button_touch
+	if self.health ~= 0 then
+		self.max_health = self.health
+		self.th_die = button_killed
+		self.takedamage = DAMAGE_YES
+	else
+		self.touch = button_touch
+	end
 
 	if self.speed == 0 then
 		self.speed = 40

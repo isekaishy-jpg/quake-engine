@@ -1,6 +1,6 @@
 //! Encoding, and refusing bad input.
 
-use engine_core::entity::{EntityState, ModelInstance};
+use engine_core::entity::{Effect, EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -17,6 +17,8 @@ fn command() -> UserCommand {
         side: -200.0,
         up: 100.0,
         jump: true,
+        attack: true,
+        impulse: 7,
     }
 }
 
@@ -34,6 +36,7 @@ fn snapshot() -> Snapshot {
             water_jump_time: 1.5,
             jump_held: true,
             noclip: true,
+            dead: true,
             ground_model: Some(4),
         },
         instances: vec![ModelInstance {
@@ -51,6 +54,7 @@ fn snapshot() -> Snapshot {
             origin: Vec3::new(1.0, 2.0, 3.0),
             angles: Vec3::new(4.0, 5.0, 6.0),
         }],
+        boxes: vec![(Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0))],
         weapon_model: 3,
         weapon_frame: 5,
     }
@@ -85,6 +89,18 @@ fn messages_survive_the_round_trip() {
             name: "ambience/fire1.wav".to_owned(),
         }),
         ServerMessage::Music(6),
+        ServerMessage::Effect(Effect::Temp {
+            kind: 3,
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            end: Vec3::new(4.0, 5.0, 6.0),
+            entity: 9,
+        }),
+        ServerMessage::Effect(Effect::Particles {
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            direction: Vec3::new(0.0, 0.0, 100.0),
+            color: 73,
+            count: 40,
+        }),
         ServerMessage::ModelName {
             number: 12,
             name: "progs/flame.mdl".to_owned(),
@@ -142,7 +158,8 @@ fn unknown_tags_and_bad_flags_are_refused() {
     assert_eq!(ClientMessage::decode(&[99]), None);
     assert_eq!(ServerMessage::decode(&[99]), None);
     let mut bytes = ClientMessage::Move(command()).encode();
-    *bytes.last_mut().expect("bytes") = 7;
+    let jump = bytes.len() - 3;
+    bytes[jump] = 7;
     assert_eq!(ClientMessage::decode(&bytes), None);
 }
 

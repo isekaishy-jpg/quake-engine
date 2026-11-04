@@ -8,7 +8,7 @@ use engine_client::DrawnEntity;
 use engine_core::math::Vec3;
 use engine_map::{AliasModel, Map};
 use engine_render::{EntityDraw, Renderer};
-use fixture_quake::{Palette, parse_mdl};
+use fixture_quake::{Palette, parse_item_bsp, parse_mdl};
 
 /// How fast bonus items spin, in degrees a second.
 const SPIN_SPEED: f32 = 100.0;
@@ -36,10 +36,10 @@ struct Loaded {
 /// Every model asked for so far, by name, and the server's numbers for them.
 #[derive(Default)]
 pub(crate) struct ModelBank {
-    /// Each name's model, or `None` if it wouldn't load.
-    by_name: HashMap<String, Option<Arc<Loaded>>>,
+    /// Each name's parts, or `None` if it wouldn't load.
+    by_name: HashMap<String, Option<Arc<Vec<Loaded>>>>,
     /// The server's numbers, in this game.
-    by_number: HashMap<u32, Arc<Loaded>>,
+    by_number: HashMap<u32, Arc<Vec<Loaded>>>,
 }
 
 impl ModelBank {
@@ -84,43 +84,48 @@ impl ModelBank {
             .count()
     }
 
-    /// What to draw for `entity`, lit by `map` at `time`.
+    /// Adds what to draw for `entity`, lit by `map` at `time`.
     pub(crate) fn draw(
         &self,
         entity: &DrawnEntity,
         map: &Map,
         styles: &[f32],
         time: f32,
-    ) -> Option<EntityDraw> {
+        draws: &mut Vec<EntityDraw>,
+    ) {
         let state = &entity.state;
-        let loaded = self.by_number.get(&u32::from(state.model))?;
-        let model = &loaded.model;
-        let pose_of = |frame: u16| {
-            model
-                .frames
-                .get(usize::from(frame))
-                .or(model.frames.first())
-                .map_or(0, |frame| frame.pose_at(time))
+        let Some(parts) = self.by_number.get(&u32::from(state.model)) else {
+            return;
         };
         let light = map.light_at(state.origin, styles);
         let ambient = light.min(MAX_AMBIENT);
         let shade = light.min(MAX_LIGHT - ambient);
-        let mut angles = state.angles;
-        if model.spins {
-            angles.y = (time * SPIN_SPEED).rem_euclid(360.0);
+        for loaded in parts.iter() {
+            let model = &loaded.model;
+            let pose_of = |frame: u16| {
+                model
+                    .frames
+                    .get(usize::from(frame))
+                    .or(model.frames.first())
+                    .map_or(0, |frame| frame.pose_at(time))
+            };
+            let mut angles = state.angles;
+            if model.spins {
+                angles.y = (time * SPIN_SPEED).rem_euclid(360.0);
+            }
+            draws.push(EntityDraw {
+                model: loaded.number,
+                pose: pose_of(entity.from_frame),
+                next_pose: pose_of(state.frame),
+                blend: entity.blend,
+                skin: u32::from(state.skin),
+                origin: state.origin,
+                angles,
+                ambient: ambient / NEUTRAL_LIGHT,
+                shade: shade / NEUTRAL_LIGHT,
+                in_front: false,
+            });
         }
-        Some(EntityDraw {
-            model: loaded.number,
-            pose: pose_of(entity.from_frame),
-            next_pose: pose_of(state.frame),
-            blend: entity.blend,
-            skin: u32::from(state.skin),
-            origin: state.origin,
-            angles,
-            ambient: ambient / NEUTRAL_LIGHT,
-            shade: shade / NEUTRAL_LIGHT,
-            in_front: false,
-        })
     }
 
     /// What to draw for the player's weapon, `model` at `frame`.
@@ -132,7 +137,7 @@ impl ModelBank {
         light: f32,
         time: f32,
     ) -> Option<EntityDraw> {
-        let loaded = self.by_number.get(&model)?;
+        let loaded = self.by_number.get(&model)?.first()?;
         let pose = loaded
             .model
             .frames
@@ -156,17 +161,26 @@ impl ModelBank {
     }
 }
 
-/// Loads `name`, and hands it to `renderer`.
+/// Loads `name`, and hands its parts to `renderer`.
 fn load(
     name: &str,
     filesystem: &FileSystem,
     renderer: Option<&mut Renderer>,
-) -> Option<Arc<Loaded>> {
+) -> Option<Arc<Vec<Loaded>>> {
     let renderer = renderer?;
     let palette = filesystem.read("gfx/palette.lmp").ok()?;
     let palette = Palette::parse(&palette)?;
     let bytes = filesystem.read(name).ok()?;
-    let model = Arc::new(parse_mdl(&bytes, &palette)?);
-    let number = renderer.add_model(Arc::clone(&model)).ok()?;
-    Some(Arc::new(Loaded { number, model }))
+    let models = if name.ends_with(".bsp") {
+        parse_item_bsp(&bytes, &palette)?
+    } else {
+        vec![parse_mdl(&bytes, &palette)?]
+    };
+    let mut parts = Vec::with_capacity(models.len());
+    for model in models {
+        let model = Arc::new(model);
+        let number = renderer.add_model(Arc::clone(&model)).ok()?;
+        parts.push(Loaded { number, model });
+    }
+    Some(Arc::new(parts))
 }

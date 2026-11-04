@@ -18,6 +18,15 @@ use engine_physics::CollisionWorld;
 use engine_script::{Game, ScriptError};
 use engine_sim::Simulation;
 
+/// Which level a game starts, and what the player brings to it.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Level {
+    /// Its name.
+    pub name: String,
+    /// What the player carries, or `None` for a new game.
+    pub parms: Option<Vec<f64>>,
+}
+
 /// A running game.
 pub struct Server {
     /// The connection to the client.
@@ -34,6 +43,10 @@ pub struct Server {
     seconds: f64,
     /// A level the scripts want to change to.
     next_level: Option<String>,
+    /// What the player carries to it.
+    parms: Option<Vec<f64>>,
+    /// The level running, for a restart.
+    level: Level,
 }
 
 impl Server {
@@ -50,10 +63,13 @@ impl Server {
         origin: Vec3,
         sources: &[(&str, &str)],
         seconds: f64,
+        level: Level,
     ) -> Result<Self, ScriptError> {
         let simulation = Rc::new(RefCell::new(Simulation::new(Arc::clone(map), origin)));
+        simulation.borrow_mut().set_world(Rc::clone(&world));
         let game = Game::new(&simulation, sources)?;
         game.spawn_map(&map.entities);
+        game.connect_player(&level.name, level.parms.as_deref());
         let mut server = Self {
             transport,
             world,
@@ -62,6 +78,8 @@ impl Server {
             tick: 0,
             seconds,
             next_level: None,
+            parms: None,
+            level,
         };
         server.flush_outbox();
         Ok(server)
@@ -70,6 +88,11 @@ impl Server {
     /// Takes a level the scripts asked for.
     pub fn take_next_level(&mut self) -> Option<String> {
         self.next_level.take()
+    }
+
+    /// What the player carries to the level asked for.
+    pub fn take_parms(&mut self) -> Option<Vec<f64>> {
+        self.parms.take()
     }
 
     /// Runs `source` in the game, for tests and tools.
@@ -120,18 +143,21 @@ impl Server {
             player: *simulation.player(),
             instances: simulation.instances(),
             entities: simulation.entity_states(),
+            boxes: simulation.solid_boxes(),
             weapon_model: simulation.weapon_model(),
             weapon_frame: simulation.weapon_frame(),
         };
         self.transport
             .send(ServerMessage::Snapshot(snapshot).encode());
+        drop(simulation);
+        self.simulation.borrow_mut().clear_muzzle_flashes();
     }
 
     /// Runs a move, with the game's player logic around it.
     fn run_command(&mut self, command: &UserCommand) {
         let fresh = command.sequence > self.simulation.borrow().last_command();
         if fresh {
-            self.simulation.borrow_mut().set_jump_down(command.jump);
+            self.simulation.borrow_mut().set_buttons(command);
             self.game.player_pre_think();
         }
         self.simulation
@@ -165,6 +191,16 @@ impl Server {
         }
         if let Some(track) = outbox.music {
             self.transport.send(ServerMessage::Music(track).encode());
+        }
+        for effect in outbox.effects {
+            self.transport.send(ServerMessage::Effect(effect).encode());
+        }
+        if outbox.parms.is_some() {
+            self.parms = outbox.parms;
+        }
+        if outbox.restart {
+            self.next_level = Some(self.level.name.clone());
+            self.parms.clone_from(&self.level.parms);
         }
         if outbox.level.is_some() {
             self.next_level = outbox.level;

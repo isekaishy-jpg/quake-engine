@@ -5,11 +5,13 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
+use engine_core::entity::Effect;
 use engine_core::math::Vec3;
 use engine_core::player::Liquid;
 use engine_core::sound::{SoundStart, StaticSound};
-use engine_map::Entity as MapEntity;
-use engine_sim::{Callback, EntityId, MoveType, Simulation, Solid};
+use engine_map::{Contents, Entity as MapEntity};
+use engine_sim::{Callback, EntityId, FLAG_ON_GROUND, MoveKind, MoveType, Simulation, Solid};
+use mlua::chunk::Compiler;
 use mlua::{Function, Lua, Table, Value, Vector, VmState};
 
 /// The prelude every game runs on.
@@ -19,11 +21,26 @@ const PRELUDE: &str = include_str!("prelude.luau");
 const CALL_LIMIT: Duration = Duration::from_secs(1);
 
 /// `SOLID_NOT`, `SOLID_TRIGGER` and `SOLID_BSP`, as scripts write them.
-const SOLID_NUMBERS: [(Solid, f64); 3] =
-    [(Solid::Not, 0.0), (Solid::Trigger, 1.0), (Solid::Bsp, 4.0)];
+const SOLID_NUMBERS: [(Solid, f64); 5] = [
+    (Solid::Not, 0.0),
+    (Solid::Trigger, 1.0),
+    (Solid::Bbox, 2.0),
+    (Solid::SlideBox, 3.0),
+    (Solid::Bsp, 4.0),
+];
 
 /// `MOVETYPE_NONE` and `MOVETYPE_PUSH`, as scripts write them.
-const MOVE_TYPE_NUMBERS: [(MoveType, f64); 2] = [(MoveType::None, 0.0), (MoveType::Push, 7.0)];
+const MOVE_TYPE_NUMBERS: [(MoveType, f64); 9] = [
+    (MoveType::None, 0.0),
+    (MoveType::Walk, 3.0),
+    (MoveType::Step, 4.0),
+    (MoveType::Fly, 5.0),
+    (MoveType::Toss, 6.0),
+    (MoveType::Push, 7.0),
+    (MoveType::Noclip, 8.0),
+    (MoveType::FlyMissile, 9.0),
+    (MoveType::Bounce, 10.0),
+];
 
 /// A script that couldn't load.
 #[derive(Debug)]
@@ -60,6 +77,12 @@ pub struct Outbox {
     pub static_sounds: Vec<StaticSound>,
     /// A music track to play.
     pub music: Option<u8>,
+    /// Short-lived effects.
+    pub effects: Vec<Effect>,
+    /// What the player carries to the next level.
+    pub parms: Option<Vec<f64>>,
+    /// Whether the level should start again.
+    pub restart: bool,
 }
 
 /// Turns a script's vector into an engine one.
@@ -125,6 +148,13 @@ fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
         }),
         "onground" => Value::Boolean(player.on_ground),
         "button2" => Value::Boolean(sim.jump_down()),
+        "button0" => Value::Boolean(sim.attack_down()),
+        "impulse" => Value::Number(f64::from(sim.impulse())),
+        "dead" => Value::Boolean(player.dead),
+        "v_angle" => {
+            let (yaw, pitch) = sim.view();
+            Value::Vector(from_vec3(Vec3::new(pitch, yaw, 0.0)))
+        }
         "waterjump" => Value::Boolean(player.water_jump_time > 0.0),
         "noclip" => Value::Boolean(player.noclip),
         _ => Value::Nil,
@@ -171,9 +201,14 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
             let (yaw, pitch) = sim.view();
             vector(Vec3::new(pitch, yaw, 0.0))
         }
-        "waterlevel" | "watertype" | "onground" | "button2" | "waterjump" | "noclip" => {
-            read_player_field(sim, id, field)
+        "waterlevel" | "watertype" | "onground" | "button0" | "button2" | "impulse" | "dead"
+        | "v_angle" | "waterjump" | "noclip" => read_player_field(sim, id, field),
+        "flags" => {
+            let on_ground = id == sim.player_id() && sim.player().on_ground;
+            let ground = if on_ground { FLAG_ON_GROUND } else { 0 };
+            Value::Number(f64::from(entity.flags | ground))
         }
+        "avelocity" => vector(entity.angular_velocity),
         _ => return Err(no_field(field)),
     })
 }
@@ -223,6 +258,8 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
             sim.set_weapon_model(&name);
         }
         "weaponframe" => sim.set_weapon_frame(small_number(value)?),
+        "impulse" => sim.set_impulse(u8::try_from(small_number(value)?).unwrap_or(0)),
+        "dead" => sim.set_dead(matches!(value, Value::Boolean(true))),
         _ => {
             let number = as_number(value);
             let Some(entity) = sim.entity_mut(id) else {
@@ -235,6 +272,8 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
                 "ltime" => entity.local_time = number?,
                 "visible" => entity.visible = matches!(value, Value::Boolean(true)),
                 "angles" => entity.angles = as_vec3(value)?,
+                "avelocity" => entity.angular_velocity = as_vec3(value)?,
+                "flags" => entity.flags = u32::from(small_number(value)?),
                 "frame" => entity.frame = small_number(value)?,
                 "skin" => entity.skin = u8::try_from(small_number(value)?).unwrap_or(0),
                 "effects" => entity.effects = u8::try_from(small_number(value)?).unwrap_or(0),
@@ -290,6 +329,10 @@ impl Game {
             lua.globals().raw_set(global, Value::Nil)?;
         }
         lua.sandbox(true)?;
+        // Above level 0, Luau caches any global a chunk doesn't assign itself, as
+        // if it were a constant. Games share globals between scripts, so one
+        // script would never see what another writes.
+        lua.set_compiler(Compiler::new().set_optimization_level(0));
         let call_started = Rc::new(Cell::new(Instant::now()));
         let started = Rc::clone(&call_started);
         lua.set_interrupt(move |_lua| {
@@ -414,7 +457,131 @@ impl Game {
             })?,
         )?;
         Self::register_sound(lua, simulation, outbox, &engine)?;
+        Self::register_world(lua, simulation, &engine)?;
+        Self::register_effects(lua, outbox, &engine)?;
         lua.globals().set("engine", engine)
+    }
+
+    /// Adds what looks at the world to the `engine` table.
+    fn register_world(
+        lua: &Lua,
+        simulation: &Rc<RefCell<Simulation>>,
+        engine: &Table,
+    ) -> mlua::Result<()> {
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "traceline",
+            lua.create_function(
+                move |_, (start, end, nomonsters, pass): (Vector, Vector, bool, Option<f64>)| {
+                    let kind = if nomonsters {
+                        MoveKind::NoMonsters
+                    } else {
+                        MoveKind::Normal
+                    };
+                    let trace = sim.borrow().trace_line(
+                        to_vec3(start),
+                        to_vec3(end),
+                        kind,
+                        pass.map(id_from),
+                    );
+                    Ok((
+                        trace.fraction,
+                        from_vec3(trace.end),
+                        from_vec3(trace.normal),
+                        trace.entity.map(id_to),
+                    ))
+                },
+            )?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "pointcontents",
+            lua.create_function(move |_, point: Vector| {
+                Ok(match sim.borrow().point_contents(to_vec3(point)) {
+                    Contents::Empty => -1.0,
+                    Contents::Solid => -2.0,
+                    Contents::Water => -3.0,
+                    Contents::Slime => -4.0,
+                    Contents::Lava => -5.0,
+                    Contents::Sky => -6.0,
+                })
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "droptofloor",
+            lua.create_function(move |_, id: f64| Ok(sim.borrow_mut().drop_to_floor(id_from(id))))?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "set_owner",
+            lua.create_function(move |_, (id, owner): (f64, Option<f64>)| {
+                if let Some(entity) = sim.borrow_mut().entity_mut(id_from(id)) {
+                    entity.owner = owner.map(id_from);
+                }
+                Ok(())
+            })?,
+        )
+    }
+
+    /// Adds effects and level changes to the `engine` table.
+    fn register_effects(
+        lua: &Lua,
+        outbox: &Rc<RefCell<Outbox>>,
+        engine: &Table,
+    ) -> mlua::Result<()> {
+        let out = Rc::clone(outbox);
+        engine.set(
+            "temp_entity",
+            lua.create_function(
+                move |_, (kind, origin, end, entity): (u8, Vector, Vector, Option<f64>)| {
+                    out.borrow_mut().effects.push(Effect::Temp {
+                        kind,
+                        origin: to_vec3(origin),
+                        end: to_vec3(end),
+                        entity: entity.map_or(0, |id| id_from(id).to_bits()),
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "particle",
+            lua.create_function(
+                move |_, (origin, direction, color, count): (Vector, Vector, u8, f64)| {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "a cast saturates a count too large for a byte"
+                    )]
+                    let count = count as u8;
+                    out.borrow_mut().effects.push(Effect::Particles {
+                        origin: to_vec3(origin),
+                        direction: to_vec3(direction),
+                        color,
+                        count,
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "set_parms",
+            lua.create_function(move |_, parms: Vec<f64>| {
+                out.borrow_mut().parms = Some(parms);
+                Ok(())
+            })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "restart",
+            lua.create_function(move |_, ()| {
+                out.borrow_mut().restart = true;
+                Ok(())
+            })?,
+        )
     }
 
     /// Adds the sound half of the `engine` table.
@@ -518,7 +685,8 @@ impl Game {
         let (kind, id, other) = match callback {
             Callback::Think(id) => ("think", id, None),
             Callback::Blocked { id, other } => ("blocked", id, Some(other)),
-            Callback::Touch { id, other } => ("touch", id, Some(other)),
+            Callback::Touch { id, other } => ("touch", id, other),
+            Callback::Splash(id) => ("splash", id, None),
         };
         self.report(
             self.dispatch
@@ -532,6 +700,21 @@ impl Game {
         let function: mlua::Result<Option<Function>> = self.lua.globals().get(name);
         match function {
             Ok(Some(function)) => self.report(function.call::<()>(self.player.clone())),
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Runs the game's `ClientConnect`, to ready the player for level `name`
+    /// with what they carried from the last one, if anything.
+    pub fn connect_player(&self, name: &str, parms: Option<&[f64]>) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientConnect");
+        match function {
+            Ok(Some(function)) => {
+                let parms = parms.map(<[f64]>::to_vec);
+                self.report(function.call::<()>((self.player.clone(), name, parms)));
+            }
             Ok(None) => {}
             Err(error) => self.report(Err(error)),
         }

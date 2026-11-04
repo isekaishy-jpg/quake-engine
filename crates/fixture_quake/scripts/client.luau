@@ -22,6 +22,8 @@ function changelevel_touch(self, other)
 	activator = other
 	SUB_UseTargets(self)
 	self.touch = SUB_Null
+	SetChangeParms(other)
+	engine.set_parms(parms)
 	engine.changelevel(self.map)
 end
 
@@ -66,8 +68,26 @@ function PlayerJump(self)
 end
 
 function WaterMove(self)
-	if self.noclip then
+	if self.noclip or self.health < 0 then
 		return
+	end
+
+	if self.waterlevel ~= 3 then
+		if self.air_finished < time() then
+			sound(self, CHAN_VOICE, "player/gasp2.wav", 1, ATTN_NORM)
+		elseif self.air_finished < time() + 9 then
+			sound(self, CHAN_VOICE, "player/gasp1.wav", 1, ATTN_NORM)
+		end
+		self.air_finished = time() + 12
+		self.dmg = 2
+	elseif self.air_finished < time() and (self.pain_finished or 0) < time() then
+		-- Drown.
+		self.dmg += 2
+		if self.dmg > 15 then
+			self.dmg = 10
+		end
+		T_Damage(self, world, world, self.dmg)
+		self.pain_finished = time() + 1
 	end
 
 	if self.waterlevel == 0 then
@@ -76,6 +96,18 @@ function WaterMove(self)
 			self.in_water = false
 		end
 		return
+	end
+
+	local dmgtime = self.dmgtime or 0
+	if self.watertype == CONTENT_LAVA and dmgtime < time() then
+		local suited = (self.radsuit_finished or 0) > time()
+		self.dmgtime = time() + (if suited then 1 else 0.2)
+		T_Damage(self, world, world, 10 * self.waterlevel)
+	elseif self.watertype == CONTENT_SLIME then
+		if dmgtime < time() and (self.radsuit_finished or 0) < time() then
+			self.dmgtime = time() + 1
+			T_Damage(self, world, world, 4 * self.waterlevel)
+		end
 	end
 
 	if not self.in_water then
@@ -87,11 +119,19 @@ function WaterMove(self)
 			sound(self, CHAN_BODY, "player/slimbrn2.wav", 1, ATTN_NORM)
 		end
 		self.in_water = true
+		self.dmgtime = 0
 	end
 end
 
 -- Runs before each of the player's moves.
 function PlayerPreThink(self)
+	if self.deadflag == DEAD_DYING then
+		return
+	end
+	if self.deadflag >= DEAD_DEAD then
+		PlayerDeathThink(self)
+		return
+	end
 	WaterMove(self)
 	if self.button2 then
 		PlayerJump(self)
@@ -102,6 +142,9 @@ end
 
 -- Runs after each of the player's moves.
 function PlayerPostThink(self)
+	if self.deadflag ~= DEAD_NO then
+		return
+	end
 	local fall = self.jump_flag or 0
 	if fall < -300 and self.onground then
 		if self.watertype == CONTENT_WATER then
@@ -114,4 +157,24 @@ function PlayerPostThink(self)
 		end
 	end
 	self.jump_flag = self.velocity.z
+	CheckPowerups(self)
+	W_WeaponFrame(self)
+end
+
+-- A thing crossed a liquid's surface.
+function entity_splash(self)
+	sound(self, CHAN_AUTO, "misc/h2ohit1.wav", 1, ATTN_NORM)
+end
+
+-- The engine readies the player once the map has spawned.
+function ClientConnect(self, name, saved)
+	if world then
+		world.model = "maps/" .. name .. ".bsp"
+	end
+	if saved then
+		parms = saved
+	else
+		SetNewParms()
+	end
+	PutClientInServer(self)
 end

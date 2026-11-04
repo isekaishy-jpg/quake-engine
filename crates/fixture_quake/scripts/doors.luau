@@ -62,6 +62,10 @@ end
 
 function door_go_down(self)
 	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
+	if (self.max_health or 0) ~= 0 then
+		self.takedamage = DAMAGE_YES
+		self.health = self.max_health
+	end
 	self.state = STATE_DOWN
 	SUB_CalcMove(self, self.pos1, self.speed, door_hit_bottom)
 end
@@ -118,6 +122,13 @@ function door_use(self, _other)
 		self.enemy.message = ""
 	end
 	door_fire(owner)
+end
+
+function door_killed(self)
+	local owner = self.owner
+	owner.health = owner.max_health
+	owner.takedamage = DAMAGE_NO
+	door_use(owner)
 end
 
 function door_trigger_touch(self, other)
@@ -327,6 +338,11 @@ function func_door(self)
 
 	self.state = STATE_BOTTOM
 
+	if self.health ~= 0 then
+		self.takedamage = DAMAGE_YES
+		self.th_die = door_killed
+	end
+
 	if self.items ~= 0 then
 		self.wait = -1
 	end
@@ -344,8 +360,11 @@ end
 local SECRET_OPEN_ONCE = 1
 local SECRET_1ST_LEFT = 2
 local SECRET_1ST_DOWN = 4
+local SECRET_NO_SHOOT = 8
+local SECRET_YES_SHOOT = 16
 
 function fd_secret_use(self, _other)
+	self.health = 10000
 	if self.origin ~= self.oldorigin then
 		return
 	end
@@ -354,6 +373,10 @@ function fd_secret_use(self, _other)
 	self.velocity = vector.zero
 	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.nextthink = self.ltime + 0.1
+	if bit32.band(self.spawnflags, SECRET_NO_SHOOT) == 0 then
+		self.th_pain = SUB_Null
+		self.takedamage = DAMAGE_NO
+	end
 
 	local temp = 1 - bit32.band(self.spawnflags, SECRET_1ST_LEFT)
 	local forward, right, up = makevectors(self.mangle)
@@ -415,6 +438,11 @@ function fd_secret_move6(self)
 end
 
 function fd_secret_done(self)
+	if not has_text(self.targetname) or bit32.band(self.spawnflags, SECRET_YES_SHOOT) ~= 0 then
+		self.health = 10000
+		self.takedamage = DAMAGE_YES
+		self.th_pain = fd_secret_use
+	end
 	sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 end
 
@@ -476,5 +504,13 @@ function func_door_secret(self)
 	self.oldorigin = self.origin
 	if self.wait == 0 then
 		self.wait = 5
+	end
+	if not has_text(self.targetname) then
+		self.spawnflags = bit32.bor(self.spawnflags, SECRET_YES_SHOOT)
+	end
+	if bit32.band(self.spawnflags, SECRET_YES_SHOOT) ~= 0 then
+		self.health = 10000
+		self.takedamage = DAMAGE_YES
+		self.th_pain = fd_secret_use
 	end
 end

@@ -28,6 +28,10 @@ pub struct Buttons {
     pub speed: bool,
     /// `+jump`.
     pub jump: bool,
+    /// `+attack`.
+    pub attack: bool,
+    /// The last `impulse`, until a command takes it.
+    pub impulse: u8,
 }
 
 /// One axis from two opposing buttons.
@@ -48,6 +52,7 @@ impl Buttons {
             "movedown" => &mut self.down,
             "speed" => &mut self.speed,
             "jump" => &mut self.jump,
+            "attack" => &mut self.attack,
             _ => return false,
         };
         *button = held;
@@ -65,6 +70,8 @@ impl Buttons {
             side: axis(self.right, self.left) * speed,
             up: axis(self.up || self.jump, self.down) * speed,
             jump: self.jump,
+            attack: self.attack,
+            impulse: self.impulse,
             ..UserCommand::default()
         }
     }

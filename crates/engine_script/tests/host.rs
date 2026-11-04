@@ -92,7 +92,10 @@ fn callbacks_reach_the_right_entity_with_their_arguments() {
     let id = last(&simulation);
     let other = simulation.borrow().player_id();
     game.run(Callback::Think(id));
-    game.run(Callback::Touch { id, other });
+    game.run(Callback::Touch {
+        id,
+        other: Some(other),
+    });
     game.run(Callback::Blocked { id, other });
     assert_eq!(
         prints(&game),
@@ -309,4 +312,35 @@ fn player_fields_are_nil_on_anything_else() {
         "#,
     )
     .expect("runs");
+}
+
+#[test]
+fn a_script_sees_what_another_script_writes_to_a_global() {
+    let map = Arc::new(engine_map::Map::default());
+    let simulation = Rc::new(RefCell::new(Simulation::new(map, Vec3::ZERO)));
+    let sources = [
+        ("reader", "shared = 1 function read() return nil end"),
+        ("writer", "function write(value) shared = value end"),
+        (
+            "other",
+            "function show() engine.print(tostring(shared)) end",
+        ),
+    ];
+    let game = Game::new(&simulation, &sources).expect("scripts load");
+    game.exec("write(5) show()").expect("runs");
+    assert_eq!(prints(&game), ["5"]);
+}
+
+#[test]
+fn a_trace_result_reaches_the_script_that_asked() {
+    let (game, _simulation) = game(
+        r#"
+        function report()
+            traceline(vector.zero, vector.create(10, 0, 0), true, nil)
+            engine.print(tostring(trace_endpos))
+        end
+        "#,
+    );
+    game.exec("report()").expect("runs");
+    assert_eq!(prints(&game), ["10, 0, 0"]);
 }

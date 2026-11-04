@@ -4,14 +4,16 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_client::{Client, StepSmoother};
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{Effect, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
-use engine_map::{ClipChild, ClipNode, Entity, Leaf, Map, Model, Node, NodeChild, Plane, Tree};
+use engine_map::{
+    ClipChild, ClipNode, Contents, Entity, Leaf, Map, Model, Node, NodeChild, Plane, Tree,
+};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
-use engine_server::Server;
+use engine_server::{Level, Server};
 use fixture_quake::SCRIPTS;
 
 /// One tick.
@@ -57,6 +59,38 @@ fn add_box_hull(tree: &mut Tree, mins: Vec3, maxs: Vec3) -> ClipChild {
     ClipChild::Node(first)
 }
 
+/// Adds a drawing tree that's solid inside a box, and returns its root. Leaf 0
+/// is solid and leaf 1 open.
+fn add_box_nodes(tree: &mut Tree, mins: Vec3, maxs: Vec3) -> NodeChild {
+    let x = Vec3::new(1.0, 0.0, 0.0);
+    let y = Vec3::new(0.0, 1.0, 0.0);
+    let z = Vec3::new(0.0, 0.0, 1.0);
+    let sides = [
+        (x, maxs.x, false),
+        (x, mins.x, true),
+        (y, maxs.y, false),
+        (y, mins.y, true),
+        (z, maxs.z, false),
+        (z, mins.z, true),
+    ];
+    let first = u32::try_from(tree.nodes.len()).expect("small");
+    for (index, (normal, distance, inside_is_front)) in (0_u32..).zip(sides) {
+        let plane = add_plane(tree, normal, distance);
+        let inner = if index == 5 {
+            NodeChild::Leaf(0)
+        } else {
+            NodeChild::Node(first + index + 1)
+        };
+        let children = if inside_is_front {
+            [inner, NodeChild::Leaf(1)]
+        } else {
+            [NodeChild::Leaf(1), inner]
+        };
+        tree.nodes.push(Node { plane, children });
+    }
+    NodeChild::Node(first)
+}
+
 /// An open room from -256 to 256, with brush models for `boxes`, and `entities`.
 fn map(boxes: &[(Vec3, Vec3)], entities: &[&[(&str, &str)]]) -> Arc<Map> {
     let mut tree = Tree::default();
@@ -84,24 +118,40 @@ fn map(boxes: &[(Vec3, Vec3)], entities: &[&[(&str, &str)]]) -> Arc<Map> {
             [next, ClipChild::Solid]
         };
         tree.clip_nodes.push(ClipNode { plane, children });
+        let open = if index == 5 {
+            NodeChild::Leaf(1)
+        } else {
+            NodeChild::Node(index + 1)
+        };
+        let children = if solid_in_front {
+            [NodeChild::Leaf(0), open]
+        } else {
+            [open, NodeChild::Leaf(0)]
+        };
+        tree.nodes.push(Node { plane, children });
     }
-    tree.nodes = vec![Node {
-        plane: 5,
-        children: [NodeChild::Leaf(1), NodeChild::Leaf(0)],
-    }];
-    tree.leaves = vec![Leaf::default(), Leaf::default()];
+    tree.leaves = vec![
+        Leaf {
+            contents: Contents::Solid,
+            ..Leaf::default()
+        },
+        Leaf::default(),
+    ];
     let mut models = vec![Model {
         mins: Vec3::new(-256.0, -256.0, -256.0),
         maxs: Vec3::new(256.0, 256.0, 256.0),
         hulls: [ClipChild::Node(0), ClipChild::Empty],
+        root: Some(NodeChild::Node(0)),
         ..Model::default()
     }];
     for &(mins, maxs) in boxes {
-        let root = add_box_hull(&mut tree, mins, maxs);
+        let hull = add_box_hull(&mut tree, mins, maxs);
+        let root = add_box_nodes(&mut tree, mins, maxs);
         models.push(Model {
             mins,
             maxs,
-            hulls: [root, ClipChild::Empty],
+            hulls: [hull, ClipChild::Empty],
+            root: Some(root),
             ..Model::default()
         });
     }
@@ -142,6 +192,8 @@ struct Game {
     static_sounds: Vec<StaticSound>,
     /// The last music track received.
     music: Option<u8>,
+    /// Effects received.
+    effects: Vec<Effect>,
 }
 
 impl Game {
@@ -149,8 +201,16 @@ impl Game {
     fn new(map: &Arc<Map>, origin: Vec3) -> Self {
         let world = Rc::new(CollisionWorld::new(Arc::clone(map)));
         let (client, server_end) = loopback();
-        let server = Server::new(Box::new(server_end), world, map, origin, SCRIPTS, TICK)
-            .expect("the scripts load");
+        let server = Server::new(
+            Box::new(server_end),
+            world,
+            map,
+            origin,
+            SCRIPTS,
+            TICK,
+            Level::default(),
+        )
+        .expect("the scripts load");
         Self {
             server,
             client,
@@ -161,6 +221,7 @@ impl Game {
             sounds: Vec::new(),
             static_sounds: Vec::new(),
             music: None,
+            effects: Vec::new(),
         }
     }
 
@@ -186,6 +247,7 @@ impl Game {
                     ServerMessage::Sound(sound) => self.sounds.push(sound),
                     ServerMessage::StaticSound(sound) => self.static_sounds.push(sound),
                     ServerMessage::Music(track) => self.music = Some(track),
+                    ServerMessage::Effect(effect) => self.effects.push(effect),
                     ServerMessage::LightStyle { .. } | ServerMessage::ModelName { .. } => {}
                 }
             }
@@ -388,6 +450,7 @@ fn view_wobble(follow: bool) -> (f32, f32) {
         start,
         SCRIPTS,
         TICK,
+        Level::default(),
     )
     .expect("the scripts load");
     let mut client = Client::new(Box::new(client_end), world, start);
@@ -715,4 +778,369 @@ fn a_wall_is_solid_and_an_illusion_is_not() {
     let mut game = Game::new(&map_two, at_floor(0.0, 0.0));
     game.run(72, forward);
     assert!(game.player().origin.x < 51.0, "stopped by the wall");
+}
+
+/// A command holding attack, facing along x.
+fn attack() -> UserCommand {
+    UserCommand {
+        attack: true,
+        ..UserCommand::default()
+    }
+}
+
+/// An impulse.
+fn impulse(number: u8) -> UserCommand {
+    UserCommand {
+        impulse: number,
+        ..UserCommand::default()
+    }
+}
+
+impl Game {
+    /// Runs Luau with `player` set, which fails the test if it fails.
+    fn check(&self, source: &str) {
+        let source = format!(r#"local player = find_all("classname", "player")[1] {source}"#);
+        self.server.exec(&source).expect("the check holds");
+    }
+
+    /// How many temporary entities of `wanted` have happened.
+    fn temps(&self, wanted: u8) -> usize {
+        self.effects
+            .iter()
+            .filter(|effect| matches!(effect, Effect::Temp { kind, .. } if *kind == wanted))
+            .count()
+    }
+}
+
+/// A wall to shoot at x = 100.
+fn wall() -> (Vec3, Vec3) {
+    (
+        Vec3::new(100.0, -64.0, -256.0),
+        Vec3::new(116.0, 64.0, -128.0),
+    )
+}
+
+/// A wall that doesn't move.
+const WALL: &[(&str, &str)] = &[("classname", "func_wall"), ("model", "*1")];
+
+#[test]
+fn a_new_player_has_a_shotgun_and_shells() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"
+        assert(player.weapon == IT_SHOTGUN)
+        assert(player.ammo_shells == 25)
+        assert(player.weaponmodel == "progs/v_shot.mdl")
+        assert(player.health == 100)
+        "#,
+    );
+    assert_ne!(game.latest.as_ref().expect("a snapshot").weapon_model, 0);
+}
+
+#[test]
+fn the_shotgun_uses_a_shell_and_hits_the_wall() {
+    let (mins, maxs) = wall();
+    let map = map(&[(mins, maxs)], &[WALL]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(1, attack());
+    assert_eq!(sound_names(&game), ["weapons/guncock.wav"]);
+    assert_eq!(game.temps(2), 6, "six pellets");
+    game.check("assert(player.ammo_shells == 24 and player.weaponframe == 1)");
+    game.wait(0.15);
+    game.check("assert(player.weaponframe == 2)");
+    game.wait(0.6);
+    game.check("assert(player.weaponframe == 0)");
+}
+
+#[test]
+fn holding_attack_fires_at_the_weapons_rate() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(72, attack());
+    game.check("assert(player.ammo_shells == 23)");
+}
+
+#[test]
+fn an_impulse_changes_weapon_and_refuses_what_you_lack() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(1));
+    game.check(r#"assert(player.weapon == IT_AXE and player.weaponmodel == "progs/v_axe.mdl")"#);
+    game.run(2, impulse(7));
+    game.check("assert(player.weapon == IT_AXE)");
+    assert!(game.prints.iter().any(|text| text == "no weapon."));
+}
+
+#[test]
+fn a_rocket_flies_explodes_and_hurts_who_is_close() {
+    let (mins, maxs) = wall();
+    let map = map(&[(mins, maxs)], &[WALL]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(9));
+    game.run(1, attack());
+    let flying = game.latest.as_ref().expect("a snapshot").entities.len();
+    assert_eq!(flying, 1, "the rocket");
+    game.check("assert(player.ammo_rockets == 99)");
+    game.wait(0.3);
+    assert_eq!(game.temps(3), 1, "one explosion");
+    game.check("assert(player.health < 100 and player.health > 0)");
+    assert!(game.player().velocity.x < 0.0, "it knocks the player back");
+    game.wait(1.0);
+    assert!(
+        game.latest
+            .as_ref()
+            .expect("a snapshot")
+            .entities
+            .is_empty(),
+        "the explosion ends"
+    );
+}
+
+#[test]
+fn a_grenade_bounces_and_goes_off_on_its_fuse() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(9));
+    game.run(2, impulse(6));
+    game.run(1, attack());
+    game.wait(1.5);
+    assert!(sound_names(&game).contains(&"weapons/bounce.wav"));
+    assert_eq!(game.temps(3), 0, "not yet");
+    game.wait(1.5);
+    assert_eq!(game.temps(3), 1);
+}
+
+#[test]
+fn nails_fire_while_held_and_stop_when_let_go() {
+    let (mins, maxs) = wall();
+    let map = map(&[(mins, maxs)], &[WALL]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(9));
+    game.run(2, impulse(4));
+    game.run(36, attack());
+    game.wait(0.5);
+    game.check("assert(player.ammo_nails < 198 and player.ammo_nails > 188)");
+    assert!(game.temps(0) >= 2, "spikes hit the wall");
+    game.check("assert(player.weaponframe == 0)");
+}
+
+/// An item on the floor at the origin.
+fn item(class: &'static str) -> Vec<(&'static str, &'static str)> {
+    vec![("classname", class), ("origin", "0 0 -255")]
+}
+
+#[test]
+fn ammo_is_picked_up_once_and_disappears() {
+    let shells = item("item_shells");
+    let map = map(&[], &[&shells]);
+    let mut game = Game::new(&map, at_floor(-200.0, 0.0));
+    game.wait(0.5);
+    let count = |game: &Game| game.latest.as_ref().expect("a snapshot").entities.len();
+    assert_eq!(count(&game), 1, "it's on the floor");
+    game.client
+        .send(ClientMessage::Console(format!("setpos 16 16 {}", FLOOR + 1.0)).encode());
+    game.wait(0.2);
+    game.check("assert(player.ammo_shells == 45)");
+    assert!(sound_names(&game).contains(&"weapons/lock4.wav"));
+    assert_eq!(count(&game), 0, "it's gone");
+    game.wait(0.5);
+    game.check("assert(player.ammo_shells == 45)");
+}
+
+#[test]
+fn a_weapon_on_the_floor_is_taken_up_at_once() {
+    let weapon = item("weapon_rocketlauncher");
+    let map = map(&[], &[&weapon]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.5);
+    game.check(
+        r#"
+        assert(player.weapon == IT_ROCKET_LAUNCHER)
+        assert(player.ammo_rockets == 5)
+        assert(player.weaponmodel == "progs/v_rock2.mdl")
+        "#,
+    );
+}
+
+#[test]
+fn health_heals_up_to_the_limit_and_stays_if_not_needed() {
+    let health = item("item_health");
+    let map = map(&[], &[&health]);
+    let mut game = Game::new(&map, at_floor(-200.0, 0.0));
+    game.wait(0.5);
+    game.client
+        .send(ClientMessage::Console(format!("setpos 16 16 {}", FLOOR + 1.0)).encode());
+    game.wait(0.2);
+    game.check("assert(player.health == 100)");
+    assert_eq!(game.latest.as_ref().expect("a snapshot").entities.len(), 1);
+    game.check("player.health = 50");
+    game.wait(0.2);
+    game.check("assert(player.health == 75)");
+    assert!(
+        game.latest
+            .as_ref()
+            .expect("a snapshot")
+            .entities
+            .is_empty()
+    );
+}
+
+#[test]
+fn armor_soaks_up_damage() {
+    let armor = item("item_armor1");
+    let map = map(&[], &[&armor]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.5);
+    game.check(
+        r#"
+        assert(player.armorvalue == 100)
+        T_Damage(player, world, world, 10)
+        assert(player.armorvalue == 97)
+        assert(player.health == 93)
+        "#,
+    );
+}
+
+#[test]
+fn a_key_opens_its_door() {
+    let (mins, maxs) = door_box();
+    let door = [DOOR, &[("spawnflags", "16")]].concat();
+    let map = map(&[(mins, maxs)], &[&door]);
+    let mut game = Game::new(&map, at_floor(60.0, 0.0));
+    game.wait(0.3);
+    assert!(
+        game.instance(1).origin.z.abs() < 0.5,
+        "no field on a key door"
+    );
+    game.check("player.items = bit32.bor(player.items, IT_KEY1)");
+    game.run(
+        36,
+        UserCommand {
+            forward: 400.0,
+            ..UserCommand::default()
+        },
+    );
+    game.wait(1.0);
+    assert!(game.instance(1).origin.z > 50.0, "it opened");
+    game.check("assert(bit32.band(player.items, IT_KEY1) == 0)");
+}
+
+#[test]
+fn a_door_with_health_opens_when_shot() {
+    let (mins, maxs) = door_box();
+    let door = [DOOR, &[("health", "10")]].concat();
+    let map = map(&[(mins, maxs)], &[&door]);
+    let mut game = Game::new(&map, at_floor(-100.0, 0.0));
+    game.wait(0.3);
+    assert!(
+        game.instance(1).origin.z.abs() < 0.5,
+        "shot doors have no field"
+    );
+    game.run(1, attack());
+    game.wait(0.3);
+    assert!(game.instance(1).origin.z > 0.0, "the shot opened it");
+}
+
+#[test]
+fn a_button_with_health_fires_when_shot() {
+    let (door_mins, door_maxs) = door_box();
+    let button_mins = Vec3::new(40.0, -16.0, -256.0);
+    let button_maxs = Vec3::new(50.0, 16.0, -224.0);
+    let door = [DOOR, &[("targetname", "d"), ("wait", "0.2")]].concat();
+    let button: &[(&str, &str)] = &[
+        ("classname", "func_button"),
+        ("model", "*2"),
+        ("angle", "-2"),
+        ("target", "d"),
+        ("health", "1"),
+        ("wait", "1"),
+    ];
+    let map = map(
+        &[(door_mins, door_maxs), (button_mins, button_maxs)],
+        &[&door, button],
+    );
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    assert!(game.instance(1).origin.z.abs() < 0.5);
+    game.run(1, attack());
+    game.wait(1.2);
+    assert!(game.instance(1).origin.z > 0.0, "the shot pressed it");
+}
+
+#[test]
+fn a_dead_player_stays_down_and_a_button_restarts_the_level() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check("T_Damage(player, world, world, 200)");
+    game.wait(0.05);
+    assert!(game.player().dead);
+    game.check("assert(player.deadflag == DEAD_DYING)");
+    let forward = UserCommand {
+        forward: 400.0,
+        ..UserCommand::default()
+    };
+    let before = game.player().origin;
+    game.run(36, forward);
+    assert!(
+        (game.player().origin - before).length() < 0.5,
+        "they can't walk"
+    );
+    game.wait(1.2);
+    assert_eq!(game.server.take_next_level(), None, "it waits for a button");
+    game.run(2, attack());
+    assert!(game.server.take_next_level().is_some());
+}
+
+#[test]
+fn a_level_change_carries_gear_but_not_keys() {
+    let trigger: &[(&str, &str)] = &[
+        ("classname", "trigger_changelevel"),
+        ("model", "*1"),
+        ("map", "next"),
+    ];
+    let (mins, maxs) = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let map_one = map(&[(mins, maxs)], &[trigger]);
+    let mut game = Game::new(&map_one, at_floor(-300.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"
+        player.items = bit32.bor(player.items, IT_NAILGUN, IT_KEY1)
+        player.ammo_nails = 40
+        player.health = 20
+        "#,
+    );
+    game.client
+        .send(ClientMessage::Console(format!("setpos 0 0 {}", FLOOR + 1.0)).encode());
+    game.wait(0.1);
+    assert_eq!(game.server.take_next_level().as_deref(), Some("next"));
+    let parms = game.server.take_parms().expect("gear to carry");
+    assert_eq!(parms[1], 50.0, "health is at least 50");
+    assert_eq!(parms[4], 40.0, "nails");
+    let keyed = 131_072.0;
+    assert!(parms[0] < keyed, "keys stay behind: {}", parms[0]);
+}
+
+#[test]
+fn lava_burns() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check(
+        r#"
+        T_Damage(player, world, world, 5)
+        assert(player.health == 95)
+        "#,
+    );
 }

@@ -53,6 +53,7 @@ fn answer(server: &mut Loopback, acknowledged: u32, player: PlayerState) {
         player,
         instances: Vec::new(),
         entities: Vec::new(),
+        boxes: Vec::new(),
         weapon_model: 0,
         weapon_frame: 0,
     };
@@ -224,6 +225,7 @@ fn snapshot_with(server: &mut Loopback, tick: u32, instances: Vec<ModelInstance>
         },
         instances,
         entities: Vec::new(),
+        boxes: Vec::new(),
         weapon_model: 0,
         weapon_frame: 0,
     };
@@ -278,7 +280,7 @@ fn messages_from_the_server_are_kept_until_asked_for() {
 
 #[test]
 fn unknown_buttons_are_reported() {
-    assert!(!Buttons::default().set("attack", true));
+    assert!(!Buttons::default().set("nonsense", true));
 }
 
 #[test]
@@ -331,6 +333,7 @@ fn snapshot_of(server: &mut Loopback, tick: u32, entities: Vec<EntityState>) {
         player: PlayerState::default(),
         instances: Vec::new(),
         entities,
+        boxes: Vec::new(),
         weapon_model: 2,
         weapon_frame: 5,
     };
