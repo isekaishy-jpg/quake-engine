@@ -10,7 +10,7 @@ Done, in proposals 0001 to 0009, apart from:
 
 | Item | What research has to establish |
 |---|---|
-| Luau style guide | Which guide, and what enforces it. Needed before Luau code |
+| Luau formatting | Which tool enforces `docs/style.md`, such as `StyLua` in `xtask` |
 | Sol crates under the workspace lints | About 800 warnings to work through |
 
 ## Dependencies

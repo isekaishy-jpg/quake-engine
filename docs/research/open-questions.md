@@ -4,7 +4,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 
 | Question | Needed | Affects |
 |---|---|---|
-| How do doors and lifts work as `box3d` bodies? | Kinematic brush models, tested in motion | Collision |
 | How do sweeps against other entities combine with hull rays? | A method and a comparison | Collision |
 | Is `qbsp`'s lightmap atlas usable as it stands? | Run it, and check the output | Renderer |
 | How do `renet` and its transports behave under loss and latency? | A test with injected loss | Transport |

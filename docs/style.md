@@ -246,3 +246,11 @@ Before merge, the author and reviewer MUST be able to answer yes to all applicab
 - Are tests outside production source and focused on observable behavior?
 - Do formatting, linting, and all workspace tests pass?
 - Does the commit history follow Conventional Commits and remain reviewable?
+
+## Luau
+
+- A port MUST start with the licence notice of what it ports, and name its source files.
+- Ported functions MUST keep their original names, so a port can be checked against its source. `self` and `other` are arguments, not globals.
+- Tabs indent Luau. Lines SHOULD stay under 100 columns.
+- Comments follow the same rules as Rust: they say why, not what.
+- Zero is true in Luau, so ported `if (!x)` checks MUST compare with 0 or nil, not rely on truthiness.
