@@ -107,5 +107,25 @@ unimplemented = "warn"
 unwrap_used = "warn"
 wildcard_imports = "warn"
 
+# Mixing runs on a real-time thread, so a dev build that doesn't optimize it
+# crackles under load. Proposal 0029.
+[profile.dev.package.kira]
+opt-level = 3
+
+[profile.dev.package.cpal]
+opt-level = 3
+
+[profile.dev.package.symphonia]
+opt-level = 3
+
+[profile.dev.package.symphonia-core]
+opt-level = 3
+
+[profile.dev.package.symphonia-format-ogg]
+opt-level = 3
+
+[profile.dev.package.symphonia-codec-vorbis]
+opt-level = 3
+
 [profile.bench]
 debug = 1

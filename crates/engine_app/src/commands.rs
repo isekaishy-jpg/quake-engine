@@ -104,10 +104,13 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
         world.look.yaw(),
         world.look.pitch()
     ));
+    let load = world.audio.peak_load().unwrap_or(0.0) * 100.0;
     console.print(format!(
-        "audio: device {}, {} playing, {} static, {} of {} sounds missing, music {:?}",
+        "audio: device {}, {} playing, {} static in {} voices, {} of {} sounds missing, \
+         music {:?}, thread peaked at {load:.1}%",
         world.audio.has_device(),
         world.audio.playing().len(),
+        world.audio.static_count(),
         world.audio.static_volumes().len(),
         world.sounds.missing(),
         world.sounds.len(),

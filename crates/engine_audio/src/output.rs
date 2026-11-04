@@ -20,8 +20,12 @@ const MAX_VOICES: usize = 1024;
 /// How long a volume takes to change, so changes don't click.
 const SMOOTHING: Duration = Duration::from_millis(15);
 
-/// How long a sound takes to fade when stopped or muted.
+/// How long a sound takes to fade when stopped.
 const FADE: Duration = Duration::from_millis(30);
+
+/// How long everything takes to fade when muted. Fades run in decibels, so a
+/// short one drops most of the way at once, which crackles.
+const MUTE_FADE: Duration = Duration::from_millis(250);
 
 /// A change over `duration`.
 fn tween(duration: Duration) -> Tween {
@@ -146,7 +150,15 @@ impl Output {
         } else {
             Decibels::IDENTITY
         };
-        self.manager.main_track().set_volume(volume, tween(FADE));
+        self.manager
+            .main_track()
+            .set_volume(volume, tween(MUTE_FADE));
+    }
+
+    /// The most of the audio thread's time used since last asked, from 0 to 1.
+    pub(crate) fn peak_load(&mut self) -> Option<f32> {
+        let backend = self.manager.backend_mut();
+        std::iter::from_fn(|| backend.pop_cpu_usage()).reduce(f32::max)
     }
 
     /// Loops the music in `bytes`, in place of any already playing.

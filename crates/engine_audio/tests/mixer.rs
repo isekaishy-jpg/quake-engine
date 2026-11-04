@@ -258,3 +258,62 @@ fn the_real_device_opens_and_plays_when_there_is_one() {
     audio.stop_sounds();
     assert!(audio.play_music(vec![1, 2, 3]).is_err() || !audio.has_device());
 }
+
+/// A static sound at `origin`.
+fn fixed(origin: Vec3, volume: f32) -> StaticSound {
+    StaticSound {
+        origin,
+        volume,
+        attenuation: 3.0,
+        name: String::new(),
+    }
+}
+
+#[test]
+fn statics_of_one_clip_add_up() {
+    let mut audio = Audio::silent();
+    let hum = clip(&mut audio, 1, true);
+    audio.add_static(&fixed(Vec3::new(10.0, 0.0, 0.0), 0.2), hum);
+    audio.add_static(&fixed(Vec3::new(20.0, 0.0, 0.0), 0.2), hum);
+    audio.update(listener(), 0.01, [0, 0]);
+    let volumes = audio.static_volumes();
+    assert_eq!(volumes.len(), 1, "one voice for the clip");
+    assert_eq!(audio.static_count(), 2);
+    assert!(volumes[0].0 > 0.3 && volumes[0].0 < 0.4, "{volumes:?}");
+}
+
+#[test]
+fn statics_of_one_clip_never_pass_full_volume() {
+    let mut audio = Audio::silent();
+    let hum = clip(&mut audio, 1, true);
+    for _ in 0..8 {
+        audio.add_static(&fixed(Vec3::new(10.0, 0.0, 0.0), 0.5), hum);
+    }
+    audio.update(listener(), 0.01, [0, 0]);
+    assert_eq!(audio.static_volumes(), [(1.0, 1.0)]);
+}
+
+#[test]
+fn statics_of_different_clips_stay_apart() {
+    let mut audio = Audio::silent();
+    let hum = clip(&mut audio, 1, true);
+    let drip = clip(&mut audio, 1, true);
+    audio.add_static(&fixed(Vec3::new(10.0, 0.0, 0.0), 0.5), hum);
+    audio.add_static(&fixed(Vec3::new(10.0, 0.0, 0.0), 0.5), drip);
+    audio.update(listener(), 0.01, [0, 0]);
+    assert_eq!(audio.static_volumes().len(), 2);
+}
+
+#[test]
+fn a_sound_right_beside_the_listener_stops_at_full_volume() {
+    let mut audio = Audio::silent();
+    let beep = clip(&mut audio, 1, false);
+    let beside = SoundStart {
+        origin: Vec3::new(0.0, -10.0, 0.0),
+        ..sound(1, 2)
+    };
+    audio.start(&beside, beep);
+    let playing = audio.playing();
+    assert!((playing[0].right - 1.0).abs() < f32::EPSILON);
+    assert!(playing[0].left < 0.1);
+}

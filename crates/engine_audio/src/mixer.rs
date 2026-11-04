@@ -22,6 +22,9 @@ const AMBIENT_FLOOR: f32 = 8.0;
 /// The most of the same sound's start that a second copy skips, in seconds.
 const MAX_SKIP: f64 = 0.1;
 
+/// The most one ear gets from one channel, from `SND_PaintChannelFrom8`.
+const FULL_VOLUME: f32 = 1.0;
+
 /// A clip the mixer holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct ClipId(usize);
@@ -65,11 +68,12 @@ struct Channel {
 impl Channel {
     /// Works out the volume in each ear.
     fn spatialize(&mut self, listener: &Listener) {
-        self.ears = if self.own {
+        let (left, right) = if self.own {
             (self.volume, self.volume)
         } else {
             stereo_volumes(self.origin, listener, self.volume, self.attenuation)
         };
+        self.ears = (left.min(FULL_VOLUME), right.min(FULL_VOLUME));
     }
 }
 
@@ -83,6 +87,13 @@ struct Static {
     volume: f32,
     /// How fast it fades.
     attenuation: f32,
+}
+
+/// All the sounds at fixed places that play one clip. `S_Update` adds them
+/// into one channel, so five torches are one louder torch, up to full volume.
+struct StaticGroup {
+    /// What's playing.
+    clip: ClipId,
     /// The backend's sound, only while it can be heard.
     voice: Option<Voice>,
     /// The volume in each ear.
@@ -125,6 +136,8 @@ pub struct Audio {
     channels: Vec<Option<Channel>>,
     /// Sounds at fixed places.
     statics: Vec<Static>,
+    /// What they add up to.
+    static_groups: Vec<StaticGroup>,
     /// Sounds from leaves.
     ambients: [Ambient; 2],
     /// Where sounds are heard from.
@@ -157,6 +170,7 @@ impl Audio {
                 .take(DYNAMIC_CHANNELS)
                 .collect(),
             statics: Vec::new(),
+            static_groups: Vec::new(),
             ambients: [Ambient::default(), Ambient::default()],
             listener: Listener::default(),
             music_volume: 1.0,
@@ -274,9 +288,14 @@ impl Audio {
                 origin: sound.origin,
                 volume: sound.volume,
                 attenuation: sound.attenuation,
-                voice: None,
-                ears: (0.0, 0.0),
             });
+            if !self.static_groups.iter().any(|group| group.clip == clip) {
+                self.static_groups.push(StaticGroup {
+                    clip,
+                    voice: None,
+                    ears: (0.0, 0.0),
+                });
+            }
         }
     }
 
@@ -306,26 +325,38 @@ impl Audio {
                 voice.set_volumes(left, right);
             }
         }
-        for sound in &mut self.statics {
-            sound.ears = stereo_volumes(sound.origin, &listener, sound.volume, sound.attenuation);
-            let (left, right) = sound.ears;
+        self.update_statics(&listener);
+        self.update_ambients(seconds, levels);
+    }
+
+    /// Adds up the sounds at fixed places, and plays what can be heard.
+    fn update_statics(&mut self, listener: &Listener) {
+        for group in &mut self.static_groups {
+            let (mut left, mut right) = (0.0, 0.0);
+            for sound in self.statics.iter().filter(|sound| sound.clip == group.clip) {
+                let (one_left, one_right) =
+                    stereo_volumes(sound.origin, listener, sound.volume, sound.attenuation);
+                left += one_left;
+                right += one_right;
+            }
+            let (left, right) = (left.min(FULL_VOLUME), right.min(FULL_VOLUME));
+            group.ears = (left, right);
             let audible = left > 0.0 || right > 0.0;
-            match (&mut sound.voice, audible, &mut self.output) {
+            match (&mut group.voice, audible, &mut self.output) {
                 (Some(voice), true, _) => voice.set_volumes(left, right),
                 (Some(voice), false, _) => {
                     voice.stop();
-                    sound.voice = None;
+                    group.voice = None;
                 }
                 (None, true, Some(output)) => {
-                    sound.voice = self
+                    group.voice = self
                         .clips
-                        .get(sound.clip.0)
+                        .get(group.clip.0)
                         .and_then(|clip| output.play(&clip.prepared, 0.0, left, right));
                 }
                 (None, _, _) => {}
             }
         }
-        self.update_ambients(seconds, levels);
     }
 
     /// `S_UpdateAmbientSounds`.
@@ -378,10 +409,21 @@ impl Audio {
             .collect()
     }
 
-    /// The volume in each ear of every sound at a fixed place.
+    /// How many sounds there are at fixed places.
+    #[must_use]
+    pub fn static_count(&self) -> usize {
+        self.statics.len()
+    }
+
+    /// The volume in each ear of each clip playing at fixed places.
     #[must_use]
     pub fn static_volumes(&self) -> Vec<(f32, f32)> {
-        self.statics.iter().map(|sound| sound.ears).collect()
+        self.static_groups.iter().map(|group| group.ears).collect()
+    }
+
+    /// The most of the audio thread's time used since last asked, from 0 to 1.
+    pub fn peak_load(&mut self) -> Option<f32> {
+        self.output.as_mut().and_then(Output::peak_load)
     }
 
     /// The water and sky volumes, from 0 to 1.
@@ -400,8 +442,9 @@ impl Audio {
                 voice.stop();
             }
         }
-        for mut sound in self.statics.drain(..) {
-            if let Some(voice) = &mut sound.voice {
+        self.statics.clear();
+        for mut group in self.static_groups.drain(..) {
+            if let Some(voice) = &mut group.voice {
                 voice.stop();
             }
         }
