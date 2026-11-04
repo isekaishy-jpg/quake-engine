@@ -30,12 +30,16 @@ pub(crate) struct HullTrace {
     pub(crate) start_solid: bool,
     /// Whether it never left solid.
     pub(crate) all_solid: bool,
+    /// Whether it passed through open air.
+    pub(crate) in_open: bool,
+    /// Whether it passed through liquid.
+    pub(crate) in_water: bool,
 }
 
 /// What a step down a hull finds.
 enum Step {
-    /// Open space.
-    Open,
+    /// Open space, and whether it's liquid.
+    Open(bool),
     /// Solid.
     Solid,
     /// A plane, with what's in front and behind.
@@ -47,7 +51,9 @@ fn step(tree: &Tree, root: HullRoot) -> Step {
     let usize_of = |value: u32| usize::try_from(value).unwrap_or(usize::MAX);
     match root {
         HullRoot::Point(NodeChild::Leaf(leaf)) => match tree.leaf(leaf) {
-            Some(leaf) if leaf.contents != Contents::Solid => Step::Open,
+            Some(leaf) if leaf.contents != Contents::Solid => {
+                Step::Open(leaf.contents != Contents::Empty)
+            }
             _ => Step::Solid,
         },
         HullRoot::Point(NodeChild::Node(index)) => tree
@@ -59,7 +65,7 @@ fn step(tree: &Tree, root: HullRoot) -> Step {
                 Some(Step::Split(plane, children))
             })
             .unwrap_or(Step::Solid),
-        HullRoot::Clip(ClipChild::Empty) => Step::Open,
+        HullRoot::Clip(ClipChild::Empty) => Step::Open(false),
         HullRoot::Clip(ClipChild::Solid) => Step::Solid,
         HullRoot::Clip(ClipChild::Node(index)) => tree
             .clip_nodes
@@ -77,7 +83,7 @@ fn step(tree: &Tree, root: HullRoot) -> Step {
 fn solid_at(tree: &Tree, mut root: HullRoot, point: Vec3) -> bool {
     loop {
         match step(tree, root) {
-            Step::Open => return false,
+            Step::Open(_) => return false,
             Step::Solid => return true,
             Step::Split(plane, children) => {
                 let side = plane.normal.dot(point) - plane.distance;
@@ -98,8 +104,10 @@ fn check(
     trace: &mut HullTrace,
 ) -> bool {
     let (plane, children) = match step(tree, root) {
-        Step::Open => {
+        Step::Open(wet) => {
             trace.all_solid = false;
+            trace.in_water |= wet;
+            trace.in_open |= !wet;
             return true;
         }
         Step::Solid => {
@@ -165,6 +173,8 @@ pub(crate) fn trace_hull(tree: &Tree, root: HullRoot, start: Vec3, end: Vec3) ->
         normal: Vec3::ZERO,
         start_solid: false,
         all_solid: true,
+        in_open: false,
+        in_water: false,
     };
     check(tree, root, root, (0.0, start), (1.0, end), &mut trace);
     if trace.all_solid {

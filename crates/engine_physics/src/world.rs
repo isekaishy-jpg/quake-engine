@@ -57,6 +57,10 @@ pub struct Trace {
     pub all_solid: bool,
     /// The brush model it hit, or `None` for the world or nothing.
     pub model: Option<u32>,
+    /// Whether it passed through open air.
+    pub in_open: bool,
+    /// Whether it passed through liquid.
+    pub in_water: bool,
 }
 
 /// What fills a point.
@@ -281,6 +285,8 @@ impl<'a> Collision<'a> {
             start_solid: false,
             all_solid: false,
             model: None,
+            in_open: false,
+            in_water: false,
         };
         if let Some(root) = root_of(0) {
             let trace = trace_hull(&map.tree, root, start - shift, end - shift);
@@ -291,6 +297,8 @@ impl<'a> Collision<'a> {
                 start_solid: trace.start_solid,
                 all_solid: trace.all_solid,
                 model: None,
+                in_open: trace.in_open,
+                in_water: trace.in_water,
             };
         }
         let solid = self.instances.iter().filter(|instance| {
@@ -310,6 +318,8 @@ impl<'a> Collision<'a> {
                     start_solid: trace.start_solid || best.start_solid,
                     all_solid: trace.all_solid,
                     model: Some(instance.model),
+                    in_open: best.in_open,
+                    in_water: best.in_water,
                 };
             }
         }
@@ -437,6 +447,8 @@ impl<'a> Collision<'a> {
                 start_solid: true,
                 all_solid: self.in_solid(end),
                 model: None,
+                in_open: false,
+                in_water: false,
             };
         }
         let clear = Trace {
@@ -446,6 +458,8 @@ impl<'a> Collision<'a> {
             start_solid: false,
             all_solid: false,
             model: None,
+            in_open: false,
+            in_water: false,
         };
         let delta = end - start;
         if delta == Vec3::ZERO {
@@ -477,6 +491,8 @@ impl<'a> Collision<'a> {
             start_solid: false,
             all_solid: false,
             model,
+            in_open: false,
+            in_water: false,
         }
     }
 
@@ -513,6 +529,8 @@ impl<'a> Collision<'a> {
             start_solid: false,
             all_solid: false,
             model: None,
+            in_open: false,
+            in_water: false,
         }
     }
 }

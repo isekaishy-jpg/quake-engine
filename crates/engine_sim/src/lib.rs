@@ -9,7 +9,9 @@
 mod flight;
 mod simulation;
 mod table;
+mod walk;
 
 pub use flight::{FLAG_ON_GROUND, MoveKind, MoveTrace};
 pub use simulation::{Callback, Entity, MoveType, Simulation, Solid};
 pub use table::{EntityId, SlotTable};
+pub use walk::{FLAG_FLY, FLAG_PARTIAL_GROUND, FLAG_SWIM, Target};

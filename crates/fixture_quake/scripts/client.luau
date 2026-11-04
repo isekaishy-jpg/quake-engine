@@ -162,6 +162,11 @@ function PlayerPostThink(self)
 end
 
 -- A thing crossed a liquid's surface.
+-- A monster that lands hard makes a noise, from `SV_Physics_Step`.
+function entity_landed(self)
+	sound(self, CHAN_AUTO, "demon/dland2.wav", 1, ATTN_NORM)
+end
+
 function entity_splash(self)
 	sound(self, CHAN_AUTO, "misc/h2ohit1.wav", 1, ATTN_NORM)
 end
@@ -178,3 +183,10 @@ function ClientConnect(self, name, saved)
 	end
 	PutClientInServer(self)
 end
+
+-- Places that are looked up, which have to stay in the world to be found.
+function info_intermission(_self) end
+function info_player_start(_self) end
+function info_player_start2(_self) end
+function info_player_deathmatch(_self) end
+function info_player_coop(_self) end

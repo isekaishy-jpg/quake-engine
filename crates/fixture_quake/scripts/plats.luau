@@ -259,10 +259,3 @@ function misc_teleporttrain(self)
 	self.nextthink = self.ltime + 0.1
 	self.think = func_train_find
 end
-
--- A marker trains follow. Monsters use its touch in the original.
-function path_corner(self)
-	if not has_text(self.targetname) then
-		objerror("monster_movetarget: no targetname")
-	end
-end

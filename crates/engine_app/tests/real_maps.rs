@@ -545,6 +545,126 @@ fn every_model_in_the_game_parses() {
     assert_eq!(models, 79);
 }
 
+/// Lua that runs `body` on every monster, with `player` and `each` set.
+fn on_every_monster(body: &str) -> String {
+    format!(
+        r#"local player = find_all("classname", "player")[1]
+        local classes = {{ "monster_army", "monster_demon1", "monster_dog", "monster_enforcer",
+            "monster_fish", "monster_hell_knight", "monster_knight", "monster_ogre",
+            "monster_shalrath", "monster_shambler", "monster_tarbaby", "monster_wizard",
+            "monster_zombie" }}
+        local number = 0
+        for _, class in classes do
+            for _, each in find_all("classname", class) do
+                number += 1
+                if each.health > 0 then
+                    {body}
+                end
+            end
+        end"#
+    )
+}
+
+/// Wakes, hurts and kills every monster on `map`, and returns what went wrong
+/// and how many monsters there were.
+fn fight_everything(map: &Arc<Map>) -> (Vec<String>, u32) {
+    let world = Rc::new(CollisionWorld::new(Arc::clone(map)));
+    let origin = spawn_point(map).origin;
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        map,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("the scripts load");
+    let mut errors = Vec::new();
+    let mut run = |server: &mut Server, seconds: u32| {
+        for _ in 0..seconds * 72 {
+            server.tick();
+            while let Some(bytes) = client.receive() {
+                if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
+                    && text.contains("script error")
+                {
+                    errors.push(text);
+                }
+            }
+        }
+    };
+    run(&mut server, 1);
+    server
+        .exec(
+            r#"local player = find_all("classname", "player")[1]
+            player.flags = bit32.bor(player.flags, FL_GODMODE)"#,
+        )
+        .expect("godmode");
+    server
+        .exec(&on_every_monster(
+            "each.enemy = player; each.goalentity = player; FoundTarget(each)",
+        ))
+        .expect("waking");
+    run(&mut server, 8);
+    for _ in 0..3 {
+        server
+            .exec(&on_every_monster("T_Damage(each, player, player, 5)"))
+            .expect("hurting");
+        run(&mut server, 2);
+    }
+    server
+        .exec(&on_every_monster(
+            "T_Damage(each, player, player, each.health + if number % 2 == 0 then 0 else 200)",
+        ))
+        .expect("killing");
+    run(&mut server, 4);
+    server
+        .exec(&on_every_monster(
+            r#"if each.takedamage ~= 0 then error("still alive: " .. class) end"#,
+        ))
+        .expect("none are left");
+    let count = map
+        .entities
+        .iter()
+        .filter(|entity| {
+            entity
+                .get("classname")
+                .is_some_and(|class| class.starts_with("monster_"))
+        })
+        .count();
+    (errors, u32::try_from(count).expect("a few monsters"))
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_monster_wakes_fights_and_dies_without_errors() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut monsters = 0;
+    let mut failures = 0;
+    for path in filesystem.list("maps/") {
+        let Some(name) = path
+            .strip_prefix("maps/")
+            .and_then(|p| p.strip_suffix(".bsp"))
+            .filter(|name| !name.starts_with("b_"))
+        else {
+            continue;
+        };
+        let map = load(&filesystem, name, &palette);
+        let (errors, count) = fight_everything(&map);
+        monsters += count;
+        if !errors.is_empty() {
+            failures += 1;
+            println!("{name}: {} errors, first {}", errors.len(), errors[0]);
+        }
+    }
+    println!("{monsters} monsters, {failures} maps with errors");
+    assert_eq!(failures, 0);
+    assert!(monsters > 1000);
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn every_sprite_in_the_game_parses() {
@@ -645,17 +765,5 @@ fn every_class_on_every_map_has_a_function() {
         }
     }
     println!("{} classes, none for {found:?}", classes.len());
-    // Spawn points are looked up, and don't run.
-    let expected = [
-        "info_player",
-        "info_intermission",
-        "monster_",
-        "event_lightning",
-        "trigger_monsterjump",
-    ];
-    let missing: Vec<&String> = found
-        .iter()
-        .filter(|name| !expected.iter().any(|known| name.starts_with(known)))
-        .collect();
-    assert!(missing.is_empty(), "{missing:?}");
+    assert!(found.is_empty(), "{found:?}");
 }

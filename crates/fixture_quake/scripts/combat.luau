@@ -50,8 +50,12 @@ function Killed(targ, attacker)
 		return
 	end
 	targ.enemy = attacker
+	if bit32.band(targ.flags, FL_MONSTER) ~= 0 then
+		killed_monsters += 1
+	end
 	targ.takedamage = DAMAGE_NO
 	targ.touch = SUB_Null
+	monster_death_use(targ)
 	if targ.th_die then
 		targ.th_die(targ)
 	end
@@ -107,8 +111,26 @@ function T_Damage(targ, inflictor, attacker, damage)
 		return
 	end
 
+	-- React to the damage.
+	if bit32.band(targ.flags, FL_MONSTER) ~= 0 and exists(attacker) then
+		-- Get mad, unless it's the same class. Soldiers don't care.
+		if targ ~= attacker and attacker ~= targ.enemy then
+			if targ.classname ~= attacker.classname or targ.classname == "monster_army" then
+				if ent(targ.enemy).classname == "player" then
+					targ.oldenemy = targ.enemy
+				end
+				targ.enemy = attacker
+				FoundTarget(targ)
+			end
+		end
+	end
+
 	if targ.th_pain then
 		targ.th_pain(targ, attacker, take)
+		-- Nightmare mode monsters don't go into pain frames often.
+		if skill == 3 then
+			targ.pain_finished = time() + 5
+		end
 	end
 end
 

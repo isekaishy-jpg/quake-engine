@@ -1271,3 +1271,275 @@ fn a_fireball_is_thrown_up_and_goes_when_it_lands() {
     assert!(flying > 0, "it throws them");
     assert!(landed > 0, "and they go when they land");
 }
+
+/// A soldier facing the player from `x`.
+fn soldier(x: &str) -> [(&'static str, String); 3] {
+    [
+        ("classname", "monster_army".to_owned()),
+        ("origin", format!("{x} 0 -200")),
+        ("angle", "180".to_owned()),
+    ]
+}
+
+/// `fields` as the borrowed list a map takes.
+fn borrowed<'a>(fields: &'a [(&'static str, String)]) -> Vec<(&'a str, &'a str)> {
+    fields
+        .iter()
+        .map(|(key, value)| (*key, value.as_str()))
+        .collect()
+}
+
+#[test]
+fn a_map_angle_turns_a_monster() {
+    let fields = soldier("200");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-200.0, 0.0));
+    game.wait(0.1);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.angles.y == 180, tostring(grunt.angles))
+        assert(grunt.origin.z < -250, "it dropped to the floor")"#,
+    );
+}
+
+#[test]
+fn a_soldier_sees_the_player_and_shoots() {
+    let fields = soldier("200");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-100.0, 0.0));
+    game.wait(0.8);
+    assert!(
+        sound_names(&game).contains(&"soldier/sight1.wav"),
+        "{:?}",
+        sound_names(&game)
+    );
+    game.wait(6.0);
+    assert!(sound_names(&game).contains(&"soldier/sattck1.wav"));
+    game.check(r#"assert(player.health < 100, "it hit")"#);
+}
+
+#[test]
+fn a_soldier_with_its_back_turned_does_not_notice_from_afar() {
+    let mut fields = soldier("200");
+    fields[2].1 = "0".to_owned();
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-240.0, 0.0));
+    game.wait(2.0);
+    assert!(!sound_names(&game).contains(&"soldier/sight1.wav"));
+}
+
+#[test]
+fn a_soldier_hears_nothing_through_a_wall() {
+    let fields = soldier("200");
+    let (mins, maxs) = (
+        Vec3::new(100.0, -256.0, -256.0),
+        Vec3::new(116.0, 256.0, 256.0),
+    );
+    let map = map(&[(mins, maxs)], &[WALL, &borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(2.0);
+    assert!(!sound_names(&game).contains(&"soldier/sight1.wav"));
+}
+
+#[test]
+fn a_shot_wakes_a_monster_up_and_it_comes_for_the_player() {
+    let mut fields = soldier("200");
+    fields[2].1 = "0".to_owned();
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-240.0, 0.0));
+    game.wait(0.2);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        T_Damage(grunt, player, player, 1)
+        assert(grunt.enemy == player)"#,
+    );
+    game.wait(0.1);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.goalentity == player)"#,
+    );
+}
+
+#[test]
+fn a_dead_soldier_falls_is_no_longer_solid_and_drops_a_backpack() {
+    let fields = soldier("100");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-100.0, 0.0));
+    game.wait(0.2);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        T_Damage(grunt, player, player, 30)
+        assert(killed_monsters == 1)
+        assert(grunt.health <= 0)"#,
+    );
+    let frame = |game: &Game| game.latest.as_ref().expect("a snapshot").entities[0].frame;
+    let first = frame(&game);
+    game.wait(1.5);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.solid == SOLID_NOT)
+        assert(#find_all("touch", BackpackTouch) == 1)"#,
+    );
+    assert_ne!(frame(&game), first, "it plays its death");
+    assert!(sound_names(&game).iter().any(|name| name.contains("death")));
+}
+
+#[test]
+fn a_monster_blown_apart_leaves_gibs() {
+    let fields = soldier("100");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-100.0, 0.0));
+    game.wait(0.2);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        T_Damage(grunt, player, player, 500)"#,
+    );
+    game.wait(0.05);
+    let parts = game.latest.as_ref().expect("a snapshot").entities.len();
+    assert!(parts >= 4, "a head and gibs and a backpack: {parts}");
+}
+
+#[test]
+fn a_monster_follows_its_path() {
+    let fields = [
+        ("classname", "monster_army".to_owned()),
+        ("origin", "-200 -200 -200".to_owned()),
+        ("target", "first".to_owned()),
+    ];
+    let first: &[(&str, &str)] = &[
+        ("classname", "path_corner"),
+        ("targetname", "first"),
+        ("target", "second"),
+        ("origin", "-100 -200 -232"),
+    ];
+    let second: &[(&str, &str)] = &[
+        ("classname", "path_corner"),
+        ("targetname", "second"),
+        ("target", "first"),
+        ("origin", "-100 100 -232"),
+    ];
+    let map = map(&[], &[&borrowed(&fields), first, second]);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.server
+        .exec(r#"local p = find_all("classname", "player")[1] p.flags = 128"#)
+        .expect("notarget");
+    game.wait(7.0);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.origin.x > -130, "it reached the first corner: " .. tostring(grunt.origin))"#,
+    );
+    game.wait(5.0);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.origin.y > -150, "it turned to the second: " .. tostring(grunt.origin))"#,
+    );
+}
+
+#[test]
+fn a_plat_carries_a_monster_standing_on_it() {
+    let (mins, maxs) = plat_box();
+    let plat: &[(&str, &str)] = &[("classname", "func_plat"), ("model", "*1")];
+    let fields = [
+        ("classname", "monster_army".to_owned()),
+        ("origin", "0 0 -100".to_owned()),
+        ("angle", "0".to_owned()),
+    ];
+    let map = map(&[(mins, maxs)], &[plat, &borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.server
+        .exec(r#"local p = find_all("classname", "player")[1] p.flags = 128"#)
+        .expect("notarget");
+    game.wait(0.3);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        local plat = find_all("classname", "plat")[1] or find_all("classname", "func_plat")[1]
+        grunt.nextthink = 0
+        plat_go_down(plat)"#,
+    );
+    game.wait(0.5);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        local plat = find_all("classname", "plat")[1] or find_all("classname", "func_plat")[1]
+        local gap = grunt.origin.z + grunt.mins.z - (plat.origin.z + plat.maxs.z)
+        assert(math.abs(gap + 24) < 8, "it goes down with it: " .. gap)"#,
+    );
+}
+
+#[test]
+fn a_leaping_monster_comes_down_and_lands() {
+    let fields = soldier("100");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-200.0, 0.0));
+    game.wait(0.1);
+    game.check(
+        r#"local dog = find_all("classname", "monster_army")[1]
+        dog.flags -= bit32.band(dog.flags, FL_ONGROUND)
+        dog.velocity = vector.create(0, 0, 300)
+        dog.origin = dog.origin + vector.create(0, 0, 1)"#,
+    );
+    game.wait(0.1);
+    game.check(
+        r#"local dog = find_all("classname", "monster_army")[1]
+        assert(dog.origin.z > -240, "it's in the air")"#,
+    );
+    game.wait(1.5);
+    game.check(
+        r#"local dog = find_all("classname", "monster_army")[1]
+        assert(bit32.band(dog.flags, FL_ONGROUND) ~= 0, "it landed")"#,
+    );
+}
+
+#[test]
+fn a_rocket_finds_a_monster_near_its_line() {
+    let fields = soldier("150");
+    let map = map(&[], &[&borrowed(&fields)]);
+    let mut game = Game::new(&map, at_floor(-100.0, 0.0));
+    game.wait(0.1);
+    game.run(2, impulse(9));
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        grunt.nextthink = 0
+        makevectors(vector.create(10, 0, 0))
+        local bent = aim(player, 1000)
+        assert(bent.z > v_forward.z, "it bends up towards the soldier: " .. tostring(bent))"#,
+    );
+}
+
+#[test]
+fn a_monster_on_a_teleport_arrives_and_frags_what_is_there() {
+    let (mins, maxs) = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let trigger: &[(&str, &str)] = &[
+        ("classname", "trigger_teleport"),
+        ("model", "*1"),
+        ("target", "there"),
+    ];
+    let destination: &[(&str, &str)] = &[
+        ("classname", "info_teleport_destination"),
+        ("targetname", "there"),
+        ("origin", "200 200 -256"),
+    ];
+    let fields = [
+        ("classname", "monster_army".to_owned()),
+        ("origin", "0 0 -230".to_owned()),
+    ];
+    let victim = [
+        ("classname", "monster_ogre".to_owned()),
+        ("origin", "200 200 -230".to_owned()),
+    ];
+    let map = map(
+        &[(mins, maxs)],
+        &[trigger, destination, &borrowed(&fields), &borrowed(&victim)],
+    );
+    let mut game = Game::new(&map, at_floor(-200.0, -200.0));
+    game.server
+        .exec(r#"local p = find_all("classname", "player")[1] p.flags = 128"#)
+        .expect("notarget");
+    game.wait(1.5);
+    game.check(
+        r#"local grunt = find_all("classname", "monster_army")[1]
+        assert(grunt.origin.x > 100, "it's there: " .. tostring(grunt.origin))"#,
+    );
+}

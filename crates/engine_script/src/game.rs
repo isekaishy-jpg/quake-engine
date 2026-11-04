@@ -10,7 +10,9 @@ use engine_core::math::Vec3;
 use engine_core::player::Liquid;
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_map::{Contents, Entity as MapEntity};
-use engine_sim::{Callback, EntityId, FLAG_ON_GROUND, MoveKind, MoveType, Simulation, Solid};
+use engine_sim::{
+    Callback, EntityId, FLAG_ON_GROUND, MoveKind, MoveType, Simulation, Solid, Target,
+};
 use mlua::chunk::Compiler;
 use mlua::{Function, Lua, Table, Value, Vector, VmState};
 
@@ -196,12 +198,15 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "skin" => Value::Number(f64::from(entity.skin)),
         "effects" => Value::Number(f64::from(entity.effects)),
         "punchangle" => vector(sim.punch()),
+        "ideal_yaw" => Value::Number(f64::from(entity.ideal_yaw)),
+        "yaw_speed" => Value::Number(f64::from(entity.yaw_speed)),
         "weaponframe" => Value::Number(f64::from(sim.weapon_frame())),
         "weaponmodel" => Value::String(lua.create_string(sim.weapon_model_name())?),
         "view" => {
             let (yaw, pitch) = sim.view();
             vector(Vec3::new(pitch, yaw, 0.0))
         }
+        "v_angle" if id != sim.player_id() => vector(entity.view_angle),
         "waterlevel" | "watertype" | "onground" | "button0" | "button2" | "impulse" | "dead"
         | "v_angle" | "waterjump" | "noclip" => read_player_field(sim, id, field),
         "flags" => {
@@ -222,6 +227,15 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
 )]
 fn small_number(value: &Value) -> mlua::Result<u16> {
     Ok(as_number(value)? as u16)
+}
+
+/// A small real number from a script's value, or an error.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "yaws need no more than f32"
+)]
+fn as_f32(value: &Value) -> mlua::Result<f32> {
+    Ok(as_number(value)? as f32)
 }
 
 /// A number from a script's value, or an error.
@@ -272,6 +286,9 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
                 "maxs" => entity.maxs = as_vec3(value)?,
                 "nextthink" => entity.next_think = number?,
                 "ltime" => entity.local_time = number?,
+                "v_angle" => entity.view_angle = as_vec3(value)?,
+                "ideal_yaw" => entity.ideal_yaw = as_f32(value)?,
+                "yaw_speed" => entity.yaw_speed = as_f32(value)?,
                 "visible" => entity.visible = matches!(value, Value::Boolean(true)),
                 "angles" => entity.angles = as_vec3(value)?,
                 "avelocity" => entity.angular_velocity = as_vec3(value)?,
@@ -491,6 +508,8 @@ impl Game {
                         from_vec3(trace.end),
                         from_vec3(trace.normal),
                         trace.entity.map(id_to),
+                        trace.in_open,
+                        trace.in_water,
                     ))
                 },
             )?,
@@ -509,6 +528,7 @@ impl Game {
                 })
             })?,
         )?;
+        Self::register_walking(lua, simulation, engine)?;
         let sim = Rc::clone(simulation);
         engine.set(
             "droptofloor",
@@ -522,6 +542,61 @@ impl Game {
                     entity.owner = owner.map(id_from);
                 }
                 Ok(())
+            })?,
+        )
+    }
+
+    /// Adds how monsters get about to the `engine` table.
+    fn register_walking(
+        lua: &Lua,
+        simulation: &Rc<RefCell<Simulation>>,
+        engine: &Table,
+    ) -> mlua::Result<()> {
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "walkmove",
+            lua.create_function(
+                move |_, (id, yaw, distance, enemy): (f64, f32, f32, Option<f64>)| {
+                    Ok(sim
+                        .borrow_mut()
+                        .walk_move(id_from(id), yaw, distance, enemy.map(id_from)))
+                },
+            )?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "movetogoal",
+            lua.create_function(
+                move |_, (id, distance, goal, enemy): (f64, f32, Option<f64>, Option<f64>)| {
+                    let target = Target {
+                        goal: goal.map(id_from),
+                        enemy: enemy.map(id_from),
+                    };
+                    sim.borrow_mut().move_to_goal(id_from(id), distance, target);
+                    Ok(())
+                },
+            )?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "changeyaw",
+            lua.create_function(move |_, id: f64| {
+                sim.borrow_mut().change_yaw(id_from(id));
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "checkbottom",
+            lua.create_function(move |_, id: f64| Ok(sim.borrow().check_bottom(id_from(id))))?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "player_in_view",
+            lua.create_function(move |_, (id, view_offset): (f64, Vector)| {
+                Ok(sim
+                    .borrow_mut()
+                    .player_in_view(id_from(id), to_vec3(view_offset)))
             })?,
         )
     }
@@ -689,6 +764,7 @@ impl Game {
             Callback::Blocked { id, other } => ("blocked", id, Some(other)),
             Callback::Touch { id, other } => ("touch", id, other),
             Callback::Splash(id) => ("splash", id, None),
+            Callback::Land(id) => ("land", id, None),
         };
         self.report(
             self.dispatch

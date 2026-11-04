@@ -60,6 +60,8 @@ end
 function PutClientInServer(self)
 	self.classname = "player"
 	self.takedamage = DAMAGE_AIM
+	self.view_ofs = vector.create(0, 0, 22)
+	self.flags = bit32.bor(self.flags, FL_CLIENT)
 	self.solid = SOLID_SLIDEBOX
 	self.movetype = MOVETYPE_WALK
 	self.show_hostile = 0
@@ -202,6 +204,47 @@ local function DeathSound(self)
 	sound(self, CHAN_VOICE, "player/death" .. tostring(number) .. ".wav", 1, ATTN_NONE)
 end
 
+function VelocityForDamage(dm)
+	local v = vector.create(100 * crandom(), 100 * crandom(), 200 + 100 * random())
+	if dm > -50 then
+		return v * 0.7
+	elseif dm > -200 then
+		return v * 2
+	end
+	return v * 10
+end
+
+function ThrowGib(self, gibname, dm)
+	local new = spawn()
+	new.origin = self.origin
+	setmodel(new, gibname)
+	setsize(new, vector.zero, vector.zero)
+	new.velocity = VelocityForDamage(dm)
+	new.movetype = MOVETYPE_BOUNCE
+	new.solid = SOLID_NOT
+	new.avelocity = vector.create(random() * 600, random() * 600, random() * 600)
+	new.think = SUB_Remove
+	new.ltime = time()
+	new.nextthink = time() + 10 + random() * 10
+	new.frame = 0
+	new.flags = 0
+end
+
+function ThrowHead(self, gibname, dm)
+	setmodel(self, gibname)
+	self.frame = 0
+	self.nextthink = -1
+	self.movetype = MOVETYPE_BOUNCE
+	self.takedamage = DAMAGE_NO
+	self.solid = SOLID_NOT
+	self.view_ofs = vector.create(0, 0, 8)
+	setsize(self, vector.create(-16, -16, 0), vector.create(16, 16, 56))
+	self.velocity = VelocityForDamage(dm)
+	self.origin = with_z(self.origin, self.origin.z - 24)
+	self.flags -= bit32.band(self.flags, FL_ONGROUND)
+	self.avelocity = crandom() * vector.create(0, 600, 0)
+end
+
 function PlayerDie(self)
 	self.items -= bit32.band(self.items, IT_INVISIBILITY)
 	self.invisible_finished = 0
@@ -213,7 +256,11 @@ function PlayerDie(self)
 	self.solid = SOLID_NOT
 	self.dead = true
 	if self.health < -40 then
-		sound(self, CHAN_VOICE, "player/gib.wav", 1, ATTN_NONE)
+		ThrowGib(self, "progs/gib1.mdl", self.health)
+		ThrowGib(self, "progs/gib2.mdl", self.health)
+		ThrowGib(self, "progs/gib3.mdl", self.health)
+		local sample = if random() < 0.5 then "player/gib.wav" else "player/udeath.wav"
+		sound(self, CHAN_VOICE, sample, 1, ATTN_NONE)
 	else
 		DeathSound(self)
 	end

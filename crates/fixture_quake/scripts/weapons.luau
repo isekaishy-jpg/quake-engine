@@ -54,6 +54,55 @@ end
 local multi_ent = nil
 local multi_damage = 0
 
+-- How close a target has to be to the line of fire to draw it, from `sv_aim`.
+local AIM_LIMIT = 0.93
+
+-- The direction to fire in, bent up or down to something near the line of
+-- fire, from `PF_aim`.
+function aim(self, _speed)
+	local start = self.origin + vector.create(0, 0, 20)
+	traceline(start, start + v_forward * 2048, false, self)
+	if trace_ent.takedamage == DAMAGE_AIM then
+		return v_forward
+	end
+	local bestdist = AIM_LIMIT
+	local best = nil
+	for _, check in find_all("takedamage", DAMAGE_AIM) do
+		if check ~= self then
+			local target = check.origin + (check.mins + check.maxs) * 0.5
+			local dist = vector.dot(normalize(target - start), v_forward)
+			if dist >= bestdist then
+				traceline(start, target, false, self)
+				if trace_ent == check then
+					bestdist = dist
+					best = check
+				end
+			end
+		end
+	end
+	if best == nil then
+		return v_forward
+	end
+	local dir = best.origin - self.origin
+	local flat = v_forward * vector.dot(dir, v_forward)
+	return normalize(with_z(flat, dir.z))
+end
+
+function SpawnMeatSpray(self, org, vel)
+	local missile = spawn()
+	missile.owner = self
+	missile.movetype = MOVETYPE_BOUNCE
+	missile.solid = SOLID_NOT
+	makevectors(self.angles)
+	missile.velocity = with_z(vel, vel.z + 250 + 50 * random())
+	missile.avelocity = vector.create(3000, 1000, 2000)
+	missile.nextthink = time() + 1
+	missile.think = SUB_Remove
+	setmodel(missile, "progs/zom_gib.mdl")
+	setsize(missile, vector.zero, vector.zero)
+	setorigin(missile, org)
+end
+
 function ClearMultiDamage()
 	multi_ent = nil
 	multi_damage = 0
@@ -138,6 +187,10 @@ local function s_explode(self, frame)
 			s_explode(me, frame + 1)
 		end
 	end
+end
+
+function s_explode1(self)
+	s_explode(self, 0)
 end
 
 function BecomeExplosion(self)
@@ -307,6 +360,7 @@ function launch_spike(self, org, dir)
 	setsize(spike, vector.zero, vector.zero)
 	setorigin(spike, org)
 	spike.velocity = dir * 1000
+	newmis = spike
 	return spike
 end
 
@@ -347,6 +401,7 @@ function LaunchLaser(self, org, vec)
 	laser.nextthink = time() + 5
 	laser.think = SUB_Remove
 	laser.touch = Laser_Touch
+	newmis = laser
 	return laser
 end
 

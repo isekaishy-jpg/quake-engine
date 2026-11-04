@@ -353,7 +353,13 @@ function item_sigil(self)
 		objerror("no spawnflags")
 	end
 	self.noise = "misc/runekey.wav"
-	for bit, model in { [1] = "progs/end1.mdl", [2] = "progs/end2.mdl", [4] = "progs/end3.mdl", [8] = "progs/end4.mdl" } do
+	local models = {
+		[1] = "progs/end1.mdl",
+		[2] = "progs/end2.mdl",
+		[4] = "progs/end3.mdl",
+		[8] = "progs/end4.mdl",
+	}
+	for bit, model in models do
 		if bit32.band(self.spawnflags, bit) ~= 0 then
 			setmodel(self, model)
 		end
@@ -407,3 +413,63 @@ item_artifact_invisibility =
 	powerup("items/inv1.wav", "progs/invisibl.mdl", "Ring of Shadows", IT_INVISIBILITY)
 item_artifact_super_damage =
 	powerup("items/damage.wav", "progs/quaddama.mdl", "Quad Damage", IT_QUAD)
+
+function BackpackTouch(self, other)
+	if other.classname ~= "player" or other.health <= 0 then
+		return
+	end
+	-- If the player was using their best weapon, change up to the new one if better.
+	local best = W_BestWeapon(other)
+
+	other.ammo_shells += self.ammo_shells
+	other.ammo_nails += self.ammo_nails
+	other.ammo_rockets += self.ammo_rockets
+	other.ammo_cells += self.ammo_cells
+	other.items = bit32.bor(other.items, self.items)
+	bound_other_ammo(other)
+
+	local got = "You get "
+	if self.ammo_shells ~= 0 then
+		got ..= self.ammo_shells .. " shells  "
+	end
+	if self.ammo_nails ~= 0 then
+		got ..= self.ammo_nails .. " nails "
+	end
+	if self.ammo_rockets ~= 0 then
+		got ..= self.ammo_rockets .. " rockets  "
+	end
+	if self.ammo_cells ~= 0 then
+		got ..= self.ammo_cells .. " cells  "
+	end
+	sprint(other, got)
+	sound(other, CHAN_ITEM, "weapons/lock4.wav", 1, ATTN_NORM)
+	bonus_flash(other)
+
+	if other.weapon == best then
+		other.weapon = W_BestWeapon(other)
+	end
+	remove(self)
+	W_SetCurrentAmmo(other)
+end
+
+function DropBackpack(self)
+	if self.ammo_shells + self.ammo_nails + self.ammo_rockets + self.ammo_cells == 0 then
+		return
+	end
+	local item = spawn()
+	item.origin = self.origin - vector.create(0, 0, 24)
+	item.items = self.weapon or 0
+	item.ammo_shells = self.ammo_shells
+	item.ammo_nails = self.ammo_nails
+	item.ammo_rockets = self.ammo_rockets
+	item.ammo_cells = self.ammo_cells
+	item.velocity = vector.create(-100 + random() * 200, -100 + random() * 200, 300)
+	item.flags = FL_ITEM
+	item.solid = SOLID_TRIGGER
+	item.movetype = MOVETYPE_TOSS
+	setmodel(item, "progs/backpack.mdl")
+	setsize(item, vector.create(-16, -16, 0), vector.create(16, 16, 56))
+	item.touch = BackpackTouch
+	item.nextthink = time() + 120
+	item.think = SUB_Remove
+end

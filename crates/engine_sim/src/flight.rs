@@ -11,10 +11,10 @@ use crate::simulation::{Callback, Entity, MoveType, Simulation, Solid};
 use crate::table::EntityId;
 
 /// `sv_gravity`, in units a second each second.
-const GRAVITY: f32 = 800.0;
+pub(crate) const GRAVITY: f32 = 800.0;
 
 /// `sv_maxvelocity`, on each axis.
-const MAX_VELOCITY: f32 = 2000.0;
+pub(crate) const MAX_VELOCITY: f32 = 2000.0;
 
 /// `FL_ONGROUND`.
 pub const FLAG_ON_GROUND: u32 = 512;
@@ -26,7 +26,7 @@ const FLAG_MONSTER: u32 = 32;
 const STOP_EPSILON: f32 = 0.1;
 
 /// A move's stop on a floor, as a normal's height.
-const FLOOR_NORMAL: f32 = 0.7;
+pub(crate) const FLOOR_NORMAL: f32 = 0.7;
 
 /// How fast a bouncing thing has to rise to keep bouncing.
 const MIN_BOUNCE: f32 = 60.0;
@@ -62,10 +62,14 @@ pub struct MoveTrace {
     pub hit: bool,
     /// The entity it hit, if it wasn't the world.
     pub entity: Option<EntityId>,
+    /// Whether it passed through open air.
+    pub in_open: bool,
+    /// Whether it passed through liquid.
+    pub in_water: bool,
 }
 
 /// `ClipVelocity`: a velocity with what goes into a plane taken out of it.
-fn clip_velocity(velocity: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
+pub(crate) fn clip_velocity(velocity: Vec3, normal: Vec3, overbounce: f32) -> Vec3 {
     let stopped = |part: f32| {
         if part.abs() < STOP_EPSILON { 0.0 } else { part }
     };
@@ -85,9 +89,21 @@ impl Simulation {
         pass: Option<EntityId>,
         world: &CollisionWorld,
     ) -> MoveTrace {
-        let (start, end) = ends;
-        let (mins, maxs) = size;
-        let instances = self.instances();
+        self.trace_without((ends, size), kind, pass, world, None)
+    }
+
+    /// A trace as if brush model `ignored` weren't there.
+    pub(crate) fn trace_without(
+        &self,
+        path: ((Vec3, Vec3), (Vec3, Vec3)),
+        kind: MoveKind,
+        pass: Option<EntityId>,
+        world: &CollisionWorld,
+        ignored: Option<u32>,
+    ) -> MoveTrace {
+        let ((start, end), (mins, maxs)) = path;
+        let mut instances = self.instances();
+        instances.retain(|instance| Some(instance.model) != ignored);
         let hull = world.with(&instances).move_box(start, mins, maxs, end);
         let hit = hull.fraction < 1.0 || hull.start_solid;
         let mut best = MoveTrace {
@@ -98,6 +114,8 @@ impl Simulation {
             all_solid: hull.all_solid,
             hit,
             entity: hull.model.and_then(|model| self.entity_of_model(model)),
+            in_open: hull.in_open,
+            in_water: hull.in_water,
         };
         let owner = pass.and_then(|id| self.entity(id)).and_then(|e| e.owner);
         let pass_has_size = pass
@@ -166,6 +184,8 @@ impl Simulation {
                 all_solid: false,
                 hit: false,
                 entity: None,
+                in_open: false,
+                in_water: false,
             },
         }
     }
@@ -193,6 +213,7 @@ impl Simulation {
         if let Some(entity) = self.entity_mut(id) {
             entity.origin = trace.end;
             entity.flags |= FLAG_ON_GROUND;
+            entity.ground = trace.entity;
         }
         true
     }
@@ -285,7 +306,7 @@ impl Simulation {
     }
 
     /// `SV_Impact`: both sides of a hit get a touch.
-    fn impact(
+    pub(crate) fn impact(
         &self,
         id: EntityId,
         entity: &Entity,
@@ -304,6 +325,18 @@ impl Simulation {
                 id: other,
                 other: Some(id),
             });
+        }
+    }
+
+    /// `SV_CheckWaterTransition`, for an entity left where it is.
+    pub(crate) fn check_water_of(
+        &mut self,
+        id: EntityId,
+        world: &CollisionWorld,
+        callbacks: &mut Vec<Callback>,
+    ) {
+        if let Some(entity) = self.entity_mut(id) {
+            Self::check_water(entity, id, world, callbacks);
         }
     }
 

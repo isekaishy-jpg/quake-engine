@@ -69,14 +69,20 @@ IT_INVULNERABILITY = 1048576
 IT_SUIT = 2097152
 IT_QUAD = 4194304
 
+FL_FLY = 1
+FL_SWIM = 2
 FL_CLIENT = 8
 FL_INWATER = 16
 FL_MONSTER = 32
 FL_GODMODE = 64
+FL_NOTARGET = 128
 FL_ITEM = 256
 FL_ONGROUND = 512
+FL_PARTIALGROUND = 1024
 
+EF_BRIGHTFIELD = 1
 EF_MUZZLEFLASH = 2
+EF_BRIGHTLIGHT = 4
 EF_DIMLIGHT = 8
 
 DAMAGE_NO = 0
@@ -107,6 +113,71 @@ TE_KNIGHTSPIKE = 8
 TE_LIGHTNING3 = 9
 TE_LAVASPLASH = 10
 TE_TELEPORT = 11
+
+RANGE_MELEE = 0
+RANGE_NEAR = 1
+RANGE_MID = 2
+RANGE_FAR = 3
+
+AS_STRAIGHT = 1
+AS_SLIDING = 2
+AS_MELEE = 3
+AS_MISSILE = 4
+
+VEC_ORIGIN = vector.zero
+VEC_HULL_MIN = vector.create(-16, -16, -24)
+VEC_HULL_MAX = vector.create(16, 16, 32)
+VEC_HULL2_MIN = vector.create(-32, -32, -24)
+VEC_HULL2_MAX = vector.create(32, 32, 64)
+
+-- Fields that read as zero until they're set, as all of QuakeC's do.
+set_field_defaults({
+	ammo_cells = 0,
+	ammo_nails = 0,
+	ammo_rockets = 0,
+	ammo_shells = 0,
+	attack_finished = 0,
+	attack_state = 0,
+	cnt = 0,
+	fixangle = 0,
+	health = 0,
+	inpain = 0,
+	items = 0,
+	lefty = 0,
+	pain_finished = 0,
+	pausetime = 0,
+	search_time = 0,
+	show_hostile = 0,
+	spawnflags = 0,
+	state = 0,
+	takedamage = 0,
+	waitmin = 0,
+	movedir = vector.zero,
+	view_ofs = vector.zero,
+})
+
+-- This is a single player game, for now.
+deathmatch = 0
+coop = 0
+
+-- The last thing fired.
+newmis = nil
+
+-- How many monsters there are, and how many are dead.
+total_monsters = 0
+killed_monsters = 0
+
+-- How far a monster moves on this step, kept for those that strafe.
+movedist = 0
+
+-- Set when the game ends.
+intermission_running = 0
+intermission_exittime = 0
+
+-- The game's closing text, which is printed until there's a screen for it.
+function finale(text)
+	engine.print(text)
+end
 
 -- The entity that set off the current chain of events.
 activator = nil
@@ -142,6 +213,29 @@ function spawn_filter(self)
 		elseif skill == 1 then SPAWNFLAG_NOT_MEDIUM
 		else SPAWNFLAG_NOT_HARD
 	return bit32.band(self.spawnflags, flag) == 0
+end
+
+-- What a `[frame, next]` function does before its code.
+function animate(self, frame, think)
+	self.frame = frame
+	self.nextthink = time() + 0.1
+	self.think = think
+end
+
+function SUB_AttackFinished(self, normal)
+	self.cnt = 0 -- reset the refire counter
+	if skill ~= 3 then
+		self.attack_finished = time() + normal
+	end
+end
+
+-- Runs `thinkst` again, for a nightmare monster that hasn't stopped firing.
+function SUB_CheckRefire(self, thinkst)
+	if skill ~= 3 or self.cnt == 1 or not visible(self, self.enemy) then
+		return
+	end
+	self.cnt = 1
+	self.think = thinkst
 end
 
 function SUB_Null(_self) end

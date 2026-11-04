@@ -10,6 +10,7 @@ use engine_map::Map;
 use engine_movement::{MoveVars, player_move};
 use engine_physics::CollisionWorld;
 
+use crate::flight::{FLAG_ON_GROUND, MoveKind};
 use crate::table::{EntityId, SlotTable};
 
 /// The longest a single command may claim to last, in seconds, so a client
@@ -109,6 +110,14 @@ pub struct Entity {
     pub angular_velocity: Vec3,
     /// Who made it, which it doesn't hit.
     pub owner: Option<EntityId>,
+    /// What it's standing on, if it isn't the world.
+    pub ground: Option<EntityId>,
+    /// Where a script says it's looking, for what isn't the player.
+    pub view_angle: Vec3,
+    /// The yaw a monster is turning towards.
+    pub ideal_yaw: f32,
+    /// How far a monster turns at once, in degrees.
+    pub yaw_speed: f32,
     /// The original's flag bits.
     pub flags: u32,
     /// Whether it was in a liquid when last checked.
@@ -135,6 +144,8 @@ pub enum Callback {
         /// What's in the way.
         other: EntityId,
     },
+    /// `id` landed hard.
+    Land(EntityId),
     /// `id` was touched by `other`.
     Touch {
         /// What was touched.
@@ -185,6 +196,12 @@ pub struct Simulation {
     weapon_frame: u16,
     /// How far the view is knocked, in degrees.
     punch: Vec3,
+    /// The state of `rand`.
+    pub(crate) seed: u32,
+    /// When monsters last took a look at where the player can be seen from.
+    pub(crate) last_check: f64,
+    /// The leaves the player can be seen from.
+    pub(crate) player_view: Vec<bool>,
 }
 
 /// Whether two boxes overlap.
@@ -232,6 +249,9 @@ impl Simulation {
             weapon_model: 0,
             weapon_frame: 0,
             punch: Vec3::ZERO,
+            seed: 1,
+            last_check: 0.0,
+            player_view: Vec::new(),
         }
     }
 
@@ -284,6 +304,11 @@ impl Simulation {
         } else {
             self.shape_number(name)
         };
+    }
+
+    /// The map.
+    pub(crate) fn map(&self) -> &Arc<Map> {
+        &self.map
     }
 
     /// How far the view is knocked, in degrees.
@@ -580,8 +605,17 @@ impl Simulation {
                     callbacks.push(Callback::Think(id));
                 }
             }
-            MoveType::None | MoveType::Walk | MoveType::Step => {
+            MoveType::None | MoveType::Walk => {
                 self.run_think(id, &entity, seconds, &mut callbacks);
+            }
+            MoveType::Step => {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    reason = "a tick needs no more than f32"
+                )]
+                self.fall(id, seconds as f32, world, &mut callbacks);
+                self.run_think(id, &entity, seconds, &mut callbacks);
+                self.check_water_of(id, world, &mut callbacks);
             }
             MoveType::Noclip => {
                 self.run_think(id, &entity, seconds, &mut callbacks);
@@ -635,7 +669,8 @@ impl Simulation {
             .map(|(id, _)| id)
     }
 
-    /// `SV_PushMove`, for the one thing that can be pushed: the player.
+    /// `SV_PushMove`: moves a pusher, and what it carries or runs into. If
+    /// anything is in the way, everything goes back.
     fn push_move(
         &mut self,
         id: EntityId,
@@ -662,31 +697,159 @@ impl Simulation {
         let Some(model) = moved.model.filter(|_| moved.solid == Solid::Bsp) else {
             return;
         };
-        if self.player.noclip {
-            return;
-        }
-        let instances = self.instances();
-        let collision = world.with(&instances);
-        let riding = self.player.on_ground && self.player.ground_model == Some(model);
-        let hit = collision.in_model(model, moved.origin, self.player.origin);
-        if !riding && !hit {
-            return;
-        }
         let before = self.player;
-        let pushed = collision
-            .ignoring(model)
-            .trace(self.player.origin, self.player.origin + step);
-        self.player.origin = pushed.end;
-        if collision.in_solid(self.player.origin) {
+        let blocker = if self.push_player(id, model, step, world) {
+            self.push_entities(id, model, step, world)
+        } else {
+            Err(self.player_id)
+        };
+        if let Err(blocker) = blocker {
             self.player = before;
             if let Some(pusher) = self.entities.get_mut(id) {
                 pusher.origin = start;
                 pusher.local_time -= seconds;
             }
-            callbacks.push(Callback::Blocked {
-                id,
-                other: self.player_id,
-            });
+            callbacks.push(Callback::Blocked { id, other: blocker });
+        }
+    }
+
+    /// Moves the player if a pusher carries or hits them, and returns false if
+    /// they're stuck.
+    fn push_player(
+        &mut self,
+        id: EntityId,
+        model: u32,
+        step: Vec3,
+        world: &CollisionWorld,
+    ) -> bool {
+        if self.player.noclip {
+            return true;
+        }
+        let Some(origin) = self.entities.get(id).map(|pusher| pusher.origin) else {
+            return true;
+        };
+        let instances = self.instances();
+        let collision = world.with(&instances);
+        let riding = self.player.on_ground && self.player.ground_model == Some(model);
+        if !riding && !collision.in_model(model, origin, self.player.origin) {
+            return true;
+        }
+        let pushed = collision
+            .ignoring(model)
+            .trace(self.player.origin, self.player.origin + step);
+        self.player.origin = pushed.end;
+        !collision.in_solid(self.player.origin)
+    }
+
+    /// Whether `entity` is in something, from `SV_TestEntityPosition`.
+    fn stuck(&self, id: EntityId, entity: &Entity, world: &CollisionWorld) -> bool {
+        let size = (entity.mins, entity.maxs);
+        let ends = (entity.origin, entity.origin);
+        self.trace_move(ends, size, MoveKind::Normal, Some(id), world)
+            .start_solid
+    }
+
+    /// Moves what a pusher carries or hits. Returns what's stuck, having put
+    /// back what it moved.
+    fn push_entities(
+        &mut self,
+        id: EntityId,
+        model: u32,
+        step: Vec3,
+        world: &CollisionWorld,
+    ) -> Result<(), EntityId> {
+        let Some(pusher) = self.entities.get(id).copied() else {
+            return Ok(());
+        };
+        let (low, high) = (pusher.origin + pusher.mins, pusher.origin + pusher.maxs);
+        let mut moved: Vec<(EntityId, Entity)> = Vec::new();
+        for other in self.entities.ids() {
+            let Some(entity) = self.entities.get(other).copied() else {
+                continue;
+            };
+            let still = matches!(
+                entity.move_type,
+                MoveType::Push | MoveType::None | MoveType::Noclip | MoveType::Walk
+            );
+            if other == id || other == self.player_id || still {
+                continue;
+            }
+            let riding = entity.flags & FLAG_ON_GROUND != 0 && entity.ground == Some(id);
+            if !riding {
+                let touching = boxes_touch(
+                    entity.origin + entity.mins,
+                    entity.origin + entity.maxs,
+                    low,
+                    high,
+                );
+                if !touching || !self.stuck(other, &entity, world) {
+                    continue;
+                }
+            }
+            moved.push((other, entity));
+            // `SV_PushEntity`, with the pusher out of the way.
+            let path = (
+                (entity.origin, entity.origin + step),
+                (entity.mins, entity.maxs),
+            );
+            let trace = self.trace_without(path, MoveKind::Normal, Some(other), world, Some(model));
+            let mut pushed = entity;
+            pushed.flags &= !FLAG_ON_GROUND;
+            pushed.origin = trace.end;
+            if let Some(stored) = self.entities.get_mut(other) {
+                *stored = pushed;
+            }
+            if !self.stuck(other, &pushed, world) || pushed.mins.x >= pushed.maxs.x {
+                continue;
+            }
+            if matches!(pushed.solid, Solid::Not | Solid::Trigger) {
+                // A corpse, which gets out of the way.
+                if let Some(stored) = self.entities.get_mut(other) {
+                    stored.mins.x = 0.0;
+                    stored.mins.y = 0.0;
+                    stored.maxs = stored.mins;
+                }
+                continue;
+            }
+            for (back, entity) in moved {
+                if let Some(stored) = self.entities.get_mut(back) {
+                    *stored = entity;
+                }
+            }
+            return Err(other);
+        }
+        Ok(())
+    }
+
+    /// Triggers overlapping a monster, as `SV_LinkEdict` finds.
+    fn monster_touches(&self, touches: &mut Vec<Callback>) {
+        let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
+        let triggers: Vec<(EntityId, Vec3, Vec3)> = self
+            .entities
+            .iter()
+            .filter(|(_, entity)| entity.solid == Solid::Trigger)
+            .map(|(id, entity)| {
+                (
+                    id,
+                    entity.origin + entity.mins - margin,
+                    entity.origin + entity.maxs + margin,
+                )
+            })
+            .collect();
+        for (other, entity) in self.entities.iter() {
+            if entity.move_type != MoveType::Step || entity.solid == Solid::Not {
+                continue;
+            }
+            let low = entity.origin + entity.mins;
+            let high = entity.origin + entity.maxs;
+            for (id, trigger_low, trigger_high) in &triggers {
+                if boxes_touch(low, high, *trigger_low, *trigger_high) {
+                    touches.push(Callback::Touch {
+                        id: *id,
+                        other: Some(other),
+                    });
+                }
+            }
         }
     }
 
@@ -713,6 +876,7 @@ impl Simulation {
                 }
             }
         }
+        self.monster_touches(&mut touches);
         if !self.player.noclip && !self.player.dead {
             let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
             let low = self.player.origin + PLAYER_MINS - margin;

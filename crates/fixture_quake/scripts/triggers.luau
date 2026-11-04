@@ -184,6 +184,41 @@ function spawn_tfog(org)
 	temp_entity(TE_TELEPORT, org)
 end
 
+function tdeath_touch(self, other)
+	if other == self.owner then
+		return
+	end
+	-- Frag anyone who teleports in on top of an invincible player.
+	if other.classname == "player" then
+		if (other.invincible_finished or 0) > time() then
+			self.classname = "teledeath2"
+		end
+		if self.owner.classname ~= "player" then
+			-- Other monsters explode themselves.
+			T_Damage(self.owner, self, self, 50000)
+			return
+		end
+	end
+	if other.health ~= 0 then
+		T_Damage(other, self, self, 50000)
+	end
+end
+
+function spawn_tdeath(org, death_owner)
+	local death = spawn()
+	death.classname = "teledeath"
+	death.movetype = MOVETYPE_NONE
+	death.solid = SOLID_TRIGGER
+	death.angles = vector.zero
+	local margin = vector.create(1, 1, 1)
+	setsize(death, death_owner.mins - margin, death_owner.maxs + margin)
+	setorigin(death, org)
+	death.touch = tdeath_touch
+	death.nextthink = time() + 0.2
+	death.think = SUB_Remove
+	death.owner = death_owner
+end
+
 function teleport_touch(self, other)
 	if has_text(self.targetname) and self.nextthink < time() then
 		return
@@ -193,7 +228,8 @@ function teleport_touch(self, other)
 		return
 	end
 
-	if other.health <= 0 then
+	-- Only living creatures teleport.
+	if other.health <= 0 or other.solid ~= SOLID_SLIDEBOX then
 		return
 	end
 
@@ -213,12 +249,15 @@ function teleport_touch(self, other)
 
 	-- And another in front of the destination.
 	spawn_tfog(t.origin + forward * 32)
+	spawn_tdeath(t.origin, other)
 
 	setorigin(other, t.origin)
+	other.angles = mangle
 	if other.classname == "player" then
 		engine.set_view(mangle.y, mangle.x)
 		other.velocity = forward * 300
 	end
+	other.flags -= bit32.band(other.flags, FL_ONGROUND)
 end
 
 function info_teleport_destination(self)
@@ -316,4 +355,34 @@ function trigger_push(self)
 	if self.speed == 0 then
 		self.speed = 1000
 	end
+end
+
+function trigger_monsterjump_touch(self, other)
+	local kind = bit32.band(other.flags, bit32.bor(FL_MONSTER, FL_FLY, FL_SWIM))
+	if kind ~= FL_MONSTER then
+		return
+	end
+	-- Set X and Y even if not on the ground, so the jump will clear lips.
+	local velocity = other.velocity
+	local x, y = self.movedir.x * self.speed, self.movedir.y * self.speed
+	other.velocity = vector.create(x, y, velocity.z)
+	if bit32.band(other.flags, FL_ONGROUND) == 0 then
+		return
+	end
+	other.flags -= FL_ONGROUND
+	other.velocity = with_z(other.velocity, self.height)
+end
+
+function trigger_monsterjump(self)
+	if self.speed == 0 then
+		self.speed = 200
+	end
+	if self.height == 0 then
+		self.height = 200
+	end
+	if self.angles == vector.zero then
+		self.angles = vector.create(0, 360, 0)
+	end
+	InitTrigger(self)
+	self.touch = trigger_monsterjump_touch
 end

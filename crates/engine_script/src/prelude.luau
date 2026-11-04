@@ -33,6 +33,8 @@ local ENGINE_FIELDS = {
 	impulse = true,
 	v_angle = true,
 	punchangle = true,
+	ideal_yaw = true,
+	yaw_speed = true,
 	dead = true,
 }
 
@@ -81,15 +83,42 @@ local Entity = {}
 -- to a key that isn't there, so these live under other names.
 local WATCHED_FIELDS = { model = "_model", owner = "_owner" }
 
+-- What a field reads as until it's set. A game adds its own with
+-- `set_field_defaults`.
+local field_defaults = {
+	origin = vector.zero,
+	velocity = vector.zero,
+	mins = vector.zero,
+	maxs = vector.zero,
+	size = vector.zero,
+	absmin = vector.zero,
+	absmax = vector.zero,
+	angles = vector.zero,
+	avelocity = vector.zero,
+	v_angle = vector.zero,
+	flags = 0,
+}
+
+function set_field_defaults(defaults)
+	for field, value in defaults do
+		field_defaults[field] = value
+	end
+end
+
 function Entity.__index(entity, key)
 	if ENGINE_FIELDS[key] then
-		return engine.get(rawget(entity, "_id"), key)
+		local id = rawget(entity, "_id")
+		local value = if id >= 0 then engine.get(id, key) else nil
+		if value ~= nil then
+			return value
+		end
+		return field_defaults[key]
 	end
 	local watched = WATCHED_FIELDS[key]
 	if watched then
 		return rawget(entity, watched)
 	end
-	return nil
+	return field_defaults[key]
 end
 
 function Entity.__newindex(entity, key, value)
@@ -211,11 +240,89 @@ trace_endpos = vector.zero
 trace_plane_normal = vector.zero
 trace_ent = nil
 
+trace_inopen = false
+trace_inwater = false
+
 -- Stands in for the world in a map that has none.
-local no_world = {}
+local no_world = setmetatable({ _id = -1 }, Entity)
+
+-- The player, once there is one.
+the_player = nil
+
+-- `entity`, or the world for none, as QuakeC's empty entity fields are.
+function ent(entity)
+	return entity or world or no_world
+end
+
+-- Whether `entity` is something, which the world isn't.
+function exists(entity)
+	return entity ~= nil and entity ~= world and entity ~= no_world
+end
+
+-- The next entity after `from` whose `field` is `value`, or the world.
+function find_entity(from, field, value)
+	return ent(find(if exists(from) then from else nil, field, value))
+end
+
+function with_x(value, x)
+	return vector.create(x, value.y, value.z)
+end
+
+function with_y(value, y)
+	return vector.create(value.x, y, value.z)
+end
+
+function with_z(value, z)
+	return vector.create(value.x, value.y, z)
+end
+
+-- The engine's number for `entity`, if it's still there.
+local function id_of(entity)
+	if exists(entity) and not is_removed(entity) then
+		return rawget(entity, "_id")
+	end
+	return nil
+end
+
+function walkmove(entity, yaw, distance)
+	return engine.walkmove(rawget(entity, "_id"), yaw, distance, id_of(entity.enemy))
+end
+
+function movetogoal(entity, distance)
+	local id = rawget(entity, "_id")
+	engine.movetogoal(id, distance, id_of(entity.goalentity), id_of(entity.enemy))
+end
+
+function ChangeYaw(entity)
+	engine.changeyaw(rawget(entity, "_id"))
+end
+
+function checkbottom(entity)
+	return engine.checkbottom(rawget(entity, "_id"))
+end
+
+-- The player, if `entity` could be looking at them, from `PF_checkclient`.
+function checkclient(entity)
+	local player = the_player
+	if player == nil or player.health <= 0 then
+		return ent(nil)
+	end
+	if engine.player_in_view(rawget(entity, "_id"), entity.view_ofs) then
+		return player
+	end
+	return ent(nil)
+end
+
+-- From `PF_rint`.
+function rint(value)
+	if value > 0 then
+		return math.floor(value + 0.5)
+	end
+	return math.ceil(value - 0.5)
+end
 
 function traceline(start, finish, nomonsters, ignore)
-	local fraction, endpos, normal, hit = engine.traceline(
+	local fraction, endpos, normal, hit, inopen, inwater = engine.traceline(
 		start,
 		finish,
 		nomonsters,
@@ -224,7 +331,9 @@ function traceline(start, finish, nomonsters, ignore)
 	trace_fraction = fraction
 	trace_endpos = endpos
 	trace_plane_normal = normal
-	trace_ent = hit and entities[hit] or world or no_world
+	trace_ent = hit and entities[hit] or ent(nil)
+	trace_inopen = inopen
+	trace_inwater = inwater
 end
 
 function pointcontents(point)
@@ -240,6 +349,18 @@ function normalize(value)
 		return value
 	end
 	return vector.normalize(value)
+end
+
+-- The yaw of a direction, from `PF_vectoyaw`.
+function vectoyaw(value)
+	if value.x == 0 and value.y == 0 then
+		return 0
+	end
+	local yaw = math.floor(math.deg(math.atan2(value.y, value.x)))
+	if yaw < 0 then
+		yaw += 360
+	end
+	return yaw
 end
 
 -- Pitch and yaw of a direction, from `PF_vectoangles`.
@@ -274,11 +395,6 @@ function findradius(origin, radius)
 		end
 	end
 	return found
-end
-
--- The direction to fire in. Aiming at monsters arrives with them.
-function aim(_entity, _speed)
-	return v_forward
 end
 
 function temp_entity(kind, origin, finish, from)
@@ -358,6 +474,7 @@ end
 -- The player, from the slot the engine gave it.
 function adopt_player(id)
 	local player = wrap(id)
+	the_player = player
 	rawset(player, "classname", "player")
 	rawset(player, "health", 100)
 	rawset(player, "items", 0)
@@ -376,8 +493,14 @@ function dispatch(kind, id, other_id)
 		end
 		return
 	end
+	if kind == "land" then
+		if entity_landed then
+			entity_landed(entity)
+		end
+		return
+	end
 	local callback = rawget(entity, kind)
 	if callback then
-		callback(entity, other_id and entities[other_id] or world)
+		callback(entity, other_id and entities[other_id] or ent(nil))
 	end
 end
