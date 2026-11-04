@@ -254,7 +254,7 @@ function teleport_touch(self, other)
 	setorigin(other, t.origin)
 	other.angles = mangle
 	if other.classname == "player" then
-		engine.set_view(mangle.y, mangle.x)
+		set_view(other, mangle.y, mangle.x)
 		other.velocity = forward * 300
 	end
 	other.flags -= bit32.band(other.flags, FL_ONGROUND)

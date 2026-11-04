@@ -33,12 +33,13 @@ fn setup() -> (Server, Loopback) {
 
 /// A forward command numbered `sequence`.
 fn forward(sequence: u32) -> ClientMessage {
-    ClientMessage::Move(UserCommand {
+    let command = UserCommand {
         sequence,
         seconds: 1.0 / 72.0,
         forward: 400.0,
         ..UserCommand::default()
-    })
+    };
+    ClientMessage::Move(vec![command], 0)
 }
 
 /// The newest snapshot.
@@ -88,12 +89,13 @@ fn old_commands_do_not_run_twice() {
 #[test]
 fn a_command_cannot_claim_a_long_time() {
     let (mut server, mut client) = setup();
-    let cheat = ClientMessage::Move(UserCommand {
+    let command = UserCommand {
         sequence: 1,
         seconds: 1000.0,
         forward: 400.0,
         ..UserCommand::default()
-    });
+    };
+    let cheat = ClientMessage::Move(vec![command], 0);
     client.send(cheat.encode());
     server.tick();
     let state = snapshot(&mut client);

@@ -8,7 +8,10 @@ use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_movement::{MoveVars, player_move};
-use engine_net::{ClientMessage, ServerMessage, Transport};
+use engine_net::{
+    ClientMessage, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport, apply_delta,
+    delta_baseline,
+};
 use engine_physics::CollisionWorld;
 
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
@@ -64,6 +67,13 @@ struct FrameChange {
 
 /// The most commands waiting for the server. Older ones are forgotten.
 const MAX_PENDING: usize = 512;
+
+/// How many of the latest commands go in each move, so a lost packet costs
+/// nothing, as `CL_SendMove` does in QuakeWorld.
+const COMMANDS_PER_MOVE: usize = 3;
+
+/// How many snapshots are kept to apply differences to.
+const SNAPSHOT_HISTORY: usize = 64;
 
 /// The local player's side of a game.
 pub struct Client {
@@ -125,6 +135,12 @@ pub struct Client {
     stats: Vec<i32>,
     /// What the game has to show, waiting to be taken.
     events: Vec<ScreenEvent>,
+    /// Recent snapshots, newest last.
+    history: VecDeque<Snapshot>,
+    /// A level the server wants loaded.
+    level: Option<String>,
+    /// The latest scores.
+    scores: Vec<PlayerScore>,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -166,6 +182,9 @@ impl Client {
             time: 0.0,
             stats: Vec::new(),
             events: Vec::new(),
+            history: VecDeque::with_capacity(SNAPSHOT_HISTORY),
+            level: None,
+            scores: Vec::new(),
             touched: Vec::new(),
         }
     }
@@ -346,7 +365,6 @@ impl Client {
         command.sequence = self.next_sequence;
         command.seconds = seconds;
         self.next_sequence = self.next_sequence.wrapping_add(1);
-        self.transport.send(ClientMessage::Move(command).encode());
         let mut predicted = self.predicted;
         self.run_on(&mut predicted, &command);
         self.predicted = predicted;
@@ -354,6 +372,85 @@ impl Client {
             let _oldest = self.pending.pop_front();
         }
         self.pending.push_back(command);
+        let first = self.pending.len().saturating_sub(COMMANDS_PER_MOVE);
+        let commands: Vec<UserCommand> = self.pending.iter().skip(first).copied().collect();
+        let seen = self.history.back().map_or(0, |snapshot| snapshot.tick);
+        self.transport
+            .send_unreliable(ClientMessage::Move(commands, seen).encode());
+    }
+
+    /// Takes a level the server wants loaded.
+    pub fn take_level(&mut self) -> Option<String> {
+        self.level.take()
+    }
+
+    /// Says the level is loaded.
+    pub fn send_ready(&mut self) {
+        self.transport.send(ClientMessage::Ready.encode());
+    }
+
+    /// Says who this client is.
+    pub fn send_info(&mut self, name: &str, colors: u8) {
+        let info = PlayerInfo {
+            name: name.to_owned(),
+            colors,
+        };
+        self.transport.send(ClientMessage::Info(info).encode());
+    }
+
+    /// The latest scores.
+    #[must_use]
+    pub fn scores(&self) -> &[PlayerScore] {
+        &self.scores
+    }
+
+    /// Whether the server is still there.
+    #[must_use]
+    pub fn is_connected(&self) -> bool {
+        self.transport.is_connected()
+    }
+
+    /// Takes in a snapshot, unless a newer one has already arrived.
+    fn take_snapshot(&mut self, snapshot: Snapshot) {
+        if self
+            .history
+            .back()
+            .is_some_and(|last| last.tick >= snapshot.tick)
+        {
+            return;
+        }
+        if self.history.len() == SNAPSHOT_HISTORY {
+            let _oldest = self.history.pop_front();
+        }
+        self.history.push_back(snapshot.clone());
+        self.pending
+            .retain(|command| command.sequence > snapshot.acknowledged);
+        self.previous_instances = std::mem::replace(&mut self.instances, snapshot.instances);
+        self.boxes = snapshot.boxes;
+        self.note_entities(snapshot.tick, snapshot.entities);
+        self.weapon = (snapshot.weapon_model, snapshot.weapon_frame);
+        self.player_entity = snapshot.player_entity;
+        self.player_effects = snapshot.player_effects;
+        self.previous_punch = self.punch;
+        self.punch = snapshot.punch;
+        self.time = snapshot.time;
+        self.stats = snapshot.stats;
+        let mut predicted = snapshot.player;
+        let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
+        for command in &pending {
+            self.run_on(&mut predicted, command);
+        }
+        self.predicted = predicted;
+    }
+
+    /// Applies a delta, if its baseline is still here.
+    fn take_delta(&mut self, bytes: &[u8]) {
+        let snapshot = delta_baseline(bytes)
+            .and_then(|tick| self.history.iter().find(|old| old.tick == tick))
+            .and_then(|base| apply_delta(base, bytes));
+        if let Some(snapshot) = snapshot {
+            self.take_snapshot(snapshot);
+        }
     }
 
     /// Sends a console command to the server.
@@ -390,27 +487,10 @@ impl Client {
     pub fn receive(&mut self) {
         while let Some(bytes) = self.transport.receive() {
             match ServerMessage::decode(&bytes) {
-                Some(ServerMessage::Snapshot(snapshot)) => {
-                    self.pending
-                        .retain(|command| command.sequence > snapshot.acknowledged);
-                    self.previous_instances =
-                        std::mem::replace(&mut self.instances, snapshot.instances);
-                    self.boxes = snapshot.boxes;
-                    self.note_entities(snapshot.tick, snapshot.entities);
-                    self.weapon = (snapshot.weapon_model, snapshot.weapon_frame);
-                    self.player_entity = snapshot.player_entity;
-                    self.player_effects = snapshot.player_effects;
-                    self.previous_punch = self.punch;
-                    self.punch = snapshot.punch;
-                    self.time = snapshot.time;
-                    self.stats = snapshot.stats;
-                    let mut predicted = snapshot.player;
-                    let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
-                    for command in &pending {
-                        self.run_on(&mut predicted, command);
-                    }
-                    self.predicted = predicted;
-                }
+                Some(ServerMessage::Snapshot(snapshot)) => self.take_snapshot(snapshot),
+                Some(ServerMessage::SnapshotDelta(delta)) => self.take_delta(&delta),
+                Some(ServerMessage::Level(name)) => self.level = Some(name),
+                Some(ServerMessage::Scores(scores)) => self.scores = scores,
                 Some(ServerMessage::LightStyle { index, pattern }) => {
                     self.styles.set(index, &pattern);
                 }

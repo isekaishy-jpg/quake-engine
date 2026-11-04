@@ -408,28 +408,41 @@ impl Simulation {
         }
     }
 
-    /// `PF_checkclient`: whether something at `id`, with eyes `view_height`
-    /// above its origin, is somewhere the player might be seen from.
-    pub fn player_in_view(&mut self, id: EntityId, view_offset: Vec3) -> bool {
+    /// `PF_checkclient`: the player something at `id`, with eyes `view_offset`
+    /// above its origin, might see. Monsters look for one player at a time, and
+    /// move on to the next a few times a second, as `PF_newcheckclient` does.
+    pub fn player_in_view(&mut self, id: EntityId, view_offset: Vec3) -> Option<EntityId> {
         let map = std::sync::Arc::clone(self.map());
         let tree = &map.tree;
+        let ids = self.player_ids();
         if self.time() - self.last_check >= CHECK_SECONDS || self.player_view.is_empty() {
             self.last_check = self.time();
-            let eyes = self.player().origin + Vec3::new(0.0, 0.0, PLAYER_VIEW_HEIGHT);
+            let alive = |sim: &Self, index: usize| {
+                sim.player_of(ids[index % ids.len()])
+                    .is_some_and(|state| !state.dead)
+            };
+            let start = self.check_index + 1;
+            let next = (start..start + ids.len())
+                .find(|&index| alive(self, index))
+                .unwrap_or(start);
+            self.check_index = next % ids.len();
+            let target = self
+                .player_of(ids[self.check_index])
+                .map_or(Vec3::ZERO, |state| state.origin);
+            let eyes = target + Vec3::new(0.0, 0.0, PLAYER_VIEW_HEIGHT);
             let mut visible = vec![false; tree.leaves.len()];
             tree.mark_visible(tree.leaf_at(eyes), &mut visible);
             self.player_view = visible;
         }
-        let Some(entity) = self.entity(id) else {
-            return false;
-        };
+        let entity = self.entity(id)?;
         let leaf = tree.leaf_at(entity.origin + view_offset);
-        leaf != 0
+        let seen = leaf != 0
             && usize::try_from(leaf)
                 .ok()
                 .and_then(|leaf| self.player_view.get(leaf))
                 .copied()
-                .unwrap_or(false)
+                .unwrap_or(false);
+        seen.then(|| ids.get(self.check_index).copied()).flatten()
     }
 
     /// `SV_FlyMove`: moves a falling thing, sliding along what it hits.

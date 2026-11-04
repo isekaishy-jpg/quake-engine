@@ -4,11 +4,22 @@ use std::sync::mpsc::{self, Receiver, Sender};
 
 /// Something that carries messages to the other side.
 pub trait Transport {
-    /// Sends one message. A closed connection loses it.
+    /// Sends one message that has to arrive, in order. A closed connection
+    /// loses it.
     fn send(&mut self, bytes: Vec<u8>);
+
+    /// Sends one message that may be lost, or arrive out of order.
+    fn send_unreliable(&mut self, bytes: Vec<u8>) {
+        self.send(bytes);
+    }
 
     /// The next message, if one has arrived.
     fn receive(&mut self) -> Option<Vec<u8>>;
+
+    /// Whether the other end is still there.
+    fn is_connected(&self) -> bool {
+        true
+    }
 }
 
 /// One end of a connection inside this process.

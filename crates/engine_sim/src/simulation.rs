@@ -1,4 +1,4 @@
-//! Entities, the player and pusher physics.
+//! Entities, players and pusher physics.
 
 use std::rc::Rc;
 use std::sync::Arc;
@@ -158,40 +158,77 @@ pub enum Callback {
     Splash(EntityId),
 }
 
+/// One player, by whatever connects them (proposal 0045).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub(crate) struct Player {
+    /// Their entity.
+    id: EntityId,
+    /// How they're moving.
+    state: PlayerState,
+    /// The last command run.
+    last_command: u32,
+    /// Their last yaw and pitch.
+    view: (f32, f32),
+    /// Whether their jump button is down.
+    jump_down: bool,
+    /// Whether their attack button is down.
+    attack_down: bool,
+    /// The impulse waiting to be handled, or 0.
+    impulse: u8,
+    /// The number of their weapon model, or 0 for none.
+    weapon_model: u16,
+    /// The frame their weapon shows.
+    weapon_frame: u16,
+    /// Whether their weapon is hidden from their own view.
+    weapon_hidden: bool,
+    /// How far their view is knocked, in degrees.
+    punch: Vec3,
+    /// Brush models they hit since last asked.
+    #[serde(skip)]
+    touched: Vec<u32>,
+}
+
+impl Player {
+    /// A player on `id`, at `origin`.
+    fn new(id: EntityId, origin: Vec3) -> Self {
+        Self {
+            id,
+            state: PlayerState {
+                origin,
+                ..PlayerState::default()
+            },
+            last_command: 0,
+            view: (0.0, 0.0),
+            jump_down: false,
+            attack_down: false,
+            impulse: 0,
+            weapon_model: 0,
+            weapon_frame: 0,
+            weapon_hidden: false,
+            punch: Vec3::ZERO,
+            touched: Vec::new(),
+        }
+    }
+}
+
 /// What a saved game keeps of a simulation (proposal 0044).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedSimulation {
     /// Every entity.
     entities: SlotTable<Entity>,
-    /// The player's entity.
-    player_id: EntityId,
-    /// The player.
-    player: PlayerState,
+    /// Every player.
+    players: Vec<Player>,
     /// Game time in seconds.
     time: f64,
-    /// The player's last yaw and pitch.
-    view: (f32, f32),
-    /// Whether the player's jump button is down.
-    jump_down: bool,
-    /// Whether the player's attack button is down.
-    attack_down: bool,
-    /// The impulse waiting to be handled, or 0.
-    impulse: u8,
     /// Model names, where a shape's number is its place here plus one.
     shapes: Vec<String>,
-    /// The number of the player's weapon model, or 0 for none.
-    weapon_model: u16,
-    /// The frame the player's weapon shows.
-    weapon_frame: u16,
-    /// Whether the player's weapon is hidden from their own view.
-    weapon_hidden: bool,
-    /// How far the view is knocked, in degrees.
-    punch: Vec3,
     /// The state of `rand`.
     seed: u32,
-    /// When monsters last took a look at where the player can be seen from.
+    /// When monsters last took a look at where a player can be seen from.
     last_check: f64,
-    /// The leaves the player can be seen from.
+    /// The player monsters are looking for.
+    check_index: usize,
+    /// The leaves that player can be seen from.
     player_view: Vec<bool>,
 }
 
@@ -202,45 +239,23 @@ pub struct Simulation {
     map: Arc<Map>,
     /// Every entity.
     entities: SlotTable<Entity>,
-    /// The player's entity.
-    player_id: EntityId,
-    /// The player.
-    player: PlayerState,
+    /// Every player. The first is the host's, and stays.
+    players: Vec<Player>,
     /// The rules of movement.
     vars: MoveVars,
-    /// The last command run.
-    last_command: u32,
     /// Game time in seconds.
     time: f64,
-    /// Brush models the player hit since last asked.
-    touched: Vec<u32>,
-    /// The player's last yaw and pitch.
-    view: (f32, f32),
     /// The collision scripts' traces use.
     collision: Option<Rc<CollisionWorld>>,
-    /// Whether the player's jump button is down.
-    jump_down: bool,
-    /// Whether the player's attack button is down.
-    attack_down: bool,
-    /// The impulse waiting to be handled, or 0.
-    impulse: u8,
     /// Model names, where a shape's number is its place here plus one.
     shapes: Vec<String>,
-    /// How many of those the server has passed on.
-    shapes_sent: usize,
-    /// The number of the player's weapon model, or 0 for none.
-    weapon_model: u16,
-    /// The frame the player's weapon shows.
-    weapon_frame: u16,
-    /// Whether the player's weapon is hidden from their own view.
-    weapon_hidden: bool,
-    /// How far the view is knocked, in degrees.
-    punch: Vec3,
     /// The state of `rand`.
     pub(crate) seed: u32,
-    /// When monsters last took a look at where the player can be seen from.
+    /// When monsters last took a look at where a player can be seen from.
     pub(crate) last_check: f64,
-    /// The leaves the player can be seen from.
+    /// The player monsters are looking for, as `PF_newcheckclient` picks.
+    pub(crate) check_index: usize,
+    /// The leaves that player can be seen from.
     pub(crate) player_view: Vec<bool>,
 }
 
@@ -255,45 +270,69 @@ fn boxes_touch(low_a: Vec3, high_a: Vec3, low_b: Vec3, high_b: Vec3) -> bool {
 }
 
 impl Simulation {
-    /// A simulation of `map` with the player at `origin`.
+    /// A simulation of `map` with the first player at `origin`.
     #[must_use]
     pub fn new(map: Arc<Map>, origin: Vec3) -> Self {
-        let mut entities = SlotTable::new();
-        let player_id = entities.insert(
+        let mut simulation = Self {
+            map,
+            entities: SlotTable::new(),
+            players: Vec::new(),
+            vars: MoveVars::default(),
+            time: 0.0,
+            collision: None,
+            shapes: Vec::new(),
+            seed: 1,
+            last_check: 0.0,
+            check_index: 0,
+            player_view: Vec::new(),
+        };
+        let _first = simulation.add_player(origin);
+        simulation
+    }
+
+    /// Adds a player at `origin`.
+    pub fn add_player(&mut self, origin: Vec3) -> EntityId {
+        let id = self.entities.insert(
             Entity {
                 mins: PLAYER_MINS,
                 maxs: PLAYER_MAXS,
                 ..Entity::default()
             },
-            0.0,
+            self.time,
         );
-        Self {
-            map,
-            entities,
-            player_id,
-            player: PlayerState {
-                origin,
-                ..PlayerState::default()
-            },
-            vars: MoveVars::default(),
-            last_command: 0,
-            time: 0.0,
-            touched: Vec::new(),
-            view: (0.0, 0.0),
-            collision: None,
-            jump_down: false,
-            attack_down: false,
-            impulse: 0,
-            shapes: Vec::new(),
-            shapes_sent: 0,
-            weapon_model: 0,
-            weapon_frame: 0,
-            weapon_hidden: false,
-            punch: Vec3::ZERO,
-            seed: 1,
-            last_check: 0.0,
-            player_view: Vec::new(),
+        self.players.push(Player::new(id, origin));
+        id
+    }
+
+    /// Takes a player out of the game, which isn't for the first.
+    pub fn remove_player(&mut self, id: EntityId) {
+        if self.players.first().is_some_and(|first| first.id != id) {
+            self.players.retain(|player| player.id != id);
+            let _removed = self.entities.remove(id, self.time);
+            self.check_index = 0;
         }
+    }
+
+    /// The players' entities.
+    #[must_use]
+    pub fn player_ids(&self) -> Vec<EntityId> {
+        self.players.iter().map(|player| player.id).collect()
+    }
+
+    /// Whether `id` is a player.
+    #[must_use]
+    pub fn is_player(&self, id: EntityId) -> bool {
+        self.players.iter().any(|player| player.id == id)
+    }
+
+    /// The player on `id`.
+    fn slot(&self, id: EntityId) -> Option<&Player> {
+        self.players.iter().find(|player| player.id == id)
+    }
+
+    /// The player on `id`.
+    fn slot_mut(&mut self, id: EntityId) -> Option<&mut Player> {
+        self.players.iter_mut().find(|player| player.id == id)
     }
 
     /// What a saved game keeps. Naming every field means a new one can't be
@@ -303,43 +342,24 @@ impl Simulation {
         let Self {
             map: _,
             entities,
-            player_id,
-            player,
+            players,
             vars: _,
-            last_command: _,
             time,
-            touched: _,
-            view,
             collision: _,
-            jump_down,
-            attack_down,
-            impulse,
             shapes,
-            shapes_sent: _,
-            weapon_model,
-            weapon_frame,
-            weapon_hidden,
-            punch,
             seed,
             last_check,
+            check_index,
             player_view,
         } = self;
         SavedSimulation {
             entities: entities.clone(),
-            player_id: *player_id,
-            player: *player,
+            players: players.clone(),
             time: *time,
-            view: *view,
-            jump_down: *jump_down,
-            attack_down: *attack_down,
-            impulse: *impulse,
             shapes: shapes.clone(),
-            weapon_model: *weapon_model,
-            weapon_frame: *weapon_frame,
-            weapon_hidden: *weapon_hidden,
-            punch: *punch,
             seed: *seed,
             last_check: *last_check,
+            check_index: *check_index,
             player_view: player_view.clone(),
         }
     }
@@ -348,28 +368,21 @@ impl Simulation {
     /// start again, and the client hears every model's name.
     #[must_use]
     pub fn restored(map: Arc<Map>, saved: SavedSimulation) -> Self {
+        let mut players = saved.players;
+        for player in &mut players {
+            player.last_command = 0;
+        }
         Self {
             map,
             entities: saved.entities,
-            player_id: saved.player_id,
-            player: saved.player,
+            players,
             vars: MoveVars::default(),
-            last_command: 0,
             time: saved.time,
-            touched: Vec::new(),
-            view: saved.view,
             collision: None,
-            jump_down: saved.jump_down,
-            attack_down: saved.attack_down,
-            impulse: saved.impulse,
             shapes: saved.shapes,
-            shapes_sent: 0,
-            weapon_model: saved.weapon_model,
-            weapon_frame: saved.weapon_frame,
-            weapon_hidden: saved.weapon_hidden,
-            punch: saved.punch,
             seed: saved.seed,
             last_check: saved.last_check,
+            check_index: saved.check_index,
             player_view: saved.player_view,
         }
     }
@@ -396,33 +409,31 @@ impl Simulation {
         }
     }
 
-    /// Model names the client hasn't heard yet, with their numbers.
-    pub fn take_new_shapes(&mut self) -> Vec<(u16, String)> {
-        let first = self.shapes_sent;
-        self.shapes_sent = self.shapes.len();
-        self.shapes[first..]
-            .iter()
-            .zip(first..)
-            .filter_map(|(name, index)| Some((u16::try_from(index + 1).ok()?, name.clone())))
-            .collect()
+    /// Every model name, where a number is a name's place plus one.
+    #[must_use]
+    pub fn shapes(&self) -> &[String] {
+        &self.shapes
     }
 
-    /// The name of the player's weapon model, empty for none.
+    /// The name of a player's weapon model, empty for none.
     #[must_use]
-    pub fn weapon_model_name(&self) -> &str {
-        usize::from(self.weapon_model)
-            .checked_sub(1)
+    pub fn weapon_model_name(&self, id: EntityId) -> &str {
+        self.slot(id)
+            .and_then(|player| usize::from(player.weapon_model).checked_sub(1))
             .and_then(|index| self.shapes.get(index))
             .map_or("", String::as_str)
     }
 
-    /// Sets the player's weapon model by name, where empty is none.
-    pub fn set_weapon_model(&mut self, name: &str) {
-        self.weapon_model = if name.is_empty() {
+    /// Sets a player's weapon model by name, where empty is none.
+    pub fn set_weapon_model(&mut self, id: EntityId, name: &str) {
+        let number = if name.is_empty() {
             0
         } else {
             self.shape_number(name)
         };
+        if let Some(player) = self.slot_mut(id) {
+            player.weapon_model = number;
+        }
     }
 
     /// The map.
@@ -430,59 +441,61 @@ impl Simulation {
         &self.map
     }
 
-    /// How far the view is knocked, in degrees.
+    /// How far a player's view is knocked, in degrees.
     #[must_use]
-    pub fn punch(&self) -> Vec3 {
-        self.punch
+    pub fn punch(&self, id: EntityId) -> Vec3 {
+        self.slot(id).map_or(Vec3::ZERO, |player| player.punch)
     }
 
-    /// Knocks the view.
-    pub fn set_punch(&mut self, punch: Vec3) {
-        self.punch = punch;
-    }
-
-    /// The frame the player's weapon shows.
-    #[must_use]
-    pub fn weapon_frame(&self) -> u16 {
-        self.weapon_frame
-    }
-
-    /// Sets the frame the player's weapon shows.
-    pub fn set_weapon_frame(&mut self, frame: u16) {
-        self.weapon_frame = frame;
-    }
-
-    /// The number of the player's weapon model.
-    #[must_use]
-    pub fn weapon_model(&self) -> u16 {
-        self.weapon_model
-    }
-
-    /// The number of the model the player sees, which is 0 for none.
-    #[must_use]
-    pub fn shown_weapon_model(&self) -> u16 {
-        if self.weapon_hidden {
-            0
-        } else {
-            self.weapon_model
+    /// Knocks a player's view.
+    pub fn set_punch(&mut self, id: EntityId, punch: Vec3) {
+        if let Some(player) = self.slot_mut(id) {
+            player.punch = punch;
         }
     }
 
-    /// Hides the player's weapon from their own view, or shows it again.
-    pub fn set_weapon_hidden(&mut self, hidden: bool) {
-        self.weapon_hidden = hidden;
+    /// The frame a player's weapon shows.
+    #[must_use]
+    pub fn weapon_frame(&self, id: EntityId) -> u16 {
+        self.slot(id).map_or(0, |player| player.weapon_frame)
     }
 
-    /// Marks the player as dead or alive.
-    pub fn set_dead(&mut self, dead: bool) {
-        self.player.dead = dead;
+    /// Sets the frame a player's weapon shows.
+    pub fn set_weapon_frame(&mut self, id: EntityId, frame: u16) {
+        if let Some(player) = self.slot_mut(id) {
+            player.weapon_frame = frame;
+        }
     }
 
-    /// Holds the player still, or lets them go.
-    pub fn set_frozen(&mut self, frozen: bool) {
-        self.player.frozen = frozen;
-        if frozen {
-            self.player.velocity = Vec3::ZERO;
+    /// The number of the model a player sees, which is 0 for none.
+    #[must_use]
+    pub fn shown_weapon_model(&self, id: EntityId) -> u16 {
+        self.slot(id)
+            .filter(|player| !player.weapon_hidden)
+            .map_or(0, |player| player.weapon_model)
+    }
+
+    /// Hides a player's weapon from their own view, or shows it again.
+    pub fn set_weapon_hidden(&mut self, id: EntityId, hidden: bool) {
+        if let Some(player) = self.slot_mut(id) {
+            player.weapon_hidden = hidden;
+        }
+    }
+
+    /// Marks a player as dead or alive.
+    pub fn set_dead(&mut self, id: EntityId, dead: bool) {
+        if let Some(player) = self.slot_mut(id) {
+            player.state.dead = dead;
+        }
+    }
+
+    /// Holds a player still, or lets them go.
+    pub fn set_frozen(&mut self, id: EntityId, frozen: bool) {
+        if let Some(player) = self.slot_mut(id) {
+            player.state.frozen = frozen;
+            if frozen {
+                player.state.velocity = Vec3::ZERO;
+            }
         }
     }
 
@@ -507,42 +520,55 @@ impl Simulation {
                 frame: entity.frame,
                 skin: entity.skin,
                 effects: entity.effects,
-                origin: entity.origin,
-                angles: entity.angles,
+                origin: self.origin(id).unwrap_or(entity.origin),
+                angles: self.shown_angles(id, entity),
             })
             .collect()
     }
 
-    /// Whether the player's jump button is down.
-    #[must_use]
-    pub fn jump_down(&self) -> bool {
-        self.jump_down
+    /// How an entity faces. A player's body turns with their yaw, and leans a
+    /// third of their pitch, from `SV_ClientThink`.
+    fn shown_angles(&self, id: EntityId, entity: &Entity) -> Vec3 {
+        self.slot(id).map_or(entity.angles, |player| {
+            let (yaw, pitch) = player.view;
+            Vec3::new(-pitch / 3.0, yaw, 0.0)
+        })
     }
 
-    /// Notes the player's buttons, for scripts to see before the move runs.
-    pub fn set_buttons(&mut self, command: &UserCommand) {
-        self.jump_down = command.jump;
-        self.attack_down = command.attack;
-        if command.impulse != 0 {
-            self.impulse = command.impulse;
+    /// Whether a player's jump button is down.
+    #[must_use]
+    pub fn jump_down(&self, id: EntityId) -> bool {
+        self.slot(id).is_some_and(|player| player.jump_down)
+    }
+
+    /// Notes a player's buttons, for scripts to see before the move runs.
+    pub fn set_buttons(&mut self, id: EntityId, command: &UserCommand) {
+        if let Some(player) = self.slot_mut(id) {
+            player.jump_down = command.jump;
+            player.attack_down = command.attack;
+            if command.impulse != 0 {
+                player.impulse = command.impulse;
+            }
         }
     }
 
-    /// Whether the player's attack button is down.
+    /// Whether a player's attack button is down.
     #[must_use]
-    pub fn attack_down(&self) -> bool {
-        self.attack_down
+    pub fn attack_down(&self, id: EntityId) -> bool {
+        self.slot(id).is_some_and(|player| player.attack_down)
     }
 
     /// The impulse waiting to be handled, or 0.
     #[must_use]
-    pub fn impulse(&self) -> u8 {
-        self.impulse
+    pub fn impulse(&self, id: EntityId) -> u8 {
+        self.slot(id).map_or(0, |player| player.impulse)
     }
 
     /// Sets the impulse waiting to be handled.
-    pub fn set_impulse(&mut self, impulse: u8) {
-        self.impulse = impulse;
+    pub fn set_impulse(&mut self, id: EntityId, impulse: u8) {
+        if let Some(player) = self.slot_mut(id) {
+            player.impulse = impulse;
+        }
     }
 
     /// Sets the collision scripts' traces use.
@@ -555,28 +581,34 @@ impl Simulation {
         self.collision.as_ref()
     }
 
-    /// The player's last yaw and pitch.
+    /// A player's last yaw and pitch.
     #[must_use]
-    pub fn view(&self) -> (f32, f32) {
-        self.view
+    pub fn view(&self, id: EntityId) -> (f32, f32) {
+        self.slot(id).map_or((0.0, 0.0), |player| player.view)
     }
 
-    /// The player.
+    /// The first player.
     #[must_use]
     pub fn player(&self) -> &PlayerState {
-        &self.player
+        &self.players[0].state
     }
 
-    /// The player's entity.
+    /// The player on `id`.
+    #[must_use]
+    pub fn player_of(&self, id: EntityId) -> Option<&PlayerState> {
+        self.slot(id).map(|player| &player.state)
+    }
+
+    /// The first player's entity.
     #[must_use]
     pub fn player_id(&self) -> EntityId {
-        self.player_id
+        self.players[0].id
     }
 
-    /// The last command run.
+    /// The last command a player has run.
     #[must_use]
-    pub fn last_command(&self) -> u32 {
-        self.last_command
+    pub fn last_command(&self, id: EntityId) -> u32 {
+        self.slot(id).map_or(0, |player| player.last_command)
     }
 
     /// Game time in seconds.
@@ -590,9 +622,9 @@ impl Simulation {
         self.entities.insert(Entity::default(), self.time)
     }
 
-    /// Removes an entity. The player stays.
+    /// Removes an entity. Players stay.
     pub fn remove(&mut self, id: EntityId) {
-        if id != self.player_id {
+        if !self.is_player(id) {
             let _removed = self.entities.remove(id, self.time);
         }
     }
@@ -614,21 +646,21 @@ impl Simulation {
         self.entities.ids()
     }
 
-    /// An entity's position, which for the player is the player's.
+    /// An entity's position, which for a player is the player's.
     #[must_use]
     pub fn origin(&self, id: EntityId) -> Option<Vec3> {
-        if id == self.player_id {
-            return Some(self.player.origin);
+        if let Some(player) = self.slot(id) {
+            return Some(player.state.origin);
         }
         self.entities.get(id).map(|entity| entity.origin)
     }
 
-    /// Moves an entity. Moving the player takes it off the ground.
+    /// Moves an entity. Moving a player takes them off the ground.
     pub fn set_origin(&mut self, id: EntityId, origin: Vec3) {
-        if id == self.player_id {
-            self.player.origin = origin;
-            self.player.on_ground = false;
-            self.player.ground_model = None;
+        if let Some(player) = self.slot_mut(id) {
+            player.state.origin = origin;
+            player.state.on_ground = false;
+            player.state.ground_model = None;
         } else if let Some(entity) = self.entities.get_mut(id) {
             entity.origin = origin;
         }
@@ -637,16 +669,16 @@ impl Simulation {
     /// An entity's velocity.
     #[must_use]
     pub fn velocity(&self, id: EntityId) -> Option<Vec3> {
-        if id == self.player_id {
-            return Some(self.player.velocity);
+        if let Some(player) = self.slot(id) {
+            return Some(player.state.velocity);
         }
         self.entities.get(id).map(|entity| entity.velocity)
     }
 
     /// Sets an entity's velocity.
     pub fn set_velocity(&mut self, id: EntityId, velocity: Vec3) {
-        if id == self.player_id {
-            self.player.velocity = velocity;
+        if let Some(player) = self.slot_mut(id) {
+            player.state.velocity = velocity;
         } else if let Some(entity) = self.entities.get_mut(id) {
             entity.velocity = velocity;
         }
@@ -681,39 +713,48 @@ impl Simulation {
             .collect()
     }
 
-    /// Runs `command`, unless it's older than one already run.
-    pub fn run_command(&mut self, command: &UserCommand, world: &CollisionWorld) {
-        if command.sequence <= self.last_command {
+    /// Runs `command` for a player, unless it's older than one already run.
+    pub fn run_command(&mut self, id: EntityId, command: &UserCommand, world: &CollisionWorld) {
+        if command.sequence <= self.last_command(id) {
             return;
         }
-        self.last_command = command.sequence;
-        self.view = (command.yaw, command.pitch);
+        let instances = self.instances();
+        let boxes = self.solid_boxes(id);
+        let vars = self.vars;
+        let Some(player) = self.slot_mut(id) else {
+            return;
+        };
+        player.last_command = command.sequence;
+        player.view = (command.yaw, command.pitch);
         let mut command = *command;
         command.seconds = command.seconds.clamp(0.0, MAX_COMMAND_SECONDS);
         // `DropPunchAngle`.
-        let knock = self.punch.length();
-        self.punch = self.punch.normalized() * (knock - PUNCH_RECOVERY * command.seconds).max(0.0);
-        let instances = self.instances();
-        let boxes = self.solid_boxes();
+        let knock = player.punch.length();
+        player.punch =
+            player.punch.normalized() * (knock - PUNCH_RECOVERY * command.seconds).max(0.0);
         player_move(
-            &mut self.player,
+            &mut player.state,
             &command,
-            &self.vars,
+            &vars,
             world.with(&instances).with_boxes(&boxes),
-            &mut self.touched,
+            &mut player.touched,
         );
     }
 
     /// Turns noclip on or off, and returns the new setting.
-    pub fn toggle_noclip(&mut self) -> bool {
-        self.player.noclip = !self.player.noclip;
-        self.player.noclip
+    pub fn toggle_noclip(&mut self, id: EntityId) -> bool {
+        self.slot_mut(id).is_some_and(|player| {
+            player.state.noclip = !player.state.noclip;
+            player.state.noclip
+        })
     }
 
-    /// Moves the player to `origin`, at rest.
-    pub fn teleport(&mut self, origin: Vec3) {
-        self.set_origin(self.player_id, origin);
-        self.player.velocity = Vec3::ZERO;
+    /// Moves a player to `origin`, at rest.
+    pub fn teleport(&mut self, id: EntityId, origin: Vec3) {
+        self.set_origin(id, origin);
+        if let Some(player) = self.slot_mut(id) {
+            player.state.velocity = Vec3::ZERO;
+        }
     }
 
     /// Advances `id` by `seconds`, and returns what its script has to handle,
@@ -723,7 +764,7 @@ impl Simulation {
         let Some(entity) = self.entities.get(id).copied() else {
             return callbacks;
         };
-        if id == self.player_id {
+        if self.is_player(id) {
             self.run_think(id, &entity, seconds, &mut callbacks);
             return callbacks;
         }
@@ -839,14 +880,19 @@ impl Simulation {
         let Some(model) = moved.model.filter(|_| moved.solid == Solid::Bsp) else {
             return;
         };
-        let before = self.player;
-        let blocker = if self.push_player(id, model, step, world) {
-            self.push_entities(id, model, step, world)
-        } else {
-            Err(self.player_id)
+        let before: Vec<PlayerState> = self.players.iter().map(|player| player.state).collect();
+        let stuck = self
+            .player_ids()
+            .into_iter()
+            .find(|&player| !self.push_player(player, id, model, step, world));
+        let blocker = match stuck {
+            Some(player) => Err(player),
+            None => self.push_entities(id, model, step, world),
         };
         if let Err(blocker) = blocker {
-            self.player = before;
+            for (player, state) in self.players.iter_mut().zip(before) {
+                player.state = state;
+            }
             if let Some(pusher) = self.entities.get_mut(id) {
                 pusher.origin = start;
                 pusher.local_time -= seconds;
@@ -855,32 +901,36 @@ impl Simulation {
         }
     }
 
-    /// Moves the player if a pusher carries or hits them, and returns false if
+    /// Moves a player if a pusher carries or hits them, and returns false if
     /// they're stuck.
     fn push_player(
         &mut self,
+        player: EntityId,
         id: EntityId,
         model: u32,
         step: Vec3,
         world: &CollisionWorld,
     ) -> bool {
-        if self.player.noclip {
-            return true;
-        }
         let Some(origin) = self.entities.get(id).map(|pusher| pusher.origin) else {
             return true;
         };
         let instances = self.instances();
+        let Some(state) = self.slot_mut(player).map(|player| &mut player.state) else {
+            return true;
+        };
+        if state.noclip {
+            return true;
+        }
         let collision = world.with(&instances);
-        let riding = self.player.on_ground && self.player.ground_model == Some(model);
-        if !riding && !collision.in_model(model, origin, self.player.origin) {
+        let riding = state.on_ground && state.ground_model == Some(model);
+        if !riding && !collision.in_model(model, origin, state.origin) {
             return true;
         }
         let pushed = collision
             .ignoring(model)
-            .trace(self.player.origin, self.player.origin + step);
-        self.player.origin = pushed.end;
-        !collision.in_solid(self.player.origin)
+            .trace(state.origin, state.origin + step);
+        state.origin = pushed.end;
+        !collision.in_solid(state.origin)
     }
 
     /// Whether `entity` is in something, from `SV_TestEntityPosition`.
@@ -913,7 +963,7 @@ impl Simulation {
                 entity.move_type,
                 MoveType::Push | MoveType::None | MoveType::Noclip | MoveType::Walk
             );
-            if other == id || other == self.player_id || still {
+            if other == id || self.is_player(other) || still {
                 continue;
             }
             let riding = entity.flags & FLAG_ON_GROUND != 0 && entity.ground == Some(id);
@@ -1000,29 +1050,35 @@ impl Simulation {
         self.time += seconds;
     }
 
-    /// Touches from the player since last asked: brush models hit, then
-    /// triggers overlapping its box.
+    /// Touches from players since last asked: brush models hit, then triggers
+    /// overlapping their boxes.
     pub fn take_touches(&mut self) -> Vec<Callback> {
-        let player = self.player_id;
         let mut touches = Vec::new();
-        let mut touched = std::mem::take(&mut self.touched);
-        touched.sort_unstable();
-        touched.dedup();
-        for model in touched {
-            for (id, entity) in self.entities.iter() {
-                if entity.model == Some(model) && entity.solid == Solid::Bsp {
-                    touches.push(Callback::Touch {
-                        id,
-                        other: Some(player),
-                    });
+        for index in 0..self.players.len() {
+            let player = self.players[index].id;
+            let mut touched = std::mem::take(&mut self.players[index].touched);
+            touched.sort_unstable();
+            touched.dedup();
+            for model in touched {
+                for (id, entity) in self.entities.iter() {
+                    if entity.model == Some(model) && entity.solid == Solid::Bsp {
+                        touches.push(Callback::Touch {
+                            id,
+                            other: Some(player),
+                        });
+                    }
                 }
             }
         }
         self.monster_touches(&mut touches);
-        if !self.player.noclip && !self.player.dead && !self.player.frozen {
+        for player in &self.players {
+            let state = player.state;
+            if state.noclip || state.dead || state.frozen {
+                continue;
+            }
             let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
-            let low = self.player.origin + PLAYER_MINS - margin;
-            let high = self.player.origin + PLAYER_MAXS + margin;
+            let low = state.origin + PLAYER_MINS - margin;
+            let high = state.origin + PLAYER_MAXS + margin;
             for (id, entity) in self.entities.iter() {
                 // `SV_LinkEdict` makes items extra wide.
                 let wide = if entity.flags & FLAG_ITEM != 0 {
@@ -1040,7 +1096,7 @@ impl Simulation {
                 if touching {
                     touches.push(Callback::Touch {
                         id,
-                        other: Some(player),
+                        other: Some(player.id),
                     });
                 }
             }

@@ -28,7 +28,11 @@ fn last(simulation: &Rc<RefCell<Simulation>>) -> EntityId {
 
 /// What the scripts printed.
 fn prints(game: &Game) -> Vec<String> {
-    game.take_outbox().prints
+    game.take_outbox()
+        .prints
+        .into_iter()
+        .map(|(_target, text)| text)
+        .collect()
 }
 
 #[test]
@@ -252,14 +256,6 @@ fn a_sound_comes_from_the_middle_of_its_entity() {
     assert_eq!(sound.name, "misc/talk.wav");
     assert!((sound.volume - 0.5).abs() < f32::EPSILON);
     assert!(!sound.own);
-}
-
-#[test]
-fn a_sound_from_the_player_is_marked_as_its_own() {
-    let (game, _simulation) = game("");
-    game.exec(r#"sound(find_all("classname", "player")[1], 4, "a.wav", 1, 1)"#)
-        .expect("runs");
-    assert!(game.take_outbox().sounds[0].own);
 }
 
 #[test]

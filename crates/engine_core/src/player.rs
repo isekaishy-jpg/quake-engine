@@ -69,4 +69,7 @@ pub struct UserCommand {
     pub attack: bool,
     /// A number sent to the game, such as a weapon to change to, or 0.
     pub impulse: u8,
+    /// The game time of what the player was looking at, for hitting what they
+    /// saw (proposal 0048).
+    pub view_time: f64,
 }

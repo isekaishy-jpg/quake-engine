@@ -890,7 +890,8 @@ impl Side {
             sequence: self.sequence,
             ..command
         };
-        self.client.send(ClientMessage::Move(command).encode());
+        self.client
+            .send(ClientMessage::Move(vec![command], 0).encode());
         self.server.tick();
         while let Some(bytes) = self.client.receive() {
             match ServerMessage::decode(&bytes).expect("valid") {

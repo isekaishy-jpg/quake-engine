@@ -328,16 +328,14 @@ function checkbottom(entity)
 	return engine.checkbottom(rawget(entity, "_id"))
 end
 
--- The player, if `entity` could be looking at them, from `PF_checkclient`.
+-- A player `entity` could be looking at, from `PF_checkclient`.
 function checkclient(entity)
-	local player = the_player
+	local id = engine.player_in_view(rawget(entity, "_id"), entity.view_ofs)
+	local player = id and entities[id]
 	if player == nil or player.health <= 0 then
 		return ent(nil)
 	end
-	if engine.player_in_view(rawget(entity, "_id"), entity.view_ofs) then
-		return player
-	end
-	return ent(nil)
+	return player
 end
 
 -- From `PF_rint`.
@@ -432,20 +430,25 @@ function particle(origin, direction, color, count)
 	engine.particle(origin, direction, color, count)
 end
 
-function sprint(_entity, message)
-	engine.print(message)
+function sprint(entity, message)
+	engine.print(message, rawget(entity, "_id"))
 end
 
 function bprint(message)
 	engine.print(message)
 end
 
-function centerprint(_entity, message)
-	engine.centerprint(message)
+function centerprint(entity, message)
+	engine.centerprint(message, rawget(entity, "_id"))
 end
 
-function stuffcmd(_entity, text)
-	engine.stuffcmd(text)
+function stuffcmd(entity, text)
+	engine.stuffcmd(text, rawget(entity, "_id"))
+end
+
+-- Turns a player to look along `yaw` and `pitch`.
+function set_view(entity, yaw, pitch)
+	engine.set_view(yaw, pitch, rawget(entity, "_id"))
 end
 
 function localcmd(text)
@@ -529,11 +532,22 @@ end
 -- The player, from the slot the engine gave it.
 function adopt_player(id)
 	local player = wrap(id)
-	the_player = player
+	if the_player == nil then
+		the_player = player
+	end
 	rawset(player, "classname", "player")
 	rawset(player, "health", 100)
 	rawset(player, "items", 0)
 	return player
+end
+
+-- Forgets a player who has left.
+function forget_player(id)
+	local player = entities[id]
+	if player then
+		entities[id] = nil
+		rawset(player, "_removed", true)
+	end
 end
 
 -- Runs a callback from the engine.

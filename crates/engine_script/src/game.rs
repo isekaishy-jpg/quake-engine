@@ -1,6 +1,7 @@
 //! Running scripts against a simulation.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::fmt;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
@@ -72,14 +73,14 @@ impl From<mlua::Error> for ScriptError {
 /// What scripts asked for, for the server to pass on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Outbox {
-    /// Text for the player.
-    pub prints: Vec<String>,
+    /// Text for one player, or everyone.
+    pub prints: Vec<(Option<EntityId>, String)>,
     /// A level to change to.
     pub level: Option<String>,
     /// Light styles that changed.
     pub light_styles: Vec<(u8, String)>,
-    /// A yaw and pitch to turn the player to.
-    pub view: Option<(f32, f32)>,
+    /// A yaw and pitch to turn one player, or everyone, to.
+    pub views: Vec<(Option<EntityId>, f32, f32)>,
     /// Sounds starting.
     pub sounds: Vec<SoundStart>,
     /// Sounds looping at fixed places.
@@ -88,21 +89,21 @@ pub struct Outbox {
     pub music: Option<u8>,
     /// Short-lived effects.
     pub effects: Vec<Effect>,
-    /// What the player carries to the next level.
-    pub parms: Option<Vec<f64>>,
+    /// What each player carries to the next level.
+    pub parms: Vec<(EntityId, Vec<f64>)>,
     /// Whether the level should start again.
     pub restart: bool,
     /// The game's flags to carry to the next level.
     pub level_flags: Option<f64>,
-    /// Text for the middle of the screen.
-    pub center_prints: Vec<String>,
-    /// Commands for the client's console.
-    pub stuffed: Vec<String>,
+    /// Text for the middle of one player's screen, or everyone's.
+    pub center_prints: Vec<(Option<EntityId>, String)>,
+    /// Commands for one client's console, or everyone's.
+    pub stuffed: Vec<(Option<EntityId>, String)>,
     /// Commands for the host's console.
     pub local_commands: Vec<String>,
-    /// Damage to the player, as what armour took, what they took, and where
+    /// Damage to a player, as who, what armour took, what they took, and where
     /// it came from.
-    pub damage: Vec<(u8, u8, Vec3)>,
+    pub damage: Vec<(EntityId, u8, u8, Vec3)>,
     /// An end of level screen, by the game's number.
     pub intermission: Option<u8>,
     /// The level's title.
@@ -158,10 +159,9 @@ fn check_sound(volume: f32, attenuation: f32) -> mlua::Result<()> {
 
 /// Reads a field only the player has, which is nil on anything else.
 fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
-    if id != sim.player_id() {
+    let Some(player) = sim.player_of(id) else {
         return Value::Nil;
-    }
-    let player = sim.player();
+    };
     match field {
         "waterlevel" => Value::Number(f64::from(player.water_level)),
         "watertype" => Value::Number(match player.liquid {
@@ -171,13 +171,13 @@ fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
             Liquid::Lava => -5.0,
         }),
         "onground" => Value::Boolean(player.on_ground),
-        "button2" => Value::Boolean(sim.jump_down()),
-        "button0" => Value::Boolean(sim.attack_down()),
-        "impulse" => Value::Number(f64::from(sim.impulse())),
+        "button2" => Value::Boolean(sim.jump_down(id)),
+        "button0" => Value::Boolean(sim.attack_down(id)),
+        "impulse" => Value::Number(f64::from(sim.impulse(id))),
         "dead" => Value::Boolean(player.dead),
         "frozen" => Value::Boolean(player.frozen),
         "v_angle" => {
-            let (yaw, pitch) = sim.view();
+            let (yaw, pitch) = sim.view(id);
             Value::Vector(from_vec3(Vec3::new(pitch, yaw, 0.0)))
         }
         "waterjump" => Value::Boolean(player.water_jump_time > 0.0),
@@ -220,20 +220,20 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "frame" => Value::Number(f64::from(entity.frame)),
         "skin" => Value::Number(f64::from(entity.skin)),
         "effects" => Value::Number(f64::from(entity.effects)),
-        "punchangle" => vector(sim.punch()),
+        "punchangle" => vector(sim.punch(id)),
         "ideal_yaw" => Value::Number(f64::from(entity.ideal_yaw)),
         "yaw_speed" => Value::Number(f64::from(entity.yaw_speed)),
-        "weaponframe" => Value::Number(f64::from(sim.weapon_frame())),
-        "weaponmodel" => Value::String(lua.create_string(sim.weapon_model_name())?),
+        "weaponframe" => Value::Number(f64::from(sim.weapon_frame(id))),
+        "weaponmodel" => Value::String(lua.create_string(sim.weapon_model_name(id))?),
         "view" => {
-            let (yaw, pitch) = sim.view();
+            let (yaw, pitch) = sim.view(id);
             vector(Vec3::new(pitch, yaw, 0.0))
         }
-        "v_angle" if id != sim.player_id() => vector(entity.view_angle),
+        "v_angle" if !sim.is_player(id) => vector(entity.view_angle),
         "waterlevel" | "watertype" | "onground" | "button0" | "button2" | "impulse" | "dead"
         | "v_angle" | "waterjump" | "noclip" | "frozen" => read_player_field(sim, id, field),
         "flags" => {
-            let on_ground = id == sim.player_id() && sim.player().on_ground;
+            let on_ground = sim.player_of(id).is_some_and(|player| player.on_ground);
             let ground = if on_ground { FLAG_ON_GROUND } else { 0 };
             Value::Number(f64::from(entity.flags | ground))
         }
@@ -287,20 +287,20 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
     match field {
         "origin" => sim.set_origin(id, as_vec3(value)?),
         "velocity" => sim.set_velocity(id, as_vec3(value)?),
-        "punchangle" => sim.set_punch(as_vec3(value)?),
+        "punchangle" => sim.set_punch(id, as_vec3(value)?),
         "weaponmodel" => {
             let name = if let Value::String(name) = value {
                 name.to_string_lossy()
             } else {
                 String::new()
             };
-            sim.set_weapon_model(&name);
+            sim.set_weapon_model(id, &name);
         }
-        "weaponframe" => sim.set_weapon_frame(small_number(value)?),
-        "impulse" => sim.set_impulse(u8::try_from(small_number(value)?).unwrap_or(0)),
-        "dead" => sim.set_dead(matches!(value, Value::Boolean(true))),
-        "frozen" => sim.set_frozen(matches!(value, Value::Boolean(true))),
-        "weaponhidden" => sim.set_weapon_hidden(matches!(value, Value::Boolean(true))),
+        "weaponframe" => sim.set_weapon_frame(id, small_number(value)?),
+        "impulse" => sim.set_impulse(id, u8::try_from(small_number(value)?).unwrap_or(0)),
+        "dead" => sim.set_dead(id, matches!(value, Value::Boolean(true))),
+        "frozen" => sim.set_frozen(id, matches!(value, Value::Boolean(true))),
+        "weaponhidden" => sim.set_weapon_hidden(id, matches!(value, Value::Boolean(true))),
         _ => {
             let number = as_number(value);
             let Some(entity) = sim.entity_mut(id) else {
@@ -352,8 +352,8 @@ pub struct Game {
     call_started: Rc<Cell<Instant>>,
     /// The prelude's `dispatch`.
     dispatch: Function,
-    /// The player's table.
-    player: Table,
+    /// Each player's table.
+    players: RefCell<HashMap<EntityId, Table>>,
 }
 
 impl Game {
@@ -395,13 +395,13 @@ impl Game {
         let dispatch: Function = lua.globals().get("dispatch")?;
         let adopt: Function = lua.globals().get("adopt_player")?;
         let player = simulation.borrow().player_id();
-        let player: Table = adopt.call(id_to(player))?;
+        let table: Table = adopt.call(id_to(player))?;
         Ok(Self {
             lua,
             outbox,
             call_started,
             dispatch,
-            player,
+            players: RefCell::new(HashMap::from([(player, table)])),
         })
     }
 
@@ -476,8 +476,8 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "print",
-            lua.create_function(move |_, text: String| {
-                out.borrow_mut().prints.push(text);
+            lua.create_function(move |_, (text, target): (String, Option<f64>)| {
+                out.borrow_mut().prints.push((target.map(id_from), text));
                 Ok(())
             })?,
         )?;
@@ -502,8 +502,10 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "set_view",
-            lua.create_function(move |_, (yaw, pitch): (f32, f32)| {
-                out.borrow_mut().view = Some((yaw, pitch));
+            lua.create_function(move |_, (yaw, pitch, target): (f32, f32, Option<f64>)| {
+                out.borrow_mut()
+                    .views
+                    .push((target.map(id_from), yaw, pitch));
                 Ok(())
             })?,
         )?;
@@ -628,7 +630,8 @@ impl Game {
             lua.create_function(move |_, (id, view_offset): (f64, Vector)| {
                 Ok(sim
                     .borrow_mut()
-                    .player_in_view(id_from(id), to_vec3(view_offset)))
+                    .player_in_view(id_from(id), to_vec3(view_offset))
+                    .map(id_to))
             })?,
         )
     }
@@ -678,8 +681,8 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "set_parms",
-            lua.create_function(move |_, parms: Vec<f64>| {
-                out.borrow_mut().parms = Some(parms);
+            lua.create_function(move |_, (parms, target): (Vec<f64>, f64)| {
+                out.borrow_mut().parms.push((id_from(target), parms));
                 Ok(())
             })?,
         )?;
@@ -703,16 +706,18 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "centerprint",
-            lua.create_function(move |_, text: String| {
-                out.borrow_mut().center_prints.push(text);
+            lua.create_function(move |_, (text, target): (String, Option<f64>)| {
+                out.borrow_mut()
+                    .center_prints
+                    .push((target.map(id_from), text));
                 Ok(())
             })?,
         )?;
         let out = Rc::clone(outbox);
         engine.set(
             "stuffcmd",
-            lua.create_function(move |_, text: String| {
-                out.borrow_mut().stuffed.push(text);
+            lua.create_function(move |_, (text, target): (String, Option<f64>)| {
+                out.borrow_mut().stuffed.push((target.map(id_from), text));
                 Ok(())
             })?,
         )?;
@@ -727,16 +732,20 @@ impl Game {
         let out = Rc::clone(outbox);
         engine.set(
             "damage",
-            lua.create_function(move |_, (armor, blood, from): (f64, f64, Vector)| {
-                #[expect(
-                    clippy::cast_possible_truncation,
-                    clippy::cast_sign_loss,
-                    reason = "a cast saturates damage too large for a byte"
-                )]
-                let (armor, blood) = (armor as u8, blood as u8);
-                out.borrow_mut().damage.push((armor, blood, to_vec3(from)));
-                Ok(())
-            })?,
+            lua.create_function(
+                move |_, (target, armor, blood, from): (f64, f64, f64, Vector)| {
+                    #[expect(
+                        clippy::cast_possible_truncation,
+                        clippy::cast_sign_loss,
+                        reason = "a cast saturates damage too large for a byte"
+                    )]
+                    let (armor, blood) = (armor as u8, blood as u8);
+                    out.borrow_mut()
+                        .damage
+                        .push((id_from(target), armor, blood, to_vec3(from)));
+                    Ok(())
+                },
+            )?,
         )?;
         let out = Rc::clone(outbox);
         engine.set(
@@ -785,7 +794,7 @@ impl Game {
                         origin: sim.origin(id).unwrap_or(entity.origin) + middle,
                         volume,
                         attenuation,
-                        own: id == sim.player_id(),
+                        own: false,
                         name,
                     });
                     Ok(())
@@ -824,7 +833,7 @@ impl Game {
             self.outbox
                 .borrow_mut()
                 .prints
-                .push(format!("script error: {error}"));
+                .push((None, format!("script error: {error}")));
         }
     }
 
@@ -833,7 +842,7 @@ impl Game {
     pub fn start_level(&self, name: &str, settings: &[(String, f64)], flags: f64) {
         self.call_started.set(Instant::now());
         let function: mlua::Result<Option<Function>> = self.lua.globals().get("start_level");
-        let settings: std::collections::HashMap<&str, f64> = settings
+        let settings: HashMap<&str, f64> = settings
             .iter()
             .map(|(name, value)| (name.as_str(), *value))
             .collect();
@@ -883,55 +892,91 @@ impl Game {
         );
     }
 
-    /// Runs `name` on the player, if the game has one.
-    fn run_on_player(&self, name: &str) {
+    /// The table of player `id`.
+    fn player(&self, id: EntityId) -> Option<Table> {
+        self.players.borrow().get(&id).cloned()
+    }
+
+    /// Runs `name` on a player, if the game has one.
+    fn run_on_player(&self, name: &str, id: EntityId) {
         self.call_started.set(Instant::now());
         let function: mlua::Result<Option<Function>> = self.lua.globals().get(name);
-        match function {
-            Ok(Some(function)) => self.report(function.call::<()>(self.player.clone())),
-            Ok(None) => {}
+        match (function, self.player(id)) {
+            (Ok(Some(function)), Some(player)) => self.report(function.call::<()>(player)),
+            (Err(error), _) => self.report(Err(error)),
+            _ => {}
+        }
+    }
+
+    /// Gives the game a table for player `id`.
+    pub fn add_player(&self, id: EntityId) {
+        let adopt: mlua::Result<Function> = self.lua.globals().get("adopt_player");
+        let table = adopt.and_then(|adopt| adopt.call::<Table>(id_to(id)));
+        match table {
+            Ok(table) => {
+                self.players.borrow_mut().insert(id, table);
+            }
             Err(error) => self.report(Err(error)),
         }
     }
 
-    /// Runs the game's `ClientConnect`, to ready the player for level `name`
+    /// Runs the game's `ClientConnect`, to ready player `id` for level `name`
     /// with what they carried from the last one, if anything.
-    pub fn connect_player(&self, name: &str, parms: Option<&[f64]>) {
+    pub fn connect_player(&self, id: EntityId, name: &str, parms: Option<&[f64]>, netname: &str) {
         self.call_started.set(Instant::now());
         let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientConnect");
-        match function {
-            Ok(Some(function)) => {
+        match (function, self.player(id)) {
+            (Ok(Some(function)), Some(player)) => {
                 let parms = parms.map(<[f64]>::to_vec);
-                self.report(function.call::<()>((self.player.clone(), name, parms)));
+                self.report(function.call::<()>((player, name, parms, netname)));
             }
-            Ok(None) => {}
-            Err(error) => self.report(Err(error)),
+            (Err(error), _) => self.report(Err(error)),
+            _ => {}
         }
     }
 
-    /// Passes a console command from the player to the game's `ClientCommand`.
-    pub fn client_command(&self, command: &str, argument: &str) {
+    /// Runs the game's `ClientDisconnect`, and forgets player `id`.
+    pub fn disconnect_player(&self, id: EntityId) {
+        self.run_on_player("ClientDisconnect", id);
+        let forget: mlua::Result<Function> = self.lua.globals().get("forget_player");
+        self.report(forget.and_then(|forget| forget.call::<()>(id_to(id))));
+        let _table = self.players.borrow_mut().remove(&id);
+    }
+
+    /// Runs the game's `PlayerPreThink`.
+    pub fn player_pre_think(&self, id: EntityId) {
+        self.run_on_player("PlayerPreThink", id);
+    }
+
+    /// Runs the game's `PlayerPostThink`.
+    pub fn player_post_think(&self, id: EntityId) {
+        self.run_on_player("PlayerPostThink", id);
+    }
+
+    /// Passes a console command from a player to the game's `ClientCommand`.
+    pub fn client_command(&self, id: EntityId, command: &str, argument: &str) {
         self.call_started.set(Instant::now());
         let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientCommand");
-        match function {
-            Ok(Some(function)) => {
-                self.report(function.call::<()>((self.player.clone(), command, argument)));
+        match (function, self.player(id)) {
+            (Ok(Some(function)), Some(player)) => {
+                self.report(function.call::<()>((player, command, argument)));
             }
-            Ok(None) => {}
-            Err(error) => self.report(Err(error)),
+            (Err(error), _) => self.report(Err(error)),
+            _ => {}
         }
     }
 
-    /// The numbers the game's `ClientData` gives for the status display, as
-    /// `SV_WriteClientdataToMessage`. It sends what's due to the player, too.
+    /// The numbers the game's `ClientData` gives for a player's status
+    /// display, as `SV_WriteClientdataToMessage`. It sends what's due to the
+    /// player, too.
     #[must_use]
-    pub fn client_data(&self) -> Vec<i32> {
+    pub fn client_data(&self, id: EntityId) -> Vec<i32> {
         self.call_started.set(Instant::now());
         let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientData");
-        let Ok(Some(function)) = function else {
+        let (Ok(Some(function)), Some(player)) = (function, self.player(id)) else {
             return Vec::new();
         };
-        match function.call::<Vec<f64>>(self.player.clone()) {
+        match function.call::<Vec<f64>>(player) {
             #[expect(
                 clippy::cast_possible_truncation,
                 reason = "stats are whole, and item bits fill all 32"
@@ -942,16 +987,6 @@ impl Game {
                 Vec::new()
             }
         }
-    }
-
-    /// Runs the game's `PlayerPreThink`.
-    pub fn player_pre_think(&self) {
-        self.run_on_player("PlayerPreThink");
-    }
-
-    /// Runs the game's `PlayerPostThink`.
-    pub fn player_post_think(&self) {
-        self.run_on_player("PlayerPostThink");
     }
 
     /// Takes what scripts have asked for.

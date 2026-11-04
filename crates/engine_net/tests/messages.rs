@@ -19,6 +19,7 @@ fn command() -> UserCommand {
         jump: true,
         attack: true,
         impulse: 7,
+        view_time: 0.0,
     }
 }
 
@@ -69,7 +70,7 @@ fn snapshot() -> Snapshot {
 
 #[test]
 fn messages_survive_the_round_trip() {
-    let moving = ClientMessage::Move(command());
+    let moving = ClientMessage::Move(vec![command()], 0);
     assert_eq!(ClientMessage::decode(&moving.encode()), Some(moving));
     let console = ClientMessage::Console("noclip".to_owned());
     assert_eq!(ClientMessage::decode(&console.encode()), Some(console));
@@ -131,7 +132,7 @@ fn a_snapshot_claiming_too_many_models_is_refused() {
 
 #[test]
 fn short_and_long_messages_are_refused() {
-    let bytes = ClientMessage::Move(command()).encode();
+    let bytes = ClientMessage::Move(vec![command()], 0).encode();
     for length in 0..bytes.len() {
         assert_eq!(ClientMessage::decode(&bytes[..length]), None, "{length}");
     }
@@ -149,13 +150,13 @@ fn numbers_that_are_not_numbers_are_refused() {
     let mut nan = command();
     nan.yaw = f32::NAN;
     assert_eq!(
-        ClientMessage::decode(&ClientMessage::Move(nan).encode()),
+        ClientMessage::decode(&ClientMessage::Move(vec![nan], 0).encode()),
         None
     );
     let mut infinite = command();
     infinite.seconds = f32::INFINITY;
     assert_eq!(
-        ClientMessage::decode(&ClientMessage::Move(infinite).encode()),
+        ClientMessage::decode(&ClientMessage::Move(vec![infinite], 0).encode()),
         None
     );
 }
@@ -164,8 +165,8 @@ fn numbers_that_are_not_numbers_are_refused() {
 fn unknown_tags_and_bad_flags_are_refused() {
     assert_eq!(ClientMessage::decode(&[99]), None);
     assert_eq!(ServerMessage::decode(&[99]), None);
-    let mut bytes = ClientMessage::Move(command()).encode();
-    let jump = bytes.len() - 3;
+    let mut bytes = ClientMessage::Move(vec![command()], 0).encode();
+    let jump = bytes.len() - 11;
     bytes[jump] = 7;
     assert_eq!(ClientMessage::decode(&bytes), None);
 }

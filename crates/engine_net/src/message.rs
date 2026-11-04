@@ -59,6 +59,30 @@ const TAG_INTERMISSION: u8 = 16;
 /// The tag of the level's title.
 const TAG_LEVEL_TITLE: u8 = 17;
 
+/// The tag of a snapshot as what changed.
+pub(crate) const TAG_SNAPSHOT_DELTA: u8 = 18;
+
+/// The tag of a level to load.
+const TAG_LEVEL: u8 = 19;
+
+/// The tag of the scores.
+const TAG_SCORES: u8 = 20;
+
+/// The tag of a client having loaded the level.
+const TAG_READY: u8 = 21;
+
+/// The tag of who a client says they are.
+const TAG_INFO: u8 = 22;
+
+/// The most commands in a move message.
+const MAX_MOVE_COMMANDS: usize = 8;
+
+/// The longest name.
+const MAX_NAME_BYTES: usize = 32;
+
+/// The most players the scores can list.
+const MAX_SCORES: usize = 64;
+
 /// The most stats a snapshot may carry.
 const MAX_STATS: usize = 64;
 
@@ -108,11 +132,38 @@ pub struct Snapshot {
     pub stats: Vec<i32>,
 }
 
+/// Who a client says they are.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayerInfo {
+    /// Their name.
+    pub name: String,
+    /// Their shirt colour in the high four bits, and pants in the low.
+    pub colors: u8,
+}
+
+/// A line of the scores.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PlayerScore {
+    /// Their entity.
+    pub entity: u64,
+    /// Their name.
+    pub name: String,
+    /// Their frags.
+    pub frags: i32,
+    /// Their shirt colour in the high four bits, and pants in the low.
+    pub colors: u8,
+}
+
 /// A message to the server.
 #[derive(Clone, Debug, PartialEq)]
 pub enum ClientMessage {
-    /// Input.
-    Move(UserCommand),
+    /// Input, oldest first, sent more than once in case of loss, and the last
+    /// snapshot received.
+    Move(Vec<UserCommand>, u32),
+    /// The map named by the server is loaded.
+    Ready,
+    /// Who this client is.
+    Info(PlayerInfo),
     /// A console command for the server to run.
     Console(String),
 }
@@ -170,29 +221,35 @@ pub enum ServerMessage {
     Intermission(u8),
     /// The level's title.
     LevelTitle(String),
+    /// A snapshot as what changed, to be applied to the one it names.
+    SnapshotDelta(Vec<u8>),
+    /// Load this map, and say when it's ready.
+    Level(String),
+    /// Everyone's names and frags.
+    Scores(Vec<PlayerScore>),
 }
 
 /// Reads fields from the front of a message.
-struct Reader<'a> {
+pub(crate) struct Reader<'a> {
     /// What's left.
-    bytes: &'a [u8],
+    pub(crate) bytes: &'a [u8],
 }
 
 impl Reader<'_> {
     /// Takes `N` bytes.
-    fn take<const N: usize>(&mut self) -> Option<[u8; N]> {
+    pub(crate) fn take<const N: usize>(&mut self) -> Option<[u8; N]> {
         let (field, rest) = self.bytes.split_first_chunk::<N>()?;
         self.bytes = rest;
         Some(*field)
     }
 
     /// A byte.
-    fn byte(&mut self) -> Option<u8> {
+    pub(crate) fn byte(&mut self) -> Option<u8> {
         self.take::<1>().map(|[byte]| byte)
     }
 
     /// A flag, which must be 0 or 1.
-    fn flag(&mut self) -> Option<bool> {
+    pub(crate) fn flag(&mut self) -> Option<bool> {
         match self.byte()? {
             0 => Some(false),
             1 => Some(true),
@@ -201,19 +258,19 @@ impl Reader<'_> {
     }
 
     /// A number.
-    fn u32(&mut self) -> Option<u32> {
+    pub(crate) fn u32(&mut self) -> Option<u32> {
         self.take().map(u32::from_le_bytes)
     }
 
     /// A float, which must be finite.
-    fn f32(&mut self) -> Option<f32> {
+    pub(crate) fn f32(&mut self) -> Option<f32> {
         self.take()
             .map(f32::from_le_bytes)
             .filter(|value| value.is_finite())
     }
 
     /// A double, which must be finite.
-    fn f64(&mut self) -> Option<f64> {
+    pub(crate) fn f64(&mut self) -> Option<f64> {
         self.take()
             .map(f64::from_le_bytes)
             .filter(|value| value.is_finite())
@@ -229,12 +286,12 @@ impl Reader<'_> {
     }
 
     /// A vector.
-    fn vec3(&mut self) -> Option<Vec3> {
+    pub(crate) fn vec3(&mut self) -> Option<Vec3> {
         Some(Vec3::new(self.f32()?, self.f32()?, self.f32()?))
     }
 
     /// Whether everything was read.
-    fn finished(&self) -> bool {
+    pub(crate) fn finished(&self) -> bool {
         self.bytes.is_empty()
     }
 }
@@ -245,7 +302,7 @@ fn put_f32(out: &mut Vec<u8>, value: f32) {
 }
 
 /// Appends a vector.
-fn put_vec3(out: &mut Vec<u8>, value: Vec3) {
+pub(crate) fn put_vec3(out: &mut Vec<u8>, value: Vec3) {
     put_f32(out, value.x);
     put_f32(out, value.y);
     put_f32(out, value.z);
@@ -272,30 +329,62 @@ fn liquid_from(number: u8) -> Option<Liquid> {
     }
 }
 
+/// Appends a command.
+fn encode_command(command: &UserCommand, out: &mut Vec<u8>) {
+    out.extend_from_slice(&command.sequence.to_le_bytes());
+    for value in [
+        command.seconds,
+        command.yaw,
+        command.pitch,
+        command.forward,
+        command.side,
+        command.up,
+    ] {
+        put_f32(out, value);
+    }
+    out.extend_from_slice(&[
+        u8::from(command.jump),
+        u8::from(command.attack),
+        command.impulse,
+    ]);
+    out.extend_from_slice(&command.view_time.to_le_bytes());
+}
+
+/// Reads a command.
+fn read_command(reader: &mut Reader<'_>) -> Option<UserCommand> {
+    Some(UserCommand {
+        sequence: reader.u32()?,
+        seconds: reader.f32()?,
+        yaw: reader.f32()?,
+        pitch: reader.f32()?,
+        forward: reader.f32()?,
+        side: reader.f32()?,
+        up: reader.f32()?,
+        jump: reader.flag()?,
+        attack: reader.flag()?,
+        impulse: reader.byte()?,
+        view_time: reader.f64()?,
+    })
+}
+
 impl ClientMessage {
     /// The message as bytes.
     #[must_use]
     pub fn encode(&self) -> Vec<u8> {
         let mut out = Vec::new();
         match self {
-            Self::Move(command) => {
+            Self::Move(commands, seen) => {
                 out.push(TAG_MOVE);
-                out.extend_from_slice(&command.sequence.to_le_bytes());
-                for value in [
-                    command.seconds,
-                    command.yaw,
-                    command.pitch,
-                    command.forward,
-                    command.side,
-                    command.up,
-                ] {
-                    put_f32(&mut out, value);
+                out.extend_from_slice(&seen.to_le_bytes());
+                out.push(u8::try_from(commands.len()).unwrap_or(0));
+                for command in commands {
+                    encode_command(command, &mut out);
                 }
-                out.extend_from_slice(&[
-                    u8::from(command.jump),
-                    u8::from(command.attack),
-                    command.impulse,
-                ]);
+            }
+            Self::Ready => out.push(TAG_READY),
+            Self::Info(info) => {
+                out.extend_from_slice(&[TAG_INFO, info.colors]);
+                out.extend_from_slice(info.name.as_bytes());
             }
             Self::Console(text) => {
                 out.push(TAG_CONSOLE);
@@ -312,19 +401,25 @@ impl ClientMessage {
         match tag {
             TAG_MOVE => {
                 let mut reader = Reader { bytes: rest };
-                let command = UserCommand {
-                    sequence: reader.u32()?,
-                    seconds: reader.f32()?,
-                    yaw: reader.f32()?,
-                    pitch: reader.f32()?,
-                    forward: reader.f32()?,
-                    side: reader.f32()?,
-                    up: reader.f32()?,
-                    jump: reader.flag()?,
-                    attack: reader.flag()?,
-                    impulse: reader.byte()?,
-                };
-                reader.finished().then_some(Self::Move(command))
+                let seen = reader.u32()?;
+                let count = usize::from(reader.byte()?);
+                if count > MAX_MOVE_COMMANDS {
+                    return None;
+                }
+                let mut commands = Vec::with_capacity(count);
+                for _ in 0..count {
+                    commands.push(read_command(&mut reader)?);
+                }
+                reader.finished().then_some(Self::Move(commands, seen))
+            }
+            TAG_READY => rest.is_empty().then_some(Self::Ready),
+            TAG_INFO => {
+                let (&colors, name) = rest.split_first()?;
+                if name.len() > MAX_NAME_BYTES {
+                    return None;
+                }
+                let name = std::str::from_utf8(name).ok()?.to_owned();
+                Some(Self::Info(PlayerInfo { name, colors }))
             }
             TAG_CONSOLE if rest.len() <= MAX_CONSOLE_BYTES => std::str::from_utf8(rest)
                 .ok()
@@ -414,6 +509,25 @@ impl ServerMessage {
                 out.push(TAG_LEVEL_TITLE);
                 out.extend_from_slice(text.as_bytes());
             }
+            Self::SnapshotDelta(bytes) => {
+                out.push(TAG_SNAPSHOT_DELTA);
+                out.extend_from_slice(bytes);
+            }
+            Self::Level(name) => {
+                out.push(TAG_LEVEL);
+                out.extend_from_slice(name.as_bytes());
+            }
+            Self::Scores(scores) => {
+                out.push(TAG_SCORES);
+                out.push(u8::try_from(scores.len()).unwrap_or(0));
+                for score in scores {
+                    out.extend_from_slice(&score.entity.to_le_bytes());
+                    out.extend_from_slice(&score.frags.to_le_bytes());
+                    out.push(score.colors);
+                    out.push(u8::try_from(score.name.len()).unwrap_or(0));
+                    out.extend_from_slice(score.name.as_bytes());
+                }
+            }
         }
         out
     }
@@ -483,6 +597,9 @@ impl ServerMessage {
                 _ => None,
             },
             TAG_LEVEL_TITLE => text_from(rest).map(Self::LevelTitle),
+            TAG_SNAPSHOT_DELTA => Some(Self::SnapshotDelta(rest.to_vec())),
+            TAG_LEVEL => text_from(rest).map(Self::Level),
+            TAG_SCORES => decode_scores(rest).map(Self::Scores),
             _ => None,
         }
     }
@@ -535,12 +652,37 @@ fn text_from(bytes: &[u8]) -> Option<String> {
     std::str::from_utf8(bytes).ok().map(str::to_owned)
 }
 
-/// Appends a snapshot.
-fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
-    let player = &snapshot.player;
-    out.push(TAG_SNAPSHOT);
-    out.extend_from_slice(&snapshot.tick.to_le_bytes());
-    out.extend_from_slice(&snapshot.acknowledged.to_le_bytes());
+/// Reads the scores.
+fn decode_scores(bytes: &[u8]) -> Option<Vec<PlayerScore>> {
+    let mut reader = Reader { bytes };
+    let count = usize::from(reader.byte()?);
+    if count > MAX_SCORES {
+        return None;
+    }
+    let mut scores = Vec::with_capacity(count);
+    for _ in 0..count {
+        let entity = u64::from_le_bytes(reader.take()?);
+        let frags = i32::from_le_bytes(reader.take()?);
+        let colors = reader.byte()?;
+        let length = usize::from(reader.byte()?);
+        if length > MAX_NAME_BYTES || reader.bytes.len() < length {
+            return None;
+        }
+        let (name, rest) = reader.bytes.split_at(length);
+        reader.bytes = rest;
+        let name = std::str::from_utf8(name).ok()?.to_owned();
+        scores.push(PlayerScore {
+            entity,
+            name,
+            frags,
+            colors,
+        });
+    }
+    reader.finished().then_some(scores)
+}
+
+/// Appends a player.
+pub(crate) fn encode_player(player: &PlayerState, out: &mut Vec<u8>) {
     put_vec3(out, player.origin);
     put_vec3(out, player.velocity);
     put_f32(out, player.water_jump_time);
@@ -554,6 +696,14 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         u8::from(player.frozen),
     ]);
     out.extend_from_slice(&player.ground_model.unwrap_or(NO_MODEL).to_le_bytes());
+}
+
+/// Appends a snapshot.
+pub(crate) fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
+    out.push(TAG_SNAPSHOT);
+    out.extend_from_slice(&snapshot.tick.to_le_bytes());
+    out.extend_from_slice(&snapshot.acknowledged.to_le_bytes());
+    encode_player(&snapshot.player, out);
     let count = u32::try_from(snapshot.instances.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&count.to_le_bytes());
     for instance in &snapshot.instances {
@@ -591,11 +741,8 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
     }
 }
 
-/// Reads a snapshot.
-fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
-    let mut reader = Reader { bytes };
-    let tick = reader.u32()?;
-    let acknowledged = reader.u32()?;
+/// Reads a player.
+pub(crate) fn read_player(reader: &mut Reader<'_>) -> Option<PlayerState> {
     let origin = reader.vec3()?;
     let velocity = reader.vec3()?;
     let water_jump_time = reader.f32()?;
@@ -607,7 +754,7 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
     let dead = reader.flag()?;
     let frozen = reader.flag()?;
     let ground = reader.u32()?;
-    let player = PlayerState {
+    Some(PlayerState {
         origin,
         velocity,
         on_ground,
@@ -619,7 +766,15 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
         dead,
         frozen,
         ground_model: (ground != NO_MODEL).then_some(ground),
-    };
+    })
+}
+
+/// Reads a snapshot.
+fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
+    let mut reader = Reader { bytes };
+    let tick = reader.u32()?;
+    let acknowledged = reader.u32()?;
+    let player = read_player(&mut reader)?;
     let count = usize::try_from(reader.u32()?).ok()?;
     if count > MAX_INSTANCES {
         return None;

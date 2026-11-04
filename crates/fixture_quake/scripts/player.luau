@@ -81,14 +81,13 @@ function PutClientInServer(self)
 	self.th_pain = player_pain
 	self.th_die = PlayerDie
 	self.deadflag = DEAD_NO
-	self.netname = "player"
 	setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
 	-- Returning with a rune lands somewhere else, from `SelectSpawnPoint`.
 	if serverflags ~= 0 then
 		local spot = find_entity(world, "classname", "info_player_start2")
 		if exists(spot) then
 			setorigin(self, spot.origin + vector.create(0, 0, 1))
-			engine.set_view(spot.angles.y, 0)
+			set_view(self, spot.angles.y, 0)
 		end
 	end
 end

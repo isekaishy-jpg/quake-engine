@@ -5,8 +5,10 @@
 //!
 //! May depend on `engine_core`. See proposal 0008.
 
+mod delta;
 mod message;
 mod transport;
 
-pub use message::{ClientMessage, ServerMessage, Snapshot};
+pub use delta::{apply_delta, delta_baseline, delta_from};
+pub use message::{ClientMessage, PlayerInfo, PlayerScore, ServerMessage, Snapshot};
 pub use transport::{Loopback, Transport, loopback};

@@ -63,8 +63,10 @@ function changelevel(map)
 		return
 	end
 	changelevel_issued = true
-	SetChangeParms(the_player)
-	engine.set_parms(parms)
+	for _, player in find_all("classname", "player") do
+		SetChangeParms(player)
+		engine.set_parms(parms, rawget(player, "_id"))
+	end
 	engine.changelevel(map, serverflags)
 end
 
@@ -146,7 +148,7 @@ function hold_at_camera(player, pos)
 	player.view_ofs = vector.zero
 	player.angles = mangle
 	-- Turn this way immediately.
-	engine.set_view(mangle.y, mangle.x)
+	set_view(player, mangle.y, mangle.x)
 	player.nextthink = time() + 0.5
 	player.takedamage = DAMAGE_NO
 	player.solid = SOLID_NOT
@@ -162,7 +164,10 @@ function execute_changelevel(_self)
 	-- Enforce a wait time before allowing changelevel.
 	intermission_exittime = time() + (if deathmatch ~= 0 then 5 else 2)
 	engine.music(3)
-	hold_at_camera(the_player, FindIntermission())
+	local pos = FindIntermission()
+	for _, player in find_all("classname", "player") do
+		hold_at_camera(player, pos)
+	end
 	engine.intermission(1)
 end
 
@@ -344,7 +349,8 @@ function ClientData(self)
 	local take, save = self.dmg_take or 0, self.dmg_save or 0
 	if take ~= 0 or save ~= 0 then
 		local from = ent(self.dmg_inflictor)
-		engine.damage(save, take, from.origin + (from.mins + from.maxs) * 0.5)
+		local at = from.origin + (from.mins + from.maxs) * 0.5
+		engine.damage(rawget(self, "_id"), save, take, at)
 		self.dmg_take = 0
 		self.dmg_save = 0
 	end
@@ -515,7 +521,8 @@ function entity_splash(self)
 end
 
 -- The engine readies the player once the map has spawned.
-function ClientConnect(self, name, saved)
+function ClientConnect(self, name, saved, netname)
+	self.netname = netname or "player"
 	if world then
 		world.model = "maps/" .. name .. ".bsp"
 		engine.level_title(world.message or "")

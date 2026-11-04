@@ -223,14 +223,16 @@ impl Simulation {
         self.entity_ids_with(|entity| entity.model == Some(model))
     }
 
-    /// The boxes of everything solid but brush models, for what a player can't
+    /// The boxes of everything solid but brush models, for what `player` can't
     /// walk through.
     #[must_use]
-    pub fn solid_boxes(&self) -> Vec<(Vec3, Vec3)> {
-        let player = self.player_id();
+    pub fn solid_boxes(&self, player: EntityId) -> Vec<(Vec3, Vec3)> {
         self.solid_entities()
             .filter(|(id, _)| *id != player)
-            .map(|(_, entity)| (entity.origin + entity.mins, entity.origin + entity.maxs))
+            .map(|(id, entity)| {
+                let origin = self.origin(id).unwrap_or(entity.origin);
+                (origin + entity.mins, origin + entity.maxs)
+            })
             .collect()
     }
 

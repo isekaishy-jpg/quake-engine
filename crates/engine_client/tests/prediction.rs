@@ -39,7 +39,7 @@ fn forward() -> UserCommand {
 fn received(server: &mut Loopback) -> Vec<UserCommand> {
     std::iter::from_fn(|| server.receive())
         .filter_map(|bytes| match ClientMessage::decode(&bytes) {
-            Some(ClientMessage::Move(command)) => Some(command),
+            Some(ClientMessage::Move(commands, _seen)) => commands.last().copied(),
             _ => None,
         })
         .collect()
