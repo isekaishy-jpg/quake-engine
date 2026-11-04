@@ -6,6 +6,7 @@
 //!
 //! May depend on `engine_core`, `engine_map`. See proposal 0008.
 
+mod alias;
 mod atlas;
 mod backend;
 mod error;
@@ -15,6 +16,7 @@ mod renderer;
 mod visible;
 mod world;
 
+pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::Atlas;
 pub use error::RenderError;
 pub use matrix::view_projection;

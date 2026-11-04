@@ -120,6 +120,11 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
         world.audio.ambient_volumes(),
         world.audio.static_volumes()
     ));
+    console.print(format!(
+        "models: {} loaded, {} missing",
+        world.models.len(),
+        world.models.missing()
+    ));
     if let Some(renderer) = &world.renderer {
         let stats = renderer.statistics();
         let at = world
@@ -208,13 +213,19 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
         console.print("screenshot <path>");
         return;
     }
-    let (view, instances) = world.view(0.0, 1.0, 0.0);
+    let (view, instances, entities) = world.view(0.0, 1.0, 0.0);
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;
     };
     let result = renderer
-        .capture(&view, &instances, SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT)
+        .capture(
+            &view,
+            &instances,
+            &entities,
+            SCREENSHOT_WIDTH,
+            SCREENSHOT_HEIGHT,
+        )
         .map_err(Into::into)
         .and_then(|capture| write_png(&capture, path));
     match result {

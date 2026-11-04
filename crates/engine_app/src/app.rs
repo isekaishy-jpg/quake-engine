@@ -9,23 +9,25 @@ use std::time::Duration;
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT,
+    AmbientSounds, Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT, view_bob,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
+use engine_map::Map;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{Renderer, Target, View};
+use engine_render::{EntityDraw, Renderer, Target, View};
 use engine_server::Server;
 use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point};
 
 use crate::commands;
+use crate::models::ModelBank;
 use crate::options::Options;
 use crate::sounds::SoundBank;
 
@@ -103,6 +105,10 @@ pub(crate) struct World {
     audio_settings: Option<(AudioLevels, bool)>,
     /// How much water and sky can be heard.
     ambience: Option<AmbientSounds>,
+    /// Models loaded so far.
+    pub(crate) models: ModelBank,
+    /// The map, for the light on models.
+    map: Option<Arc<Map>>,
 }
 
 impl World {
@@ -137,6 +143,8 @@ impl World {
             .clip("ambience/wind2.wav", &self.filesystem, &mut self.audio);
         self.audio.set_ambient_clips(water, sky);
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
+        self.models.clear_numbers();
+        self.map = Some(Arc::clone(&map));
         if let Some(renderer) = &mut self.renderer {
             renderer.load_map(map)?;
         }
@@ -172,6 +180,14 @@ impl World {
         let Some(client) = &mut self.client else {
             return;
         };
+        for (number, name) in client.take_model_names() {
+            self.models.name_number(
+                u32::from(number),
+                &name,
+                &self.filesystem,
+                self.renderer.as_mut(),
+            );
+        }
         let sounds = client.take_sounds();
         let static_sounds = client.take_static_sounds();
         let music = client.take_music();
@@ -246,16 +262,20 @@ impl World {
         leftover: f32,
         fraction: f32,
         frame_seconds: f32,
-    ) -> (View, Vec<ModelInstance>) {
+    ) -> (View, Vec<ModelInstance>, Vec<EntityDraw>) {
         let command = self.command();
         let mut origin = Vec3::ZERO;
         let mut instances = Vec::new();
+        let mut entities = Vec::new();
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
             let body = state.origin + client.ground_lag(&state, fraction);
             let step = self.step.update(body.z, state.on_ground, frame_seconds);
-            origin = body + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step);
+            let speed = Vec3::new(state.velocity.x, state.velocity.y, 0.0).length();
+            let time = self.map_time as f32;
+            let bob = view_bob(time, speed);
+            origin = body + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step + bob);
             let (sin, cos) = self.look.yaw().to_radians().sin_cos();
             self.listener = Listener {
                 origin,
@@ -263,6 +283,31 @@ impl World {
             };
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
+            if let Some(map) = &self.map {
+                entities.extend(
+                    client
+                        .draw_entities(fraction)
+                        .iter()
+                        .filter_map(|entity| self.models.draw(entity, map, &styles, time)),
+                );
+                let (model, frame) = client.weapon();
+                let yaw = self.look.yaw() as f32;
+                let pitch = self.look.pitch() as f32;
+                let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
+                let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
+                let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
+                // From `V_CalcRefdef`, with the status bar's 2 units.
+                let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
+                let light = map.light_at(state.origin, &styles);
+                let angles = Vec3::new(-pitch, yaw, 0.0);
+                entities.extend(self.models.draw_weapon(
+                    u32::from(model),
+                    frame,
+                    (placed, angles),
+                    light,
+                    time,
+                ));
+            }
         }
         let view = View {
             origin,
@@ -272,7 +317,7 @@ impl World {
             time: self.map_time as f32,
             styles,
         };
-        (view, instances)
+        (view, instances, entities)
     }
 }
 
@@ -371,6 +416,8 @@ impl Engine {
                 listener: Listener::default(),
                 audio_settings: None,
                 ambience: None,
+                models: ModelBank::default(),
+                map: None,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
@@ -562,13 +609,13 @@ impl PlatformApp for Engine {
                 clippy::cast_possible_truncation,
                 reason = "a frame's timing needs no more than f32"
             )]
-            let (view, instances) = self.world.view(
+            let (view, instances, entities) = self.world.view(
                 (fraction * tick_seconds) as f32,
                 fraction as f32,
                 frame.delta.as_secs_f64() as f32,
             );
             if let Some(renderer) = &mut self.world.renderer
-                && let Err(error) = renderer.draw(&view, &instances)
+                && let Err(error) = renderer.draw(&view, &instances, &entities)
             {
                 self.console.print(format!("renderer: {error}"));
                 self.show_output();

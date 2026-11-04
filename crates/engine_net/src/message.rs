@@ -1,6 +1,6 @@
 //! What client and server say to each other.
 
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -35,6 +35,12 @@ const TAG_STATIC_SOUND: u8 = 8;
 /// The tag of a music track.
 const TAG_MUSIC: u8 = 9;
 
+/// The tag of a model's name.
+const TAG_MODEL_NAME: u8 = 10;
+
+/// The most entities a snapshot may list.
+const MAX_ENTITIES: usize = 8192;
+
 /// The longest sound name, from `MAX_QPATH`.
 const MAX_SOUND_NAME_BYTES: usize = 64;
 
@@ -58,6 +64,12 @@ pub struct Snapshot {
     pub player: PlayerState,
     /// Where brush models are.
     pub instances: Vec<ModelInstance>,
+    /// Entities with other models.
+    pub entities: Vec<EntityState>,
+    /// The number of the player's weapon model, or 0 for none.
+    pub weapon_model: u16,
+    /// The frame it shows.
+    pub weapon_frame: u16,
 }
 
 /// A message to the server.
@@ -89,6 +101,13 @@ pub enum ServerMessage {
     StaticSound(StaticSound),
     /// A music track plays.
     Music(u8),
+    /// A model's number is given its name.
+    ModelName {
+        /// The number snapshots use.
+        number: u16,
+        /// The file's name.
+        name: String,
+    },
     /// Turns the player's view.
     SetView {
         /// The yaw in degrees.
@@ -284,6 +303,11 @@ impl ServerMessage {
                 out.extend_from_slice(sound.name.as_bytes());
             }
             Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
+            Self::ModelName { number, name } => {
+                out.push(TAG_MODEL_NAME);
+                out.extend_from_slice(&number.to_le_bytes());
+                out.extend_from_slice(name.as_bytes());
+            }
         }
         out
     }
@@ -307,6 +331,12 @@ impl ServerMessage {
             }
             TAG_SOUND => decode_sound(rest).map(Self::Sound),
             TAG_STATIC_SOUND => decode_static_sound(rest).map(Self::StaticSound),
+            TAG_MODEL_NAME => {
+                let mut reader = Reader { bytes: rest };
+                let number = u16::from_le_bytes(reader.take()?);
+                let name = reader.sound_name()?;
+                Some(Self::ModelName { number, name })
+            }
             TAG_MUSIC => match rest {
                 [track] => Some(Self::Music(*track)),
                 _ => None,
@@ -387,6 +417,18 @@ fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         put_vec3(out, instance.origin);
         out.extend_from_slice(&[u8::from(instance.visible), u8::from(instance.solid)]);
     }
+    out.extend_from_slice(&snapshot.weapon_model.to_le_bytes());
+    out.extend_from_slice(&snapshot.weapon_frame.to_le_bytes());
+    let count = u32::try_from(snapshot.entities.len()).unwrap_or(u32::MAX);
+    out.extend_from_slice(&count.to_le_bytes());
+    for entity in &snapshot.entities {
+        out.extend_from_slice(&entity.id.to_le_bytes());
+        out.extend_from_slice(&entity.model.to_le_bytes());
+        out.extend_from_slice(&entity.frame.to_le_bytes());
+        out.extend_from_slice(&[entity.skin, entity.effects]);
+        put_vec3(out, entity.origin);
+        put_vec3(out, entity.angles);
+    }
 }
 
 /// Reads a snapshot.
@@ -427,10 +469,31 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             solid: reader.flag()?,
         });
     }
+    let weapon_model = u16::from_le_bytes(reader.take()?);
+    let weapon_frame = u16::from_le_bytes(reader.take()?);
+    let count = usize::try_from(reader.u32()?).ok()?;
+    if count > MAX_ENTITIES {
+        return None;
+    }
+    let mut entities = Vec::with_capacity(count);
+    for _ in 0..count {
+        entities.push(EntityState {
+            id: u64::from_le_bytes(reader.take()?),
+            model: u16::from_le_bytes(reader.take()?),
+            frame: u16::from_le_bytes(reader.take()?),
+            skin: reader.byte()?,
+            effects: reader.byte()?,
+            origin: reader.vec3()?,
+            angles: reader.vec3()?,
+        });
+    }
     reader.finished().then_some(Snapshot {
         tick,
         acknowledged,
         player,
         instances,
+        entities,
+        weapon_model,
+        weapon_frame,
     })
 }

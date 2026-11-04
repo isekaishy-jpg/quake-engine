@@ -107,6 +107,11 @@ impl Server {
         }
         self.simulation.borrow_mut().end_tick(self.seconds);
         self.flush_outbox();
+        let shapes = self.simulation.borrow_mut().take_new_shapes();
+        for (number, name) in shapes {
+            self.transport
+                .send(ServerMessage::ModelName { number, name }.encode());
+        }
         self.tick = self.tick.wrapping_add(1);
         let simulation = self.simulation.borrow();
         let snapshot = Snapshot {
@@ -114,6 +119,9 @@ impl Server {
             acknowledged: simulation.last_command(),
             player: *simulation.player(),
             instances: simulation.instances(),
+            entities: simulation.entity_states(),
+            weapon_model: simulation.weapon_model(),
+            weapon_frame: simulation.weapon_frame(),
         };
         self.transport
             .send(ServerMessage::Snapshot(snapshot).encode());

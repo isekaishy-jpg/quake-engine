@@ -94,6 +94,8 @@ pub struct Tree {
     pub planes: Vec<Plane>,
     /// The nodes. The first is the root.
     pub nodes: Vec<Node>,
+    /// Each node's first face and how many it has, in [`crate::Map::faces`].
+    pub node_faces: Vec<(u32, u32)>,
     /// The leaves.
     pub leaves: Vec<Leaf>,
     /// Faces by leaf, as indices into [`crate::Map::faces`].
@@ -133,12 +135,12 @@ impl Tree {
     }
 
     /// The node at `index`.
-    fn node(&self, index: u32) -> Option<&Node> {
+    pub(crate) fn node(&self, index: u32) -> Option<&Node> {
         self.nodes.get(usize::try_from(index).ok()?)
     }
 
     /// The plane at `index`.
-    fn plane(&self, index: u32) -> Option<&Plane> {
+    pub(crate) fn plane(&self, index: u32) -> Option<&Plane> {
         self.planes.get(usize::try_from(index).ok()?)
     }
 

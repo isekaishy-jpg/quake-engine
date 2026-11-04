@@ -12,8 +12,7 @@
 --
 --  See the LICENSE file for details.
 --
--- Ported from the parts of misc.qc that maps need without models. Lights that
--- show a model only keep their sound until models arrive.
+-- Ported from the parts of misc.qc that maps need.
 
 local START_OFF = 1
 
@@ -69,13 +68,25 @@ end
 
 local function FireAmbient(self)
 	ambientsound(self.origin, "ambience/fire1.wav", 0.5, ATTN_STATIC)
-	remove(self)
 end
 
-light_torch_small_walltorch = FireAmbient
-light_flame_large_yellow = FireAmbient
-light_flame_small_yellow = FireAmbient
-light_flame_small_white = FireAmbient
+function light_torch_small_walltorch(self)
+	setmodel(self, "progs/flame.mdl")
+	FireAmbient(self)
+end
+
+function light_flame_large_yellow(self)
+	setmodel(self, "progs/flame2.mdl")
+	self.frame = 1
+	FireAmbient(self)
+end
+
+function light_flame_small_yellow(self)
+	setmodel(self, "progs/flame2.mdl")
+	FireAmbient(self)
+end
+
+light_flame_small_white = light_flame_small_yellow
 
 local function ambient(sample, volume)
 	return function(self)

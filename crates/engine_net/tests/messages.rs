@@ -1,6 +1,6 @@
 //! Encoding, and refusing bad input.
 
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -42,6 +42,17 @@ fn snapshot() -> Snapshot {
             visible: true,
             solid: false,
         }],
+        entities: vec![EntityState {
+            id: u64::MAX,
+            model: 7,
+            frame: 300,
+            skin: 2,
+            effects: 8,
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            angles: Vec3::new(4.0, 5.0, 6.0),
+        }],
+        weapon_model: 3,
+        weapon_frame: 5,
     }
 }
 
@@ -74,6 +85,10 @@ fn messages_survive_the_round_trip() {
             name: "ambience/fire1.wav".to_owned(),
         }),
         ServerMessage::Music(6),
+        ServerMessage::ModelName {
+            number: 12,
+            name: "progs/flame.mdl".to_owned(),
+        },
         ServerMessage::SetView {
             yaw: 90.0,
             pitch: -10.0,

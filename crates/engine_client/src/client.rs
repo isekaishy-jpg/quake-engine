@@ -1,9 +1,9 @@
 //! The client: commands, prediction and the render tick (proposal 0024).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -12,6 +12,33 @@ use engine_net::{ClientMessage, ServerMessage, Transport};
 use engine_physics::CollisionWorld;
 
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
+
+/// Further than this in a tick is a teleport, and isn't blended.
+const MAX_BLENDED_MOVE: f32 = 200.0;
+
+/// How many ticks a model takes to blend to a new frame, which is the original's
+/// 10 frames a second.
+const FRAME_BLEND_TICKS: f32 = 7.2;
+
+/// An entity as it should be drawn now.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct DrawnEntity {
+    /// Where it is now, showing the frame it's blending to.
+    pub state: EntityState,
+    /// The frame it's blending from.
+    pub from_frame: u16,
+    /// How far to `state`'s frame, from 0 to 1.
+    pub blend: f32,
+}
+
+/// An entity's change of frame.
+#[derive(Clone, Copy, Debug, Default)]
+struct FrameChange {
+    /// The frame before.
+    from: u16,
+    /// The tick it changed on.
+    tick: u32,
+}
 
 /// The most commands waiting for the server. Older ones are forgotten.
 const MAX_PENDING: usize = 512;
@@ -40,6 +67,18 @@ pub struct Client {
     prints: Vec<String>,
     /// A view the server wants, waiting to be applied.
     view: Option<(f32, f32)>,
+    /// Entities in the latest snapshot.
+    entities: Vec<EntityState>,
+    /// Entities in the snapshot before it, by id.
+    previous_entities: HashMap<u64, EntityState>,
+    /// The last change of frame of each entity.
+    frame_changes: HashMap<u64, FrameChange>,
+    /// The latest snapshot's tick.
+    tick: u32,
+    /// The player's weapon model and frame.
+    weapon: (u16, u16),
+    /// Model names waiting to be loaded.
+    model_names: Vec<(u16, String)>,
     /// Sounds from the server, waiting to be played.
     sounds: Vec<SoundStart>,
     /// Sounds at fixed places, waiting to be added.
@@ -69,6 +108,12 @@ impl Client {
             styles: LightStyles::new(),
             prints: Vec::new(),
             view: None,
+            entities: Vec::new(),
+            previous_entities: HashMap::new(),
+            frame_changes: HashMap::new(),
+            tick: 0,
+            weapon: (0, 0),
+            model_names: Vec::new(),
             sounds: Vec::new(),
             static_sounds: Vec::new(),
             music: None,
@@ -122,6 +167,45 @@ impl Client {
             (Some(from), Some(to)) => from.lerp(to, fraction) - to,
             _ => Vec3::ZERO,
         }
+    }
+
+    /// Entities as they should be drawn, `fraction` of the way from the last
+    /// snapshot but one to the last.
+    #[must_use]
+    pub fn draw_entities(&self, fraction: f32) -> Vec<DrawnEntity> {
+        self.entities
+            .iter()
+            .map(|entity| {
+                let mut state = *entity;
+                if let Some(from) = self.previous_entities.get(&entity.id)
+                    && (entity.origin - from.origin).length() < MAX_BLENDED_MOVE
+                {
+                    state.origin = from.origin.lerp(entity.origin, fraction);
+                    state.angles = blend_angles(from.angles, entity.angles, fraction);
+                }
+                let change = self.frame_changes.get(&entity.id).copied();
+                let (from_frame, blend) = change.map_or((entity.frame, 1.0), |change| {
+                    let ticks = self.tick.wrapping_sub(change.tick) as f32 + fraction;
+                    (change.from, (ticks / FRAME_BLEND_TICKS).min(1.0))
+                });
+                DrawnEntity {
+                    state,
+                    from_frame,
+                    blend,
+                }
+            })
+            .collect()
+    }
+
+    /// The player's weapon model and frame.
+    #[must_use]
+    pub fn weapon(&self) -> (u16, u16) {
+        self.weapon
+    }
+
+    /// Takes the model names the server has given.
+    pub fn take_model_names(&mut self) -> Vec<(u16, String)> {
+        std::mem::take(&mut self.model_names)
     }
 
     /// Every light style's brightness at `time`.
@@ -188,6 +272,29 @@ impl Client {
             .send(ClientMessage::Console(text.to_owned()).encode());
     }
 
+    /// Takes a new list of entities, noting which changed frame.
+    fn note_entities(&mut self, tick: u32, entities: Vec<EntityState>) {
+        let previous: HashMap<u64, EntityState> = std::mem::replace(&mut self.entities, entities)
+            .into_iter()
+            .map(|entity| (entity.id, entity))
+            .collect();
+        for entity in &self.entities {
+            if let Some(from) = previous.get(&entity.id)
+                && from.frame != entity.frame
+            {
+                self.frame_changes.insert(
+                    entity.id,
+                    FrameChange {
+                        from: from.frame,
+                        tick,
+                    },
+                );
+            }
+        }
+        self.previous_entities = previous;
+        self.tick = tick;
+    }
+
     /// Reads what the server sent. Each snapshot resets the prediction to the
     /// server's state and replays what it hasn't run, as `CL_PredictMove`.
     pub fn receive(&mut self) {
@@ -198,6 +305,8 @@ impl Client {
                         .retain(|command| command.sequence > snapshot.acknowledged);
                     self.previous_instances =
                         std::mem::replace(&mut self.instances, snapshot.instances);
+                    self.note_entities(snapshot.tick, snapshot.entities);
+                    self.weapon = (snapshot.weapon_model, snapshot.weapon_frame);
                     let mut predicted = snapshot.player;
                     let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
                     for command in &pending {
@@ -209,6 +318,9 @@ impl Client {
                     self.styles.set(index, &pattern);
                 }
                 Some(ServerMessage::Print(text)) => self.prints.push(text),
+                Some(ServerMessage::ModelName { number, name }) => {
+                    self.model_names.push((number, name));
+                }
                 Some(ServerMessage::Sound(sound)) => self.sounds.push(sound),
                 Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
                 Some(ServerMessage::Music(track)) => self.music = Some(track),
@@ -231,4 +343,17 @@ impl Client {
         }
         state
     }
+}
+
+/// Angles `fraction` of the way from `from` to `to`, the short way round.
+fn blend_angles(from: Vec3, to: Vec3, fraction: f32) -> Vec3 {
+    let blend = |from: f32, to: f32| {
+        let turn = (to - from + 180.0).rem_euclid(360.0) - 180.0;
+        from + turn * fraction
+    };
+    Vec3::new(
+        blend(from.x, to.x),
+        blend(from.y, to.y),
+        blend(from.z, to.z),
+    )
 }

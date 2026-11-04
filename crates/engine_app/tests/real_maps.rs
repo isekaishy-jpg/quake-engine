@@ -17,7 +17,7 @@ use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::Server;
 use fixture_quake::{
-    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_wav, spawn_point,
+    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_mdl, parse_wav, spawn_point,
 };
 
 /// A small random number generator, so a failure repeats.
@@ -513,4 +513,31 @@ fn every_music_track_decodes() {
             .unwrap_or_else(|error| panic!("{path}: {error}"));
     }
     audio.stop_music();
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_model_in_the_game_parses() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut models = 0;
+    let mut spinners = 0;
+    for path in filesystem.list("progs/") {
+        if !path.ends_with(".mdl") {
+            continue;
+        }
+        let bytes = filesystem.read(&path).expect("it reads");
+        let model = parse_mdl(&bytes, &palette).unwrap_or_else(|| panic!("{path} parses"));
+        assert!(!model.corners.is_empty(), "{path} has triangles");
+        assert!(!model.frames.is_empty(), "{path} has frames");
+        for frame in &model.frames {
+            let end = frame.first_pose + frame.pose_count;
+            assert!(end as usize <= model.poses.len(), "{path}'s frames fit");
+        }
+        models += 1;
+        spinners += usize::from(model.spins);
+    }
+    println!("{models} models, {spinners} spin");
+    assert_eq!(models, 79);
 }

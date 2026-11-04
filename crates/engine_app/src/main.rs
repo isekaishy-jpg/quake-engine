@@ -3,6 +3,7 @@
 
 mod app;
 mod commands;
+mod models;
 mod options;
 mod sounds;
 

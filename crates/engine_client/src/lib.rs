@@ -12,8 +12,8 @@ mod view;
 
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
-pub use client::Client;
+pub use client::{Client, DrawnEntity};
 pub use input::Buttons;
 pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};
-pub use view::{StepSmoother, VIEW_HEIGHT};
+pub use view::{StepSmoother, VIEW_HEIGHT, view_bob};

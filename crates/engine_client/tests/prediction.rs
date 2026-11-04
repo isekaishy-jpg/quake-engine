@@ -6,7 +6,7 @@ use std::rc::Rc;
 
 use common::room;
 use engine_client::{Buttons, Client, LightStyles, StepSmoother};
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -52,6 +52,9 @@ fn answer(server: &mut Loopback, acknowledged: u32, player: PlayerState) {
         acknowledged,
         player,
         instances: Vec::new(),
+        entities: Vec::new(),
+        weapon_model: 0,
+        weapon_frame: 0,
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -220,6 +223,9 @@ fn snapshot_with(server: &mut Loopback, tick: u32, instances: Vec<ModelInstance>
             ..PlayerState::default()
         },
         instances,
+        entities: Vec::new(),
+        weapon_model: 0,
+        weapon_frame: 0,
     };
     server.send(ServerMessage::Snapshot(snapshot).encode());
 }
@@ -315,4 +321,109 @@ fn sounds_wait_to_be_taken() {
     assert_eq!(client.take_music(), Some(4));
     assert!(client.take_sounds().is_empty());
     assert_eq!(client.take_music(), None);
+}
+
+/// Sends a snapshot with `entities`.
+fn snapshot_of(server: &mut Loopback, tick: u32, entities: Vec<EntityState>) {
+    let snapshot = Snapshot {
+        tick,
+        acknowledged: 0,
+        player: PlayerState::default(),
+        instances: Vec::new(),
+        entities,
+        weapon_model: 2,
+        weapon_frame: 5,
+    };
+    server.send(ServerMessage::Snapshot(snapshot).encode());
+}
+
+/// An entity at `x` showing `frame`.
+fn thing(id: u64, x: f32, frame: u16) -> EntityState {
+    EntityState {
+        id,
+        model: 1,
+        frame,
+        origin: Vec3::new(x, 0.0, 0.0),
+        ..EntityState::default()
+    }
+}
+
+#[test]
+fn entities_draw_between_the_last_two_snapshots_by_id() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_of(&mut server, 1, vec![thing(1, 0.0, 0), thing(2, 100.0, 0)]);
+    snapshot_of(&mut server, 2, vec![thing(2, 120.0, 0), thing(1, 10.0, 0)]);
+    client.receive();
+    let drawn = client.draw_entities(0.5);
+    assert!((drawn[0].state.origin.x - 110.0).abs() < 1e-4);
+    assert!((drawn[1].state.origin.x - 5.0).abs() < 1e-4);
+    assert_eq!(client.weapon(), (2, 5));
+}
+
+#[test]
+fn a_new_entity_appears_where_it_is() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_of(&mut server, 1, vec![]);
+    snapshot_of(&mut server, 2, vec![thing(1, 50.0, 0)]);
+    client.receive();
+    assert!((client.draw_entities(0.5)[0].state.origin.x - 50.0).abs() < 1e-4);
+}
+
+#[test]
+fn a_teleport_is_not_drawn_between_its_ends() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_of(&mut server, 1, vec![thing(1, 0.0, 0)]);
+    snapshot_of(&mut server, 2, vec![thing(1, 500.0, 0)]);
+    client.receive();
+    assert!((client.draw_entities(0.5)[0].state.origin.x - 500.0).abs() < 1e-4);
+}
+
+#[test]
+fn angles_blend_the_short_way_round() {
+    let (mut client, mut server, _world) = setup();
+    let turned = |yaw| EntityState {
+        angles: Vec3::new(0.0, yaw, 0.0),
+        ..thing(1, 0.0, 0)
+    };
+    snapshot_of(&mut server, 1, vec![turned(350.0)]);
+    snapshot_of(&mut server, 2, vec![turned(10.0)]);
+    client.receive();
+    let yaw = client.draw_entities(0.5)[0].state.angles.y;
+    assert!((yaw.rem_euclid(360.0)).abs() < 1e-3, "{yaw}");
+}
+
+#[test]
+fn a_new_frame_blends_in_over_a_tenth_of_a_second() {
+    let (mut client, mut server, _world) = setup();
+    snapshot_of(&mut server, 1, vec![thing(1, 0.0, 3)]);
+    client.receive();
+    assert!(
+        (client.draw_entities(0.0)[0].blend - 1.0).abs() < 1e-6,
+        "nothing to blend"
+    );
+    snapshot_of(&mut server, 2, vec![thing(1, 0.0, 4)]);
+    client.receive();
+    let drawn = client.draw_entities(0.0)[0];
+    assert_eq!((drawn.from_frame, drawn.state.frame), (3, 4));
+    assert!(drawn.blend.abs() < 1e-6);
+    let later = client.draw_entities(0.72)[0];
+    assert!((later.blend - 0.1).abs() < 1e-4);
+    for tick in 3..12 {
+        snapshot_of(&mut server, tick, vec![thing(1, 0.0, 4)]);
+    }
+    client.receive();
+    assert!((client.draw_entities(0.0)[0].blend - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn model_names_wait_to_be_taken() {
+    let (mut client, mut server, _world) = setup();
+    let name = "progs/flame.mdl".to_owned();
+    server.send(ServerMessage::ModelName { number: 3, name }.encode());
+    client.receive();
+    assert_eq!(
+        client.take_model_names(),
+        [(3, "progs/flame.mdl".to_owned())]
+    );
+    assert!(client.take_model_names().is_empty());
 }

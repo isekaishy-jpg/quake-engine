@@ -21,6 +21,12 @@ local ENGINE_FIELDS = {
 	button2 = true,
 	waterjump = true,
 	noclip = true,
+	angles = true,
+	frame = true,
+	skin = true,
+	effects = true,
+	weaponmodel = true,
+	weaponframe = true,
 }
 
 -- Map fields that aren't text.
@@ -168,15 +174,12 @@ local function fill(entity, fields)
 		elseif key == "origin" then
 			entity.origin = parse_vector(value)
 		elseif VECTOR_FIELDS[key] then
-			rawset(entity, key, parse_vector(value))
+			entity[key] = parse_vector(value)
 		elseif NUMBER_FIELDS[key] then
 			rawset(entity, key, tonumber(value) or 0)
 		elseif key ~= "_id" then
 			rawset(entity, key, value)
 		end
-	end
-	if rawget(entity, "angles") == nil then
-		rawset(entity, "angles", vector.zero)
 	end
 	for key in NUMBER_FIELDS do
 		if rawget(entity, key) == nil then
@@ -204,7 +207,6 @@ function adopt_player(id)
 	rawset(player, "classname", "player")
 	rawset(player, "health", 100)
 	rawset(player, "items", 0)
-	rawset(player, "angles", vector.zero)
 	return player
 end
 

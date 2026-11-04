@@ -186,7 +186,7 @@ impl Game {
                     ServerMessage::Sound(sound) => self.sounds.push(sound),
                     ServerMessage::StaticSound(sound) => self.static_sounds.push(sound),
                     ServerMessage::Music(track) => self.music = Some(track),
-                    ServerMessage::LightStyle { .. } => {}
+                    ServerMessage::LightStyle { .. } | ServerMessage::ModelName { .. } => {}
                 }
             }
         }

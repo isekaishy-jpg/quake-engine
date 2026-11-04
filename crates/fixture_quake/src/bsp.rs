@@ -262,6 +262,11 @@ fn import_tree(bsp: &BspData) -> Tree {
             children: [node_child(*node.front), node_child(*node.back)],
         })
         .collect();
+    let node_faces = bsp
+        .nodes
+        .iter()
+        .map(|node| (node.face_idx.0, node.face_num.0))
+        .collect();
     let leaves = bsp
         .leaves
         .iter()
@@ -281,6 +286,7 @@ fn import_tree(bsp: &BspData) -> Tree {
     Tree {
         planes,
         nodes,
+        node_faces,
         leaves,
         leaf_faces: bsp.mark_surfaces.iter().map(|face| face.0).collect(),
         clip_nodes: bsp

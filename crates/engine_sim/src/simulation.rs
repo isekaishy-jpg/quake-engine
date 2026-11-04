@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use engine_core::entity::ModelInstance;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::Map;
@@ -64,6 +64,16 @@ pub struct Entity {
     pub move_type: MoveType,
     /// The brush model it shows, if any.
     pub model: Option<u32>,
+    /// The number of the other model it shows, or 0 for none.
+    pub shape: u16,
+    /// Which frame it shows.
+    pub frame: u16,
+    /// Which skin it shows.
+    pub skin: u8,
+    /// Effects, by the original's bits.
+    pub effects: u8,
+    /// Its pitch, yaw and roll in degrees.
+    pub angles: Vec3,
     /// Whether the model is drawn.
     pub visible: bool,
     /// A pusher's own clock, in seconds.
@@ -116,6 +126,14 @@ pub struct Simulation {
     view: (f32, f32),
     /// Whether the player's jump button is down.
     jump_down: bool,
+    /// Model names, where a shape's number is its place here plus one.
+    shapes: Vec<String>,
+    /// How many of those the server has passed on.
+    shapes_sent: usize,
+    /// The number of the player's weapon model, or 0 for none.
+    weapon_model: u16,
+    /// The frame the player's weapon shows.
+    weapon_frame: u16,
 }
 
 /// Whether two boxes overlap.
@@ -155,7 +173,97 @@ impl Simulation {
             touched: Vec::new(),
             view: (0.0, 0.0),
             jump_down: false,
+            shapes: Vec::new(),
+            shapes_sent: 0,
+            weapon_model: 0,
+            weapon_frame: 0,
         }
+    }
+
+    /// The number of the model called `name`, giving it one if it's new.
+    fn shape_number(&mut self, name: &str) -> u16 {
+        let found = self.shapes.iter().position(|shape| shape == name);
+        let index = found.unwrap_or_else(|| {
+            self.shapes.push(name.to_owned());
+            self.shapes.len() - 1
+        });
+        u16::try_from(index + 1).unwrap_or(0)
+    }
+
+    /// Shows the model called `name` on an entity, which gets a box of 32
+    /// units each way until `setsize` changes it, as `PF_setmodel` gives.
+    pub fn set_shape(&mut self, id: EntityId, name: &str) {
+        let shape = self.shape_number(name);
+        if let Some(entity) = self.entities.get_mut(id) {
+            entity.shape = shape;
+            entity.visible = true;
+            entity.mins = Vec3::new(-16.0, -16.0, -16.0);
+            entity.maxs = Vec3::new(16.0, 16.0, 16.0);
+        }
+    }
+
+    /// Model names the client hasn't heard yet, with their numbers.
+    pub fn take_new_shapes(&mut self) -> Vec<(u16, String)> {
+        let first = self.shapes_sent;
+        self.shapes_sent = self.shapes.len();
+        self.shapes[first..]
+            .iter()
+            .zip(first..)
+            .filter_map(|(name, index)| Some((u16::try_from(index + 1).ok()?, name.clone())))
+            .collect()
+    }
+
+    /// The name of the player's weapon model, empty for none.
+    #[must_use]
+    pub fn weapon_model_name(&self) -> &str {
+        usize::from(self.weapon_model)
+            .checked_sub(1)
+            .and_then(|index| self.shapes.get(index))
+            .map_or("", String::as_str)
+    }
+
+    /// Sets the player's weapon model by name, where empty is none.
+    pub fn set_weapon_model(&mut self, name: &str) {
+        self.weapon_model = if name.is_empty() {
+            0
+        } else {
+            self.shape_number(name)
+        };
+    }
+
+    /// The frame the player's weapon shows.
+    #[must_use]
+    pub fn weapon_frame(&self) -> u16 {
+        self.weapon_frame
+    }
+
+    /// Sets the frame the player's weapon shows.
+    pub fn set_weapon_frame(&mut self, frame: u16) {
+        self.weapon_frame = frame;
+    }
+
+    /// The number of the player's weapon model.
+    #[must_use]
+    pub fn weapon_model(&self) -> u16 {
+        self.weapon_model
+    }
+
+    /// Every entity that shows a model.
+    #[must_use]
+    pub fn entity_states(&self) -> Vec<EntityState> {
+        self.entities
+            .iter()
+            .filter(|(_, entity)| entity.visible && entity.shape != 0)
+            .map(|(id, entity)| EntityState {
+                id: id.to_bits(),
+                model: entity.shape,
+                frame: entity.frame,
+                skin: entity.skin,
+                effects: entity.effects,
+                origin: entity.origin,
+                angles: entity.angles,
+            })
+            .collect()
     }
 
     /// Whether the player's jump button is down.

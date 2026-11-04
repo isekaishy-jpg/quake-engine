@@ -5,8 +5,9 @@ use std::sync::Arc;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::Map;
+use engine_map::{AliasModel, Map};
 
+use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
 use crate::error::RenderError;
 use crate::visible::VisibleSet;
@@ -117,6 +118,15 @@ impl Renderer {
         Ok(())
     }
 
+    /// Uploads a model, and returns the number to draw it by.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn add_model(&mut self, model: Arc<AliasModel>) -> Result<u32, RenderError> {
+        self.backend.add_model(model)
+    }
+
     /// Sets the text in the corner of the picture. Empty hides it.
     pub fn set_overlay_text(&mut self, text: &str) {
         self.backend.set_overlay_text(text);
@@ -138,6 +148,7 @@ impl Renderer {
         loaded: Option<&'a mut LoadedMap>,
         view: &View,
         instances: &'a [ModelInstance],
+        entities: &'a [EntityDraw],
     ) -> Option<Scene<'a>> {
         let loaded = loaded?;
         let changed = loaded
@@ -148,6 +159,7 @@ impl Renderer {
             mesh: &loaded.mesh,
             visible: &loaded.visible,
             instances,
+            entities,
             changed,
         })
     }
@@ -157,8 +169,13 @@ impl Renderer {
     /// # Errors
     ///
     /// Returns [`RenderError`] if the device fails.
-    pub fn draw(&mut self, view: &View, instances: &[ModelInstance]) -> Result<(), RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view, instances);
+    pub fn draw(
+        &mut self,
+        view: &View,
+        instances: &[ModelInstance],
+        entities: &[EntityDraw],
+    ) -> Result<(), RenderError> {
+        let scene = Self::scene(self.loaded.as_mut(), view, instances, entities);
         self.backend.draw(view, scene.as_ref())
     }
 
@@ -171,10 +188,11 @@ impl Renderer {
         &mut self,
         view: &View,
         instances: &[ModelInstance],
+        entities: &[EntityDraw],
         width: u32,
         height: u32,
     ) -> Result<Capture, RenderError> {
-        let scene = Self::scene(self.loaded.as_mut(), view, instances);
+        let scene = Self::scene(self.loaded.as_mut(), view, instances, entities);
         self.backend.capture(view, scene.as_ref(), width, height)
     }
 

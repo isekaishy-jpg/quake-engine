@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{Map, TextureKind};
+use engine_map::{AliasModel, Map, TextureKind};
 use vulkane::safe::{
     AccessFlags, ApiVersion, AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, Buffer,
     BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
@@ -21,6 +21,9 @@ use vulkane::safe::{
     VertexInputBinding, WaitSemaphore,
 };
 
+use crate::alias::{
+    ALIAS_PUSH_SIZE, EntityDraw, POSE_CORNER_BYTES, pose_bytes, push_bytes, uv_bytes,
+};
 use crate::error::RenderError;
 use crate::matrix::view_projection;
 use crate::overlay::{
@@ -58,6 +61,9 @@ const MIN_SWAPCHAIN_IMAGES: u32 = 2;
 const WORLD_SHADER: &str = include_str!("shaders/world.wgsl");
 
 /// The overlay shader.
+const ALIAS_SHADER: &str = include_str!("shaders/alias.wgsl");
+
+/// The overlay's shader.
 const OVERLAY_SHADER: &str = include_str!("shaders/overlay.wgsl");
 
 /// What [`Backend`] needs to draw a loaded map.
@@ -70,6 +76,8 @@ pub(crate) struct Scene<'a> {
     pub(crate) visible: &'a VisibleSet,
     /// Where brush models are.
     pub(crate) instances: &'a [ModelInstance],
+    /// The other models to draw.
+    pub(crate) entities: &'a [EntityDraw],
     /// Whether `visible` changed since it was last uploaded.
     pub(crate) changed: bool,
 }
@@ -158,6 +166,22 @@ struct OverlayPass {
     built_for: Option<(String, (u32, u32))>,
 }
 
+/// A model on the GPU.
+struct GpuAlias {
+    /// The model, for its scale and offset.
+    model: Arc<AliasModel>,
+    /// Every pose's corners.
+    poses: GpuBuffer,
+    /// Each corner's place on the skin.
+    uvs: GpuBuffer,
+    /// A descriptor set for each skin.
+    skin_sets: Vec<DescriptorSet>,
+    /// Kept alive for the sets.
+    _skins: Vec<GpuImage>,
+    /// Kept alive for the sets.
+    _pool: DescriptorPool,
+}
+
 /// The four pipelines.
 struct Pipelines {
     /// Lit surfaces.
@@ -168,6 +192,8 @@ struct Pipelines {
     liquid: GraphicsPipeline,
     /// Sky.
     sky: GraphicsPipeline,
+    /// Alias models.
+    alias: GraphicsPipeline,
 }
 
 impl Pipelines {
@@ -205,6 +231,10 @@ pub(crate) struct Backend {
     texture_layout: DescriptorSetLayout,
     /// The set used with no map.
     pipeline_layout: PipelineLayout,
+    /// The layout of model pipelines.
+    alias_layout: PipelineLayout,
+    /// Every model uploaded.
+    models: Vec<GpuAlias>,
     /// The pipelines.
     pipelines: Pipelines,
     /// The pass ending ready to present.
@@ -455,7 +485,17 @@ impl Backend {
                 size: MODEL_OFFSET_SIZE,
             }],
         )?;
-        let pipelines = Self::make_pipelines(&device, &pipeline_layout, &present_pass)?;
+        let alias_layout = PipelineLayout::with_push_constants(
+            &device,
+            &[&frame_layout, &texture_layout],
+            &[PushConstantRange {
+                stage_flags: ShaderStageFlags::VERTEX,
+                offset: 0,
+                size: ALIAS_PUSH_SIZE,
+            }],
+        )?;
+        let pipelines =
+            Self::make_pipelines(&device, &pipeline_layout, &alias_layout, &present_pass)?;
         let texture_sampler = Sampler::new_mipmapped(
             &device,
             SamplerCreateInfo {
@@ -485,6 +525,8 @@ impl Backend {
             frame_layout,
             texture_layout,
             pipeline_layout,
+            alias_layout,
+            models: Vec::new(),
             pipelines,
             present_pass,
             capture_pass,
@@ -657,10 +699,143 @@ impl Backend {
         rec.draw(overlay.count, 1, 0, 0);
     }
 
+    /// The pipeline for models. Each pose is a vertex buffer at its own offset,
+    /// bound twice, so the shader can blend two of them.
+    fn make_alias_pipeline(
+        device: &Device,
+        layout: &PipelineLayout,
+        pass: &RenderPass,
+    ) -> Result<GraphicsPipeline, RenderError> {
+        let spirv = vulkane::safe::naga::compile_wgsl(ALIAS_SHADER)
+            .map_err(|error| RenderError(error.to_string()))?;
+        let shader = ShaderModule::from_spirv(device, &spirv)?;
+        let pose_stride = u32::try_from(POSE_CORNER_BYTES).unwrap_or(0);
+        let binding = |binding, stride| VertexInputBinding {
+            binding,
+            stride,
+            input_rate: InputRate::VERTEX,
+        };
+        let attribute = |location, binding, format, offset| VertexInputAttribute {
+            location,
+            binding,
+            format,
+            offset,
+        };
+        GraphicsPipelineBuilder::new(layout, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+            .vertex_input(
+                &[
+                    binding(0, pose_stride),
+                    binding(1, pose_stride),
+                    binding(2, 8),
+                ],
+                &[
+                    attribute(0, 0, Format::R8G8B8A8_UINT, 0),
+                    attribute(1, 0, Format::R8G8B8A8_SNORM, 4),
+                    attribute(2, 1, Format::R8G8B8A8_UINT, 0),
+                    attribute(3, 1, Format::R8G8B8A8_SNORM, 4),
+                    attribute(4, 2, Format::R32G32_SFLOAT, 0),
+                ],
+            )
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .build(device)
+            .map_err(RenderError::from)
+    }
+
+    /// Uploads a model, and returns its number.
+    pub(crate) fn add_model(&mut self, model: Arc<AliasModel>) -> Result<u32, RenderError> {
+        let poses = self.device_buffer(&pose_bytes(&model), BufferUsage::VERTEX_BUFFER)?;
+        let uvs = self.device_buffer(&uv_bytes(&model), BufferUsage::VERTEX_BUFFER)?;
+        let sets = u32::try_from(model.skins.len().max(1)).unwrap_or(u32::MAX);
+        let pool = DescriptorPool::new(
+            &self.device,
+            sets,
+            &[
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: sets,
+                },
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLER,
+                    descriptor_count: sets,
+                },
+            ],
+        )?;
+        let mut skins = Vec::with_capacity(model.skins.len());
+        let mut skin_sets = Vec::with_capacity(model.skins.len());
+        for skin in &model.skins {
+            let levels = [(model.skin_width, model.skin_height, skin.as_slice())];
+            let image = self.upload_image(&levels, Format::R8G8B8A8_UNORM)?;
+            let set = pool.allocate(&self.texture_layout)?;
+            set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            set.write_sampler(1, &self.texture_sampler);
+            skin_sets.push(set);
+            skins.push(image);
+        }
+        self.models.push(GpuAlias {
+            model,
+            poses,
+            uvs,
+            skin_sets,
+            _skins: skins,
+            _pool: pool,
+        });
+        Ok(u32::try_from(self.models.len() - 1).unwrap_or(u32::MAX))
+    }
+
+    /// Records the draw calls of the models in `scene`.
+    fn record_models(
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        layout: &PipelineLayout,
+        pipelines: &Pipelines,
+        models: &[GpuAlias],
+        map: &GpuMap,
+        scene: &Scene<'_>,
+    ) {
+        if scene.entities.is_empty() {
+            return;
+        }
+        rec.bind_graphics_pipeline(&pipelines.alias);
+        for draw in scene.entities {
+            let Some(gpu) = models.get(draw.model as usize) else {
+                continue;
+            };
+            let skin = gpu
+                .skin_sets
+                .get(draw.skin as usize)
+                .or(gpu.skin_sets.first());
+            let Some(skin) = skin else {
+                continue;
+            };
+            let corners = gpu.model.corners.len();
+            let pose_size = (corners * POSE_CORNER_BYTES) as u64;
+            rec.bind_vertex_buffers(
+                0,
+                &[
+                    (&gpu.poses.buffer, u64::from(draw.pose) * pose_size),
+                    (&gpu.poses.buffer, u64::from(draw.next_pose) * pose_size),
+                    (&gpu.uvs.buffer, 0),
+                ],
+            );
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, skin]);
+            rec.push_constants(
+                layout,
+                ShaderStageFlags::VERTEX,
+                0,
+                &push_bytes(draw, &gpu.model),
+            );
+            rec.draw(u32::try_from(corners).unwrap_or(0), 1, 0, 0);
+        }
+    }
+
     /// The four pipelines, which differ in their fragment stage.
     fn make_pipelines(
         device: &Device,
         layout: &PipelineLayout,
+        alias_layout: &PipelineLayout,
         pass: &RenderPass,
     ) -> Result<Pipelines, RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(WORLD_SHADER)
@@ -699,6 +874,7 @@ impl Backend {
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,
             sky: pipeline("fs_sky")?,
+            alias: Self::make_alias_pipeline(device, alias_layout, pass)?,
         })
     }
 
@@ -1128,6 +1304,14 @@ impl Backend {
                     view.time,
                     extent,
                 );
+                Self::record_models(
+                    &mut rec,
+                    &self.alias_layout,
+                    &self.pipelines,
+                    &self.models,
+                    map,
+                    scene,
+                );
             }
             Self::record_overlay(&mut rec, self.overlay.as_ref(), extent);
             rec.end_render_pass();
@@ -1222,6 +1406,14 @@ impl Backend {
                         scene,
                         view.time,
                         (width, height),
+                    );
+                    Self::record_models(
+                        rec,
+                        &self.alias_layout,
+                        &self.pipelines,
+                        &self.models,
+                        map,
+                        scene,
                     );
                 }
                 Self::record_overlay(rec, self.overlay.as_ref(), (width, height));

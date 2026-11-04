@@ -138,7 +138,6 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
     };
     let vector = |value: Vec3| Value::Vector(from_vec3(value));
     let origin = sim.origin(id).unwrap_or(entity.origin);
-    let _lua = lua;
     Ok(match field {
         "origin" => vector(origin),
         "velocity" => vector(sim.velocity(id).unwrap_or(entity.velocity)),
@@ -162,6 +161,12 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "nextthink" => Value::Number(entity.next_think),
         "ltime" => Value::Number(entity.local_time),
         "visible" => Value::Boolean(entity.visible),
+        "angles" => vector(entity.angles),
+        "frame" => Value::Number(f64::from(entity.frame)),
+        "skin" => Value::Number(f64::from(entity.skin)),
+        "effects" => Value::Number(f64::from(entity.effects)),
+        "weaponframe" => Value::Number(f64::from(sim.weapon_frame())),
+        "weaponmodel" => Value::String(lua.create_string(sim.weapon_model_name())?),
         "view" => {
             let (yaw, pitch) = sim.view();
             vector(Vec3::new(pitch, yaw, 0.0))
@@ -171,6 +176,16 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         }
         _ => return Err(no_field(field)),
     })
+}
+
+/// A small whole number from a script's value, or an error.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "frames and skins are small, and a cast saturates anything that isn't"
+)]
+fn small_number(value: &Value) -> mlua::Result<u16> {
+    Ok(as_number(value)? as u16)
 }
 
 /// A number from a script's value, or an error.
@@ -199,6 +214,15 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
     match field {
         "origin" => sim.set_origin(id, as_vec3(value)?),
         "velocity" => sim.set_velocity(id, as_vec3(value)?),
+        "weaponmodel" => {
+            let name = if let Value::String(name) = value {
+                name.to_string_lossy()
+            } else {
+                String::new()
+            };
+            sim.set_weapon_model(&name);
+        }
+        "weaponframe" => sim.set_weapon_frame(small_number(value)?),
         _ => {
             let number = as_number(value);
             let Some(entity) = sim.entity_mut(id) else {
@@ -210,6 +234,10 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
                 "nextthink" => entity.next_think = number?,
                 "ltime" => entity.local_time = number?,
                 "visible" => entity.visible = matches!(value, Value::Boolean(true)),
+                "angles" => entity.angles = as_vec3(value)?,
+                "frame" => entity.frame = small_number(value)?,
+                "skin" => entity.skin = u8::try_from(small_number(value)?).unwrap_or(0),
+                "effects" => entity.effects = u8::try_from(small_number(value)?).unwrap_or(0),
                 "solid" => {
                     let number = number?;
                     entity.solid = SOLID_NUMBERS
@@ -342,6 +370,8 @@ impl Game {
             lua.create_function(move |_, (id, model): (f64, String)| {
                 if let Some(number) = model.strip_prefix('*').and_then(|n| n.parse().ok()) {
                     sim.borrow_mut().set_model(id_from(id), number);
+                } else if !model.is_empty() {
+                    sim.borrow_mut().set_shape(id_from(id), &model);
                 }
                 Ok(())
             })?,
