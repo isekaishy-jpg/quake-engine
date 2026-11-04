@@ -18,6 +18,8 @@ The human set these on 2026-11-03.
 8. **The Sol crates are part of this engine.** `solapp`, `solworker` and `solcache` live here as repository crates and can be changed here.
 9. **Online play is server-authoritative, with fair play as a goal.** Behaviour is controlled by server settings, not hardcoded.
 10. **Original game data is never committed.** The engine loads it from the user's own copy.
+11. **The first end goal is the port.** The finished product plays Quake, the fixture, so we know it works.
+12. **Game dev encapsulation throughout,** so anything can be changed later. Each system sits behind its own boundary, and third-party libraries stay private to the system that uses them.
 
 Decisions recorded before this workflow was adopted are in [docs/pre-research](docs/pre-research/README.md). They say what we intend to do. They aren't research, and each still goes through the workflow below.
 

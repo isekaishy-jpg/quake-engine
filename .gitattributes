@@ -1,0 +1,17 @@
+# Text is stored and checked out with LF on every platform. The eol attribute
+# overrides a machine's core.autocrlf, which ends Git's LF/CRLF warnings.
+* text=auto eol=lf
+
+# Binary formats are never converted or diffed as text.
+*.png binary
+*.ico binary
+*.wav binary
+*.ogg binary
+*.flac binary
+*.bin binary
+*.pak binary
+*.bsp binary
+*.mdl binary
+*.lib binary
+*.dll binary
+*.exe binary

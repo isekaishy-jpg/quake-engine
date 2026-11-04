@@ -6,18 +6,12 @@ The order is a first draft. Earlier items unblock later ones.
 
 ## Increment 0: repository and build
 
+Done, in proposals 0001 to 0009, apart from:
+
 | Item | What research has to establish |
 |---|---|
-| Toolchain pin | Which Rust release, and how it's kept in step with the crates |
-| Repository and workspace layout | Directories, members, and where third-party patched sources sit |
-| Line endings | Git attributes and the rules for generated and vendored files |
-| Lint set | Which lints, and how they apply to the Sol crates and generated code |
-| Required checks | `xtask`, what it runs, and how it reports |
-| Versions and build numbers | Spelling, storage and reservation |
-| Rust style guide | Adapting the Solarity client's `STYLE.md` |
-| Luau style guide | Which guide, and what enforces it |
-| Crate boundaries | Which crates exist, what each owns, and what may depend on what |
-| Bringing in the Sol crates | The state they're in here, and what changes to make them engine crates |
+| Luau style guide | Which guide, and what enforces it. Needed before Luau code |
+| Sol crates under the workspace lints | About 800 warnings to work through |
 
 ## Dependencies
 

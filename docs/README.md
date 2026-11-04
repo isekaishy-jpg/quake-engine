@@ -1,12 +1,26 @@
 # Documentation
 
+- **Engineering:**
+  - [Rust style guide](style.md)
+  - [Development: building, checks and build numbers](development.md)
 - **Research:**
   - [Research plan](research/plan.md): the items that need researching, in order
   - [Open research questions](research/open-questions.md)
 - **Designs:** none yet.
-- **Proposals:** none yet. Each item gets one record under `proposals/`, with its research, design, proposal and review.
+- **Proposals:** one record per item, each with its research, design, proposal and review.
+  - [0001: engine architecture and the road to playing Quake](proposals/0001-architecture.md)
+  - Increment 0:
+    - [0002: the Rust toolchain pin](proposals/0002-toolchain.md)
+    - [0003: repository and workspace layout](proposals/0003-repository-layout.md)
+    - [0004: line endings](proposals/0004-line-endings.md)
+    - [0005: the lint set](proposals/0005-lints.md)
+    - [0006: `xtask` and the required checks](proposals/0006-xtask-checks.md)
+    - [0007: versions and build numbers](proposals/0007-versions-and-build-numbers.md)
+    - [0008: crate boundaries and their permanent test](proposals/0008-crate-boundaries.md)
+    - [0009: the Sol crates as repository crates](proposals/0009-sol-crates.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
+  - [0002: increment 0](reviews/0002-increment-0.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC
