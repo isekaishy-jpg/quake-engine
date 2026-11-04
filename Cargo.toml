@@ -34,6 +34,7 @@ exclude = ["vendor/winit", "vendor/micropool", "vendor/vulkane", "vendor/box3d"]
 # version `0.0.0a` (proposal 0007).
 [workspace.package]
 version = "0.0.0-alpha"
+license = "GPL-2.0-or-later"
 edition = "2024"
 rust-version = "1.98"
 publish = false

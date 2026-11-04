@@ -2,6 +2,7 @@
 name = "engine_map"
 description = "The engine's own map type. Knows nothing about any file format."
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true

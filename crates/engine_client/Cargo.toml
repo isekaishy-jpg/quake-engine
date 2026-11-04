@@ -2,6 +2,7 @@
 name = "engine_client"
 description = "Client state: prediction, interpolation and input commands."
 version.workspace = true
+license.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
