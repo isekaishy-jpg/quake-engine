@@ -46,6 +46,12 @@
     - [0029: the audio backend](proposals/0029-audio-backend.md)
     - [0030: sound data](proposals/0030-sound-data.md)
     - [0031: sounds in the game](proposals/0031-sounds-in-the-game.md)
+  - Increment 6:
+    - [0032: entities on the client](proposals/0032-entities-on-the-client.md)
+    - [0033: alias models](proposals/0033-alias-models.md)
+    - [0034: flying things and traces](proposals/0034-flying-things-and-traces.md)
+    - [0035: the QuakeC port of combat](proposals/0035-quakec-combat-port.md)
+    - [0036: sprites, particles, lights and beams](proposals/0036-effects.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -55,6 +61,7 @@
   - [0006: increment 3](reviews/0006-increment-3.md)
   - [0007: increment 4](reviews/0007-increment-4.md)
   - [0008: increment 5](reviews/0008-increment-5.md)
+  - [0009: increment 6](reviews/0009-increment-6.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC
