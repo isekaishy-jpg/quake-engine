@@ -95,7 +95,7 @@ fn callbacks_reach_the_right_entity_with_their_arguments() {
     game.spawn_map(&[entity(&[("classname", "thing")])]);
     let id = last(&simulation);
     let other = simulation.borrow().player_id();
-    game.run(Callback::Think(id));
+    game.run(Callback::Think(id, 0.0));
     game.run(Callback::Touch {
         id,
         other: Some(other),
@@ -115,7 +115,7 @@ fn callbacks_reach_the_right_entity_with_their_arguments() {
 fn a_missing_callback_is_fine() {
     let (game, simulation) = game("function thing(self) end");
     game.spawn_map(&[entity(&[("classname", "thing")])]);
-    game.run(Callback::Think(last(&simulation)));
+    game.run(Callback::Think(last(&simulation), 0.0));
     assert!(prints(&game).is_empty());
 }
 
@@ -172,7 +172,7 @@ fn a_script_error_is_reported_and_the_game_carries_on() {
         "#,
     );
     game.spawn_map(&[entity(&[("classname", "thing")])]);
-    game.run(Callback::Think(last(&simulation)));
+    game.run(Callback::Think(last(&simulation), 0.0));
     let output = prints(&game);
     assert!(output[0].contains("broken"), "{output:?}");
     game.exec("engine.print('still here')").expect("runs");
@@ -189,7 +189,7 @@ fn a_runaway_script_is_stopped() {
         "#,
     );
     game.spawn_map(&[entity(&[("classname", "thing")])]);
-    game.run(Callback::Think(last(&simulation)));
+    game.run(Callback::Think(last(&simulation), 0.0));
     assert!(prints(&game)[0].contains("too long"));
 }
 

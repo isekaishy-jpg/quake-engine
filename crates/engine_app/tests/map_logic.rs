@@ -1735,3 +1735,33 @@ fn cheats_arrive_through_the_console() {
     game.wait(0.05);
     assert!(game.server.take_next_level().is_some(), "it starts again");
 }
+
+/// How many shots `weapon`'s impulse gets away in ten seconds of holding fire.
+fn shots_in_ten_seconds(weapon: u8, ammo: &str) -> f64 {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.run(2, impulse(9));
+    game.run(2, impulse(weapon));
+    game.wait(0.1);
+    game.check(&format!("player.{ammo} = 200 W_SetCurrentAmmo(player)"));
+    game.run(720, attack());
+    let left = format!("assert(false, player.{ammo})");
+    let error = game.server.exec(&format!(
+        "local player = find_all(\"classname\", \"player\")[1] {left}"
+    ));
+    let text = format!("{:?}", error.err());
+    let number = text
+        .split(|c: char| !c.is_ascii_digit())
+        .find(|part| !part.is_empty() && part.len() <= 3 && part != &"1")
+        .unwrap_or("0");
+    200.0 - number.parse::<f64>().unwrap_or(0.0)
+}
+
+#[test]
+fn rates_of_fire_dont_round_up_to_whole_ticks() {
+    let rockets = shots_in_ten_seconds(7, "ammo_rockets");
+    assert!((12.0..=13.0).contains(&rockets), "0.8 s apart: {rockets}");
+    let nails = shots_in_ten_seconds(4, "ammo_nails");
+    assert!((98.0..=101.0).contains(&nails), "ten a second: {nails}");
+}

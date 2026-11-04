@@ -12,9 +12,9 @@ use engine_assets::DirectoryArchive;
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Buttons, Client, DrawnEntity, EffectSource, Effects, Look, LookScale,
-    ScreenEvent, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key, dead_roll, view_bob,
-    view_idle, view_roll,
+    AmbientSounds, Bindings, Bot, BotSkill, Buttons, Client, DrawnEntity, EffectSource, Effects,
+    Look, LookScale, ScreenEvent, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key, dead_roll,
+    view_bob, view_idle, view_roll,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::Quad;
@@ -23,7 +23,7 @@ use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
 use engine_map::{Contents, Map};
-use engine_net::{NetServer, ServerMessage, Transport, loopback};
+use engine_net::{Conditioned, Conditions, NetServer, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
@@ -82,7 +82,16 @@ struct AudioLevels {
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
 /// Settings a game can read, which go to it as each level starts.
-const LEVEL_SETTINGS: [&str; 9] = [
+const LEVEL_SETTINGS: [&str; 18] = [
+    "sv_fair_enable",
+    "sv_fair_floor",
+    "sv_fair_width",
+    "sv_fair_ceiling",
+    "sv_fair_ceiling_margin",
+    "sv_fair_partial",
+    "sv_fair_outlier",
+    "sv_fair_interval",
+    "sv_unlag_enable",
     "skill",
     "deathmatch",
     "coop",
@@ -229,6 +238,12 @@ pub(crate) struct World {
     connect_time: f64,
     /// Who this player is.
     pub(crate) identity: SeatInfo,
+    /// Bots playing here, each a client of its own.
+    pub(crate) bots: Vec<Bot>,
+    /// How many bots have been made, for names and seeds.
+    bots_made: u32,
+    /// The map's collision, for bots.
+    collision: Option<Rc<CollisionWorld>>,
 }
 
 impl World {
@@ -256,7 +271,62 @@ impl World {
 
     /// Whether other people are involved, so the game can't stop for one.
     pub(crate) fn is_online(&self) -> bool {
-        self.net_server.is_some() || (self.client.is_some() && self.server.is_none())
+        self.net_server.is_some()
+            || !self.bots.is_empty()
+            || (self.client.is_some() && self.server.is_none())
+    }
+
+    /// Notes the map's collision, for bots.
+    pub(crate) fn set_collision(&mut self, collision: Rc<CollisionWorld>) {
+        self.collision = Some(collision);
+    }
+
+    /// Adds a bot on a connection of `ping` milliseconds. Returns its name.
+    pub(crate) fn add_bot(&mut self, ping: u64) -> Option<String> {
+        let world = Rc::clone(self.collision.as_ref()?);
+        let server = self.server.as_mut()?;
+        self.bots_made += 1;
+        let number = self.bots_made;
+        let conditions = Conditions {
+            send_delay: Duration::from_millis(ping / 2),
+            ..Conditions::default()
+        };
+        let (bot_end, server_end) = loopback();
+        let seed = u64::from(number) * 7919;
+        let name = format!("bot{number}");
+        let colors = u8::try_from(number % 14).unwrap_or(0);
+        let server_end = Conditioned::new(Box::new(server_end), conditions, seed);
+        server.add_seat(Seat::new(
+            Box::new(server_end),
+            SeatInfo {
+                name: name.clone(),
+                colors: colors << 4 | (13 - colors),
+            },
+        ));
+        let bot_end = Conditioned::new(Box::new(bot_end), conditions, seed + 1);
+        let mut client = Client::new(Box::new(bot_end), world, Vec3::ZERO);
+        client.send_ready();
+        self.bots
+            .push(Bot::new(client, BotSkill::default(), number));
+        Some(name)
+    }
+
+    /// Plays a tick of every bot, following the server to a new level.
+    fn run_bots(&mut self, seconds: f32) {
+        let Some(world) = self.collision.clone() else {
+            return;
+        };
+        for bot in std::mem::take(&mut self.bots) {
+            let mut bot = bot;
+            bot.tick(seconds, &world);
+            if bot.client_mut().take_level().is_some() {
+                let (transport, skill, seed) = bot.into_parts();
+                let mut client = Client::new(transport, Rc::clone(&world), Vec3::ZERO);
+                client.send_ready();
+                bot = Bot::new(client, skill, seed);
+            }
+            self.bots.push(bot);
+        }
     }
 
     /// Whether the game moves on, as `_Host_Frame` decides.
@@ -315,6 +385,7 @@ impl World {
             }
         }
         self.level = level;
+        self.collision = Some(Rc::clone(&collision));
         self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
@@ -335,6 +406,8 @@ impl World {
             net_server.flush();
         }
         self.net_server = None;
+        self.bots.clear();
+        self.collision = None;
         self.connecting = None;
         self.client = None;
         self.server = None;
@@ -497,11 +570,13 @@ impl World {
         self.turn_view(seconds);
         let command = self.command();
         self.buttons.impulse = 0;
+        let mut bots_due = false;
         if let Some(client) = &mut self.client {
             if let Some(server) = &mut self.server {
                 client.send_command(command, seconds);
                 server.tick();
                 client.receive();
+                bots_due = true;
             } else {
                 client.receive();
                 client.send_command(command, seconds);
@@ -528,6 +603,9 @@ impl World {
             self.show_events(events);
         }
         self.play_sounds();
+        if bots_due {
+            self.run_bots(seconds);
+        }
     }
 
     /// Turns the view by the keys held.
@@ -954,6 +1032,9 @@ impl Engine {
         console.register_cvar("topcolor", "0", saved);
         console.register_cvar("bottomcolor", "0", saved);
         console.register_cvar("maxplayers", "8", saved);
+        console.register_cvar("net_fake_latency", "0", CvarFlags::default());
+        console.register_cvar("net_fake_jitter", "0", CvarFlags::default());
+        console.register_cvar("net_fake_loss", "0", CvarFlags::default());
         for (name, value) in [
             ("skill", "1"),
             ("deathmatch", "0"),
@@ -966,6 +1047,23 @@ impl Engine {
             ("registered", "1"),
         ] {
             console.register_cvar(name, value, CvarFlags::default());
+        }
+        let server_rule = CvarFlags {
+            saved: true,
+            server: true,
+        };
+        for (name, value) in [
+            ("sv_fair_enable", "1"),
+            ("sv_fair_floor", "20"),
+            ("sv_fair_width", "20"),
+            ("sv_fair_ceiling", "90"),
+            ("sv_fair_ceiling_margin", "5"),
+            ("sv_fair_partial", "0.5"),
+            ("sv_fair_outlier", "100"),
+            ("sv_fair_interval", "30"),
+            ("sv_unlag_enable", "1"),
+        ] {
+            console.register_cvar(name, value, server_rule);
         }
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
@@ -1024,6 +1122,9 @@ impl Engine {
                 connecting: None,
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
+                bots: Vec::new(),
+                bots_made: 0,
+                collision: None,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,

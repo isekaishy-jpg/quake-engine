@@ -132,6 +132,7 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     world.leave_game();
     world.level = server.level().clone();
     world.server = Some(server);
+    world.set_collision(Rc::clone(&collision));
     world.client = Some(Client::new(Box::new(client_end), collision, origin));
     world.after_load(&map, palette)
 }

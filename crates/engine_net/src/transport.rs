@@ -1,6 +1,6 @@
 //! Moving bytes between client and server.
 
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
 /// Something that carries messages to the other side.
@@ -41,6 +41,8 @@ pub struct Loopback {
     outgoing: Sender<Vec<u8>>,
     /// From the other end.
     incoming: Receiver<Vec<u8>>,
+    /// Whether the other end has gone.
+    closed: bool,
 }
 
 /// A connected pair of ends.
@@ -52,20 +54,33 @@ pub fn loopback() -> (Loopback, Loopback) {
         Loopback {
             outgoing: to_second,
             incoming: from_second,
+            closed: false,
         },
         Loopback {
             outgoing: to_first,
             incoming: from_first,
+            closed: false,
         },
     )
 }
 
 impl Transport for Loopback {
     fn send(&mut self, bytes: Vec<u8>) {
-        let _closed = self.outgoing.send(bytes);
+        self.closed |= self.outgoing.send(bytes).is_err();
     }
 
     fn receive(&mut self) -> Option<Vec<u8>> {
-        self.incoming.try_recv().ok()
+        match self.incoming.try_recv() {
+            Ok(bytes) => Some(bytes),
+            Err(TryRecvError::Empty) => None,
+            Err(TryRecvError::Disconnected) => {
+                self.closed = true;
+                None
+            }
+        }
+    }
+
+    fn is_connected(&self) -> bool {
+        !self.closed
     }
 }

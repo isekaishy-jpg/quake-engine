@@ -1,6 +1,6 @@
 //! Entities, players and pusher physics.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -139,10 +139,12 @@ pub struct Entity {
 }
 
 /// Something a script has to handle.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Callback {
-    /// `id` thinks.
-    Think(EntityId),
+    /// `id` thinks, at a game time inside the tick, which is 0 for a tick's own
+    /// time. Scripts see that time, as `SV_RunThink` arranges, so what repeats
+    /// doesn't round up to whole ticks (proposal 0050).
+    Think(EntityId, f64),
     /// `id` was blocked by `other`.
     Blocked {
         /// The pusher.
@@ -197,6 +199,14 @@ pub(crate) struct Player {
     /// Where they've been lately, oldest first, with when.
     #[serde(skip)]
     past: VecDeque<(f64, Vec3)>,
+    /// How far back their shots can look, in seconds.
+    #[serde(skip, default = "default_rewind_limit")]
+    rewind_limit: f64,
+}
+
+/// How far back a shot looks until the server says otherwise.
+fn default_rewind_limit() -> f64 {
+    MAX_REWIND
 }
 
 impl Player {
@@ -220,6 +230,7 @@ impl Player {
             touched: Vec::new(),
             view_time: 0.0,
             past: VecDeque::new(),
+            rewind_limit: MAX_REWIND,
         }
     }
 
@@ -293,6 +304,10 @@ pub struct Simulation {
     pub(crate) player_view: Vec<bool>,
     /// Where players are taken to be, while a shot looks into the past.
     rewound: Vec<(EntityId, Vec3)>,
+    /// The exact time of what scripts are running for.
+    event_time: Option<f64>,
+    /// Where doors, lifts and monsters have been lately, oldest first.
+    things_past: VecDeque<(f64, Vec<(EntityId, Vec3)>)>,
 }
 
 /// Whether two boxes overlap.
@@ -322,6 +337,8 @@ impl Simulation {
             check_index: 0,
             player_view: Vec::new(),
             rewound: Vec::new(),
+            event_time: None,
+            things_past: VecDeque::new(),
         };
         let _first = simulation.add_player(origin);
         simulation
@@ -389,6 +406,8 @@ impl Simulation {
             check_index,
             player_view,
             rewound: _,
+            event_time: _,
+            things_past: _,
         } = self;
         SavedSimulation {
             entities: entities.clone(),
@@ -423,6 +442,8 @@ impl Simulation {
             check_index: saved.check_index,
             player_view: saved.player_view,
             rewound: Vec::new(),
+            event_time: None,
+            things_past: VecDeque::new(),
         }
     }
 
@@ -651,10 +672,15 @@ impl Simulation {
         self.slot(id).map_or(0, |player| player.last_command)
     }
 
-    /// Game time in seconds.
+    /// Game time in seconds, which is exact while something's thinking.
     #[must_use]
     pub fn time(&self) -> f64 {
-        self.time
+        self.event_time.unwrap_or(self.time)
+    }
+
+    /// Sets the time scripts see, or goes back to the tick's own.
+    pub fn set_event_time(&mut self, time: Option<f64>) {
+        self.event_time = time;
     }
 
     /// Adds an entity.
@@ -743,11 +769,16 @@ impl Simulation {
     pub fn instances(&self) -> Vec<ModelInstance> {
         self.entities
             .iter()
-            .filter_map(|(_, entity)| {
+            .filter_map(|(id, entity)| {
                 let solid = entity.solid == Solid::Bsp;
+                let origin = if self.rewound.is_empty() {
+                    entity.origin
+                } else {
+                    self.origin(id).unwrap_or(entity.origin)
+                };
                 (entity.visible || solid).then_some(ModelInstance {
                     model: entity.model?,
-                    origin: entity.origin,
+                    origin,
                     visible: entity.visible,
                     solid,
                     frame: entity.frame,
@@ -828,7 +859,7 @@ impl Simulation {
                     if let Some(entity) = self.entities.get_mut(id) {
                         entity.next_think = 0.0;
                     }
-                    callbacks.push(Callback::Think(id));
+                    callbacks.push(Callback::Think(id, 0.0));
                 }
             }
             MoveType::None | MoveType::Walk => {
@@ -876,7 +907,7 @@ impl Simulation {
             if let Some(entity) = self.entities.get_mut(id) {
                 entity.next_think = 0.0;
             }
-            callbacks.push(Callback::Think(id));
+            callbacks.push(Callback::Think(id, think_time.max(self.time)));
         }
     }
 
@@ -1100,22 +1131,84 @@ impl Simulation {
                 let _old = player.past.pop_front();
             }
         }
+        // Only worth keeping with someone to shoot at it from the past.
+        if self.players.len() > 1 {
+            let things = self
+                .entities
+                .iter()
+                .filter(|(_, entity)| {
+                    matches!(entity.move_type, MoveType::Push | MoveType::Step)
+                        && entity.solid != Solid::Not
+                })
+                .map(|(id, entity)| (id, entity.origin))
+                .collect();
+            self.things_past.push_back((time, things));
+            while self
+                .things_past
+                .front()
+                .is_some_and(|(when, _)| *when < oldest)
+            {
+                let _old = self.things_past.pop_front();
+            }
+        }
     }
 
-    /// Takes other players back to where `shooter` saw them, up to a limit,
-    /// until [`Simulation::end_rewind`] (proposal 0048).
+    /// Where doors, lifts and monsters were at `time`, between the records
+    /// around it.
+    fn things_at(&self, time: f64) -> Vec<(EntityId, Vec3)> {
+        let Some(after) = self.things_past.iter().position(|(when, _)| *when >= time) else {
+            return Vec::new();
+        };
+        let (to_time, to) = &self.things_past[after];
+        let Some((from_time, from)) = after.checked_sub(1).and_then(|i| self.things_past.get(i))
+        else {
+            return to.clone();
+        };
+        let span = to_time - from_time;
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "a blend needs no more than f32"
+        )]
+        let fraction = if span > 0.0 {
+            ((time - from_time) / span) as f32
+        } else {
+            1.0
+        };
+        let before: HashMap<EntityId, Vec3> = from.iter().copied().collect();
+        to.iter()
+            .map(|&(id, origin)| {
+                let start = before.get(&id).copied().unwrap_or(origin);
+                (id, start.lerp(origin, fraction))
+            })
+            .collect()
+    }
+
+    /// Sets how far back a player's shots can look, in seconds.
+    pub fn set_rewind_limit(&mut self, id: EntityId, seconds: f64) {
+        if let Some(player) = self.slot_mut(id) {
+            player.rewind_limit = seconds.clamp(0.0, MAX_REWIND);
+        }
+    }
+
+    /// Takes everything else back to where `shooter` saw it, up to their
+    /// limit, until [`Simulation::end_rewind`] (proposals 0048 and 0051).
     pub fn rewind(&mut self, shooter: EntityId) {
-        let view_time = self.slot(shooter).map_or(0.0, |player| player.view_time);
-        if view_time <= 0.0 {
+        let Some(player) = self.slot(shooter) else {
+            return;
+        };
+        let (view_time, limit) = (player.view_time, player.rewind_limit);
+        if view_time <= 0.0 || limit <= 0.0 {
             return;
         }
-        let time = view_time.max(self.time - MAX_REWIND).min(self.time);
-        self.rewound = self
+        let time = view_time.max(self.time - limit).min(self.time);
+        let mut rewound: Vec<(EntityId, Vec3)> = self
             .players
             .iter()
             .filter(|player| player.id != shooter)
             .filter_map(|player| Some((player.id, player.at_time(time)?)))
             .collect();
+        rewound.extend(self.things_at(time));
+        self.rewound = rewound;
     }
 
     /// Puts players back after a shot.

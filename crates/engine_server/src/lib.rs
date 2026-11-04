@@ -7,6 +7,7 @@
 //!
 //! May depend on `engine_core`, `engine_console`, `engine_map`, `engine_physics`, `engine_sim`, `engine_script`, `engine_net`. See proposal 0008.
 
+mod fair;
 mod seat;
 
 use std::cell::RefCell;
@@ -24,6 +25,7 @@ use engine_script::{Game, SavedScripts, ScriptError};
 use engine_sim::{EntityId, SavedSimulation, Simulation};
 use serde::{Deserialize, Serialize};
 
+pub use fair::{FairSettings, Zone};
 pub use seat::{Seat, SeatInfo};
 
 /// Which level a game starts, and what the player brings to it.
@@ -104,7 +106,36 @@ pub struct Server {
     origin: Vec3,
     /// Scores last sent.
     scores: Vec<PlayerScore>,
+    /// The fair play rules.
+    fair: FairSettings,
+    /// The zone now.
+    zone: Option<Zone>,
+    /// Seconds until the zone is worked out again.
+    zone_wait: f64,
 }
+
+/// How one player stands, for `status` and tests.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SeatReport {
+    /// Their name.
+    pub name: String,
+    /// Their ping as measured here, in milliseconds.
+    pub ping: f64,
+    /// Milliseconds added to their ping.
+    pub added: f64,
+    /// Milliseconds of it made up for.
+    pub compensated: f64,
+    /// Whether they're over the ceiling, and get no help.
+    pub over_ceiling: bool,
+}
+
+/// How fast added delay and compensation move towards their targets, in
+/// milliseconds a second, so timing never jumps in the middle of a fight.
+const FAIR_RAMP: f64 = 2.0;
+
+/// How much later than a shooter's ping a view can be, in seconds: the
+/// interpolation buffer, with a tick to spare.
+const VIEW_SLACK: f64 = 3.0 / 72.0;
 
 impl Server {
     /// A game of `map` with its player at `origin`, running `sources`, with
@@ -126,6 +157,7 @@ impl Server {
         simulation.borrow_mut().set_world(Rc::clone(&world));
         let game = Game::new(&simulation, sources)?;
         game.start_level(&level.name, &level.settings, level.flags);
+        let fair = FairSettings::from_settings(&level.settings);
         game.spawn_map(&map.entities);
         let host = simulation.borrow().player_id();
         game.connect_player(host, &level.name, level.parms.as_deref(), &level.host.name);
@@ -145,6 +177,9 @@ impl Server {
             told: Told::default(),
             origin,
             scores: Vec::new(),
+            fair,
+            zone: None,
+            zone_wait: 0.0,
         };
         server.flush_outbox();
         Ok(server)
@@ -169,6 +204,7 @@ impl Server {
         let game = Game::new(&simulation, sources)?;
         game.start_level(&saved.level.name, &saved.level.settings, saved.level.flags);
         game.restore(&saved.scripts)?;
+        let fair = FairSettings::from_settings(&saved.level.settings);
         let _anything_so_far = game.take_outbox();
         let host = simulation.borrow().player_id();
         let origin = simulation.borrow().player().origin;
@@ -188,6 +224,9 @@ impl Server {
             told: saved.told,
             origin,
             scores: Vec::new(),
+            fair,
+            zone: None,
+            zone_wait: 0.0,
         };
         server.retell(0);
         Ok(server)
@@ -300,10 +339,8 @@ impl Server {
                 self.seats[index].heard();
                 match ClientMessage::decode(&bytes) {
                     Some(ClientMessage::Move(commands, seen)) => {
-                        self.seats[index].note_seen(seen);
-                        for command in &commands {
-                            self.run_command(index, command);
-                        }
+                        self.seats[index].note_seen(seen, self.seconds);
+                        self.seats[index].hold_commands(commands);
                     }
                     Some(ClientMessage::Console(text)) => self.console(index, &text),
                     Some(ClientMessage::Ready) => self.seat_ready(index),
@@ -316,7 +353,91 @@ impl Server {
                     None => {}
                 }
             }
+            for command in self.seats[index].take_commands() {
+                self.run_command(index, &command);
+            }
         }
+    }
+
+    /// Works out the zone from time to time, and moves everyone towards where
+    /// it puts them (proposal 0051).
+    fn update_fairness(&mut self) {
+        self.zone_wait -= self.seconds;
+        if self.zone_wait <= 0.0 || self.zone.is_none() {
+            self.zone_wait = self.fair.interval;
+            let pings: Vec<f64> = self.seats.iter().map(Seat::ping).collect();
+            self.zone = Some(Zone::of(&pings, &self.fair));
+        }
+        let Some(zone) = self.zone else {
+            return;
+        };
+        let step = FAIR_RAMP * self.seconds;
+        let rules = self.fair;
+        for seat in &mut self.seats {
+            let ping = seat.ping();
+            let (compensated, over) = if rules.enable {
+                zone.compensated(ping, seat.over_ceiling, &rules)
+            } else {
+                (ping, false)
+            };
+            let added = if rules.enable {
+                zone.added_delay(ping)
+            } else {
+                0.0
+            };
+            if over != seat.over_ceiling {
+                seat.over_ceiling = over;
+                let text = if over {
+                    "Your ping is over this server's limit: lead your shots"
+                } else {
+                    "Your ping is back within this server's limit"
+                };
+                seat.send(&ServerMessage::Print(text.to_owned()));
+            }
+            if !seat.settled && seat.has_ping() {
+                seat.settled = true;
+                seat.added = added;
+                seat.compensated = compensated;
+            }
+            seat.added += (added - seat.added).clamp(-step, step);
+            // Losing help all at once is the point of the ceiling.
+            seat.compensated = if over {
+                0.0
+            } else {
+                seat.compensated + (compensated - seat.compensated).clamp(-step, step)
+            };
+            if let Some(player) = seat.player {
+                let limit = if !rules.unlag || over {
+                    0.0
+                } else if rules.enable {
+                    seat.compensated / 1000.0 + VIEW_SLACK
+                } else {
+                    1.0
+                };
+                self.simulation.borrow_mut().set_rewind_limit(player, limit);
+            }
+        }
+    }
+
+    /// How everyone stands.
+    #[must_use]
+    pub fn report(&self) -> Vec<SeatReport> {
+        self.seats
+            .iter()
+            .map(|seat| SeatReport {
+                name: seat.info.name.clone(),
+                ping: seat.ping(),
+                added: seat.added,
+                compensated: seat.compensated,
+                over_ceiling: seat.over_ceiling,
+            })
+            .collect()
+    }
+
+    /// The zone now, and the rules, for anyone who asks.
+    #[must_use]
+    pub fn fairness(&self) -> (Option<Zone>, FairSettings) {
+        (self.zone, self.fair)
     }
 
     /// Gives a player to someone who has loaded the map.
@@ -355,6 +476,7 @@ impl Server {
     pub fn tick(&mut self) {
         self.listen();
         self.drop_lost();
+        self.update_fairness();
         let ids = self.simulation.borrow().ids();
         for id in ids {
             let callbacks = self
@@ -388,6 +510,9 @@ impl Server {
             }
         }
         self.simulation.borrow_mut().clear_muzzle_flashes();
+        for seat in &mut self.seats {
+            seat.flush();
+        }
     }
 
     /// Tells everyone the names of models they haven't heard.
@@ -566,6 +691,36 @@ impl Server {
         }
     }
 
+    /// What `status` says, which is how players see the server's rules.
+    fn status_lines(&self) -> Vec<String> {
+        let rules = self.fair;
+        let mut lines = vec![format!(
+            "fair play {}, rewind {}, floor {} ms, ceiling {} ms",
+            if rules.enable { "on" } else { "off" },
+            if rules.unlag { "on" } else { "off" },
+            rules.floor,
+            rules.ceiling
+        )];
+        if let Some(zone) = self.zone {
+            lines.push(format!(
+                "zone {:.0} to {:.0} ms, ceiling {:.0} ms",
+                zone.floor, zone.top, zone.ceiling
+            ));
+        }
+        for seat in self.report() {
+            let help = if seat.over_ceiling {
+                "no help: lead your shots".to_owned()
+            } else {
+                format!("{:.0} ms made up for", seat.compensated)
+            };
+            lines.push(format!(
+                "{}: {:.0} ms, {:.0} ms added, {help}",
+                seat.name, seat.ping, seat.added
+            ));
+        }
+        lines
+    }
+
     /// Runs a console command from a client. Only the host can cheat.
     fn console(&mut self, index: usize, text: &str) {
         let Some(id) = self.seats[index].player else {
@@ -583,6 +738,11 @@ impl Server {
                     self.simulation
                         .borrow_mut()
                         .teleport(id, Vec3::new(x, y, z));
+                }
+            }
+            Some("status") => {
+                for line in self.status_lines() {
+                    self.seats[index].send(&ServerMessage::Print(line));
                 }
             }
             Some("say") => {

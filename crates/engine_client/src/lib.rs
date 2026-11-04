@@ -4,6 +4,7 @@
 
 mod ambience;
 mod bindings;
+mod bot;
 mod client;
 mod effects;
 mod input;
@@ -15,6 +16,7 @@ mod view_clock;
 
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
+pub use bot::{Bot, BotSkill};
 pub use client::{Client, DrawnEntity, ScreenEvent};
 pub use effects::{BeamPiece, DynamicLight, EffectSource, Effects, MAX_LIGHTS};
 pub use input::Buttons;

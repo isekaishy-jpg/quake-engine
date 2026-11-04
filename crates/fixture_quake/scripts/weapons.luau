@@ -533,6 +533,19 @@ function W_CheckNoAmmo(self)
 	return false
 end
 
+-- A tick, in seconds.
+local TICK_SECONDS = 1 / 72
+
+-- Sets when a weapon can fire next. With the button held, it counts from when
+-- it was due, not the tick that noticed, so rates don't round up to whole
+-- ticks (proposal 0050).
+function refire(self, seconds)
+	local now = time()
+	local due = self.attack_finished or 0
+	local held = due <= now and now - due < TICK_SECONDS
+	self.attack_finished = (if held then due else now) + seconds
+end
+
 -- An attack can start now.
 function W_Attack(self)
 	if not W_CheckNoAmmo(self) then
@@ -554,28 +567,28 @@ function W_Attack(self)
 		else
 			player_axe(self, 5, 137)
 		end
-		self.attack_finished = time() + 0.5
+		refire(self, 0.5)
 	elseif weapon == IT_SHOTGUN then
 		player_shot(self)
 		W_FireShotgun(self)
-		self.attack_finished = time() + 0.5
+		refire(self, 0.5)
 	elseif weapon == IT_SUPER_SHOTGUN then
 		player_shot(self)
 		W_FireSuperShotgun(self)
-		self.attack_finished = time() + 0.7
+		refire(self, 0.7)
 	elseif weapon == IT_NAILGUN or weapon == IT_SUPER_NAILGUN then
 		player_nail1(self)
 	elseif weapon == IT_GRENADE_LAUNCHER then
 		player_rocket(self)
 		W_FireGrenade(self)
-		self.attack_finished = time() + 0.6
+		refire(self, 0.6)
 	elseif weapon == IT_ROCKET_LAUNCHER then
 		player_rocket(self)
 		W_FireRocket(self)
-		self.attack_finished = time() + 0.8
+		refire(self, 0.8)
 	elseif weapon == IT_LIGHTNING then
 		player_light1(self)
-		self.attack_finished = time() + 0.1
+		refire(self, 0.1)
 		sound(self, CHAN_AUTO, "weapons/lstart.wav", 1, ATTN_NORM)
 	end
 end

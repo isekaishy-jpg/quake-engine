@@ -354,6 +354,8 @@ pub struct Game {
     dispatch: Function,
     /// Each player's table.
     players: RefCell<HashMap<EntityId, Table>>,
+    /// The game's state.
+    simulation: Rc<RefCell<Simulation>>,
 }
 
 impl Game {
@@ -402,6 +404,7 @@ impl Game {
             call_started,
             dispatch,
             players: RefCell::new(HashMap::from([(player, table)])),
+            simulation: Rc::clone(simulation),
         })
     }
 
@@ -895,17 +898,23 @@ impl Game {
     /// Runs what the simulation says is due.
     pub fn run(&self, callback: Callback) {
         self.call_started.set(Instant::now());
+        let mut event_time = None;
         let (kind, id, other) = match callback {
-            Callback::Think(id) => ("think", id, None),
+            Callback::Think(id, time) => {
+                event_time = Some(time).filter(|time| *time > 0.0);
+                ("think", id, None)
+            }
             Callback::Blocked { id, other } => ("blocked", id, Some(other)),
             Callback::Touch { id, other } => ("touch", id, other),
             Callback::Splash(id) => ("splash", id, None),
             Callback::Land(id) => ("land", id, None),
         };
+        self.simulation.borrow_mut().set_event_time(event_time);
         self.report(
             self.dispatch
                 .call::<()>((kind, id_to(id), other.map(id_to))),
         );
+        self.simulation.borrow_mut().set_event_time(None);
     }
 
     /// The table of player `id`.

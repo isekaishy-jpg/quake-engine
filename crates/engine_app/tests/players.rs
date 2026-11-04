@@ -135,7 +135,12 @@ fn two_players() -> (Server, Player, Player) {
         TICK,
         Level {
             name: "room".to_owned(),
-            settings: vec![("skill".to_owned(), 1.0), ("deathmatch".to_owned(), 1.0)],
+            settings: vec![
+                ("skill".to_owned(), 1.0),
+                ("deathmatch".to_owned(), 1.0),
+                // These clients don't answer snapshots, so have no ping.
+                ("sv_fair_enable".to_owned(), 0.0),
+            ],
             ..Level::default()
         },
     )
@@ -276,10 +281,8 @@ fn a_player_who_leaves_is_gone() {
     let (mut server, _host, guest) = two_players();
     assert_eq!(server.seat_count(), 2);
     drop(guest);
-    // A loopback can't tell it's been dropped, so this is the timeout.
-    for _ in 0..(72 * 11) {
-        server.tick();
-    }
+    server.tick();
+    server.tick();
     assert_eq!(server.seat_count(), 1);
     server
         .exec(r#"assert(#find_all("classname", "player") == 1)"#)

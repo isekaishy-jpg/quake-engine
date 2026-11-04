@@ -3,10 +3,11 @@
 use std::error::Error;
 use std::fs::File;
 use std::io::BufWriter;
+use std::time::Duration;
 
 use engine_assets::AssetError;
 use engine_console::{Args, Console};
-use engine_net::{DEFAULT_PORT, NetClient, NetServer};
+use engine_net::{Conditioned, Conditions, DEFAULT_PORT, NetClient, NetServer, Transport};
 use engine_render::Capture;
 use fixture_quake::Screen;
 
@@ -78,12 +79,14 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("host", host);
     console.register("connect", connect);
     console.register("disconnect", disconnect);
+    console.register("addbot", add_bot);
+    console.register("removebots", remove_bots);
     console.register("say", say);
     console.register("messagemode", message_mode);
     console.register("menu_multiplayer", open_menu);
     console.register("save", save);
     console.register("load", load);
-    for command in ["kill", "god", "notarget", "give"] {
+    for command in ["kill", "god", "notarget", "give", "status"] {
         console.register(command, game_command);
     }
     for ignored in ["+mlook", "-mlook", "+klook", "-klook", "sizeup", "sizedown"] {
@@ -337,12 +340,48 @@ fn host(console: &mut Console<World>, world: &mut World, args: &Args) {
     }
 }
 
-/// `connect address`: joins a game.
+/// `addbot [ping]`: adds a bot on a connection of that many milliseconds.
+fn add_bot(console: &mut Console<World>, world: &mut World, args: &Args) {
+    match world.add_bot(args.get(1).parse().unwrap_or(0)) {
+        Some(name) => console.print(format!("{name} joins")),
+        None => console.print("addbot needs a game running here: start a map first"),
+    }
+}
+
+/// `removebots`: sends the bots home.
+fn remove_bots(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    world.bots.clear();
+}
+
+/// The network the `net_fake` settings ask for, or `None` for the real one.
+fn fake_network(console: &Console<World>) -> Option<Conditions> {
+    let number = |name: &str| console.cvar(name).map_or(0.0, engine_console::Cvar::number);
+    let (latency, jitter, loss) = (
+        number("net_fake_latency"),
+        number("net_fake_jitter"),
+        number("net_fake_loss"),
+    );
+    let half = Duration::from_secs_f32(latency.max(0.0) / 2000.0);
+    (latency > 0.0 || jitter > 0.0 || loss > 0.0).then(|| Conditions {
+        send_delay: half,
+        receive_delay: half,
+        jitter: Duration::from_secs_f32(jitter.max(0.0) / 1000.0),
+        loss: f64::from(loss.clamp(0.0, 100.0)) / 100.0,
+    })
+}
+
+/// `connect address`: joins a game, through the `net_fake` settings if any are
+/// set: `net_fake_latency` and `net_fake_jitter` in milliseconds, and
+/// `net_fake_loss` in percent, of what's sent.
 fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
     match NetClient::connect(args.get(1)) {
         Ok(client) => {
             console.print(format!("connecting to {}", args.get(1)));
-            world.begin_connection(Box::new(client));
+            let transport: Box<dyn Transport> = match fake_network(console) {
+                Some(conditions) => Box::new(Conditioned::new(Box::new(client), conditions, 1)),
+                None => Box::new(client),
+            };
+            world.begin_connection(transport);
         }
         Err(error) => console.print(format!("couldn't connect: {error}")),
     }
