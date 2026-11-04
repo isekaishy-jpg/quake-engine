@@ -35,6 +35,7 @@ These ran against the Steam data, read in place.
 | Every touch and target on all 117 maps | No errors. Teleports aimed at an `info_null` are skipped, as touching one stops the original game too |
 | `e1m1` door | Opens when approached, in captures |
 | `e1m1` exit | Walking into it loads `e1m2` |
+| Riding a lift | Smoother by hand after finding 15 |
 | `e1m1` sky and pillar lights | Drawn colours match the pak's textures, and by eye the original game: the sky is blue, and the pillars' amber is washed out by their white |
 | 13 logic tests on the real scripts | Doors, reach, blocking, plats, buttons, teleports, level changes, messages, walls and skill flags |
 | 13 script host tests | Sandbox, runaway loop, script errors and fields |
@@ -48,7 +49,7 @@ These ran against the Steam data, read in place.
 - Key doors stay shut until items exist, and shot buttons and doors work by touch or not at all until combat exists. Some levels can't be finished without `noclip`.
 - Sounds are stubs, and damage does nothing.
 - Secret counters and messages print to the terminal.
-- A used button keeps its lit texture, as the alternate frame, such as `+abasebtn`, isn't shown. This was also seen in play.
+- A used button keeps its lit texture, as the alternate frame, such as `+abasebtn`, isn't shown. This was also seen in play. Increment 6 takes this with shot buttons, doors and secret doors, as they share the frame change and need combat. Scripts already set `frame`, so it has to reach the renderer. `func_button` then goes back to being touchable only without health.
 - Mission packs run the original game's logic for now, so their own classes do nothing. Running without errors doesn't show they play correctly.
 - Luau formatting isn't enforced by a tool.
 - A teleport doesn't hold back the player's backward movement for `teleport_time`.

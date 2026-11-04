@@ -51,7 +51,7 @@ A Rust engine that plays the Quake fixture from start to finish, built so any sy
 | 3 | Collision, movement, client and server over loopback | Walk around real maps |
 | 4 | Luau host, entities, doors, lifts, triggers | Open doors and change levels |
 | 5 | Audio | Hear the game |
-| 6 | Models, particles, effects, weapons | Shoot things |
+| 6 | Models, particles, effects, weapons, shootable buttons and doors, used button textures | Shoot things |
 | 7 | Monsters and the rest of the QuakeC port | Fight through levels |
 | 8 | HUD, menus, saves | **Play Quake from start to finish** |
 | 9 | Online play | Play with others |
