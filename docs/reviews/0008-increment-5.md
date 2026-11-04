@@ -17,6 +17,7 @@ Status: review record, 2026-11-04. Reviewed: proposals 0029 to 0031, and the cha
 | 11 | In play, ambient sound was too loud against the regular client, with no sense of distance. Statics matched the original's law, measured live. Wind and water come from leaf levels, and `vis` overwrites the distance it works out, so those are silent or full | `AmbientSounds` measures it live, as `vis` intended, with tests. At three spots in `e1m1` with no water nearby, water fell from 0.30 to 0, 0 and 0.13 |
 | 12 | In play, sounds were louder close up than they should be. Quake's stereo adds to the near ear, so a drone of volume 0.5 reached 0.85 in one ear at 50 units, and turning changed how loud it was | Stereo shares constant power between the ears, with tests |
 | 13 | Water and wind have no place, so finding 12 doesn't touch them. Their level matches WinQuake's numbers, so what's right is a question of balance | `ambient_level` changes them while playing, so the default can be set by ear |
+| 14 | In play, water was the main culprit. Finding 11 lets sky fade, since it's usually far off, but a player near water is nearly always within full volume of it, so water stayed at the top of its range | Water gets its own share of the level, `ambient_water`, which starts at half |
 
 ## Verified
 
@@ -30,16 +31,16 @@ These ran against the Steam data, read in place.
 | Every music track | All 10 decode |
 | `e1m1` and `e1m2` in the real engine | The device opens, tracks 6 and 8 play, as the maps ask, with 14 and 47 static sounds and no sound missing |
 | 8 ambience tests | Distance, the nearest surface, what makes a sound, and stored levels as a limit |
-| 23 mixer tests | The stereo, pan conversion, override, stealing, the player's priority, loops, statics, the cap on each ear and ambient fading |
+| 24 mixer tests | The stereo, pan conversion, override, stealing, the player's priority, loops, statics, the cap on each ear and ambient fading |
 | Door, lift, teleport, jump and landing tests | The real scripts send the right sounds on the right channels |
 
 `cargo xtask check` passes.
 
 ## Remaining
 
-- Played by hand after finding 11, and the distance fade works. Findings 12 and 13 haven't been heard yet, and nor has it been confirmed that alt-tabbing no longer pops.
+- Played by hand after finding 11, and the distance fade works. Findings 12 to 14 haven't been heard yet, and nor has it been confirmed that alt-tabbing no longer pops.
 - The regular client's settings have a low-pass filter on, at 6833 Hz. Run through Kira's interpolation, Quake's sounds have under 1% of their energy above 5.5 kHz, and a filter like that changes them by at most 0.2 dB, so it isn't copied.
-- `ambient_level` is still the original's 0.3, until it's been set by ear.
+- `ambient_level` is still the original's 0.3. `ambient_water` at 0.5 is a first guess, until it's been set by ear.
 - Once, before finding 10, the engine took over 30 s to quit under heavy load. It didn't happen again, and the cause isn't known.
 - This is a port with fixes on top. [Real sound features](../research/plan.md#real-sound-features) are planned to replace it.
 - Sounds stay where they started, as in WinQuake, so a lift's hum doesn't rise with it. Following entities needs entity numbers in snapshots.

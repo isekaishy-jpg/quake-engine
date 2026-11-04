@@ -353,3 +353,18 @@ fn the_ambient_level_can_be_changed_while_playing() {
     audio.update(listener(), 10.0, [0, 255]);
     assert!((audio.ambient_volumes()[1] - 0.15).abs() < 1e-4);
 }
+
+#[test]
+fn water_has_its_own_share_of_the_ambient_level() {
+    let mut audio = Audio::silent();
+    let water = clip(&mut audio, 1, true);
+    let wind = clip(&mut audio, 1, true);
+    audio.set_ambient_clips(Some(water), Some(wind));
+    audio.update(listener(), 10.0, [255, 255]);
+    let [water_volume, wind_volume] = audio.ambient_volumes();
+    assert!((water_volume - 0.15).abs() < 1e-4, "{water_volume}");
+    assert!((wind_volume - 0.3).abs() < 1e-4, "{wind_volume}");
+    audio.set_water_share(1.0);
+    audio.update(listener(), 10.0, [255, 255]);
+    assert!((audio.ambient_volumes()[0] - 0.3).abs() < 1e-4);
+}

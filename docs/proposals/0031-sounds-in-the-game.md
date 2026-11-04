@@ -21,7 +21,7 @@ Status: accepted, 2026-11-04, increment 5.
 - The server marks a sound as the client's own, so a client needs no entity numbers.
 - The server runs `PlayerPreThink` and `PlayerPostThink` around each command, when a game defines them.
 - `random` is seeded the same each run, so it stays deterministic.
-- `engine_client::AmbientSounds` does what `vis` meant to, from the listener rather than the leaf: full within 100 units of the nearest water or sky in sight of its leaf, fading to nothing at 500. The original jumps from 1 to 0.8 at 100, and this ramps instead. A level the map stores stays a limit, so a map from a fixed `vis` still works.
+- `engine_client::AmbientSounds` does what `vis` meant to, from the listener rather than the leaf: full within 100 units of the nearest water or sky in sight of its leaf, fading to nothing at 500. The original jumps from 1 to 0.8 at 100, and this ramps instead. A level the map stores stays a limit, so a map from a fixed `vis` still works. Water has its own share of the level, since a player near it rarely gets far enough to fade.
 - `engine_app` passes what the client received to `Audio`, with the listener and those levels. Audio is muted while minimized, as the original did.
 
 ## Proposal

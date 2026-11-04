@@ -42,6 +42,19 @@ const MAX_CATCH_UP: Duration = Duration::from_millis(250);
 const MOVE_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
                              bind space +jump; bind c +movedown; bind shift +speed";
 
+/// The sound levels the console sets.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct AudioLevels {
+    /// `volume`.
+    volume: f32,
+    /// `bgmvolume`.
+    music: f32,
+    /// `ambient_level`.
+    ambient: f32,
+    /// `ambient_water`.
+    water: f32,
+}
+
 /// The state console commands work on.
 pub(crate) struct World {
     /// The search path.
@@ -86,8 +99,8 @@ pub(crate) struct World {
     pub(crate) music_track: Option<u8>,
     /// Where sounds are heard from.
     listener: Listener,
-    /// The volume, music volume, ambient level and mute last given to `audio`.
-    audio_settings: Option<(f32, f32, f32, bool)>,
+    /// The levels and mute last given to `audio`.
+    audio_settings: Option<(AudioLevels, bool)>,
     /// How much water and sky can be heard.
     ambience: Option<AmbientSounds>,
 }
@@ -198,14 +211,13 @@ impl World {
     }
 
     /// Moves sound on by `seconds`, at these volumes.
-    fn update_audio(&mut self, seconds: f64, levels: (f32, f32, f32), muted: bool) {
-        let (volume, music_volume, ambient_level) = levels;
-        let settings = (volume, music_volume, ambient_level, muted);
-        if self.audio_settings != Some(settings) {
-            self.audio_settings = Some(settings);
-            self.audio.set_volume(volume);
-            self.audio.set_music_volume(music_volume);
-            self.audio.set_ambient_level(ambient_level);
+    fn update_audio(&mut self, seconds: f64, levels: AudioLevels, muted: bool) {
+        if self.audio_settings != Some((levels, muted)) {
+            self.audio_settings = Some((levels, muted));
+            self.audio.set_volume(levels.volume);
+            self.audio.set_music_volume(levels.music);
+            self.audio.set_ambient_level(levels.ambient);
+            self.audio.set_water_share(levels.water);
             self.audio.set_muted(muted);
         }
         let origin = self.listener.origin;
@@ -327,6 +339,7 @@ impl Engine {
         console.register_cvar("volume", "0.7", saved);
         console.register_cvar("bgmvolume", "1", saved);
         console.register_cvar("ambient_level", "0.3", saved);
+        console.register_cvar("ambient_water", "0.5", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -568,11 +581,12 @@ impl PlatformApp for Engine {
         )]
         self.world.update_audio(
             frame.delta.as_secs_f64(),
-            (
-                self.cvar_number("volume") as f32,
-                self.cvar_number("bgmvolume") as f32,
-                self.cvar_number("ambient_level") as f32,
-            ),
+            AudioLevels {
+                volume: self.cvar_number("volume") as f32,
+                music: self.cvar_number("bgmvolume") as f32,
+                ambient: self.cvar_number("ambient_level") as f32,
+                water: self.cvar_number("ambient_water") as f32,
+            },
             frame.reduced,
         );
         if self.world.quit {

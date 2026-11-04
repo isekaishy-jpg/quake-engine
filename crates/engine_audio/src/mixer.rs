@@ -145,6 +145,9 @@ pub struct Audio {
     music_volume: f32,
     /// `ambient_level`: how much of a leaf's level is heard.
     ambient_level: f32,
+    /// How much of that water gets. A player near water is always within full
+    /// volume of it, where sky is usually far enough off to fade.
+    water_share: f32,
     /// Picks how far a repeated sound skips.
     seed: u32,
 }
@@ -176,6 +179,7 @@ impl Audio {
             listener: Listener::default(),
             music_volume: 1.0,
             ambient_level: 0.3,
+            water_share: 0.5,
             seed: 1,
         }
     }
@@ -367,11 +371,12 @@ impl Audio {
         reason = "a frame's fade needs no more than f32"
     )]
     fn update_ambients(&mut self, seconds: f64, levels: [u8; 2]) {
-        for (ambient, level) in self.ambients.iter_mut().zip(levels) {
+        let shares = [self.water_share, 1.0];
+        for ((ambient, level), share) in self.ambients.iter_mut().zip(levels).zip(shares) {
             let Some(clip) = ambient.clip else {
                 continue;
             };
-            let mut wanted = self.ambient_level * f32::from(level);
+            let mut wanted = self.ambient_level * share * f32::from(level);
             if wanted < AMBIENT_FLOOR {
                 wanted = 0.0;
             }
@@ -468,6 +473,11 @@ impl Audio {
     /// Sets how much of a leaf's level is heard, from 0 to 1.
     pub fn set_ambient_level(&mut self, level: f32) {
         self.ambient_level = level;
+    }
+
+    /// Sets how much of the ambient level water gets, from 0 to 1.
+    pub fn set_water_share(&mut self, share: f32) {
+        self.water_share = share;
     }
 
     /// Sets how loud music is, from 0 to 1.
