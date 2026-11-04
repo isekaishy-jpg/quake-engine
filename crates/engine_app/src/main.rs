@@ -9,7 +9,7 @@ use std::io::Write;
 use std::process::ExitCode;
 
 use app::Engine;
-use engine_platform::{WindowConfig, run};
+use engine_platform::{WindowConfig, WindowMode, run};
 use options::Options;
 
 /// The window title.
@@ -41,11 +41,17 @@ fn main() -> ExitCode {
 /// Reads the command line and runs the engine until it stops.
 fn start() -> Result<(), Box<dyn std::error::Error>> {
     let options = Options::from_arguments(std::env::args().skip(1))?;
+    let mode = if options.windowed {
+        WindowMode::Windowed
+    } else {
+        WindowMode::Borderless
+    };
     let mut engine = Engine::new(options, (WIDTH, HEIGHT))?;
     let config = WindowConfig {
         title: TITLE.to_owned(),
         width: WIDTH,
         height: HEIGHT,
+        mode,
         frame_cap: Some(FRAME_CAP),
         reduced_frame_rate: REDUCED_FRAME_RATE,
     };

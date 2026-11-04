@@ -1,6 +1,6 @@
 # Review 0005: increment 2
 
-Status: review record, 2026-11-03. Reviewed: proposals 0016 to 0019, and the changes to `engine_core`, `engine_map`, `fixture_quake`, `engine_render`, `engine_client`, `engine_platform` and `engine_app`.
+Status: review record, 2026-11-03. Reviewed: proposals 0016 to 0020, and the changes to `engine_core`, `engine_map`, `fixture_quake`, `engine_render`, `engine_client`, `engine_platform` and `engine_app`.
 
 | # | Finding | Handling |
 |---|---|---|
@@ -23,6 +23,8 @@ These ran against the Steam data, read in place.
 | The real window | A screen grab matches the capture |
 | Resize, minimize, restore | No crash, and frames resume at the new size |
 | Flying | `W` for 1 s moved exactly 400 units along the view, `D` moved right and space moved up, with keys sent to the window |
+| Borderless default | The client area fills the 2560 by 1440 monitor with no caption, and a screen grab shows the map at full size |
+| `-window` | A captioned 1280 by 720 window |
 | Exit | Code 0 |
 | GPU tests | 6 pass on a GTX 1070, and they skip with no Vulkan device |
 
@@ -33,6 +35,6 @@ These ran against the Steam data, read in place.
 - Mouse look on a real map hasn't been tested with a real mouse. Raw motion reached the view in review 0004, and it needs window focus, so it's for the human to try.
 - Entities aren't drawn, and doors and lifts sit at rest. Light styles start as on, so lights that should start off are lit.
 - The picture may be darker than people remember, because it follows the software renderer's sums with no gamma setting. `gamma` is unknown to the console.
-- Rendering in reduced mode, and getting it to the preview, is still an [open question](../research/open-questions.md).
+- The human checked the taskbar preview and it worked. Alt-Tab hasn't been checked. Rendering in reduced mode, and getting it to the preview, is still an [open question](../research/open-questions.md).
 - Debug builds ran at around 160 frames a second. Release speed wasn't measured.
 - Increment 3 is next: collision, movement, and client and server over loopback.

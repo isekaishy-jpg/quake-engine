@@ -17,6 +17,7 @@ mod input;
 
 pub use error::PlatformError;
 pub use host::{
-    AppError, Frame, FrameOutcome, PlatformApp, ServiceOutcome, Window, WindowConfig, run,
+    AppError, Frame, FrameOutcome, PlatformApp, ServiceOutcome, Window, WindowConfig, WindowMode,
+    run,
 };
 pub use input::{InputEvent, MouseButton, key_name};

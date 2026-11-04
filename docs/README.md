@@ -31,6 +31,7 @@
     - [0017: the map type and BSP importer](proposals/0017-map-importer.md)
     - [0018: the world renderer](proposals/0018-world-renderer.md)
     - [0019: key bindings and flying](proposals/0019-flying.md)
+    - [0020: the window mode](proposals/0020-window-mode.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

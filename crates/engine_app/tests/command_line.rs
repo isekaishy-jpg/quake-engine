@@ -29,6 +29,12 @@ fn options_need_their_values() {
     assert_refused(&["-game"], "-game needs a name");
 }
 
+/// Getting as far as asking for a base directory means it was understood.
+#[test]
+fn window_is_an_option() {
+    assert_refused(&["-window"], "usage:");
+}
+
 #[test]
 fn unknown_options_are_refused() {
     assert_refused(&["-nosuch"], "unknown option: -nosuch");

@@ -152,6 +152,8 @@ pub(crate) struct Backend {
     window: Option<WindowTarget>,
     /// The wanted window size.
     wanted_size: (u32, u32),
+    /// Whether the window was resized since the swapchain was built.
+    resized: bool,
     /// The loaded map.
     map: Option<GpuMap>,
     /// The frame uniforms.
@@ -423,6 +425,7 @@ impl Backend {
             surface,
             window: None,
             wanted_size: size,
+            resized: false,
             map: None,
             uniforms,
             frame_layout,
@@ -564,6 +567,7 @@ impl Backend {
     /// Notes the window's new size.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.wanted_size = (width, height);
+        self.resized = true;
     }
 
     /// Uploads `map`.
@@ -825,11 +829,8 @@ impl Backend {
         scene: Option<&Scene<'_>>,
     ) -> Result<(), RenderError> {
         self.wait_for_frame()?;
-        let stale = self
-            .window
-            .as_ref()
-            .is_none_or(|window| window.extent != self.wanted_size);
-        if stale {
+        if self.resized || self.window.is_none() {
+            self.resized = false;
             self.rebuild_window()?;
         }
         let Some(window) = &self.window else {

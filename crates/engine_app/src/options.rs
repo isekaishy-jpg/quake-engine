@@ -27,16 +27,19 @@ pub(crate) struct Options {
     pub(crate) game_directories: Vec<String>,
     /// Console commands from `+` arguments, run by `stuffcmds`.
     pub(crate) startup_commands: String,
+    /// Whether `-window` asked for an ordinary window.
+    pub(crate) windowed: bool,
 }
 
 impl Options {
-    /// Reads `-basedir path`, `-game name` and `+command args`.
+    /// Reads `-basedir path`, `-game name`, `-window` and `+command args`.
     pub(crate) fn from_arguments(
         arguments: impl Iterator<Item = String>,
     ) -> Result<Self, OptionsError> {
         let mut base_directory = None;
         let mut game_directories = vec![BASE_GAME.to_owned()];
         let mut startup_commands = String::new();
+        let mut windowed = false;
         let mut arguments = arguments.peekable();
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
@@ -46,6 +49,7 @@ impl Options {
                         .ok_or_else(|| OptionsError("-basedir needs a path".to_owned()))?;
                     base_directory = Some(PathBuf::from(path));
                 }
+                "-window" => windowed = true,
                 "-game" => {
                     let name = arguments
                         .next()
@@ -68,12 +72,16 @@ impl Options {
             }
         }
         let base_directory = base_directory.ok_or_else(|| {
-            OptionsError("usage: quake-engine -basedir <Quake directory> [+command ...]".to_owned())
+            OptionsError(
+                "usage: quake-engine -basedir <Quake directory> [-window] [+command ...]"
+                    .to_owned(),
+            )
         })?;
         Ok(Self {
             base_directory,
             game_directories,
             startup_commands,
+            windowed,
         })
     }
 }

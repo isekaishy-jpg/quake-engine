@@ -6,10 +6,11 @@ use std::time::Duration;
 use engine_core::window::NativeWindow;
 
 use solapp::{
-    SAApplication, SAContext, SAError, SAEvent, SAEventFilter, SAFrame, SAFramePhase, SAHost,
-    SAHostConfig, SAInputMode, SAPacingPolicy, SAPhysicalSize, SAPriority, SAPropagation,
-    SAServiceBudget, SAServicePoint, SAServicePoints, SAServiceReport, SAServiceRequest,
-    SAServiceSpec, SAStopProgress, SAWindowAccess, SAWindowSpec, SAWindowTarget,
+    SAApplication, SAContext, SADisplayRequest, SADisplayTransition, SADisplayTransitionState,
+    SAError, SAEvent, SAEventFilter, SAFrame, SAFramePhase, SAHost, SAHostConfig, SAInputMode,
+    SAMonitorSnapshot, SAPacingPolicy, SAPhysicalSize, SAPresentationStatus, SAPriority,
+    SAPropagation, SAServiceBudget, SAServicePoint, SAServicePoints, SAServiceReport,
+    SAServiceRequest, SAServiceSpec, SAStopProgress, SAWindowAccess, SAWindowSpec, SAWindowTarget,
 };
 
 use crate::error::PlatformError;
@@ -22,6 +23,15 @@ pub type AppError = Box<dyn Error + Send + Sync>;
 /// normally comes first.
 const SERVICE_FALLBACK: Duration = Duration::from_millis(100);
 
+/// How the window sits on the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WindowMode {
+    /// Fills its monitor, with no frame, and stays on the desktop.
+    Borderless,
+    /// An ordinary window of the configured size.
+    Windowed,
+}
+
 /// The window to open.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct WindowConfig {
@@ -31,6 +41,8 @@ pub struct WindowConfig {
     pub width: u32,
     /// Client height in physical pixels.
     pub height: u32,
+    /// How it sits on the screen.
+    pub mode: WindowMode,
     /// The most frames per second, or `None` when a renderer paces itself.
     pub frame_cap: Option<u32>,
     /// Frames per second in reduced mode, while the window is minimized.
@@ -209,12 +221,47 @@ impl<A: PlatformApp> Adapter<'_, A> {
         )?;
         cx.set_pacing(Some(target), self.pacing())?;
         cx.request_frame()?;
+        if self.config.mode == WindowMode::Borderless {
+            Self::enter_borderless(cx, target)?;
+        }
         let _service = cx.register_service(SAServiceSpec {
             points: SAServicePoints::only(SAServicePoint::PreUpdate)
                 .union(SAServicePoints::ORDINARY),
             budget: SAServiceBudget { records: 1 },
             fallback_interval: SERVICE_FALLBACK,
         })?;
+        Ok(())
+    }
+
+    /// Asks for borderless fullscreen on the monitor the window opened on.
+    fn enter_borderless(
+        cx: &mut SAContext<'_, Self>,
+        target: SAWindowTarget,
+    ) -> Result<(), SAError> {
+        let monitors = cx.monitors(target)?;
+        let position = cx.display_observed(target)?.geometry.position;
+        let holds_window = |monitor: &&SAMonitorSnapshot| {
+            position.is_some_and(|at| {
+                let right = i64::from(monitor.position.x) + i64::from(monitor.size.width);
+                let bottom = i64::from(monitor.position.y) + i64::from(monitor.size.height);
+                at.x >= monitor.position.x
+                    && at.y >= monitor.position.y
+                    && i64::from(at.x) < right
+                    && i64::from(at.y) < bottom
+            })
+        };
+        let monitor = monitors
+            .iter()
+            .find(holds_window)
+            .or_else(|| monitors.first());
+        if let Some(monitor) = monitor {
+            let request = SADisplayRequest::Borderless {
+                monitor: monitor.id.clone(),
+            };
+            let _receipt = cx
+                .request_display(target, request)
+                .map_err(|rejected| rejected.into_parts().1)?;
+        }
         Ok(())
     }
 
@@ -335,6 +382,28 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
         };
         if next.is_err() {
             cx.request_stop();
+        }
+    }
+
+    fn display_transition(
+        &mut self,
+        cx: &mut SAContext<'_, Self>,
+        transition: &SADisplayTransition,
+    ) {
+        match &transition.state {
+            // The renderer rebuilds from the resize that follows, so nothing
+            // needs holding back here.
+            SADisplayTransitionState::AwaitingPresentation => {
+                let result =
+                    cx.report_presentation(transition.receipt, SAPresentationStatus::Ready);
+                if let Err(error) = result {
+                    self.app.notice(format!("display: {error}"));
+                }
+            }
+            SADisplayTransitionState::Failed(error) => {
+                self.app.notice(format!("display: {error}"));
+            }
+            _ => {}
         }
     }
 
