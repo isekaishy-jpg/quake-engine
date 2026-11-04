@@ -114,6 +114,11 @@ impl Renderer {
         Ok(())
     }
 
+    /// Sets the text in the corner of the picture. Empty hides it.
+    pub fn set_overlay_text(&mut self, text: &str) {
+        self.backend.set_overlay_text(text);
+    }
+
     /// Tells the renderer the window's new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.backend.resize(width, height);

@@ -21,6 +21,9 @@ use vulkane::safe::{
 
 use crate::error::RenderError;
 use crate::matrix::view_projection;
+use crate::overlay::{
+    ATLAS_HEIGHT, ATLAS_WIDTH, MAX_VERTICES, VERTEX_FLOATS, font_atlas, overlay_vertices,
+};
 use crate::renderer::{Capture, Target, View};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, Vertex, WorldMesh};
@@ -48,6 +51,9 @@ const MIN_SWAPCHAIN_IMAGES: u32 = 2;
 
 /// The world shader.
 const WORLD_SHADER: &str = include_str!("shaders/world.wgsl");
+
+/// The overlay shader.
+const OVERLAY_SHADER: &str = include_str!("shaders/overlay.wgsl");
 
 /// What [`Backend`] needs to draw a loaded map.
 pub(crate) struct Scene<'a> {
@@ -121,6 +127,30 @@ struct GpuMap {
     _atlas: GpuImage,
 }
 
+/// The text over the picture.
+struct OverlayPass {
+    /// The pipeline.
+    pipeline: GraphicsPipeline,
+    /// Its layout.
+    layout: PipelineLayout,
+    /// The font's set.
+    set: DescriptorSet,
+    /// Kept alive for the set.
+    _pool: DescriptorPool,
+    /// Kept alive for the set.
+    _set_layout: DescriptorSetLayout,
+    /// Kept alive for the set.
+    _sampler: Sampler,
+    /// Kept alive for the set.
+    _font: GpuImage,
+    /// The vertices, rewritten only when the text or size changes.
+    vertices: GpuBuffer,
+    /// How many vertices to draw.
+    count: u32,
+    /// What the vertices were built for.
+    built_for: Option<(String, (u32, u32))>,
+}
+
 /// The four pipelines.
 struct Pipelines {
     /// Lit surfaces.
@@ -156,6 +186,10 @@ pub(crate) struct Backend {
     resized: bool,
     /// The loaded map.
     map: Option<GpuMap>,
+    /// The text to show.
+    overlay_text: String,
+    /// What draws it, set up just after the rest.
+    overlay: Option<OverlayPass>,
     /// The frame uniforms.
     uniforms: GpuBuffer,
     /// The frame set layout.
@@ -427,6 +461,8 @@ impl Backend {
             wanted_size: size,
             resized: false,
             map: None,
+            overlay_text: String::new(),
+            overlay: None,
             uniforms,
             frame_layout,
             texture_layout,
@@ -448,8 +484,158 @@ impl Backend {
             device,
             _instance: instance,
         };
+        backend.overlay = Some(backend.make_overlay()?);
         backend.rebuild_window()?;
         Ok(backend)
+    }
+
+    /// Sets up the overlay's font and pipeline.
+    fn make_overlay(&self) -> Result<OverlayPass, RenderError> {
+        let font = font_atlas();
+        let image = self.upload_image(
+            &[(ATLAS_WIDTH, ATLAS_HEIGHT, font.as_slice())],
+            Format::R8G8B8A8_UNORM,
+        )?;
+        let sampler = Sampler::new(
+            &self.device,
+            SamplerCreateInfo {
+                mag_filter: SamplerFilter::NEAREST,
+                min_filter: SamplerFilter::NEAREST,
+                ..SamplerCreateInfo::default()
+            },
+        )?;
+        let binding = |binding, descriptor_type| DescriptorSetLayoutBinding {
+            binding,
+            descriptor_type,
+            descriptor_count: 1,
+            stage_flags: ShaderStageFlags::FRAGMENT,
+        };
+        let set_layout = DescriptorSetLayout::new(
+            &self.device,
+            &[
+                binding(0, DescriptorType::SAMPLED_IMAGE),
+                binding(1, DescriptorType::SAMPLER),
+            ],
+        )?;
+        let pool = DescriptorPool::new(
+            &self.device,
+            1,
+            &[
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 1,
+                },
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLER,
+                    descriptor_count: 1,
+                },
+            ],
+        )?;
+        let set = pool.allocate(&set_layout)?;
+        set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        set.write_sampler(1, &sampler);
+        let layout = PipelineLayout::new(&self.device, &[&set_layout])?;
+        let spirv = vulkane::safe::naga::compile_wgsl(OVERLAY_SHADER)
+            .map_err(|error| RenderError(error.to_string()))?;
+        let shader = ShaderModule::from_spirv(&self.device, &spirv)?;
+        let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
+        let pipeline = GraphicsPipelineBuilder::new(&layout, &self.present_pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+            .vertex_input(
+                &[VertexInputBinding {
+                    binding: 0,
+                    stride,
+                    input_rate: InputRate::VERTEX,
+                }],
+                &[
+                    VertexInputAttribute {
+                        location: 0,
+                        binding: 0,
+                        format: Format::R32G32_SFLOAT,
+                        offset: 0,
+                    },
+                    VertexInputAttribute {
+                        location: 1,
+                        binding: 0,
+                        format: Format::R32G32_SFLOAT,
+                        offset: 8,
+                    },
+                ],
+            )
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(false, false)
+            .alpha_blending(true)
+            .build(&self.device)?;
+        let vertices = host_buffer(
+            &self.device,
+            &self.physical,
+            MAX_VERTICES * VERTEX_FLOATS * 4,
+            BufferUsage::VERTEX_BUFFER,
+        )?;
+        Ok(OverlayPass {
+            pipeline,
+            layout,
+            set,
+            _pool: pool,
+            _set_layout: set_layout,
+            _sampler: sampler,
+            _font: image,
+            vertices,
+            count: 0,
+            built_for: None,
+        })
+    }
+
+    /// Sets the overlay's text.
+    pub(crate) fn set_overlay_text(&mut self, text: &str) {
+        text.clone_into(&mut self.overlay_text);
+    }
+
+    /// Rebuilds the overlay's vertices if its text or size changed.
+    fn upload_overlay(&mut self, size: (u32, u32)) -> Result<(), RenderError> {
+        let Some(overlay) = &mut self.overlay else {
+            return Ok(());
+        };
+        let current = overlay
+            .built_for
+            .as_ref()
+            .is_some_and(|(text, built)| *text == self.overlay_text && *built == size);
+        if current {
+            return Ok(());
+        }
+        let floats = overlay_vertices(&self.overlay_text, size);
+        let mut mapped = overlay.vertices.memory.map()?;
+        let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
+        for (value, chunk) in floats.iter().zip(target) {
+            *chunk = value.to_le_bytes();
+        }
+        drop(mapped);
+        overlay.count = u32::try_from(floats.len() / VERTEX_FLOATS).unwrap_or(0);
+        overlay.built_for = Some((self.overlay_text.clone(), size));
+        Ok(())
+    }
+
+    /// Records the overlay's one draw.
+    fn record_overlay(
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        overlay: Option<&OverlayPass>,
+        size: (u32, u32),
+    ) {
+        let Some(overlay) = overlay.filter(|overlay| overlay.count > 0) else {
+            return;
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&overlay.pipeline);
+        rec.bind_graphics_descriptor_sets(&overlay.layout, 0, &[&overlay.set]);
+        rec.bind_vertex_buffers(0, &[(&overlay.vertices.buffer, 0)]);
+        rec.draw(overlay.count, 1, 0, 0);
     }
 
     /// The four pipelines, which differ in their fragment stage.
@@ -849,6 +1035,7 @@ impl Backend {
         )]
         let aspect = extent.0 as f32 / extent.1 as f32;
         self.upload_frame(view, scene, aspect)?;
+        self.upload_overlay(extent)?;
         let Some(window) = &self.window else {
             return Ok(());
         };
@@ -878,6 +1065,7 @@ impl Backend {
                     extent,
                 );
             }
+            Self::record_overlay(&mut rec, self.overlay.as_ref(), extent);
             rec.end_render_pass();
             rec.end()?;
         }
@@ -947,6 +1135,7 @@ impl Backend {
         )]
         let aspect = width as f32 / height as f32;
         self.upload_frame(view, scene, aspect)?;
+        self.upload_overlay((width, height))?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
                 rec.begin_render_pass_ext(
@@ -971,6 +1160,7 @@ impl Backend {
                         (width, height),
                     );
                 }
+                Self::record_overlay(rec, self.overlay.as_ref(), (width, height));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(
                     &color.image,

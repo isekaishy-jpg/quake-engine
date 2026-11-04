@@ -7,7 +7,7 @@ use std::time::Duration;
 use engine_assets::{AssetError, FileSystem};
 use engine_client::{Bindings, Buttons, FlyCamera, Look, LookScale};
 use engine_console::{Console, CvarFlags};
-use engine_core::time::{TickClock, TickRate};
+use engine_core::time::{FpsMeter, TickClock, TickRate};
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
@@ -112,6 +112,8 @@ pub(crate) struct Engine {
     size: (u32, u32),
     /// The window lease. It must outlive the renderer.
     window: Option<Window>,
+    /// The frame rate shown on screen.
+    fps: FpsMeter,
 }
 
 /// Reads standard input on its own thread, because reading blocks. The thread
@@ -149,6 +151,7 @@ impl Engine {
         console.register_cvar("m_yaw", "0.022", saved);
         console.register_cvar("m_pitch", "0.022", saved);
         console.register_cvar("fov", "90", saved);
+        console.register_cvar("show_fps", "1", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -174,6 +177,7 @@ impl Engine {
             typed: None,
             size,
             window: None,
+            fps: FpsMeter::new(),
         })
     }
 
@@ -325,6 +329,18 @@ impl PlatformApp for Engine {
     fn frame(&mut self, frame: &Frame) -> FrameOutcome {
         self.world.frames += 1;
         self.world.reduced_frames += u64::from(frame.reduced);
+        if frame.reduced {
+            self.fps.reset();
+        } else if let Some(rate) = self.fps.frame(frame.delta) {
+            let text = if self.cvar_number("show_fps") != 0.0 {
+                format!("{rate} FPS")
+            } else {
+                String::new()
+            };
+            if let Some(renderer) = &mut self.world.renderer {
+                renderer.set_overlay_text(&text);
+            }
+        }
         if !frame.reduced {
             #[expect(
                 clippy::cast_possible_truncation,

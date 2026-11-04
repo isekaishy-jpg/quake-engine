@@ -91,6 +91,31 @@ fn what_is_left_of_the_view_is_at_the_left_of_the_picture() {
 }
 
 #[test]
+fn overlay_text_appears_in_the_top_right_corner_only() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let view = view_from_above();
+    renderer.set_overlay_text("88");
+    let capture = renderer.capture(&view, 320, 180).expect("capture");
+    let white = |x: std::ops::Range<usize>, y: std::ops::Range<usize>| {
+        let pixels = capture.rgba.as_chunks::<4>().0;
+        y.flat_map(|row| x.clone().map(move |column| row * 320 + column))
+            .filter(|&at| pixels[at][..3] == [255, 255, 255])
+            .count()
+    };
+    assert!(white(280..320, 0..30) > 0, "the corner shows it");
+    assert_eq!(white(0..280, 0..180), 0, "the rest doesn't");
+    renderer.set_overlay_text("");
+    let capture = renderer.capture(&view, 320, 180).expect("capture");
+    let pixels = capture.rgba.as_chunks::<4>().0;
+    assert!(
+        pixels.iter().all(|pixel| pixel[..3] != [255, 255, 255]),
+        "it goes away"
+    );
+}
+
+#[test]
 fn a_capture_has_the_size_asked_for() {
     let Some(mut renderer) = renderer() else {
         return;

@@ -5,7 +5,7 @@ mod common;
 use common::map;
 use engine_core::math::Vec3;
 use engine_map::{Face, Map};
-use engine_render::{Atlas, BatchKind, VisibleSet, build_world, view_projection};
+use engine_render::{Atlas, BatchKind, VisibleSet, build_world, overlay_vertices, view_projection};
 
 /// A map with one square.
 fn square_map() -> Map {
@@ -127,6 +127,51 @@ fn rectangles_never_overlap_and_the_atlas_grows() {
 #[test]
 fn rectangles_that_cannot_fit_are_refused() {
     assert_eq!(Atlas::pack(&[[9000, 1]], 8192), None);
+}
+
+/// Floats in a quad: six vertices of four.
+const QUAD_FLOATS: usize = 24;
+
+#[test]
+fn overlay_text_has_a_backing_and_a_quad_per_glyph() {
+    assert_eq!(
+        overlay_vertices("60 FPS", (1280, 720)).len(),
+        6 * QUAD_FLOATS
+    );
+}
+
+#[test]
+fn an_empty_overlay_draws_nothing() {
+    assert!(overlay_vertices("", (1280, 720)).is_empty());
+    assert!(overlay_vertices("60", (0, 0)).is_empty());
+}
+
+#[test]
+fn the_overlay_sits_in_the_top_right_corner() {
+    let vertices = overlay_vertices("60", (1280, 720));
+    let (quads, _rest) = vertices.as_chunks::<4>();
+    assert!(
+        quads
+            .iter()
+            .all(|vertex| vertex[0] > 0.5 && vertex[0] <= 1.0)
+    );
+    assert!(
+        quads
+            .iter()
+            .all(|vertex| vertex[1] > 0.5 && vertex[1] <= 1.0)
+    );
+}
+
+#[test]
+fn the_overlay_grows_with_the_window() {
+    let width = |height| {
+        let vertices = overlay_vertices("60", (height * 2, height));
+        let (quads, _rest) = vertices.as_chunks::<4>();
+        let low = quads.iter().map(|v| v[0]).fold(f32::MAX, f32::min);
+        let high = quads.iter().map(|v| v[0]).fold(f32::MIN, f32::max);
+        (high - low) * f32::from(u16::try_from(height).expect("small"))
+    };
+    assert!(width(1440) > width(720) * 1.5);
 }
 
 /// Applies a column-major matrix to a point, and divides by w.

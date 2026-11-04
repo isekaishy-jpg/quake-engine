@@ -128,3 +128,58 @@ impl TickClock {
         Duration::from_nanos(u64::try_from(nanos).unwrap_or(u64::MAX))
     }
 }
+
+/// The shortest time between readings, which is 4 a second.
+const FPS_INTERVAL: Duration = Duration::from_millis(250);
+
+/// How quickly readings follow a change in frame rate, in seconds.
+const FPS_TIME_CONSTANT: f64 = 1.0;
+
+/// A smoothed frame rate that's steady enough to read (proposal 0021).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FpsMeter {
+    /// Frames since the last reading.
+    frames: u32,
+    /// Time since the last reading.
+    elapsed: Duration,
+    /// The smoothed rate, once there is one.
+    smoothed: Option<f64>,
+}
+
+impl FpsMeter {
+    /// A meter with no readings yet.
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Counts a frame that took `delta`. Returns a new reading, at most every
+    /// 250 ms, in whole frames a second.
+    pub fn frame(&mut self, delta: Duration) -> Option<u32> {
+        self.frames += 1;
+        self.elapsed += delta;
+        if self.elapsed < FPS_INTERVAL {
+            return None;
+        }
+        let seconds = self.elapsed.as_secs_f64();
+        let rate = f64::from(self.frames) / seconds;
+        let weight = 1.0 - (-seconds / FPS_TIME_CONSTANT).exp();
+        let smoothed = self
+            .smoothed
+            .map_or(rate, |previous| previous + (rate - previous) * weight);
+        self.smoothed = Some(smoothed);
+        self.frames = 0;
+        self.elapsed = Duration::ZERO;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a frame rate is small and never negative"
+        )]
+        Some(smoothed.round() as u32)
+    }
+
+    /// Forgets everything, for after a gap in frames.
+    pub fn reset(&mut self) {
+        *self = Self::new();
+    }
+}

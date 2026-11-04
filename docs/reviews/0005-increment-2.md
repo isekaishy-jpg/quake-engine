@@ -1,6 +1,6 @@
 # Review 0005: increment 2
 
-Status: review record, 2026-11-03. Reviewed: proposals 0016 to 0020, and the changes to `engine_core`, `engine_map`, `fixture_quake`, `engine_render`, `engine_client`, `engine_platform` and `engine_app`.
+Status: review record, 2026-11-03. Reviewed: proposals 0016 to 0021, and the changes to `engine_core`, `engine_map`, `fixture_quake`, `engine_render`, `engine_client`, `engine_platform` and `engine_app`.
 
 | # | Finding | Handling |
 |---|---|---|
@@ -26,6 +26,7 @@ These ran against the Steam data, read in place.
 | Borderless default | The client area fills the 2560 by 1440 monitor with no caption, and a screen grab shows the map at full size |
 | `-window` | A captioned 1280 by 720 window |
 | Hands-on test by the human | Flying and mouse look worked with no glaring issues, and the Alt-Tab and taskbar previews worked, including while minimized |
+| FPS counter | Shows top right in a capture. Over four rounds of 4 s it ran 203.8 frames a second on and 203.3 off, so its cost doesn't show |
 | Exit | Code 0 |
 | GPU tests | 6 pass on a GTX 1070, and they skip with no Vulkan device |
 
