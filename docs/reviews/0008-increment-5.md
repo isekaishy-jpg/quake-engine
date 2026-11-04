@@ -38,7 +38,7 @@ These ran against the Steam data, read in place.
 
 ## Remaining
 
-- Played by hand after finding 14, and it sounds much better, with the distance fade working. It hasn't been confirmed that alt-tabbing no longer pops.
+- Played by hand after finding 14, and it sounds much better, with the distance fade working and no more popping heard when alt-tabbing. If popping comes back, `stats` shows the longest gap to start from.
 - The regular client's settings have a low-pass filter on, at 6833 Hz. Run through Kira's interpolation, Quake's sounds have under 1% of their energy above 5.5 kHz, and a filter like that changes them by at most 0.2 dB, so it isn't copied.
 - `ambient_level` is still the original's 0.3, and `ambient_water` stays at 0.5, which sounded right by hand. Neither is measured against anything.
 - Once, before finding 10, the engine took over 30 s to quit under heavy load. It didn't happen again, and the cause isn't known.
