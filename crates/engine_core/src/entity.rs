@@ -36,6 +36,39 @@ pub struct EntityState {
     pub angles: Vec3,
 }
 
+/// Something launched, whose path is fixed from here on (proposal 0052).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Projectile {
+    /// Its entity.
+    pub entity: u64,
+    /// Who fired it.
+    pub owner: u64,
+    /// Where it starts.
+    pub origin: Vec3,
+    /// How it starts moving.
+    pub velocity: Vec3,
+    /// The game time it starts.
+    pub time: f64,
+    /// Whether it falls and bounces, rather than flying straight.
+    pub bounces: bool,
+}
+
+/// How a blast knocks the one who set it off, for predicting it (proposal
+/// 0053). Games supply this. The server's numbers always win.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BlastRule {
+    /// The damage at its centre.
+    pub damage: f32,
+    /// How far it reaches.
+    pub reach: f32,
+    /// How much damage is lost per unit of distance.
+    pub falloff: f32,
+    /// The share of the damage you take from your own.
+    pub own_share: f32,
+    /// How much speed a point of damage gives.
+    pub knock_per_damage: f32,
+}
+
 /// A short-lived effect, which only the client knows about after it's sent.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum Effect {
@@ -61,4 +94,6 @@ pub enum Effect {
         /// How many.
         count: u8,
     },
+    /// Something's been launched.
+    Launch(Projectile),
 }

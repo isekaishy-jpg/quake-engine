@@ -1,6 +1,6 @@
 //! What client and server say to each other.
 
-use engine_core::entity::{Effect, EntityState, ModelInstance};
+use engine_core::entity::{Effect, EntityState, ModelInstance, Projectile};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -74,6 +74,12 @@ const TAG_READY: u8 = 21;
 /// The tag of who a client says they are.
 const TAG_INFO: u8 = 22;
 
+/// The tag of a launch.
+const TAG_LAUNCH: u8 = 24;
+
+/// The tag of a shot, sent the moment it's fired.
+const TAG_FIRE: u8 = 23;
+
 /// The most commands in a move message.
 const MAX_MOVE_COMMANDS: usize = 8;
 
@@ -141,6 +147,21 @@ pub struct PlayerInfo {
     pub colors: u8,
 }
 
+/// A shot, sent the moment the button goes down (proposal 0050).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FireCommand {
+    /// The view's yaw in degrees.
+    pub yaw: f32,
+    /// The view's pitch in degrees.
+    pub pitch: f32,
+    /// The game time of what the player was looking at.
+    pub view_time: f64,
+    /// How far through a tick it was fired, out of 256.
+    pub offset: u8,
+    /// A number the shot's randomness comes from, so both ends agree on it.
+    pub seed: u16,
+}
+
 /// A line of the scores.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PlayerScore {
@@ -160,6 +181,8 @@ pub enum ClientMessage {
     /// Input, oldest first, sent more than once in case of loss, and the last
     /// snapshot received.
     Move(Vec<UserCommand>, u32),
+    /// A shot, ahead of the command that would carry it.
+    Fire(FireCommand),
     /// The map named by the server is loaded.
     Ready,
     /// Who this client is.
@@ -381,6 +404,13 @@ impl ClientMessage {
                     encode_command(command, &mut out);
                 }
             }
+            Self::Fire(fire) => {
+                out.extend_from_slice(&[TAG_FIRE, fire.offset]);
+                out.extend_from_slice(&fire.seed.to_le_bytes());
+                put_f32(&mut out, fire.yaw);
+                put_f32(&mut out, fire.pitch);
+                out.extend_from_slice(&fire.view_time.to_le_bytes());
+            }
             Self::Ready => out.push(TAG_READY),
             Self::Info(info) => {
                 out.extend_from_slice(&[TAG_INFO, info.colors]);
@@ -411,6 +441,19 @@ impl ClientMessage {
                     commands.push(read_command(&mut reader)?);
                 }
                 reader.finished().then_some(Self::Move(commands, seen))
+            }
+            TAG_FIRE => {
+                let mut reader = Reader { bytes: rest };
+                let offset = reader.byte()?;
+                let seed = u16::from_le_bytes(reader.take()?);
+                let fire = FireCommand {
+                    yaw: reader.f32()?,
+                    pitch: reader.f32()?,
+                    view_time: reader.f64()?,
+                    offset,
+                    seed,
+                };
+                reader.finished().then_some(Self::Fire(fire))
             }
             TAG_READY => rest.is_empty().then_some(Self::Ready),
             TAG_INFO => {
@@ -466,6 +509,14 @@ impl ServerMessage {
                 out.extend_from_slice(sound.name.as_bytes());
             }
             Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
+            Self::Effect(Effect::Launch(launch)) => {
+                out.extend_from_slice(&[TAG_LAUNCH, u8::from(launch.bounces)]);
+                out.extend_from_slice(&launch.entity.to_le_bytes());
+                out.extend_from_slice(&launch.owner.to_le_bytes());
+                put_vec3(&mut out, launch.origin);
+                put_vec3(&mut out, launch.velocity);
+                out.extend_from_slice(&launch.time.to_le_bytes());
+            }
             Self::Effect(Effect::Temp {
                 kind,
                 origin,
@@ -560,6 +611,21 @@ impl ServerMessage {
                     entity: u64::from_le_bytes(reader.take()?),
                 };
                 reader.finished().then_some(Self::Effect(effect))
+            }
+            TAG_LAUNCH => {
+                let mut reader = Reader { bytes: rest };
+                let bounces = reader.flag()?;
+                let launch = Projectile {
+                    entity: u64::from_le_bytes(reader.take()?),
+                    owner: u64::from_le_bytes(reader.take()?),
+                    origin: reader.vec3()?,
+                    velocity: reader.vec3()?,
+                    time: reader.f64()?,
+                    bounces,
+                };
+                reader
+                    .finished()
+                    .then_some(Self::Effect(Effect::Launch(launch)))
             }
             TAG_PARTICLES => {
                 let mut reader = Reader { bytes: rest };

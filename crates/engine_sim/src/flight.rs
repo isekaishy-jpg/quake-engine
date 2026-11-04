@@ -224,11 +224,12 @@ impl Simulation {
     }
 
     /// The boxes of everything solid but brush models, for what `player` can't
-    /// walk through.
+    /// walk through. As in `SV_ClipToLinks`, that leaves out what they own, or
+    /// their own rocket would stop them.
     #[must_use]
     pub fn solid_boxes(&self, player: EntityId) -> Vec<(Vec3, Vec3)> {
         self.solid_entities()
-            .filter(|(id, _)| *id != player)
+            .filter(|(id, entity)| *id != player && entity.owner != Some(player))
             .map(|(id, entity)| {
                 let origin = self.origin(id).unwrap_or(entity.origin);
                 (origin + entity.mins, origin + entity.maxs)

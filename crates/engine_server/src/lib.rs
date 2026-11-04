@@ -331,31 +331,90 @@ impl Server {
         self.game.exec(source)
     }
 
+    /// Acts on one message from seat `index`.
+    fn handle(&mut self, index: usize, message: ClientMessage) {
+        match message {
+            ClientMessage::Move(commands, seen) => {
+                self.seats[index].note_seen(seen, self.seconds);
+                self.seats[index].hold_commands(commands);
+            }
+            ClientMessage::Fire(fire) => self.seats[index].hold_fire(fire),
+            ClientMessage::Console(text) => self.console(index, &text),
+            ClientMessage::Ready => self.seat_ready(index),
+            ClientMessage::Info(info) => {
+                self.seats[index].info = SeatInfo {
+                    name: info.name,
+                    colors: info.colors,
+                };
+            }
+        }
+    }
+
     /// Hears from everyone.
     fn listen(&mut self) {
         for index in 0..self.seats.len() {
             self.seats[index].add_allowance(self.seconds);
+            while let Some(message) = self.seats[index].backlog.pop_front() {
+                self.handle(index, message);
+            }
             while let Some(bytes) = self.seats[index].transport.receive() {
                 self.seats[index].heard();
-                match ClientMessage::decode(&bytes) {
-                    Some(ClientMessage::Move(commands, seen)) => {
-                        self.seats[index].note_seen(seen, self.seconds);
-                        self.seats[index].hold_commands(commands);
-                    }
-                    Some(ClientMessage::Console(text)) => self.console(index, &text),
-                    Some(ClientMessage::Ready) => self.seat_ready(index),
-                    Some(ClientMessage::Info(info)) => {
-                        self.seats[index].info = SeatInfo {
-                            name: info.name,
-                            colors: info.colors,
-                        };
-                    }
-                    None => {}
+                if let Some(message) = ClientMessage::decode(&bytes) {
+                    self.handle(index, message);
                 }
             }
+        }
+        self.run_fires(0.0);
+        for index in 0..self.seats.len() {
             for command in self.seats[index].take_commands() {
                 self.run_command(index, &command);
             }
+        }
+    }
+
+    /// Runs shots that are due, in the order they were fired, whoever's seat
+    /// comes first. `since_tick` is how far past the tick this is, in seconds.
+    fn run_fires(&mut self, since_tick: f64) {
+        let tick_time = self.simulation.borrow().time();
+        let mut fires = Vec::new();
+        for index in 0..self.seats.len() {
+            let Some(id) = self.seats[index].player else {
+                continue;
+            };
+            for fire in self.seats[index].take_fires(since_tick) {
+                // A client can claim the start of a tick, but nothing earlier.
+                let into = f64::from(fire.offset) / 256.0 * self.seconds;
+                fires.push((tick_time - self.seconds + into, id, fire));
+            }
+        }
+        fires.sort_by(|a, b| a.0.total_cmp(&b.0));
+        for (time, id, fire) in fires {
+            self.simulation
+                .borrow_mut()
+                .aim_player(id, fire.yaw, fire.pitch, fire.view_time);
+            self.game
+                .client_fire(id, time.max(tick_time - self.seconds), fire.seed);
+        }
+    }
+
+    /// A light pass between ticks, for weapons alone: it reads waiting shots,
+    /// tests what they hit and spawns what they launch. Nothing else moves
+    /// (proposal 0050).
+    pub fn half_tick(&mut self) {
+        for index in 0..self.seats.len() {
+            while let Some(bytes) = self.seats[index].transport.receive() {
+                self.seats[index].heard();
+                match ClientMessage::decode(&bytes) {
+                    Some(ClientMessage::Fire(fire)) => self.seats[index].hold_fire(fire),
+                    Some(message) => self.seats[index].backlog.push_back(message),
+                    None => {}
+                }
+            }
+        }
+        self.run_fires(self.seconds / 2.0);
+        self.flush_outbox();
+        for seat in &mut self.seats {
+            seat.flush();
         }
     }
 

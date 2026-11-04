@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use engine_core::player::UserCommand;
-use engine_net::{ServerMessage, Snapshot, Transport, delta_from};
+use engine_net::{ClientMessage, FireCommand, ServerMessage, Snapshot, Transport, delta_from};
 use engine_sim::EntityId;
 use serde::{Deserialize, Serialize};
 
@@ -81,6 +81,10 @@ pub struct Seat {
     held_commands: VecDeque<(f64, Vec<UserCommand>)>,
     /// Snapshots held for the added delay.
     held_snapshots: VecDeque<(f64, Vec<u8>)>,
+    /// Shots held for the added delay.
+    held_fires: VecDeque<(f64, FireCommand)>,
+    /// What arrived during a half tick, for the next full one.
+    pub(crate) backlog: VecDeque<ClientMessage>,
 }
 
 impl Seat {
@@ -106,6 +110,8 @@ impl Seat {
             settled: false,
             held_commands: VecDeque::new(),
             held_snapshots: VecDeque::new(),
+            held_fires: VecDeque::new(),
+            backlog: VecDeque::new(),
         }
     }
 
@@ -158,6 +164,27 @@ impl Seat {
         self.held_commands.push_back((release, commands));
     }
 
+    /// Holds a shot for the added delay.
+    pub(crate) fn hold_fire(&mut self, fire: FireCommand) {
+        let release = self.clock + self.hold_seconds();
+        self.held_fires.push_back((release, fire));
+    }
+
+    /// Takes shots that have been held for long enough, by `now`.
+    pub(crate) fn take_fires(&mut self, now: f64) -> Vec<FireCommand> {
+        let mut fires = Vec::new();
+        while self
+            .held_fires
+            .front()
+            .is_some_and(|(release, _)| *release <= self.clock + now)
+        {
+            if let Some((_release, fire)) = self.held_fires.pop_front() {
+                fires.push(fire);
+            }
+        }
+        fires
+    }
+
     /// Takes commands that have been held for long enough.
     pub(crate) fn take_commands(&mut self) -> Vec<UserCommand> {
         let mut commands = Vec::new();
@@ -192,6 +219,8 @@ impl Seat {
         self.sent.clear();
         self.held_commands.clear();
         self.held_snapshots.clear();
+        self.held_fires.clear();
+        self.backlog.clear();
         self.seen = 0;
         self.player = None;
         self.shapes_told = 0;

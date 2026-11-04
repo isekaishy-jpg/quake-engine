@@ -4,18 +4,19 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
-use engine_core::entity::{Effect, EntityState, ModelInstance};
+use engine_core::entity::{BlastRule, Effect, EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
-    ClientMessage, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport, apply_delta,
-    delta_baseline,
+    ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport,
+    apply_delta, delta_baseline,
 };
 use engine_physics::CollisionWorld;
 
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
+use crate::projectiles::{Flights, Launch, Timeline};
 use crate::view_clock::ViewClock;
 
 /// Further than this in a tick is a teleport, and isn't blended.
@@ -73,6 +74,16 @@ const MAX_PENDING: usize = 512;
 /// How many of the latest commands go in each move, so a lost packet costs
 /// nothing, as `CL_SendMove` does in QuakeWorld.
 const COMMANDS_PER_MOVE: usize = 3;
+
+/// The share of the gap to the present that own shots are eased by, which
+/// halves it, as the record proposes.
+const DEFAULT_CORRECTION: f64 = 0.5;
+
+/// A tick, in seconds, for working out where the server is.
+const TICK_SECONDS: f64 = 1.0 / 72.0;
+
+/// How long past a round trip a guess waits for the server, in seconds.
+const GUESS_PATIENCE: f64 = 0.15;
 
 /// How many snapshots are kept to apply differences to.
 const SNAPSHOT_HISTORY: usize = 64;
@@ -145,6 +156,16 @@ pub struct Client {
     scores: Vec<PlayerScore>,
     /// The time others are drawn at.
     clock: ViewClock,
+    /// What's flying.
+    flights: Flights,
+    /// Numbers of models by name.
+    model_numbers: HashMap<String, u16>,
+    /// Knocks predicted from our own rockets, by the command they land on.
+    knocks: Vec<(u32, Vec3)>,
+    /// How our own blasts knock us, if that's to be predicted.
+    blast: Option<BlastRule>,
+    /// Sounds already played for our own shots.
+    expected_sounds: Vec<String>,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -190,13 +211,25 @@ impl Client {
             level: None,
             scores: Vec::new(),
             clock: ViewClock::default(),
+            flights: Flights::default(),
+            model_numbers: HashMap::new(),
+            knocks: Vec::new(),
+            blast: None,
+            expected_sounds: Vec::new(),
             touched: Vec::new(),
         }
     }
 
-    /// Runs `command` on `state`, against the latest brush model positions.
+    /// Runs `command` on `state`, against the latest brush model positions,
+    /// with any knock that's due on it.
     fn run_on(&mut self, state: &mut PlayerState, command: &UserCommand) {
         self.touched.clear();
+        for (sequence, knock) in &self.knocks {
+            if *sequence == command.sequence {
+                state.velocity = state.velocity + *knock;
+                state.on_ground = false;
+            }
+        }
         let collision = self.world.with(&self.instances).with_boxes(&self.boxes);
         player_move(state, command, &self.vars, collision, &mut self.touched);
     }
@@ -285,7 +318,9 @@ impl Client {
             Some((self.history.get(before)?, self.history.get(index)?))
         });
         let Some((before, after)) = pair else {
-            return self.draw_entities(1.0);
+            let mut drawn = self.draw_entities(1.0);
+            self.place_flights(&mut drawn, time);
+            return drawn;
         };
         let span = after.time - before.time;
         #[expect(
@@ -302,7 +337,7 @@ impl Client {
             .iter()
             .map(|entity| (entity.id, entity))
             .collect();
-        after
+        let mut drawn: Vec<DrawnEntity> = after
             .entities
             .iter()
             .filter(|entity| entity.id != self.player_entity)
@@ -320,7 +355,39 @@ impl Client {
                     blend: fraction,
                 }
             })
-            .collect()
+            .collect();
+        self.place_flights(&mut drawn, time);
+        drawn
+    }
+
+    /// Puts what's flying where its path says, and adds shots of our own the
+    /// server hasn't confirmed.
+    fn place_flights(&self, drawn: &mut Vec<DrawnEntity>, behind: f64) {
+        let times = self.timeline(behind);
+        for entity in drawn.iter_mut() {
+            if let Some(place) = self.flights.place_of(entity.state.id, &times) {
+                entity.state.origin = place;
+            }
+        }
+        let guesses = self.flights.guesses(times);
+        for (number, (model, origin, velocity)) in (0u64..).zip(guesses) {
+            let flat = (velocity.x * velocity.x + velocity.y * velocity.y).sqrt();
+            drawn.push(DrawnEntity {
+                state: EntityState {
+                    id: u64::MAX - number,
+                    model,
+                    origin,
+                    angles: Vec3::new(
+                        velocity.z.atan2(flat).to_degrees(),
+                        velocity.y.atan2(velocity.x).to_degrees(),
+                        0.0,
+                    ),
+                    ..EntityState::default()
+                },
+                from_frame: 0,
+                blend: 1.0,
+            });
+        }
     }
 
     /// The player's weapon model and frame.
@@ -424,6 +491,7 @@ impl Client {
         command.seconds = seconds;
         command.view_time = self.clock.time();
         self.next_sequence = self.next_sequence.wrapping_add(1);
+        self.follow_flights();
         let mut predicted = self.predicted;
         self.run_on(&mut predicted, &command);
         self.predicted = predicted;
@@ -454,6 +522,143 @@ impl Client {
         self.transport
     }
 
+    /// How long a command takes to come back, as far as can be told.
+    fn round_trip(&self) -> f64 {
+        #[expect(clippy::cast_precision_loss, reason = "a few commands")]
+        let waiting = self.pending.len() as f64;
+        waiting * TICK_SECONDS
+    }
+
+    /// The game time at the server now, as far as can be told.
+    fn present(&self) -> f64 {
+        self.time + self.round_trip() / 2.0
+    }
+
+    /// The game time the player's own commands run at.
+    fn own_time(&self) -> f64 {
+        self.time + self.round_trip()
+    }
+
+    /// The times flights are drawn by, with others drawn at `behind`.
+    fn timeline(&self, behind: f64) -> Timeline {
+        Timeline {
+            present: self.present(),
+            own: self.own_time(),
+            behind,
+            correction: DEFAULT_CORRECTION,
+        }
+    }
+
+    /// Sets how our own blasts knock us, or that they aren't predicted.
+    pub fn set_blast(&mut self, blast: Option<BlastRule>) {
+        self.blast = blast;
+    }
+
+    /// Notes that `sound` has already been played for a shot, so the server's
+    /// won't play over it.
+    pub fn expect_own_sound(&mut self, sound: &str) {
+        self.expected_sounds.push(sound.to_owned());
+    }
+
+    /// Draws our own shot before the server has confirmed it.
+    pub fn guess_launch(&mut self, model: &str, origin: Vec3, velocity: Vec3, bounces: bool) {
+        if let Some(model) = self.model_numbers.get(model).copied() {
+            let launch = Launch {
+                origin,
+                velocity,
+                time: self.own_time(),
+                bounces,
+            };
+            let behind = self.clock.time();
+            let fired_on = self.next_sequence;
+            self.flights.guess(
+                launch,
+                model,
+                fired_on,
+                behind,
+                &self.world,
+                &self.instances,
+            );
+        }
+    }
+
+    /// Follows what's flying, and predicts the knock of our own rockets. Only
+    /// movement is predicted, and the server's next word corrects it.
+    fn follow_flights(&mut self) {
+        let ids: std::collections::HashSet<u64> =
+            self.entities.iter().map(|entity| entity.id).collect();
+        let give_up = self.round_trip() + GUESS_PATIENCE;
+        self.flights
+            .retain(|id| ids.contains(&id), self.clock.time(), give_up);
+        let blasts = self.flights.take_blasts(self.next_sequence);
+        let Some(rule) = self.blast else {
+            return;
+        };
+        let answered = self.history.back().map_or(0, |last| last.acknowledged);
+        for (lands_on, blast) in blasts {
+            if lands_on <= answered.wrapping_add(1) {
+                // The server's numbers already have it.
+                continue;
+            }
+            let middle = self.predicted.origin + Vec3::new(0.0, 0.0, 4.0);
+            let distance = (blast - middle).length();
+            if distance > rule.reach {
+                continue;
+            }
+            let points = (rule.damage - distance * rule.falloff) * rule.own_share;
+            let collision = self.world.with(&self.instances);
+            let clear = collision
+                .move_box(blast, Vec3::ZERO, Vec3::ZERO, middle)
+                .fraction
+                >= 1.0;
+            if points > 0.0 && clear {
+                let direction = (self.predicted.origin - blast).normalized();
+                let knock = direction * (points * rule.knock_per_damage);
+                self.knocks.push((lands_on, knock));
+                self.replay();
+            }
+        }
+    }
+
+    /// The command that ran at game time `time`, counting from the last one
+    /// the server has answered for.
+    fn command_at(&self, time: f64) -> u32 {
+        let answered = self.history.back().map_or(0, |last| last.acknowledged);
+        #[expect(clippy::cast_possible_truncation, reason = "a few ticks either way")]
+        let ticks = ((time + TICK_SECONDS - self.time) / TICK_SECONDS).round() as i64;
+        u32::try_from(i64::from(answered) + ticks).unwrap_or(answered)
+    }
+
+    /// Works out the prediction again from the last snapshot.
+    fn replay(&mut self) {
+        let Some(mut state) = self.history.back().map(|last| last.player) else {
+            return;
+        };
+        let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
+        for command in &pending {
+            self.run_on(&mut state, command);
+        }
+        self.predicted = state;
+    }
+
+    /// Sends a shot now, ahead of the next command, `offset` of the way
+    /// through the tick, out of 256. Returns the number its randomness comes
+    /// from.
+    pub fn send_fire(&mut self, yaw: f32, pitch: f32, offset: u8) -> u16 {
+        let seed = u16::try_from(self.next_sequence & 0xFFFF).unwrap_or(0);
+        let fire = FireCommand {
+            yaw,
+            pitch,
+            view_time: self.clock.time(),
+            offset,
+            seed,
+        };
+        self.transport
+            .send_unreliable(ClientMessage::Fire(fire).encode());
+        self.transport.flush();
+        seed
+    }
+
     /// Takes a level the server wants loaded.
     pub fn take_level(&mut self) -> Option<String> {
         self.level.take()
@@ -471,6 +676,26 @@ impl Client {
             colors,
         };
         self.transport.send(ClientMessage::Info(info).encode());
+    }
+
+    /// The last command the server has answered for, and where that left the
+    /// player, for measuring prediction.
+    #[must_use]
+    pub fn last_answer(&self) -> Option<(u32, PlayerState)> {
+        let snapshot = self.history.back()?;
+        Some((snapshot.acknowledged, snapshot.player))
+    }
+
+    /// The number the next command will have.
+    #[must_use]
+    pub fn next_sequence(&self) -> u32 {
+        self.next_sequence
+    }
+
+    /// The last launch heard of, for tests of paths.
+    #[must_use]
+    pub fn last_launch(&self) -> Option<(u64, Launch)> {
+        self.flights.last_launch()
     }
 
     /// The latest scores.
@@ -500,6 +725,10 @@ impl Client {
         self.history.push_back(snapshot.clone());
         self.pending
             .retain(|command| command.sequence > snapshot.acknowledged);
+        // A knock lands after the command before it, so the server's numbers
+        // for that command already include it.
+        let included = snapshot.acknowledged.wrapping_add(1);
+        self.knocks.retain(|(sequence, _)| *sequence > included);
         self.previous_instances = std::mem::replace(&mut self.instances, snapshot.instances);
         self.boxes = snapshot.boxes;
         self.note_entities(snapshot.tick, snapshot.entities);
@@ -570,11 +799,39 @@ impl Client {
                     self.styles.set(index, &pattern);
                 }
                 Some(ServerMessage::Print(text)) => self.prints.push(text),
+                Some(ServerMessage::Effect(Effect::Launch(projectile))) => {
+                    let own = projectile.owner == self.player_entity;
+                    let fired_on = own.then(|| self.command_at(projectile.time));
+                    let behind = self.clock.time();
+                    self.flights.launched(
+                        &projectile,
+                        fired_on,
+                        behind,
+                        &self.world,
+                        &self.instances,
+                    );
+                }
                 Some(ServerMessage::Effect(effect)) => self.effects.push(effect),
                 Some(ServerMessage::ModelName { number, name }) => {
+                    self.model_numbers.insert(name.clone(), number);
                     self.model_names.push((number, name));
                 }
-                Some(ServerMessage::Sound(sound)) => self.sounds.push(sound),
+                Some(ServerMessage::Sound(sound)) => {
+                    let played = sound
+                        .own
+                        .then(|| {
+                            self.expected_sounds
+                                .iter()
+                                .position(|name| *name == sound.name)
+                        })
+                        .flatten();
+                    match played {
+                        Some(index) => {
+                            let _played = self.expected_sounds.remove(index);
+                        }
+                        None => self.sounds.push(sound),
+                    }
+                }
                 Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
                 Some(ServerMessage::Music(track)) => self.music = Some(track),
                 Some(ServerMessage::SetView { yaw, pitch }) => self.view = Some((yaw, pitch)),

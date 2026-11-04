@@ -9,14 +9,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine_assets::FileSystem;
-use engine_client::{Bot, BotSkill, Client};
+use engine_client::{Bot, BotSkill, Client, Path};
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_map::Map;
 use engine_net::{Conditioned, Conditions, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Seat, SeatInfo, Server};
-use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
+use fixture_quake::{Palette, ROCKET_BLAST, SCRIPTS, import_map, mount_game, spawn_point};
 
 /// A tick.
 const TICK: f64 = 1.0 / 72.0;
@@ -146,10 +146,15 @@ const COUNT_SHOTS: &str = r#"
         local forward = makevectors(self.v_angle)
         local start = self.origin + vector.create(0, 0, 16)
         traceline(start, start + forward * 2048, false, self)
-        shots_fired += 1
-        speed_total += vector.magnitude(find_all("netname", "bot2")[1].velocity)
-        if trace_ent.classname == "player" then
-            shots_hit += 1
+        -- Only a target at full tilt counts: one that's just turned round is
+        -- near where it was, and that would hit with or without rewind.
+        local speed = vector.magnitude(find_all("netname", "bot2")[1].velocity)
+        if speed >= 315 then
+            shots_fired += 1
+            speed_total += speed
+            if trace_ent.classname == "player" then
+                shots_hit += 1
+            end
         end
         engine.end_rewind()
     end
@@ -191,10 +196,12 @@ fn shots_in(
         shoots: true,
         patrol_seconds: 0.0,
     };
+    // Not a multiple of the shotgun's half second, or every shot would catch
+    // the target at the same point of its run.
     let target = BotSkill {
         moves: true,
         shoots: false,
-        patrol_seconds: 0.5,
+        patrol_seconds: 0.61,
         ..BotSkill::default()
     };
     let mut bots = vec![
@@ -262,10 +269,12 @@ fn shots_land_where_they_were_aimed_at_every_ordinary_ping() {
             share(hit, fired),
             share(control, control_fired)
         );
-        assert!(fired > 100.0, "they have to have fired");
+        assert!(fired > 40.0, "they have to have fired");
         assert!(speed > 250.0, "the target has to be running");
         assert!(share(hit, fired) >= 95.0, "rewind lands what was aimed");
-        if ping >= 60 {
+        // A hit on a running target has about 50 ms of give in it, and firing
+        // on the click spends less of that, so 60 ms sits right on the edge.
+        if ping >= 75 {
             assert!(
                 share(control, control_fired) < 20.0,
                 "and it's rewind doing it"
@@ -499,4 +508,165 @@ fn a_shot_past_a_door_is_judged_where_the_door_was() {
             "#,
         )
         .expect("it holds");
+}
+
+/// Fires a projectile from where `from` stands along `direction`, and follows
+/// the server's copy, returning the worst gap between it and the client's own
+/// worked out path, in units, and how long it flew.
+fn path_error(name: &str, weapon: &str, from: Vec3, yaw_pitch: (f32, f32)) -> (f32, f64) {
+    let map = load(name);
+    let (mut server, mut host, world) = game(&map, name, &[("deathmatch", 1.0)]);
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    for _ in 0..72 {
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    }
+    server
+        .exec(&format!(
+            r#"
+            local player = find_all("classname", "player")[1]
+            setorigin(player, vector.create({}, {}, {}))
+            player.ammo_rockets = 50
+            player.items = bit32.bor(player.items, IT_ROCKET_LAUNCHER, IT_GRENADE_LAUNCHER)
+            player.weapon = {weapon}
+            W_SetCurrentAmmo(player)
+            "#,
+            from.x, from.y, from.z
+        ))
+        .expect("it runs");
+    let mut worst = 0.0_f32;
+    let mut flown = 0.0;
+    let mut path: Option<(u64, Path)> = None;
+    for tick_number in 0..300 {
+        let command = UserCommand {
+            yaw: yaw_pitch.0,
+            pitch: yaw_pitch.1,
+            attack: tick_number == 5,
+            ..UserCommand::default()
+        };
+        host.send_command(command, tick);
+        server.tick();
+        host.receive();
+        if path.is_none()
+            && let Some((id, launch)) = host.last_launch()
+        {
+            path = Some((id, Path::new(launch, &world, &[])));
+        }
+        let Some((id, path)) = &path else {
+            continue;
+        };
+        let time = host.time();
+        let drawn = host.draw_entities(1.0);
+        // Once it's gone off, it's an explosion, not a projectile.
+        let flying = path.launch().bounces && time < path.launch().time + 2.4
+            || path.impact().is_none_or(|(when, _)| time < when);
+        if let Some(entity) = drawn.iter().find(|entity| entity.state.id == *id)
+            && flying
+        {
+            worst = worst.max((path.at(time) - entity.state.origin).length());
+            flown = time - path.launch().time;
+        }
+    }
+    (worst, flown)
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_clients_path_matches_the_servers_projectile() {
+    let from = Vec3::new(-880.0, -232.0, -16.0);
+    let rocket = path_error("dm3", "IT_ROCKET_LAUNCHER", from, (0.0, 0.0));
+    let grenade = path_error("dm3", "IT_GRENADE_LAUNCHER", from, (0.0, 0.0));
+    println!("rocket {rocket:?}, grenade {grenade:?}");
+    assert!(rocket.1 > 0.05, "it flew");
+    assert!(grenade.1 > 0.5, "it flew");
+    assert!(rocket.0 < 2.0, "a rocket stays on its path");
+    assert!(grenade.0 < 16.0, "a grenade stays close");
+}
+
+/// A rocket jump at `ping`: fires at the floor, and returns the worst gap
+/// between where the client thinks it is and where the server says, over the
+/// jump, with and without predicting the knock.
+fn rocket_jump_error(ping: u64, predicting: bool) -> f32 {
+    let map = load("dm3");
+    let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
+    let mut bots = vec![add_bot(
+        &mut server,
+        &world,
+        network(ping, 0, 0.0),
+        BotSkill {
+            moves: false,
+            shoots: false,
+            ..BotSkill::default()
+        },
+        1,
+    )];
+    bots[0]
+        .client_mut()
+        .set_blast(predicting.then_some(ROCKET_BLAST));
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    server
+        .exec(
+            r#"
+            local host = find_all("netname", "player")[1]
+            setorigin(host, vector.create(0, 0, 4000))
+            host.frozen = true
+            local bot = find_all("netname", "bot1")[1]
+            setorigin(bot, vector.create(-880, -232, -16))
+            bot.ammo_rockets = 50
+            bot.health = 500
+            bot.items = bit32.bor(bot.items, IT_ROCKET_LAUNCHER)
+            bot.weapon = IT_ROCKET_LAUNCHER
+            W_SetCurrentAmmo(bot)
+            "#,
+        )
+        .expect("it runs");
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    // Straight down, then compare what was predicted for each command with
+    // what the server says that command really did.
+    let mut worst = 0.0_f32;
+    let mut predictions = std::collections::HashMap::new();
+    for tick_number in 0..144 {
+        let command = UserCommand {
+            pitch: 89.0,
+            attack: tick_number < 2,
+            ..UserCommand::default()
+        };
+        let client = bots[0].client_mut();
+        client.update_network(Duration::from_secs_f32(tick));
+        client.receive();
+        if tick_number == 0 {
+            // As a click does, before the server has heard of it.
+            let start = client.predicted().origin + Vec3::new(0.14, 0.0, 8.0);
+            let down = Vec3::new(0.017, 0.0, -1.0);
+            client.guess_launch("progs/missile.mdl", start, down * 1000.0, false);
+        }
+        let sequence = client.next_sequence();
+        client.send_command(command, tick);
+        client.flush_network();
+        predictions.insert(sequence, client.predicted().origin);
+        if let Some((answered, truth)) = client.last_answer()
+            && let Some(predicted) = predictions.get(&answered)
+        {
+            worst = worst.max((*predicted - truth.origin).length());
+        }
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    }
+    worst
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn predicting_a_rocket_jump_keeps_the_client_with_the_server() {
+    for ping in [40, 80] {
+        let with = rocket_jump_error(ping, true);
+        let without = rocket_jump_error(ping, false);
+        println!("{ping} ms: {with:.1} units with prediction, {without:.1} without");
+        assert!(with * 2.0 < without, "it has to make a real difference");
+    }
 }

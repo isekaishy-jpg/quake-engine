@@ -298,6 +298,8 @@ impl Effects {
                 end,
                 entity,
             } => self.temp(kind, origin, end, entity),
+            // The client's own flights follow these.
+            Effect::Launch(_) => {}
             Effect::Particles {
                 origin,
                 direction,

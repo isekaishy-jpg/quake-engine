@@ -12,8 +12,8 @@ use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::Map;
 use engine_net::{
-    ClientMessage, Loopback, PlayerInfo, ServerMessage, Snapshot, Transport, apply_delta,
-    delta_baseline, delta_from, loopback,
+    ClientMessage, FireCommand, Loopback, PlayerInfo, ServerMessage, Snapshot, Transport,
+    apply_delta, delta_baseline, delta_from, loopback,
 };
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Seat, SeatInfo, Server};
@@ -683,4 +683,113 @@ fn a_view_too_old_is_limited() {
         !shot_lands(29, 0.6),
         "the view is cut back to a quarter of a second"
     );
+}
+
+/// A shot from `player`, `offset` of 256 into the tick.
+fn fire(offset: u8) -> Vec<u8> {
+    ClientMessage::Fire(FireCommand {
+        offset,
+        ..FireCommand::default()
+    })
+    .encode()
+}
+
+/// How many shells a player has.
+fn shells(player: &Player) -> i32 {
+    player.latest.as_ref().expect("a snapshot").stats[6]
+}
+
+#[test]
+fn a_shot_lands_in_the_half_tick_before_the_next_tick() {
+    let (mut server, mut host, mut guest) = two_players();
+    for _ in 0..80 {
+        host.send(|_| {});
+        guest.send(|_| {});
+        server.tick();
+        host.read();
+        guest.read();
+    }
+    let before = shells(&guest);
+    let time = guest.latest.as_ref().expect("a snapshot").time;
+    server
+        .exec("shot_at = nil local old = W_FireShotgun W_FireShotgun = function(self) shot_at = time() old(self) end")
+        .expect("it runs");
+    guest.end.send(fire(128));
+    server.half_tick();
+    server
+        .exec(&format!("assert(shot_at and shot_at > {time} - 1)"))
+        .expect("it fired before any tick");
+    server.tick();
+    guest.read();
+    assert_eq!(shells(&guest), before - 1);
+}
+
+#[test]
+fn a_shot_cant_beat_the_refire_time_or_fire_twice() {
+    let (mut server, mut host, mut guest) = two_players();
+    for _ in 0..80 {
+        host.send(|_| {});
+        guest.send(|_| {});
+        server.tick();
+        host.read();
+        guest.read();
+    }
+    let before = shells(&guest);
+    for _ in 0..5 {
+        guest.end.send(fire(0));
+        guest.send(|command| command.attack = true);
+        server.half_tick();
+        server.tick();
+        guest.read();
+    }
+    assert_eq!(shells(&guest), before - 1, "half a second between shots");
+}
+
+#[test]
+fn the_earlier_shot_goes_first_whichever_seat_it_came_from() {
+    let (mut server, mut host, mut guest) = two_players();
+    for _ in 0..80 {
+        host.send(|_| {});
+        guest.send(|_| {});
+        server.tick();
+        host.read();
+        guest.read();
+    }
+    server
+        .exec(
+            r#"
+            order = {}
+            local old = W_FireShotgun
+            W_FireShotgun = function(self)
+                table.insert(order, self.netname)
+                old(self)
+            end
+            "#,
+        )
+        .expect("it runs");
+    host.end.send(fire(200));
+    guest.end.send(fire(20));
+    server.half_tick();
+    server
+        .exec(r#"assert(order[1] == "guest" and order[2] == "player", order[1])"#)
+        .expect("the guest clicked first");
+}
+
+#[test]
+fn nobody_dead_or_held_can_fire() {
+    let (mut server, mut host, mut guest) = two_players();
+    for _ in 0..80 {
+        host.send(|_| {});
+        guest.send(|_| {});
+        server.tick();
+        host.read();
+        guest.read();
+    }
+    server.exec(FIRST_KILLS_SECOND).expect("it runs");
+    let before = shells(&guest);
+    guest.end.send(fire(0));
+    server.half_tick();
+    server.tick();
+    guest.read();
+    assert_eq!(shells(&guest), before);
 }

@@ -457,6 +457,12 @@ impl Simulation {
         u16::try_from(index + 1).unwrap_or(0)
     }
 
+    /// Gives the model called `name` a number now, so clients know it before
+    /// anything shows it.
+    pub fn precache_shape(&mut self, name: &str) {
+        let _number = self.shape_number(name);
+    }
+
     /// Shows the model called `name` on an entity, which gets a box of 32
     /// units each way until `setsize` changes it, as `PF_setmodel` gives.
     pub fn set_shape(&mut self, id: EntityId, name: &str) {
@@ -1190,6 +1196,14 @@ impl Simulation {
         }
     }
 
+    /// Takes in a shot's aim, ahead of the command it came before.
+    pub fn aim_player(&mut self, id: EntityId, yaw: f32, pitch: f32, view_time: f64) {
+        if let Some(player) = self.slot_mut(id) {
+            player.view = (yaw, pitch);
+            player.view_time = view_time;
+        }
+    }
+
     /// Takes everything else back to where `shooter` saw it, up to their
     /// limit, until [`Simulation::end_rewind`] (proposals 0048 and 0051).
     pub fn rewind(&mut self, shooter: EntityId) {
@@ -1208,6 +1222,13 @@ impl Simulation {
             .filter_map(|player| Some((player.id, player.at_time(time)?)))
             .collect();
         rewound.extend(self.things_at(time));
+        // The shooter's own eye is exact too, not rounded to a tick.
+        let at = self.event_time.and_then(|time| {
+            self.slot(shooter)
+                .and_then(|player| player.at_time(time))
+                .map(|origin| (shooter, origin))
+        });
+        rewound.extend(at);
         self.rewound = rewound;
     }
 

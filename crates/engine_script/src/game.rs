@@ -6,7 +6,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::entity::Effect;
+use engine_core::entity::{Effect, Projectile};
 use engine_core::math::Vec3;
 use engine_core::player::Liquid;
 use engine_core::sound::{SoundStart, StaticSound};
@@ -44,6 +44,10 @@ const MOVE_TYPE_NUMBERS: [(MoveType, f64); 9] = [
     (MoveType::FlyMissile, 9.0),
     (MoveType::Bounce, 10.0),
 ];
+
+/// What `engine.launch` takes: an entity, its owner, its origin and velocity,
+/// the time, and whether it bounces.
+type LaunchArguments = (f64, f64, Vector, Vector, f64, bool);
 
 /// A script that couldn't load.
 #[derive(Debug)]
@@ -473,6 +477,14 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "precache_model",
+            lua.create_function(move |_, name: String| {
+                sim.borrow_mut().precache_shape(&name);
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "time",
             lua.create_function(move |_, ()| Ok(sim.borrow().time()))?,
         )?;
@@ -693,6 +705,23 @@ impl Game {
                         color,
                         count,
                     });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "launch",
+            lua.create_function(
+                move |_, (id, owner, origin, velocity, time, bounces): LaunchArguments| {
+                    out.borrow_mut().effects.push(Effect::Launch(Projectile {
+                        entity: id_from(id).to_bits(),
+                        owner: id_from(owner).to_bits(),
+                        origin: to_vec3(origin),
+                        velocity: to_vec3(velocity),
+                        time,
+                        bounces,
+                    }));
                     Ok(())
                 },
             )?,
@@ -966,6 +995,22 @@ impl Game {
         let forget: mlua::Result<Function> = self.lua.globals().get("forget_player");
         self.report(forget.and_then(|forget| forget.call::<()>(id_to(id))));
         let _table = self.players.borrow_mut().remove(&id);
+    }
+
+    /// Runs the game's `ClientFire` for a shot at game time `time`, with
+    /// `seed` for its randomness.
+    pub fn client_fire(&self, id: EntityId, time: f64, seed: u16) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientFire");
+        self.simulation.borrow_mut().set_event_time(Some(time));
+        match (function, self.player(id)) {
+            (Ok(Some(function)), Some(player)) => {
+                self.report(function.call::<()>((player, seed)));
+            }
+            (Err(error), _) => self.report(Err(error)),
+            _ => {}
+        }
+        self.simulation.borrow_mut().set_event_time(None);
     }
 
     /// Runs the game's `PlayerPreThink`.

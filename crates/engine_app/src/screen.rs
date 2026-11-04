@@ -150,8 +150,8 @@ impl World {
         canvas.into_quads()
     }
 
-    /// Plays a sound from the menus.
-    fn play_local(&mut self, name: &str) {
+    /// Plays a sound with no place, as the menus do.
+    pub(crate) fn play_local(&mut self, name: &str) {
         let clip = self.sounds.clip(name, &self.filesystem, &mut self.audio);
         if let Some(clip) = clip {
             let sound = SoundStart {

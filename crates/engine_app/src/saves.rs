@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_client::Client;
 use engine_console::Console;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
@@ -16,7 +15,7 @@ use engine_server::{SavedGame, Server};
 use fixture_quake::{Palette, SCRIPTS, import_map};
 use serde::{Deserialize, Serialize};
 
-use crate::app::{CONFIG_NAME, TICK_SECONDS, World};
+use crate::app::{CONFIG_NAME, TICK_SECONDS, World, player_client};
 use crate::options::Options;
 
 /// The folder under the user's data for this engine.
@@ -133,7 +132,7 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     world.level = server.level().clone();
     world.server = Some(server);
     world.set_collision(Rc::clone(&collision));
-    world.client = Some(Client::new(Box::new(client_end), collision, origin));
+    world.client = Some(player_client(Box::new(client_end), collision, origin));
     world.after_load(&map, palette)
 }
 

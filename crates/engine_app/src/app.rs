@@ -35,8 +35,8 @@ use engine_render::{
 use engine_server::{Level, Seat, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
-    Hud, Intermission, Menu, Palette, SCRIPTS, Score, import_map, mount_game, mount_music,
-    spawn_point,
+    Hud, Intermission, Menu, Palette, ROCKET_BLAST, SCRIPTS, Score, import_map, mount_game,
+    mount_music, shot_launch, spawn_point, weapon_rule,
 };
 
 use crate::commands;
@@ -136,6 +136,17 @@ impl Picture {
             quads: &self.quads,
         }
     }
+}
+
+/// A client for the player, with what it can know of the game's rules.
+pub(crate) fn player_client(
+    transport: Box<dyn Transport>,
+    world: Rc<CollisionWorld>,
+    origin: Vec3,
+) -> Client {
+    let mut client = Client::new(transport, world, origin);
+    client.set_blast(Some(ROCKET_BLAST));
+    client
 }
 
 /// The state console commands work on.
@@ -238,6 +249,8 @@ pub(crate) struct World {
     connect_time: f64,
     /// Who this player is.
     pub(crate) identity: SeatInfo,
+    /// When a held weapon's next shot can be drawn.
+    next_guess: f64,
     /// Bots playing here, each a client of its own.
     pub(crate) bots: Vec<Bot>,
     /// How many bots have been made, for names and seeds.
@@ -386,7 +399,7 @@ impl World {
         }
         self.level = level;
         self.collision = Some(Rc::clone(&collision));
-        self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
+        self.client = Some(player_client(Box::new(client_end), collision, start.origin));
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
         self.after_load(&map, palette)
@@ -431,7 +444,7 @@ impl World {
         let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
         let start = spawn_point(&map);
         let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
-        let mut client = Client::new(transport, collision, start.origin);
+        let mut client = player_client(transport, collision, start.origin);
         client.send_info(&self.identity.name, self.identity.colors);
         client.send_ready();
         client.flush_network();
@@ -565,6 +578,39 @@ impl World {
         }
     }
 
+    /// Shows a shot of the player's before the server answers: its projectile
+    /// and sound. Nothing here decides a result (proposal 0052).
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f32 keeps angles to a few thousandths of a degree"
+    )]
+    fn guess_shot(&mut self, seed: u16) {
+        let Some(rule) = weapon_rule(self.hud.active_weapon()) else {
+            return;
+        };
+        let remote = self.server.is_none();
+        let time = self.map_time;
+        if !remote || self.hud.ammo() < 1 || time < self.next_guess {
+            return;
+        }
+        self.next_guess = time + rule.refire;
+        let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
+        let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
+        let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
+        let axes = [
+            Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin),
+            Vec3::new(yaw_sin, -yaw_cos, 0.0),
+            Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos),
+        ];
+        if let Some(client) = &mut self.client {
+            let origin = client.predicted().origin;
+            let (start, velocity) = shot_launch(&rule, origin, axes, pitch, seed);
+            client.guess_launch(rule.model, start, velocity, rule.bounces);
+            client.expect_own_sound(rule.sound);
+        }
+        self.play_local(rule.sound);
+    }
+
     /// Runs one tick of the game.
     fn run_tick(&mut self, seconds: f32) {
         self.turn_view(seconds);
@@ -601,6 +647,10 @@ impl World {
             );
             let events = client.take_events();
             self.show_events(events);
+        }
+        // A held weapon keeps firing with no click to send.
+        if self.buttons.attack && self.is_playing_screen() {
+            self.guess_shot(0);
         }
         self.play_sounds();
         if bots_due {
@@ -973,6 +1023,8 @@ pub(crate) struct Engine {
     fps: FpsMeter,
     /// Whether there was a saved config to start from.
     has_config: bool,
+    /// Whether this tick's half tick has run.
+    half_tick_done: bool,
 }
 
 /// Reads standard input on its own thread, because reading blocks. The thread
@@ -1122,6 +1174,7 @@ impl Engine {
                 connecting: None,
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
+                next_guess: 0.0,
                 bots: Vec::new(),
                 bots_made: 0,
                 collision: None,
@@ -1133,6 +1186,7 @@ impl Engine {
             window: None,
             fps: FpsMeter::new(),
             has_config,
+            half_tick_done: false,
         })
     }
 
@@ -1274,7 +1328,41 @@ impl Engine {
                 self.console.add("togglemenu");
             }
         } else if !repeat && let Some(command) = self.world.bindings.press(&key) {
-            self.console.add(command);
+            let command = command.to_owned();
+            if command == "+attack" {
+                self.fire_now();
+            }
+            self.console.add(&command);
+        }
+    }
+
+    /// Sends a shot now, without waiting for the console or the next tick.
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "f32 keeps angles well, and a share of 256 fits a byte"
+    )]
+    fn fire_now(&mut self) {
+        if !self.world.is_running() || !self.world.is_playing_screen() {
+            return;
+        }
+        let offset = (self.clock.fraction() * 256.0) as u8;
+        let (yaw, pitch) = (self.world.look.yaw() as f32, self.world.look.pitch() as f32);
+        if let Some(client) = &mut self.world.client {
+            let seed = client.send_fire(yaw, pitch, offset);
+            self.world.guess_shot(seed);
+        }
+    }
+
+    /// Runs the half tick, once in each tick, when it's due.
+    fn run_half_tick(&mut self) {
+        if !self.half_tick_done && self.clock.fraction() >= 0.5 {
+            self.half_tick_done = true;
+            if self.world.is_running()
+                && let Some(server) = &mut self.world.server
+            {
+                server.half_tick();
+            }
         }
     }
 
@@ -1381,11 +1469,18 @@ impl PlatformApp for Engine {
         self.last_service = Some(now);
         for _ in 0..self.clock.advance(elapsed) {
             self.tick();
+            self.half_tick_done = false;
         }
+        self.run_half_tick();
         if self.world.quit {
             ServiceOutcome::Stop
-        } else {
+        } else if self.half_tick_done {
             ServiceOutcome::After(self.clock.until_next())
+        } else {
+            // Wake halfway through, for shots.
+            let tick = Duration::from_secs_f64(TICK_SECONDS);
+            let until = self.clock.until_next().saturating_sub(tick / 2);
+            ServiceOutcome::After(until)
         }
     }
 

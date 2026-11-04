@@ -77,8 +77,10 @@ pub struct Bot {
     press: f32,
     /// The state of its random numbers.
     random: u32,
-    /// Whether it's holding attack.
+    /// Whether it's holding attack, to respawn.
     fired: bool,
+    /// Whether attack was held last tick.
+    held_attack: bool,
 }
 
 impl Bot {
@@ -94,6 +96,7 @@ impl Bot {
             press: 0.0,
             random: seed | 1,
             fired: false,
+            held_attack: false,
         }
     }
 
@@ -133,7 +136,13 @@ impl Bot {
             .filter(|entity| players.contains(&entity.state.id))
             .map(|entity| entity.state.origin)
             .filter(|&origin| (origin - eye).length() < SIGHT_RANGE)
-            .filter(|&origin| world.trace(eye, origin).fraction >= 1.0)
+            .filter(|&origin| {
+                let collision = world.with(&[]);
+                collision
+                    .move_box(eye, Vec3::ZERO, Vec3::ZERO, origin)
+                    .fraction
+                    >= 1.0
+            })
             .min_by(|a, b| (*a - eye).length().total_cmp(&(*b - eye).length()))
     }
 
@@ -236,6 +245,10 @@ impl Bot {
         }
         let drawn = self.client.draw_entities_buffered(f64::from(seconds));
         let command = self.decide(seconds, &drawn, world);
+        if command.attack && !self.held_attack {
+            let _seed = self.client.send_fire(command.yaw, command.pitch, 128);
+        }
+        self.held_attack = command.attack;
         self.client.send_command(command, seconds);
         self.client.flush_network();
         // What a bot isn't using would otherwise pile up.

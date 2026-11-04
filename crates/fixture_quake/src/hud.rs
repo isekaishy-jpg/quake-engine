@@ -345,6 +345,18 @@ impl Hud {
         &self.level_title
     }
 
+    /// The weapon in use, by its item bit.
+    #[must_use]
+    pub fn active_weapon(&self) -> i32 {
+        self.stats[STAT_ACTIVE_WEAPON]
+    }
+
+    /// The ammo left for the weapon in use.
+    #[must_use]
+    pub fn ammo(&self) -> i32 {
+        self.stats[STAT_AMMO]
+    }
+
     /// The monsters killed and how many there are.
     #[must_use]
     pub fn monsters(&self) -> (i32, i32) {

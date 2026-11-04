@@ -588,6 +588,20 @@ function WaterMove(self)
 	end
 end
 
+-- A shot, as soon as it arrives. The command behind it finds the weapon busy,
+-- so nothing fires twice (proposal 0050).
+function ClientFire(self, seed)
+	if intermission_running ~= 0 or self.deadflag ~= DEAD_NO then
+		return
+	end
+	if self.view_ofs == vector.zero or time() < (self.attack_finished or 0) then
+		return
+	end
+	self.fire_seed = seed
+	W_Attack(self)
+	self.fire_seed = nil
+end
+
 -- Runs before each of the player's moves.
 function PlayerPreThink(self)
 	if intermission_running ~= 0 then

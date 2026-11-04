@@ -67,6 +67,11 @@
     - [0046: the network](proposals/0046-the-network.md)
     - [0047: deathmatch and co-op](proposals/0047-deathmatch-and-coop.md)
     - [0048: interpolation and rewind](proposals/0048-seeing-the-past.md)
+    - [0049: bots and bad networks](proposals/0049-bots-and-bad-networks.md)
+    - [0050: weapon timing](proposals/0050-weapon-timing.md)
+    - [0051: the fair play zone](proposals/0051-the-fair-play-zone.md)
+    - [0052: projectiles](proposals/0052-projectiles.md)
+    - [0053: predicted rocket jumps](proposals/0053-rocket-jumps.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

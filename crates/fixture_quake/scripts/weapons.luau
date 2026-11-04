@@ -60,6 +60,11 @@ local AIM_LIMIT = 0.93
 -- The direction to fire in, bent up or down to something near the line of
 -- fire, from `PF_aim`.
 function aim(self, _speed)
+	-- Online, what's fired goes where it's pointed, so a client can draw it
+	-- at once, as `sv_aim 2` does in QuakeWorld.
+	if deathmatch ~= 0 or coop ~= 0 then
+		return v_forward
+	end
 	local start = self.origin + vector.create(0, 0, 20)
 	traceline(start, start + v_forward * 2048, false, self)
 	if trace_ent.takedamage == DAMAGE_AIM then
@@ -227,6 +232,23 @@ function T_MissileTouch(self, other)
 	BecomeExplosion(self)
 end
 
+-- Tells clients a path, so they can work it out for themselves.
+function announce_launch(missile, owner, bounces)
+	local id = rawget(missile, "_id")
+	engine.launch(id, rawget(owner, "_id"), missile.origin, missile.velocity, time(), bounces)
+end
+
+-- The spread of a grenade from a shot's seed, the same as the client works it
+-- out, or at random with none.
+local function spread(self, salt)
+	local seed = self.fire_seed
+	if seed == nil then
+		return crandom()
+	end
+	local hashed = ((seed + salt * 40503) * 2654435761) % 4294967296
+	return hashed / 2147483648 - 1
+end
+
 function W_FireRocket(self)
 	self.ammo_rockets -= 1
 	self.currentammo = self.ammo_rockets
@@ -245,6 +267,7 @@ function W_FireRocket(self)
 	setmodel(missile, "progs/missile.mdl")
 	setsize(missile, vector.zero, vector.zero)
 	setorigin(missile, self.origin + v_forward * 8 + vector.create(0, 0, 16))
+	announce_launch(missile, self, false)
 end
 
 function LightningDamage(self, p1, p2, from, damage)
@@ -331,8 +354,8 @@ function W_FireGrenade(self)
 	if self.v_angle.x ~= 0 then
 		missile.velocity = v_forward * 600
 			+ v_up * 200
-			+ v_right * (crandom() * 10)
-			+ v_up * (crandom() * 10)
+			+ v_right * (spread(self, 0) * 10)
+			+ v_up * (spread(self, 1) * 10)
 	else
 		local velocity = aim(self, 10000) * 600
 		missile.velocity = vector.create(velocity.x, velocity.y, 200)
@@ -345,6 +368,7 @@ function W_FireGrenade(self)
 	setmodel(missile, "progs/grenade.mdl")
 	setsize(missile, vector.zero, vector.zero)
 	setorigin(missile, self.origin)
+	announce_launch(missile, self, true)
 end
 
 -- Used for both the player and the ogre.
@@ -363,6 +387,7 @@ function launch_spike(self, org, dir)
 	setorigin(spike, org)
 	spike.velocity = dir * 1000
 	newmis = spike
+	announce_launch(spike, self, false)
 	return spike
 end
 

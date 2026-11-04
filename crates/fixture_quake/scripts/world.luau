@@ -33,6 +33,10 @@ local LIGHT_STYLES = {
 
 function worldspawn(self)
 	world = self
+	-- A client draws these the moment a shot's fired, before the server has
+	-- spawned one to name them by.
+	engine.precache_model("progs/missile.mdl")
+	engine.precache_model("progs/grenade.mdl")
 	if self.sounds ~= 0 then
 		engine.music(self.sounds)
 	end
