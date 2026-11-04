@@ -108,9 +108,17 @@ impl TickClock {
     /// How far time is into the next tick, from 0 up to, but not including, 1.
     #[must_use]
     pub fn fraction(&self) -> f64 {
+        self.fraction_after(Duration::ZERO)
+    }
+
+    /// The fraction `extra` after the clock last advanced, stopping at 1.
+    /// A frame uses this, because the clock only advances when ticks run, so
+    /// between ticks [`Self::fraction`] stands still (proposal 0010).
+    #[must_use]
+    pub fn fraction_after(&self, extra: Duration) -> f64 {
         let start = self.nanos_for(u128::from(self.tick.0));
         let end = self.nanos_for(u128::from(self.tick.0) + 1);
-        let into = self.elapsed_nanos.saturating_sub(start);
+        let into = (self.elapsed_nanos + extra.as_nanos()).saturating_sub(start);
         let length = end - start;
         #[expect(
             clippy::cast_precision_loss,

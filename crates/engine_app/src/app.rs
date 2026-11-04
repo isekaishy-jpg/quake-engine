@@ -152,6 +152,7 @@ impl Engine {
         console.register_cvar("m_pitch", "0.022", saved);
         console.register_cvar("fov", "90", saved);
         console.register_cvar("show_fps", "1", saved);
+        console.register_cvar("vid_vsync", "0", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -191,6 +192,10 @@ impl Engine {
         }
         self.console.execute(&mut self.world);
         self.world.look.set_scale(self.look_scale());
+        let vsync = self.cvar_number("vid_vsync") != 0.0;
+        if let Some(renderer) = &mut self.world.renderer {
+            renderer.set_vsync(vsync);
+        }
         self.world.fov = self
             .console
             .cvar("fov")
@@ -346,7 +351,13 @@ impl PlatformApp for Engine {
                 clippy::cast_possible_truncation,
                 reason = "an interpolation fraction needs no more than f32"
             )]
-            let view = self.world.view(self.clock.fraction() as f32);
+            let view = {
+                let since_service = frame
+                    .now
+                    .saturating_sub(self.last_service.unwrap_or(frame.now));
+                self.world
+                    .view(self.clock.fraction_after(since_service) as f32)
+            };
             if let Some(renderer) = &mut self.world.renderer
                 && let Err(error) = renderer.draw(&view)
             {

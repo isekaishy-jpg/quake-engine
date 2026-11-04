@@ -17,6 +17,7 @@ Status: accepted, 2026-11-03, increment 1.
 - `TickClock` also reports the fraction into the next tick, for interpolation and the render tick, and the time until the next tick.
 - The simulation tick runs in a platform service registered for `PreUpdate` and `Maintenance`, so it doesn't depend on frames.
 - The frame callback does presentation only.
+- The clock only advances when ticks run, so a frame works out its own fraction with `fraction_after`, from the time since the clock last advanced. Review 0005 records what went wrong without it.
 
 ## Proposal
 

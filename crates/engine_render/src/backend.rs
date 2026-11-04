@@ -218,6 +218,8 @@ pub(crate) struct Backend {
     in_flight: Option<Fence>,
     /// The present mode.
     present_mode: PresentMode,
+    /// The present mode when frames don't wait for the display.
+    free_present_mode: PresentMode,
     /// The queue.
     queue: Queue,
     /// The queue's family.
@@ -477,6 +479,7 @@ impl Backend {
             available,
             in_flight: None,
             present_mode,
+            free_present_mode: present_mode,
             queue,
             queue_family,
             device_name,
@@ -748,6 +751,19 @@ impl Backend {
             extent: (width, height),
         });
         Ok(())
+    }
+
+    /// Chooses whether frames wait for the display.
+    pub(crate) fn set_vsync(&mut self, vsync: bool) {
+        let mode = if vsync {
+            PresentMode::FIFO
+        } else {
+            self.free_present_mode
+        };
+        if mode != self.present_mode {
+            self.present_mode = mode;
+            self.resized = true;
+        }
     }
 
     /// Notes the window's new size.

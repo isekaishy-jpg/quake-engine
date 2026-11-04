@@ -21,7 +21,7 @@ Status: accepted, 2026-11-03, increment 2.
 - When the view leaf changes, the visible faces are rebuilt into one index buffer, grouped by texture. Brush models are always included.
 - Four pipelines share one layout: lit, cutout, liquid and sky.
 - One frame is in flight. The renderer waits for the last frame at the start of the next, not at the end.
-- Mailbox is preferred, with FIFO as the fallback.
+- Mailbox is preferred, with FIFO as the fallback. The `vid_vsync` cvar selects FIFO, which paces frames evenly at the cost of some latency.
 - `capture` draws the same scene to an off-screen image and returns its pixels. It's used for `screenshot`, for tests with no window, and later for small preview images.
 - The window handle reaches the renderer as `engine_core::window::NativeWindow`. `engine_platform::Window` holds the `solapp` lease for as long as the renderer lives.
 - `fov` is horizontal at 4:3 and widens with the window.

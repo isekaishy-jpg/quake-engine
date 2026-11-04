@@ -46,6 +46,23 @@ fn a_stall_is_limited_and_time_is_dropped() {
     assert_eq!(clock.advance(Duration::from_millis(1)), 0);
 }
 
+/// Frames arrive between ticks, when the clock hasn't advanced.
+#[test]
+fn a_frame_between_ticks_sees_the_time_since_the_clock_advanced() {
+    let mut clock = clock();
+    assert_eq!(clock.advance(Duration::from_millis(14)), 1);
+    let start = clock.fraction();
+    let later = clock.fraction_after(Duration::from_millis(7));
+    assert!((later - start - 0.504).abs() < 0.001, "{later}");
+    assert!((clock.fraction_after(Duration::ZERO) - start).abs() < 1e-12);
+}
+
+#[test]
+fn the_fraction_stops_at_one_if_a_tick_runs_late() {
+    let clock = clock();
+    assert!((clock.fraction_after(Duration::from_millis(100)) - 1.0).abs() < 1e-12);
+}
+
 #[test]
 fn fraction_and_time_to_next_tick_follow_the_clock() {
     let mut clock = clock();

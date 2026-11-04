@@ -8,7 +8,8 @@ Status: review record, 2026-11-03. Reviewed: proposals 0016 to 0021, and the cha
 | 2 | `r1m1` from Dissolution of Eternity failed to import, because `qbsp` reads stray bytes after the last lump as a broken BSPX directory | `without_stray_tail` removes them, with tests |
 | 3 | The engine crashed on exit. Fields dropped in declaration order, so the command pool went before its buffer | Reordered, with the rule noted on the struct |
 | 4 | `assets_manager` and file ids were expected in this increment | A map and a palette give a cache nothing to do. Moved to when models and sounds arrive, recorded in proposal 0017 |
-| 5 | Reduced mode draws nothing yet, because a minimized window has no surface | Left open, as below |
+| 5 | Moving looked uneven, which the human noticed while strafing. Frames read a fraction that only changed when ticks ran, so the camera stepped at 72 Hz, and 65% of frames showed no movement. On the 144 Hz display each position showed for two refreshes | Frames now work out their own fraction, with tests, and the measurement was repeated |
+| 6 | Reduced mode draws nothing yet, because a minimized window has no surface | Left open, as below |
 
 ## Verified
 
@@ -27,6 +28,8 @@ These ran against the Steam data, read in place.
 | `-window` | A captioned 1280 by 720 window |
 | Hands-on test by the human | Flying and mouse look worked with no glaring issues, and the Alt-Tab and taskbar previews worked, including while minimized |
 | FPS counter | Shows top right in a capture. Over four rounds of 4 s it ran 203.8 frames a second on and 203.3 off, so its cost doesn't show |
+| Camera motion while moving | Frames with no movement went from 65% to 0%, and speed per frame went from 400 with a deviation of 548 to 400 with none |
+| `vid_vsync` | 144 frames a second with it on, 205 with it off, and it switches while running |
 | Exit | Code 0 |
 | GPU tests | 6 pass on a GTX 1070, and they skip with no Vulkan device |
 
@@ -37,5 +40,7 @@ These ran against the Steam data, read in place.
 - Entities aren't drawn, and doors and lifts sit at rest. Light styles start as on, so lights that should start off are lit.
 - The picture may be darker than people remember, because it follows the software renderer's sums with no gamma setting. `gamma` is unknown to the console.
 - Reduced mode still draws nothing. The previews work without it, so it stays as it is unless a preview falls short.
+- Exit was slow three times, over 8 s twice and 5.2 s once, all soon after builds. Five later runs took 150 to 470 ms, and shutdown stages measured 105 ms. The cause isn't known.
+- Some blur remained in mouse look for the human, which hasn't been measured.
 - Debug builds ran at around 160 frames a second. Release speed wasn't measured.
 - Increment 3 is next: collision, movement, and client and server over loopback.

@@ -119,6 +119,12 @@ impl Renderer {
         self.backend.set_overlay_text(text);
     }
 
+    /// Chooses whether frames wait for the display. Waiting paces them
+    /// evenly, and not waiting shows the newest frame sooner.
+    pub fn set_vsync(&mut self, vsync: bool) {
+        self.backend.set_vsync(vsync);
+    }
+
     /// Tells the renderer the window's new size.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.backend.resize(width, height);

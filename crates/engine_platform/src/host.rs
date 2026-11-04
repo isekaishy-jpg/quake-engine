@@ -81,6 +81,9 @@ impl Window {
 pub struct Frame {
     /// Time since the previous frame, zero on the first.
     pub delta: Duration,
+    /// Time since the host started, on the same clock as
+    /// [`PlatformApp::service`].
+    pub now: Duration,
     /// Whether the window is minimized, so a small, cheap frame is enough.
     pub reduced: bool,
 }
@@ -374,6 +377,7 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
     fn frame(&mut self, cx: &mut SAContext<'_, Self>, frame: SAFrame) {
         let frame = Frame {
             delta: frame.delta,
+            now: frame.raw.elapsed(),
             reduced: self.minimized,
         };
         let next = match self.app.frame(&frame) {
