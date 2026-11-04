@@ -103,6 +103,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "box3d-rust"
+version = "0.4.0"
+
+[[package]]
 name = "bumpalo"
 version = "3.20.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -352,8 +356,12 @@ dependencies = [
  "engine_console",
  "engine_core",
  "engine_map",
+ "engine_movement",
+ "engine_net",
+ "engine_physics",
  "engine_platform",
  "engine_render",
+ "engine_server",
  "fixture_quake",
  "png",
 ]
@@ -371,6 +379,10 @@ name = "engine_client"
 version = "0.0.0-alpha"
 dependencies = [
  "engine_core",
+ "engine_map",
+ "engine_movement",
+ "engine_net",
+ "engine_physics",
 ]
 
 [[package]]
@@ -391,14 +403,26 @@ dependencies = [
 [[package]]
 name = "engine_movement"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+ "engine_physics",
+]
 
 [[package]]
 name = "engine_net"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+]
 
 [[package]]
 name = "engine_physics"
 version = "0.0.0-alpha"
+dependencies = [
+ "box3d-rust",
+ "engine_core",
+ "engine_map",
+]
 
 [[package]]
 name = "engine_platform"
@@ -424,10 +448,23 @@ version = "0.0.0-alpha"
 [[package]]
 name = "engine_server"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+ "engine_map",
+ "engine_net",
+ "engine_physics",
+ "engine_sim",
+]
 
 [[package]]
 name = "engine_sim"
 version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+ "engine_map",
+ "engine_movement",
+ "engine_physics",
+]
 
 [[package]]
 name = "engine_ui"

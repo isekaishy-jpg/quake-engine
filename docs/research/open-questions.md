@@ -4,8 +4,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 
 | Question | Needed | Affects |
 |---|---|---|
-| How should movement stay out of solid with `box3d` rays, which ignore a start inside a shape? | Surface margin and stuck handling, tested on real maps | Player movement |
-| Do rebuilt solids work for BSP2 maps? | Run the rebuild on `mg1` and `mg3` through `qbsp` | Collision |
 | How do doors and lifts work as `box3d` bodies? | Kinematic brush models, tested in motion | Collision |
 | How do sweeps against other entities combine with hull rays? | A method and a comparison | Collision |
 | Is `qbsp`'s lightmap atlas usable as it stands? | Run it, and check the output | Renderer |

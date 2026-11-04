@@ -1,17 +1,24 @@
 //! The running engine: the main loop's two halves.
 
 use std::io::{BufRead, Write};
+use std::rc::Rc;
+use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use engine_assets::{AssetError, FileSystem};
-use engine_client::{Bindings, Buttons, FlyCamera, Look, LookScale};
+use engine_client::{Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT};
 use engine_console::{Console, CvarFlags};
+use engine_core::math::Vec3;
+use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
+use engine_net::loopback;
+use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
 use engine_render::{Renderer, Target, View};
+use engine_server::Server;
 use fixture_quake::{Palette, import_map, light_styles, mount_game, spawn_point};
 
 use crate::commands;
@@ -23,9 +30,9 @@ const TICK_RATE: Option<TickRate> = TickRate::new(72);
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
 
-/// Bindings for flying, set after the user's config (proposal 0019).
-const FLY_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
-                            bind space +moveup; bind c +movedown; bind shift +speed";
+/// Modern movement bindings, set after the user's config (proposal 0019).
+const MOVE_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
+                             bind space +jump; bind c +movedown; bind shift +speed";
 
 /// The state console commands work on.
 pub(crate) struct World {
@@ -49,8 +56,12 @@ pub(crate) struct World {
     pub(crate) motion_events: u64,
     /// The renderer, once the window exists.
     pub(crate) renderer: Option<Renderer>,
-    /// The camera.
-    pub(crate) camera: FlyCamera,
+    /// The local player's side of the game, once a map is loaded.
+    pub(crate) client: Option<Client>,
+    /// The game, once a map is loaded.
+    pub(crate) server: Option<Server>,
+    /// Smooths the view on stairs.
+    step: StepSmoother,
     /// The movement buttons held.
     pub(crate) buttons: Buttons,
     /// Key bindings.
@@ -68,9 +79,17 @@ impl World {
         let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
         let palette = self.filesystem.read("gfx/palette.lmp")?;
         let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
-        let map = import_map(&bsp, lit.as_deref(), &palette)?;
+        let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
         let start = spawn_point(&map);
-        self.camera = FlyCamera::new(start.eye);
+        let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+        let (client_end, server_end) = loopback();
+        self.server = Some(Server::new(
+            Box::new(server_end),
+            Rc::clone(&collision),
+            start.origin,
+        ));
+        self.client = Some(Client::new(Box::new(client_end), collision, start.origin));
+        self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
         self.map_time = 0.0;
         if let Some(renderer) = &mut self.renderer {
@@ -79,14 +98,43 @@ impl World {
         Ok(())
     }
 
-    /// The view `fraction` of the way through the next tick.
+    /// A command for the current input.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f32 keeps angles to a few thousandths of a degree"
+    )]
+    fn command(&self) -> UserCommand {
+        self.buttons
+            .command(self.look.yaw() as f32, self.look.pitch() as f32)
+    }
+
+    /// Runs one tick of the game.
+    fn run_tick(&mut self, seconds: f32) {
+        let command = self.command();
+        if let (Some(client), Some(server)) = (&mut self.client, &mut self.server) {
+            client.send_command(command, seconds);
+            server.tick();
+            client.receive();
+        }
+    }
+
+    /// The view, `leftover` seconds past the last tick. `frame_seconds` is
+    /// the time since the last view, for smoothing.
     #[expect(
         clippy::cast_possible_truncation,
         reason = "angles and map time need no more than f32 for drawing"
     )]
-    pub(crate) fn view(&self, fraction: f32) -> View {
+    pub(crate) fn view(&mut self, leftover: f32, frame_seconds: f32) -> View {
+        let command = self.command();
+        let origin = self.client.as_ref().map_or(Vec3::ZERO, |client| {
+            let state = client.render_state(&command, leftover);
+            let step = self
+                .step
+                .update(state.origin.z, state.on_ground, frame_seconds);
+            state.origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step)
+        });
         View {
-            origin: self.camera.view_position(fraction),
+            origin,
             yaw: self.look.yaw() as f32,
             pitch: self.look.pitch() as f32,
             fov: self.fov,
@@ -167,7 +215,9 @@ impl Engine {
                 look: Look::new(LookScale::from_settings(0.0, 0.0, 0.0)),
                 motion_events: 0,
                 renderer: None,
-                camera: FlyCamera::default(),
+                client: None,
+                server: None,
+                step: StepSmoother::default(),
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,
@@ -204,14 +254,9 @@ impl Engine {
         self.world.map_time += seconds;
         #[expect(
             clippy::cast_possible_truncation,
-            reason = "a fly camera needs no more than f32"
+            reason = "a tick's length needs no more than f32"
         )]
-        self.world.camera.tick(
-            self.world.buttons,
-            self.world.look.yaw() as f32,
-            self.world.look.pitch() as f32,
-            seconds as f32,
-        );
+        self.world.run_tick(seconds as f32);
         self.show_output();
     }
 
@@ -276,7 +321,7 @@ impl PlatformApp for Engine {
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add("exec quake.rc");
-        self.console.add(FLY_BINDINGS);
+        self.console.add(MOVE_BINDINGS);
         Ok(())
     }
 
@@ -347,17 +392,18 @@ impl PlatformApp for Engine {
             }
         }
         if !frame.reduced {
+            let since_service = frame
+                .now
+                .saturating_sub(self.last_service.unwrap_or(frame.now));
+            let tick_seconds = 1.0 / f64::from(self.clock.rate().hertz());
+            let leftover = self.clock.fraction_after(since_service) * tick_seconds;
             #[expect(
                 clippy::cast_possible_truncation,
-                reason = "an interpolation fraction needs no more than f32"
+                reason = "a frame's timing needs no more than f32"
             )]
-            let view = {
-                let since_service = frame
-                    .now
-                    .saturating_sub(self.last_service.unwrap_or(frame.now));
-                self.world
-                    .view(self.clock.fraction_after(since_service) as f32)
-            };
+            let view = self
+                .world
+                .view(leftover as f32, frame.delta.as_secs_f64() as f32);
             if let Some(renderer) = &mut self.world.renderer
                 && let Err(error) = renderer.draw(&view)
             {

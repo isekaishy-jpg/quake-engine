@@ -10,8 +10,5 @@ publish.workspace = true
 engine_core.workspace = true
 engine_physics.workspace = true
 
-[dev-dependencies]
-engine_map.workspace = true
-
 [lints]
 workspace = true

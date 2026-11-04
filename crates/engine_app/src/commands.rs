@@ -6,13 +6,12 @@ use std::io::BufWriter;
 
 use engine_assets::AssetError;
 use engine_console::{Args, Console};
-use engine_core::math::Vec3;
 use engine_render::Capture;
 
 use crate::app::World;
 
 /// The movement buttons, as the console sees them.
-const BUTTONS: [&str; 7] = [
+const BUTTONS: [&str; 8] = [
     "forward",
     "back",
     "moveleft",
@@ -20,6 +19,7 @@ const BUTTONS: [&str; 7] = [
     "moveup",
     "movedown",
     "speed",
+    "jump",
 ];
 
 /// The width of a screenshot.
@@ -42,6 +42,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("unbindall", unbindall);
     console.register("screenshot", screenshot);
     console.register("setpos", setpos);
+    console.register("noclip", noclip);
     for button in BUTTONS {
         console.register(&format!("+{button}"), button_down);
         console.register(&format!("-{button}"), button_up);
@@ -105,7 +106,10 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
     ));
     if let Some(renderer) = &world.renderer {
         let stats = renderer.statistics();
-        let at = world.camera.position();
+        let at = world
+            .client
+            .as_ref()
+            .map_or_else(Default::default, |client| client.predicted().origin);
         console.print(format!(
             "{}: {} of {} triangles in {} batches, at {:.1} {:.1} {:.1}",
             renderer.device_name(),
@@ -188,7 +192,7 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
         console.print("screenshot <path>");
         return;
     }
-    let view = world.view(1.0);
+    let view = world.view(0.0, 0.0);
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;
@@ -203,15 +207,24 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
     }
 }
 
-/// `setpos x y z [yaw pitch]`: moves the camera.
+/// `setpos x y z [yaw pitch]`: moves the player, through the server.
 fn setpos(console: &mut Console<World>, world: &mut World, args: &Args) {
     let number = |index: usize| args.get(index).parse::<f32>().ok();
     let (Some(x), Some(y), Some(z)) = (number(1), number(2), number(3)) else {
         console.print("setpos <x> <y> <z> [yaw pitch]");
         return;
     };
-    world.camera = engine_client::FlyCamera::new(Vec3::new(x, y, z));
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("setpos {x} {y} {z}"));
+    }
     if let (Some(yaw), Some(pitch)) = (number(4), number(5)) {
         world.look.set_view(f64::from(yaw), f64::from(pitch));
+    }
+}
+
+/// `noclip`: flies through walls, through the server.
+fn noclip(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if let Some(client) = &mut world.client {
+        client.send_console("noclip");
     }
 }

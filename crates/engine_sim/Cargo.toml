@@ -1,12 +1,18 @@
 [package]
 name = "engine_sim"
-description = "The authoritative world: entities, ticks and game rules hosting."
+description = "The server-side simulation."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_core.workspace = true
+engine_movement.workspace = true
+engine_physics.workspace = true
+
+[dev-dependencies]
+engine_map.workspace = true
 
 [lints]
 workspace = true

@@ -1,4 +1,7 @@
 //! Movement in a plain room, against the numbers Quake gives at 72 Hz.
+//!
+//! These live here because they build small maps, and `engine_movement` may
+//! not depend on `engine_map`, even for tests.
 
 mod common;
 

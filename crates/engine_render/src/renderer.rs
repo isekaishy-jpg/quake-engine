@@ -1,5 +1,7 @@
 //! The public renderer.
 
+use std::sync::Arc;
+
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::Map;
@@ -63,7 +65,7 @@ pub struct Statistics {
 /// A loaded map.
 struct LoadedMap {
     /// The map, for visibility and animation.
-    map: Map,
+    map: Arc<Map>,
     /// Its mesh data.
     mesh: WorldMesh,
     /// What's visible now.
@@ -102,7 +104,7 @@ impl Renderer {
     /// # Errors
     ///
     /// Returns [`RenderError`] if the map's data can't be built or uploaded.
-    pub fn load_map(&mut self, map: Map) -> Result<(), RenderError> {
+    pub fn load_map(&mut self, map: Arc<Map>) -> Result<(), RenderError> {
         let mesh =
             build_world(&map).ok_or_else(|| RenderError("map's light won't fit".to_owned()))?;
         self.backend.load_map(&map, &mesh)?;

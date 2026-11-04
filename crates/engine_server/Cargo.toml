@@ -1,12 +1,19 @@
 [package]
 name = "engine_server"
-description = "Runs a game: simulation, scripts and client connections."
+description = "The authoritative game server."
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
 [dependencies]
+engine_core.workspace = true
+engine_net.workspace = true
+engine_physics.workspace = true
+engine_sim.workspace = true
+
+[dev-dependencies]
+engine_map.workspace = true
 
 [lints]
 workspace = true

@@ -70,8 +70,8 @@ pub(crate) fn map(models: u32) -> Map {
         map.models.push(Model {
             first_face: number,
             face_count: 1,
-            origin: Vec3::ZERO,
             visible: true,
+            ..Model::default()
         });
     }
     map

@@ -2,6 +2,8 @@
 
 mod common;
 
+use std::sync::Arc;
+
 use common::map;
 use engine_core::math::Vec3;
 use engine_render::{Capture, Renderer, Target, View};
@@ -54,7 +56,7 @@ fn what_is_above_the_view_is_at_the_top_of_the_picture() {
     let Some(mut renderer) = renderer() else {
         return;
     };
-    renderer.load_map(map(1)).expect("load");
+    renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.origin = Vec3::new(-32.0, 64.0, -48.0);
     view.pitch = 0.0;
@@ -73,7 +75,7 @@ fn what_is_left_of_the_view_is_at_the_left_of_the_picture() {
     let Some(mut renderer) = renderer() else {
         return;
     };
-    renderer.load_map(map(1)).expect("load");
+    renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.origin = Vec3::new(-32.0, -96.0, 48.0);
     view.pitch = 0.0;
@@ -134,7 +136,7 @@ fn a_lit_white_surface_shows_its_doubled_light() {
     let Some(mut renderer) = renderer() else {
         return;
     };
-    renderer.load_map(map(1)).expect("load");
+    renderer.load_map(Arc::new(map(1))).expect("load");
     let capture = renderer
         .capture(&view_from_above(), 64, 64)
         .expect("capture");
@@ -149,7 +151,7 @@ fn a_dark_style_darkens_the_surface() {
     let Some(mut renderer) = renderer() else {
         return;
     };
-    renderer.load_map(map(1)).expect("load");
+    renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.styles[0] = 0.0;
     let capture = renderer.capture(&view, 64, 64).expect("capture");
@@ -161,7 +163,7 @@ fn a_view_with_the_surface_behind_shows_the_clear_colour() {
     let Some(mut renderer) = renderer() else {
         return;
     };
-    renderer.load_map(map(1)).expect("load");
+    renderer.load_map(Arc::new(map(1))).expect("load");
     let mut view = view_from_above();
     view.pitch = -89.9;
     let capture = renderer.capture(&view, 64, 64).expect("capture");

@@ -33,12 +33,17 @@
     - [0019: key bindings and flying](proposals/0019-flying.md)
     - [0020: the window mode](proposals/0020-window-mode.md)
     - [0021: the FPS counter](proposals/0021-fps-counter.md)
+  - Increment 3:
+    - [0022: collision on hull solids](proposals/0022-collision.md)
+    - [0023: player movement](proposals/0023-player-movement.md)
+    - [0024: client and server over loopback](proposals/0024-client-server-loopback.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
   - [0003: increment 1](reviews/0003-increment-1.md)
   - [0004: the minimized window and mouse look](reviews/0004-minimized-and-mouse.md)
   - [0005: increment 2](reviews/0005-increment-2.md)
+  - [0006: increment 3](reviews/0006-increment-3.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC
