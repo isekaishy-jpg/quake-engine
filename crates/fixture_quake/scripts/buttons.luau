@@ -39,7 +39,7 @@ function button_fire(self)
 	if self.state == STATE_UP or self.state == STATE_TOP then
 		return
 	end
-	sound(self, self.noise)
+	sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	self.state = STATE_UP
 	SUB_CalcMove(self, self.pos2, self.speed, button_wait)
 end

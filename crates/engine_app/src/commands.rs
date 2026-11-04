@@ -104,6 +104,15 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
         world.look.yaw(),
         world.look.pitch()
     ));
+    console.print(format!(
+        "audio: device {}, {} playing, {} static, {} of {} sounds missing, music {:?}",
+        world.audio.has_device(),
+        world.audio.playing().len(),
+        world.audio.static_volumes().len(),
+        world.sounds.missing(),
+        world.sounds.len(),
+        world.music_track
+    ));
     if let Some(renderer) = &world.renderer {
         let stats = renderer.statistics();
         let at = world

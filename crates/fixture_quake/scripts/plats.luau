@@ -43,25 +43,25 @@ function plat_spawn_inside_trigger(self)
 end
 
 function plat_hit_top(self)
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.state = STATE_TOP
 	self.think = plat_go_down
 	self.nextthink = self.ltime + 3
 end
 
 function plat_hit_bottom(self)
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.state = STATE_BOTTOM
 end
 
 function plat_go_down(self)
-	sound(self, self.noise)
+	sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	self.state = STATE_DOWN
 	SUB_CalcMove(self, self.pos2, self.speed, plat_hit_bottom)
 end
 
 function plat_go_up(self)
-	sound(self, self.noise)
+	sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	self.state = STATE_UP
 	SUB_CalcMove(self, self.pos1, self.speed, plat_hit_top)
 end
@@ -172,7 +172,7 @@ end
 function train_wait(self)
 	if (self.wait or 0) ~= 0 then
 		self.nextthink = self.ltime + self.wait
-		sound(self, self.noise)
+		sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	else
 		self.nextthink = self.ltime + 0.1
 	end
@@ -189,7 +189,7 @@ function train_next(self)
 		objerror("train_next: no next target")
 	end
 	self.wait = targ.wait or 0
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	SUB_CalcMove(self, targ.origin - self.mins, self.speed, train_wait)
 end
 

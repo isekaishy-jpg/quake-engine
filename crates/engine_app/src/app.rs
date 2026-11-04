@@ -7,12 +7,14 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use engine_assets::{AssetError, FileSystem};
+use engine_audio::{Audio, Listener};
 use engine_client::{Bindings, Buttons, Client, Look, LookScale, StepSmoother, VIEW_HEIGHT};
 use engine_console::{Console, CvarFlags};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TickClock, TickRate};
+use engine_map::Map;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_platform::{
@@ -20,10 +22,11 @@ use engine_platform::{
 };
 use engine_render::{Renderer, Target, View};
 use engine_server::Server;
-use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
+use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, mount_music, spawn_point};
 
 use crate::commands;
 use crate::options::Options;
+use crate::sounds::SoundBank;
 
 /// The simulation rate (proposal 0010).
 const TICK_RATE: Option<TickRate> = TickRate::new(72);
@@ -74,6 +77,18 @@ pub(crate) struct World {
     pub(crate) map_time: f64,
     /// The field of view in degrees, at 4:3.
     pub(crate) fov: f32,
+    /// Everything that sounds.
+    pub(crate) audio: Audio,
+    /// Sounds loaded so far.
+    pub(crate) sounds: SoundBank,
+    /// The music track playing.
+    pub(crate) music_track: Option<u8>,
+    /// Where sounds are heard from.
+    listener: Listener,
+    /// The volume, music volume and mute last given to `audio`.
+    audio_settings: Option<(f32, f32, bool)>,
+    /// The map, for the ambient levels of its leaves.
+    map: Option<Arc<Map>>,
 }
 
 impl World {
@@ -99,6 +114,15 @@ impl World {
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
         self.map_time = 0.0;
+        self.audio.stop_sounds();
+        let water = self
+            .sounds
+            .clip("ambience/water1.wav", &self.filesystem, &mut self.audio);
+        let sky = self
+            .sounds
+            .clip("ambience/wind2.wav", &self.filesystem, &mut self.audio);
+        self.audio.set_ambient_clips(water, sky);
+        self.map = Some(Arc::clone(&map));
         if let Some(renderer) = &mut self.renderer {
             renderer.load_map(map)?;
         }
@@ -126,6 +150,65 @@ impl World {
                 self.look.set_view(f64::from(yaw), f64::from(pitch));
             }
         }
+        self.play_sounds();
+    }
+
+    /// Passes on the sounds and music the client has heard about.
+    fn play_sounds(&mut self) {
+        let Some(client) = &mut self.client else {
+            return;
+        };
+        let sounds = client.take_sounds();
+        let static_sounds = client.take_static_sounds();
+        let music = client.take_music();
+        for sound in sounds {
+            let clip = self
+                .sounds
+                .clip(&sound.name, &self.filesystem, &mut self.audio);
+            if let Some(clip) = clip {
+                self.audio.start(&sound, clip);
+            }
+        }
+        for sound in static_sounds {
+            let clip = self
+                .sounds
+                .clip(&sound.name, &self.filesystem, &mut self.audio);
+            if let Some(clip) = clip {
+                self.audio.add_static(&sound, clip);
+            }
+        }
+        if let Some(track) = music {
+            self.play_track(track);
+        }
+    }
+
+    /// Plays music track `track`, unless it's already playing. With no file
+    /// for it there's no music, as with no disc in the drive.
+    pub(crate) fn play_track(&mut self, track: u8) {
+        if self.music_track == Some(track) {
+            return;
+        }
+        self.music_track = Some(track);
+        let bytes = self.filesystem.read(&format!("music/track{track:02}.ogg"));
+        let playing = bytes.is_ok_and(|bytes| self.audio.play_music(bytes).is_ok());
+        if !playing {
+            self.audio.stop_music();
+        }
+    }
+
+    /// Moves sound on by `seconds`, at these volumes.
+    fn update_audio(&mut self, seconds: f64, volume: f32, music_volume: f32, muted: bool) {
+        if self.audio_settings != Some((volume, music_volume, muted)) {
+            self.audio_settings = Some((volume, music_volume, muted));
+            self.audio.set_volume(volume);
+            self.audio.set_music_volume(music_volume);
+            self.audio.set_muted(muted);
+        }
+        let levels = self.map.as_ref().map_or([0, 0], |map| {
+            let leaf = map.tree.leaf(map.tree.leaf_at(self.listener.origin));
+            leaf.map_or([0, 0], |leaf| [leaf.ambient[0], leaf.ambient[1]])
+        });
+        self.audio.update(self.listener, seconds, levels);
     }
 
     /// Text from the server, and a level to change to.
@@ -156,6 +239,11 @@ impl World {
             let body = state.origin + client.ground_lag(&state, fraction);
             let step = self.step.update(body.z, state.on_ground, frame_seconds);
             origin = body + Vec3::new(0.0, 0.0, VIEW_HEIGHT + step);
+            let (sin, cos) = self.look.yaw().to_radians().sin_cos();
+            self.listener = Listener {
+                origin,
+                right: Vec3::new(sin as f32, -cos as f32, 0.0),
+            };
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
         }
@@ -212,6 +300,9 @@ impl Engine {
     pub(crate) fn new(options: Options, size: (u32, u32)) -> Result<Self, AssetError> {
         let mut filesystem = FileSystem::new();
         for game in &options.game_directories {
+            mount_music(&mut filesystem, &options.base_directory, game);
+        }
+        for game in &options.game_directories {
             mount_game(&mut filesystem, &options.base_directory.join(game))?;
         }
         let mut console = Console::new();
@@ -228,6 +319,8 @@ impl Engine {
         console.register_cvar("fov", "90", saved);
         console.register_cvar("show_fps", "1", saved);
         console.register_cvar("vid_vsync", "0", saved);
+        console.register_cvar("volume", "0.7", saved);
+        console.register_cvar("bgmvolume", "1", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -249,6 +342,16 @@ impl Engine {
                 bindings: Bindings::new(),
                 map_time: 0.0,
                 fov: 90.0,
+                audio: if options.no_sound {
+                    Audio::silent()
+                } else {
+                    Audio::new()
+                },
+                sounds: SoundBank::default(),
+                music_track: None,
+                listener: Listener::default(),
+                audio_settings: None,
+                map: None,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
@@ -453,6 +556,16 @@ impl PlatformApp for Engine {
                 return FrameOutcome::Stop;
             }
         }
+        #[expect(
+            clippy::cast_possible_truncation,
+            reason = "volumes need no more than f32"
+        )]
+        self.world.update_audio(
+            frame.delta.as_secs_f64(),
+            self.cvar_number("volume") as f32,
+            self.cvar_number("bgmvolume") as f32,
+            frame.reduced,
+        );
         if self.world.quit {
             FrameOutcome::Stop
         } else {

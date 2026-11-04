@@ -12,7 +12,8 @@
 --
 --  See the LICENSE file for details.
 --
--- Ported from the parts of misc.qc that maps need without models.
+-- Ported from the parts of misc.qc that maps need without models. Lights that
+-- show a model only keep their sound until models arrive.
 
 local START_OFF = 1
 
@@ -35,11 +36,7 @@ function light_use(self, _other)
 	end
 end
 
-function light(self)
-	if not has_text(self.targetname) then
-		remove(self)
-		return
-	end
+local function switchable(self)
 	if self.style >= 32 then
 		self.use = light_use
 		if bit32.band(self.spawnflags, START_OFF) ~= 0 then
@@ -50,7 +47,51 @@ function light(self)
 	end
 end
 
-light_fluoro = light
+function light(self)
+	if not has_text(self.targetname) then
+		remove(self)
+		return
+	end
+	switchable(self)
+end
+
+function light_fluoro(self)
+	switchable(self)
+	ambientsound(self.origin, "ambience/fl_hum1.wav", 0.5, ATTN_STATIC)
+end
+
+function light_fluorospark(self)
+	if self.style == 0 then
+		self.style = 10
+	end
+	ambientsound(self.origin, "ambience/buzz1.wav", 0.5, ATTN_STATIC)
+end
+
+local function FireAmbient(self)
+	ambientsound(self.origin, "ambience/fire1.wav", 0.5, ATTN_STATIC)
+	remove(self)
+end
+
+light_torch_small_walltorch = FireAmbient
+light_flame_large_yellow = FireAmbient
+light_flame_small_yellow = FireAmbient
+light_flame_small_white = FireAmbient
+
+local function ambient(sample, volume)
+	return function(self)
+		ambientsound(self.origin, sample, volume, ATTN_STATIC)
+	end
+end
+
+ambient_suck_wind = ambient("ambience/suck1.wav", 1)
+ambient_drone = ambient("ambience/drone6.wav", 0.5)
+ambient_flouro_buzz = ambient("ambience/buzz1.wav", 1)
+ambient_drip = ambient("ambience/drip1.wav", 0.5)
+ambient_comp_hum = ambient("ambience/comp1.wav", 1)
+ambient_thunder = ambient("ambience/thunder1.wav", 0.5)
+ambient_light_buzz = ambient("ambience/fl_hum1.wav", 0.5)
+ambient_swamp1 = ambient("ambience/swamp1.wav", 0.5)
+ambient_swamp2 = ambient("ambience/swamp2.wav", 0.5)
 
 function func_wall_use(self, _other)
 	self.frame = 1 - (self.frame or 0)

@@ -7,6 +7,7 @@ use engine_client::{Client, StepSmoother};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
+use engine_core::sound::{SoundStart, StaticSound};
 use engine_map::{ClipChild, ClipNode, Entity, Leaf, Map, Model, Node, NodeChild, Plane, Tree};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
@@ -135,6 +136,12 @@ struct Game {
     prints: Vec<String>,
     /// Views received.
     views: Vec<(f32, f32)>,
+    /// Sounds received.
+    sounds: Vec<SoundStart>,
+    /// Sounds at fixed places received.
+    static_sounds: Vec<StaticSound>,
+    /// The last music track received.
+    music: Option<u8>,
 }
 
 impl Game {
@@ -151,6 +158,9 @@ impl Game {
             latest: None,
             prints: Vec::new(),
             views: Vec::new(),
+            sounds: Vec::new(),
+            static_sounds: Vec::new(),
+            music: None,
         }
     }
 
@@ -173,6 +183,9 @@ impl Game {
                         self.prints.push(text);
                     }
                     ServerMessage::SetView { yaw, pitch } => self.views.push((yaw, pitch)),
+                    ServerMessage::Sound(sound) => self.sounds.push(sound),
+                    ServerMessage::StaticSound(sound) => self.static_sounds.push(sound),
+                    ServerMessage::Music(track) => self.music = Some(track),
                     ServerMessage::LightStyle { .. } => {}
                 }
             }
@@ -433,6 +446,137 @@ fn the_view_stays_steady_on_a_moving_plat() {
     assert!(before.0 > 0.1 && before.1 > 0.1, "it shows up: {before:?}");
     assert!(after.0 < 0.02, "rising: {}", after.0);
     assert!(after.1 < 0.02, "falling: {}", after.1);
+}
+
+/// The names of the sounds received so far.
+fn sound_names(game: &Game) -> Vec<&str> {
+    game.sounds
+        .iter()
+        .map(|sound| sound.name.as_str())
+        .collect()
+}
+
+#[test]
+fn a_door_starts_a_move_sound_and_replaces_it_when_it_stops() {
+    let (mins, maxs) = door_box();
+    let door = [DOOR, &[("sounds", "1")]].concat();
+    let map = map(&[(mins, maxs)], &[&door]);
+    let mut game = Game::new(&map, at_floor(60.0, 0.0));
+    game.wait(0.3);
+    assert_eq!(sound_names(&game), ["doors/doormv1.wav"]);
+    let start = &game.sounds[0];
+    assert_eq!(start.channel, 2);
+    assert!(!start.own);
+    assert!((start.volume - 1.0).abs() < f32::EPSILON);
+    assert!((start.attenuation - 1.0).abs() < f32::EPSILON);
+    assert!((start.origin.x - 108.0).abs() < 1.5, "the door's middle");
+    game.wait(1.3);
+    assert_eq!(
+        sound_names(&game),
+        ["doors/doormv1.wav", "doors/drclos4.wav"]
+    );
+    assert_eq!(
+        game.sounds[0].entity, game.sounds[1].entity,
+        "so it replaces"
+    );
+    assert_eq!(game.sounds[0].channel, game.sounds[1].channel);
+}
+
+#[test]
+fn a_plat_hums_while_it_moves() {
+    let (mins, maxs) = plat_box();
+    let plat: &[(&str, &str)] = &[("classname", "func_plat"), ("model", "*1")];
+    let map = map(&[(mins, maxs)], &[plat]);
+    let mut game = Game::new(&map, Vec3::new(0.0, 0.0, -248.0 + 25.0));
+    game.wait(1.5);
+    assert_eq!(
+        sound_names(&game),
+        ["plats/medplat1.wav", "plats/medplat2.wav"]
+    );
+}
+
+#[test]
+fn a_map_asks_for_its_music_and_its_ambient_sounds() {
+    let world: &[(&str, &str)] = &[("classname", "worldspawn"), ("sounds", "6")];
+    let torch: &[(&str, &str)] = &[
+        ("classname", "light_torch_small_walltorch"),
+        ("origin", "1 2 3"),
+    ];
+    let hum: &[(&str, &str)] = &[("classname", "ambient_comp_hum"), ("origin", "4 5 6")];
+    let map = map(&[], &[world, torch, hum]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    assert_eq!(game.music, Some(6));
+    assert_eq!(game.static_sounds.len(), 2);
+    let fire = &game.static_sounds[0];
+    assert_eq!(fire.name, "ambience/fire1.wav");
+    assert_eq!(fire.origin, Vec3::new(1.0, 2.0, 3.0));
+    assert!((fire.volume - 0.5).abs() < f32::EPSILON);
+    assert!((fire.attenuation - 3.0).abs() < f32::EPSILON);
+    assert_eq!(game.static_sounds[1].name, "ambience/comp1.wav");
+}
+
+#[test]
+fn a_teleport_hums_and_plays_a_sound_at_each_end() {
+    let (mins, maxs) = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let trigger: &[(&str, &str)] = &[
+        ("classname", "trigger_teleport"),
+        ("model", "*1"),
+        ("target", "there"),
+    ];
+    let destination: &[(&str, &str)] = &[
+        ("classname", "info_teleport_destination"),
+        ("targetname", "there"),
+        ("origin", "300 0 -200"),
+    ];
+    let map = map(&[(mins, maxs)], &[trigger, destination]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.5);
+    assert_eq!(game.static_sounds[0].name, "ambience/hum1.wav");
+    assert_eq!(game.sounds.len(), 2);
+    assert!(game.sounds[0].name.starts_with("misc/r_tele"));
+}
+
+#[test]
+fn the_player_makes_a_sound_jumping_but_not_for_holding_jump() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    assert!(game.sounds.is_empty(), "standing is silent");
+    let jump = UserCommand {
+        jump: true,
+        ..UserCommand::default()
+    };
+    game.run(36, jump);
+    assert_eq!(sound_names(&game), ["player/plyrjmp8.wav"]);
+    assert!(game.sounds[0].own);
+    assert_eq!(game.sounds[0].channel, 4);
+    game.run(36, jump);
+    assert_eq!(game.sounds.len(), 1);
+    game.wait(0.1);
+    game.wait(1.0);
+    game.run(2, jump);
+    assert_eq!(game.sounds.len(), 2, "letting go allows another");
+}
+
+#[test]
+fn a_long_fall_lands_with_a_sound() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, Vec3::new(0.0, 0.0, FLOOR + 200.0));
+    game.wait(1.5);
+    assert_eq!(sound_names(&game), ["player/land.wav"]);
+    assert_eq!(game.sounds[0].channel, 2);
+}
+
+#[test]
+fn a_short_fall_lands_quietly() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, Vec3::new(0.0, 0.0, FLOOR + 40.0));
+    game.wait(1.0);
+    assert!(game.sounds.is_empty());
 }
 
 #[test]

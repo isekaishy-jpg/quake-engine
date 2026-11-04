@@ -9,6 +9,7 @@ use engine_client::{Buttons, Client, LightStyles, StepSmoother};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
+use engine_core::sound::{SoundStart, StaticSound};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
@@ -285,4 +286,33 @@ fn a_model_that_replaces_another_is_not_drawn_between_them() {
     snapshot_with(&mut server, 2, vec![other]);
     client.receive();
     assert!((client.draw_instances(0.5)[0].origin.z - 10.0).abs() < f32::EPSILON);
+}
+
+#[test]
+fn sounds_wait_to_be_taken() {
+    let (mut client, mut server, _world) = setup();
+    let sound = SoundStart {
+        entity: 3,
+        channel: 2,
+        origin: Vec3::ZERO,
+        volume: 1.0,
+        attenuation: 1.0,
+        own: false,
+        name: "a.wav".to_owned(),
+    };
+    let ambient = StaticSound {
+        origin: Vec3::ZERO,
+        volume: 1.0,
+        attenuation: 3.0,
+        name: "b.wav".to_owned(),
+    };
+    server.send(ServerMessage::Sound(sound.clone()).encode());
+    server.send(ServerMessage::StaticSound(ambient.clone()).encode());
+    server.send(ServerMessage::Music(4).encode());
+    client.receive();
+    assert_eq!(client.take_sounds(), [sound]);
+    assert_eq!(client.take_static_sounds(), [ambient]);
+    assert_eq!(client.take_music(), Some(4));
+    assert!(client.take_sounds().is_empty());
+    assert_eq!(client.take_music(), None);
 }

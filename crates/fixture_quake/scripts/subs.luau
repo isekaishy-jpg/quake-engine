@@ -26,6 +26,17 @@ STATE_BOTTOM = 1
 STATE_UP = 2
 STATE_DOWN = 3
 
+CHAN_AUTO = 0
+CHAN_WEAPON = 1
+CHAN_VOICE = 2
+CHAN_ITEM = 3
+CHAN_BODY = 4
+
+ATTN_NONE = 0
+ATTN_NORM = 1
+ATTN_IDLE = 2
+ATTN_STATIC = 3
+
 IT_KEY1 = 131072
 IT_KEY2 = 262144
 
@@ -34,9 +45,6 @@ activator = nil
 
 -- The world entity, set by worldspawn.
 world = nil
-
--- Stands in for sound until audio arrives.
-function sound(_entity, _sample) end
 
 -- Prints to the player, until text can be drawn.
 function centerprint(_entity, message)
@@ -169,7 +177,7 @@ function SUB_UseTargets(self)
 	if activator and activator.classname == "player" and has_text(self.message) then
 		centerprint(activator, self.message)
 		if not self.noise then
-			sound(activator, "misc/talk.wav")
+			sound(activator, CHAN_VOICE, "misc/talk.wav", 1, ATTN_NORM)
 		end
 	end
 

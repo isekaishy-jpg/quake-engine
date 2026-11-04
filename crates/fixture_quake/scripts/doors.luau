@@ -46,7 +46,7 @@ function door_blocked(self, other)
 end
 
 function door_hit_top(self)
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.state = STATE_TOP
 	if has_flag(self, DOOR_TOGGLE) then
 		return
@@ -56,12 +56,12 @@ function door_hit_top(self)
 end
 
 function door_hit_bottom(self)
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.state = STATE_BOTTOM
 end
 
 function door_go_down(self)
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 	self.state = STATE_DOWN
 	SUB_CalcMove(self, self.pos1, self.speed, door_hit_bottom)
 end
@@ -74,7 +74,7 @@ function door_go_up(self)
 		self.nextthink = self.ltime + self.wait
 		return
 	end
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 	self.state = STATE_UP
 	SUB_CalcMove(self, self.pos2, self.speed, door_hit_top)
 	SUB_UseTargets(self)
@@ -85,7 +85,7 @@ function door_fire(self)
 		objerror("door_fire: self.owner != self")
 	end
 	if (self.items or 0) ~= 0 then
-		sound(self, self.noise4)
+		sound(self, CHAN_VOICE, self.noise4, 1, ATTN_NORM)
 	end
 	self.message = ""
 
@@ -149,7 +149,7 @@ function door_touch(self, other)
 
 	if has_text(self.owner.message) then
 		centerprint(other, self.owner.message)
-		sound(other, "misc/talk.wav")
+		sound(other, CHAN_VOICE, "misc/talk.wav", 1, ATTN_NORM)
 	end
 
 	if (self.items or 0) == 0 then
@@ -161,7 +161,7 @@ function door_touch(self, other)
 		local worldtype = world and world.worldtype or 0
 		local kind = if worldtype == 2 then "keycard" elseif worldtype == 1 then "runekey" else "key"
 		centerprint(other, "You need the " .. key .. " " .. kind)
-		sound(self, self.noise3)
+		sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 		return
 	end
 
@@ -352,7 +352,7 @@ function fd_secret_use(self, _other)
 	self.message = ""
 	SUB_UseTargets(self)
 	self.velocity = vector.zero
-	sound(self, self.noise1)
+	sound(self, CHAN_VOICE, self.noise1, 1, ATTN_NORM)
 	self.nextthink = self.ltime + 0.1
 
 	local temp = 1 - bit32.band(self.spawnflags, SECRET_1ST_LEFT)
@@ -376,22 +376,22 @@ function fd_secret_use(self, _other)
 	end
 	self.dest2 = self.dest1 + forward * self.t_length
 	SUB_CalcMove(self, self.dest1, self.speed, fd_secret_move1)
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 end
 
 function fd_secret_move1(self)
 	self.nextthink = self.ltime + 1
 	self.think = fd_secret_move2
-	sound(self, self.noise3)
+	sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 end
 
 function fd_secret_move2(self)
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 	SUB_CalcMove(self, self.dest2, self.speed, fd_secret_move3)
 end
 
 function fd_secret_move3(self)
-	sound(self, self.noise3)
+	sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 	if not has_flag(self, SECRET_OPEN_ONCE) then
 		self.nextthink = self.ltime + self.wait
 		self.think = fd_secret_move4
@@ -399,23 +399,23 @@ function fd_secret_move3(self)
 end
 
 function fd_secret_move4(self)
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 	SUB_CalcMove(self, self.dest1, self.speed, fd_secret_move5)
 end
 
 function fd_secret_move5(self)
 	self.nextthink = self.ltime + 1
 	self.think = fd_secret_move6
-	sound(self, self.noise3)
+	sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 end
 
 function fd_secret_move6(self)
-	sound(self, self.noise2)
+	sound(self, CHAN_VOICE, self.noise2, 1, ATTN_NORM)
 	SUB_CalcMove(self, self.oldorigin, self.speed, fd_secret_done)
 end
 
 function fd_secret_done(self)
-	sound(self, self.noise3)
+	sound(self, CHAN_VOICE, self.noise3, 1, ATTN_NORM)
 end
 
 function secret_blocked(self, other)
@@ -436,7 +436,7 @@ function secret_touch(self, other)
 	self.attack_finished = time() + 2
 	if has_text(self.message) then
 		centerprint(other, self.message)
-		sound(other, "misc/talk.wav")
+		sound(other, CHAN_BODY, "misc/talk.wav", 1, ATTN_NORM)
 	end
 end
 

@@ -18,6 +18,7 @@ local SPAWNFLAG_NOMESSAGE = 1
 local SPAWNFLAG_NOTOUCH = 1
 local PLAYER_ONLY = 1
 local PUSH_ONCE = 1
+local SILENT = 2
 
 found_secrets = 0
 total_secrets = 0
@@ -37,7 +38,7 @@ function multi_trigger(self)
 	end
 
 	if self.noise then
-		sound(self, self.noise)
+		sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	end
 
 	activator = self.enemy
@@ -163,6 +164,25 @@ function trigger_counter(self)
 	self.use = counter_use
 end
 
+function play_teleport(self)
+	local v = random() * 5
+	local sample = if v < 1
+		then "misc/r_tele1.wav"
+		elseif v < 2 then "misc/r_tele2.wav"
+		elseif v < 3 then "misc/r_tele3.wav"
+		elseif v < 4 then "misc/r_tele4.wav"
+		else "misc/r_tele5.wav"
+	sound(self, CHAN_VOICE, sample, 1, ATTN_NORM)
+	remove(self)
+end
+
+function spawn_tfog(org)
+	local s = spawn()
+	s.origin = org
+	s.nextthink = time() + 0.2
+	s.think = play_teleport
+end
+
 function teleport_touch(self, other)
 	if has_text(self.targetname) and self.nextthink < time() then
 		return
@@ -178,6 +198,9 @@ function teleport_touch(self, other)
 
 	SUB_UseTargets(self)
 
+	-- Put a fog where the player was.
+	spawn_tfog(other.origin)
+
 	local t = find(nil, "targetname", self.target)
 	if t == nil then
 		objerror("couldn't find target")
@@ -186,6 +209,10 @@ function teleport_touch(self, other)
 	-- A teleport can target a train, which has no mangle.
 	local mangle = t.mangle or vector.zero
 	local forward = makevectors(mangle)
+
+	-- And another in front of the destination.
+	spawn_tfog(t.origin + forward * 32)
+
 	setorigin(other, t.origin)
 	if other.classname == "player" then
 		engine.set_view(mangle.y, mangle.x)
@@ -215,6 +242,10 @@ function trigger_teleport(self)
 		objerror("no target")
 	end
 	self.use = teleport_use
+
+	if bit32.band(self.spawnflags, SILENT) == 0 then
+		ambientsound((self.mins + self.maxs) * 0.5, "ambience/hum1.wav", 0.5, ATTN_STATIC)
+	end
 end
 
 function trigger_skill_touch(_self, _other) end
@@ -270,7 +301,7 @@ function trigger_push_touch(self, other)
 		other.velocity = self.movedir * (self.speed * 10)
 		if other.classname == "player" and (other.fly_sound or 0) < time() then
 			other.fly_sound = time() + 1.5
-			sound(other, "ambience/windfly.wav")
+			sound(other, CHAN_AUTO, "ambience/windfly.wav", 1, ATTN_NORM)
 		end
 	end
 	if bit32.band(self.spawnflags, PUSH_ONCE) ~= 0 then

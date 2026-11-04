@@ -6,6 +6,7 @@ use std::rc::Rc;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
+use engine_core::sound::{SoundStart, StaticSound};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, ServerMessage, Transport};
 use engine_physics::CollisionWorld;
@@ -39,6 +40,12 @@ pub struct Client {
     prints: Vec<String>,
     /// A view the server wants, waiting to be applied.
     view: Option<(f32, f32)>,
+    /// Sounds from the server, waiting to be played.
+    sounds: Vec<SoundStart>,
+    /// Sounds at fixed places, waiting to be added.
+    static_sounds: Vec<StaticSound>,
+    /// A music track waiting to be played.
+    music: Option<u8>,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -62,6 +69,9 @@ impl Client {
             styles: LightStyles::new(),
             prints: Vec::new(),
             view: None,
+            sounds: Vec::new(),
+            static_sounds: Vec::new(),
+            music: None,
             touched: Vec::new(),
         }
     }
@@ -125,6 +135,21 @@ impl Client {
         std::mem::take(&mut self.prints)
     }
 
+    /// Takes the sounds that have started.
+    pub fn take_sounds(&mut self) -> Vec<SoundStart> {
+        std::mem::take(&mut self.sounds)
+    }
+
+    /// Takes the sounds at fixed places that have been added.
+    pub fn take_static_sounds(&mut self) -> Vec<StaticSound> {
+        std::mem::take(&mut self.static_sounds)
+    }
+
+    /// Takes the music track the server wants.
+    pub fn take_music(&mut self) -> Option<u8> {
+        self.music.take()
+    }
+
     /// Takes a yaw and pitch the server wants.
     pub fn take_view(&mut self) -> Option<(f32, f32)> {
         self.view.take()
@@ -184,6 +209,9 @@ impl Client {
                     self.styles.set(index, &pattern);
                 }
                 Some(ServerMessage::Print(text)) => self.prints.push(text),
+                Some(ServerMessage::Sound(sound)) => self.sounds.push(sound),
+                Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
+                Some(ServerMessage::Music(track)) => self.music = Some(track),
                 Some(ServerMessage::SetView { yaw, pitch }) => self.view = Some((yaw, pitch)),
                 None => {}
             }

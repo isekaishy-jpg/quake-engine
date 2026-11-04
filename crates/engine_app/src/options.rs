@@ -29,10 +29,13 @@ pub(crate) struct Options {
     pub(crate) startup_commands: String,
     /// Whether `-window` asked for an ordinary window.
     pub(crate) windowed: bool,
+    /// Whether `-nosound` asked for silence.
+    pub(crate) no_sound: bool,
 }
 
 impl Options {
-    /// Reads `-basedir path`, `-game name`, `-window` and `+command args`.
+    /// Reads `-basedir path`, `-game name`, `-window`, `-nosound` and
+    /// `+command args`.
     pub(crate) fn from_arguments(
         arguments: impl Iterator<Item = String>,
     ) -> Result<Self, OptionsError> {
@@ -40,6 +43,7 @@ impl Options {
         let mut game_directories = vec![BASE_GAME.to_owned()];
         let mut startup_commands = String::new();
         let mut windowed = false;
+        let mut no_sound = false;
         let mut arguments = arguments.peekable();
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
@@ -50,6 +54,7 @@ impl Options {
                     base_directory = Some(PathBuf::from(path));
                 }
                 "-window" => windowed = true,
+                "-nosound" => no_sound = true,
                 "-game" => {
                     let name = arguments
                         .next()
@@ -73,7 +78,7 @@ impl Options {
         }
         let base_directory = base_directory.ok_or_else(|| {
             OptionsError(
-                "usage: quake-engine -basedir <Quake directory> [-window] [+command ...]"
+                "usage: quake-engine -basedir <Quake directory> [-window] [-nosound] [+command ...]"
                     .to_owned(),
             )
         })?;
@@ -82,6 +87,7 @@ impl Options {
             game_directories,
             startup_commands,
             windowed,
+            no_sound,
         })
     }
 }

@@ -228,3 +228,85 @@ fn the_player_is_an_entity_scripts_can_move() {
     assert_eq!(simulation.player().origin, Vec3::new(5.0, 6.0, 7.0));
     assert_eq!(simulation.player().velocity, Vec3::new(0.0, 0.0, 100.0));
 }
+
+#[test]
+fn a_sound_comes_from_the_middle_of_its_entity() {
+    let (game, _simulation) = game("");
+    game.exec(
+        r#"
+        local thing = spawn()
+        thing.origin = vector.create(100, 0, 0)
+        setsize(thing, vector.create(-10, -10, -10), vector.create(30, 10, 10))
+        sound(thing, 2, "misc/talk.wav", 0.5, 1)
+        "#,
+    )
+    .expect("runs");
+    let outbox = game.take_outbox();
+    assert_eq!(outbox.sounds.len(), 1);
+    let sound = &outbox.sounds[0];
+    assert_eq!(sound.origin, Vec3::new(110.0, 0.0, 0.0));
+    assert_eq!(sound.channel, 2);
+    assert_eq!(sound.name, "misc/talk.wav");
+    assert!((sound.volume - 0.5).abs() < f32::EPSILON);
+    assert!(!sound.own);
+}
+
+#[test]
+fn a_sound_from_the_player_is_marked_as_its_own() {
+    let (game, _simulation) = game("");
+    game.exec(r#"sound(find_all("classname", "player")[1], 4, "a.wav", 1, 1)"#)
+        .expect("runs");
+    assert!(game.take_outbox().sounds[0].own);
+}
+
+#[test]
+fn a_sound_with_no_sample_is_ignored() {
+    let (game, _simulation) = game("");
+    game.exec(r#"sound(spawn(), 2, nil, 1, 1) sound(spawn(), 2, "", 1, 1)"#)
+        .expect("runs");
+    assert!(game.take_outbox().sounds.is_empty());
+}
+
+#[test]
+fn sound_values_out_of_range_are_refused() {
+    let (game, _simulation) = game("");
+    assert!(game.exec(r#"sound(spawn(), 2, "a.wav", 2, 1)"#).is_err());
+    assert!(game.exec(r#"sound(spawn(), 2, "a.wav", 1, 5)"#).is_err());
+    assert!(game.exec(r#"sound(spawn(), 8, "a.wav", 1, 1)"#).is_err());
+    assert!(
+        game.exec(r#"ambientsound(vector.zero, "a.wav", 2, 1)"#)
+            .is_err()
+    );
+}
+
+#[test]
+fn random_is_the_same_each_run_and_stays_in_range() {
+    let draw = || {
+        let (game, _simulation) = game(
+            r#"
+            function draw()
+                local value = random()
+                assert(value >= 0 and value < 1)
+                engine.print(tostring(value))
+            end
+            "#,
+        );
+        game.exec("for i = 1, 100 do draw() end").expect("runs");
+        prints(&game)
+    };
+    assert_eq!(draw(), draw());
+}
+
+#[test]
+fn player_fields_are_nil_on_anything_else() {
+    let (game, _simulation) = game("");
+    game.exec(
+        r#"
+        local player = find_all("classname", "player")[1]
+        assert(player.waterlevel == 0)
+        assert(player.onground == false)
+        assert(spawn().waterlevel == nil)
+        "#,
+    )
+    .expect("runs");
+}

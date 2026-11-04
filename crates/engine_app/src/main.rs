@@ -4,6 +4,7 @@
 mod app;
 mod commands;
 mod options;
+mod sounds;
 
 use std::io::Write;
 use std::process::ExitCode;

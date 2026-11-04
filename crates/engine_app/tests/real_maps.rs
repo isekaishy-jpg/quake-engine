@@ -8,6 +8,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
+use engine_audio::Audio;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_map::{ClipChild, Map, Tree};
@@ -15,7 +16,9 @@ use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::Server;
-use fixture_quake::{Palette, SCRIPTS, import_map, mount_game, spawn_point};
+use fixture_quake::{
+    Palette, SCRIPTS, import_map, mount_game, mount_music, parse_wav, spawn_point,
+};
 
 /// A small random number generator, so a failure repeats.
 struct Random(u64);
@@ -327,6 +330,15 @@ fn dead_teleports(map: &Map) -> Vec<String> {
 
 /// Runs every touch and target in `map`, and returns the script errors.
 fn fire_everything(map: &Arc<Map>, world: &Rc<CollisionWorld>) -> Vec<String> {
+    fire_everything_listening(map, world).0
+}
+
+/// Runs every touch and target in `map`, and returns the script errors and
+/// the names of the sounds asked for.
+fn fire_everything_listening(
+    map: &Arc<Map>,
+    world: &Rc<CollisionWorld>,
+) -> (Vec<String>, Vec<String>) {
     let (mut client, server_end) = loopback();
     let origin = spawn_point(map).origin;
     let mut server = Server::new(
@@ -339,16 +351,20 @@ fn fire_everything(map: &Arc<Map>, world: &Rc<CollisionWorld>) -> Vec<String> {
     )
     .expect("the scripts load");
     let mut errors = Vec::new();
+    let mut heard = Vec::new();
     let mut exec_errors = Vec::new();
     let mut run = |server: &mut Server, client: &mut dyn Transport, ticks: u32| {
         for _ in 0..ticks {
             server.tick();
             let _level = server.take_next_level();
             while let Some(bytes) = client.receive() {
-                if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
-                    && text.contains("script error")
-                {
-                    errors.push(text);
+                match ServerMessage::decode(&bytes) {
+                    Some(ServerMessage::Print(text)) if text.contains("script error") => {
+                        errors.push(text);
+                    }
+                    Some(ServerMessage::Sound(sound)) => heard.push(sound.name),
+                    Some(ServerMessage::StaticSound(sound)) => heard.push(sound.name),
+                    _ => {}
                 }
             }
         }
@@ -390,7 +406,7 @@ fn fire_everything(map: &Arc<Map>, world: &Rc<CollisionWorld>) -> Vec<String> {
     // Long enough for delays, trains and doors to play out.
     run(&mut server, &mut client, 72 * 5);
     errors.append(&mut exec_errors);
-    errors
+    (errors, heard)
 }
 
 #[test]
@@ -427,4 +443,74 @@ fn every_touch_and_target_runs_without_errors() {
     }
     println!("{maps} maps, {failures} with errors");
     assert_eq!(failures, 0);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_sound_in_the_game_parses() {
+    let base = base();
+    let filesystem = game(&base, "id1");
+    let (mut count, mut loops) = (0, 0);
+    for path in filesystem.list("sound/") {
+        if !path.ends_with(".wav") {
+            continue;
+        }
+        let bytes = filesystem.read(&path).expect("it reads");
+        let clip = parse_wav(&bytes).unwrap_or_else(|| panic!("{path} parses"));
+        assert!(!clip.samples.is_empty(), "{path} has samples");
+        count += 1;
+        loops += usize::from(clip.loop_start.is_some());
+    }
+    println!("{count} sounds, {loops} loops");
+    assert_eq!((count, loops), (225, 23));
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_sound_scripts_ask_for_exists() {
+    let base = base();
+    let palette = palette(&base);
+    let filesystem = game(&base, "id1");
+    let mut missing = std::collections::BTreeSet::new();
+    let mut heard = std::collections::BTreeSet::new();
+    for path in filesystem.list("maps/") {
+        let Some(name) = path
+            .strip_prefix("maps/")
+            .and_then(|p| p.strip_suffix(".bsp"))
+        else {
+            continue;
+        };
+        let map = load(&filesystem, name, &palette);
+        let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+        let (_errors, names) = fire_everything_listening(&map, &world);
+        for sound in names {
+            if !filesystem.exists(&format!("sound/{sound}")) {
+                missing.insert(sound.clone());
+            }
+            heard.insert(sound);
+        }
+    }
+    println!("{} different sounds, missing {missing:?}", heard.len());
+    assert!(heard.len() > 20);
+    assert!(missing.is_empty());
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_music_track_decodes() {
+    let base = base();
+    let mut filesystem = FileSystem::new();
+    mount_music(&mut filesystem, &base, "id1");
+    let mut audio = Audio::new();
+    assert!(audio.has_device(), "this needs a sound device");
+    let tracks = filesystem.list("music/");
+    println!("{} tracks", tracks.len());
+    assert_eq!(tracks.len(), 10);
+    for path in tracks {
+        let bytes = filesystem.read(&path).expect("it reads");
+        audio
+            .play_music(bytes)
+            .unwrap_or_else(|error| panic!("{path}: {error}"));
+    }
+    audio.stop_music();
 }

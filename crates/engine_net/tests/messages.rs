@@ -3,6 +3,7 @@
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
+use engine_core::sound::{SoundStart, StaticSound};
 use engine_net::{ClientMessage, ServerMessage, Snapshot, Transport, loopback};
 
 /// A command with every field set.
@@ -57,6 +58,22 @@ fn messages_survive_the_round_trip() {
             pattern: "abc".to_owned(),
         },
         ServerMessage::Print("hello".to_owned()),
+        ServerMessage::Sound(SoundStart {
+            entity: u64::MAX,
+            channel: 7,
+            origin: Vec3::new(1.0, 2.0, 3.0),
+            volume: 0.5,
+            attenuation: 4.0,
+            own: true,
+            name: "misc/talk.wav".to_owned(),
+        }),
+        ServerMessage::StaticSound(StaticSound {
+            origin: Vec3::new(4.0, 5.0, 6.0),
+            volume: 1.0,
+            attenuation: 3.0,
+            name: "ambience/fire1.wav".to_owned(),
+        }),
+        ServerMessage::Music(6),
         ServerMessage::SetView {
             yaw: 90.0,
             pitch: -10.0,
@@ -138,4 +155,48 @@ fn loopback_carries_messages_both_ways_in_order() {
     assert_eq!(second.receive(), Some(vec![2]));
     assert_eq!(second.receive(), None);
     assert_eq!(first.receive(), Some(vec![3]));
+}
+
+/// Bytes of a sound with these values.
+fn sound_bytes(channel: u8, volume: f32, attenuation: f32, name: &str) -> Vec<u8> {
+    let mut bytes = ServerMessage::Sound(SoundStart {
+        entity: 1,
+        channel: 0,
+        origin: Vec3::ZERO,
+        volume: 1.0,
+        attenuation: 1.0,
+        own: false,
+        name: "a".to_owned(),
+    })
+    .encode();
+    bytes.truncate(bytes.len() - 1);
+    bytes[9] = channel;
+    let volume_at = bytes.len() - 8;
+    bytes[volume_at..volume_at + 4].copy_from_slice(&volume.to_le_bytes());
+    bytes[volume_at + 4..].copy_from_slice(&attenuation.to_le_bytes());
+    bytes.extend_from_slice(name.as_bytes());
+    bytes
+}
+
+#[test]
+fn sounds_out_of_range_are_refused() {
+    assert!(ServerMessage::decode(&sound_bytes(0, 1.0, 1.0, "a")).is_some());
+    assert!(ServerMessage::decode(&sound_bytes(8, 1.0, 1.0, "a")).is_none());
+    assert!(ServerMessage::decode(&sound_bytes(0, 1.5, 1.0, "a")).is_none());
+    assert!(ServerMessage::decode(&sound_bytes(0, -0.5, 1.0, "a")).is_none());
+    assert!(ServerMessage::decode(&sound_bytes(0, 1.0, 5.0, "a")).is_none());
+    assert!(ServerMessage::decode(&sound_bytes(0, f32::NAN, 1.0, "a")).is_none());
+    assert!(ServerMessage::decode(&sound_bytes(0, 1.0, 1.0, "")).is_none());
+    let long = "a".repeat(65);
+    assert!(ServerMessage::decode(&sound_bytes(0, 1.0, 1.0, &long)).is_none());
+}
+
+#[test]
+fn a_music_message_is_one_track() {
+    assert_eq!(
+        ServerMessage::decode(&[9, 6]),
+        Some(ServerMessage::Music(6))
+    );
+    assert_eq!(ServerMessage::decode(&[9]), None);
+    assert_eq!(ServerMessage::decode(&[9, 6, 7]), None);
 }

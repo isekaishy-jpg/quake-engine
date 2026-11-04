@@ -11,6 +11,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
+use engine_core::player::UserCommand;
 use engine_map::Map;
 use engine_net::{ClientMessage, ServerMessage, Snapshot, Transport};
 use engine_physics::CollisionWorld;
@@ -85,11 +86,7 @@ impl Server {
     pub fn tick(&mut self) {
         while let Some(bytes) = self.transport.receive() {
             match ClientMessage::decode(&bytes) {
-                Some(ClientMessage::Move(command)) => {
-                    self.simulation
-                        .borrow_mut()
-                        .run_command(&command, &self.world);
-                }
+                Some(ClientMessage::Move(command)) => self.run_command(&command),
                 Some(ClientMessage::Console(text)) => self.console(&text),
                 None => {}
             }
@@ -122,6 +119,21 @@ impl Server {
             .send(ServerMessage::Snapshot(snapshot).encode());
     }
 
+    /// Runs a move, with the game's player logic around it.
+    fn run_command(&mut self, command: &UserCommand) {
+        let fresh = command.sequence > self.simulation.borrow().last_command();
+        if fresh {
+            self.simulation.borrow_mut().set_jump_down(command.jump);
+            self.game.player_pre_think();
+        }
+        self.simulation
+            .borrow_mut()
+            .run_command(command, &self.world);
+        if fresh {
+            self.game.player_post_think();
+        }
+    }
+
     /// Passes on what the scripts asked for.
     fn flush_outbox(&mut self) {
         let outbox = self.game.take_outbox();
@@ -135,6 +147,16 @@ impl Server {
         if let Some((yaw, pitch)) = outbox.view {
             self.transport
                 .send(ServerMessage::SetView { yaw, pitch }.encode());
+        }
+        for sound in outbox.static_sounds {
+            self.transport
+                .send(ServerMessage::StaticSound(sound).encode());
+        }
+        for sound in outbox.sounds {
+            self.transport.send(ServerMessage::Sound(sound).encode());
+        }
+        if let Some(track) = outbox.music {
+            self.transport.send(ServerMessage::Music(track).encode());
         }
         if outbox.level.is_some() {
             self.next_level = outbox.level;

@@ -15,6 +15,12 @@ local ENGINE_FIELDS = {
 	ltime = true,
 	visible = true,
 	view = true,
+	waterlevel = true,
+	watertype = true,
+	onground = true,
+	button2 = true,
+	waterjump = true,
+	noclip = true,
 }
 
 -- Map fields that aren't text.
@@ -115,6 +121,24 @@ function time()
 	return engine.time()
 end
 
+function sound(entity, channel, sample, volume, attenuation)
+	if sample ~= nil and sample ~= "" then
+		engine.sound(rawget(entity, "_id"), channel, sample, volume, attenuation)
+	end
+end
+
+function ambientsound(origin, sample, volume, attenuation)
+	engine.ambientsound(origin, sample, volume, attenuation)
+end
+
+local random_state = 1
+
+-- A number from 0 up to 1, the same each run, so a game replays.
+function random()
+	random_state = random_state * 16807 % 2147483647
+	return random_state / 2147483647
+end
+
 -- The forward, right and up directions of `angles`, from `AngleVectors`.
 function makevectors(angles)
 	local pitch = math.rad(angles.x)
@@ -181,6 +205,7 @@ function adopt_player(id)
 	rawset(player, "health", 100)
 	rawset(player, "items", 0)
 	rawset(player, "angles", vector.zero)
+	return player
 end
 
 -- Runs a callback from the engine.

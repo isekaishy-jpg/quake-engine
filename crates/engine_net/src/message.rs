@@ -3,6 +3,7 @@
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
+use engine_core::sound::{SoundStart, StaticSound};
 
 /// The longest console text a client may send.
 const MAX_CONSOLE_BYTES: usize = 256;
@@ -24,6 +25,18 @@ const TAG_PRINT: u8 = 5;
 
 /// The tag of a view change.
 const TAG_SET_VIEW: u8 = 6;
+
+/// The tag of a sound starting.
+const TAG_SOUND: u8 = 7;
+
+/// The tag of a sound at a fixed place.
+const TAG_STATIC_SOUND: u8 = 8;
+
+/// The tag of a music track.
+const TAG_MUSIC: u8 = 9;
+
+/// The longest sound name, from `MAX_QPATH`.
+const MAX_SOUND_NAME_BYTES: usize = 64;
 
 /// The most brush models a snapshot may list.
 const MAX_INSTANCES: usize = 4096;
@@ -70,6 +83,12 @@ pub enum ServerMessage {
     },
     /// Text for the player.
     Print(String),
+    /// A sound starts.
+    Sound(SoundStart),
+    /// A sound loops at a fixed place.
+    StaticSound(StaticSound),
+    /// A music track plays.
+    Music(u8),
     /// Turns the player's view.
     SetView {
         /// The yaw in degrees.
@@ -117,6 +136,15 @@ impl Reader<'_> {
         self.take()
             .map(f32::from_le_bytes)
             .filter(|value| value.is_finite())
+    }
+
+    /// The rest of the message, as a sound's name.
+    fn sound_name(&mut self) -> Option<String> {
+        let name = std::mem::take(&mut self.bytes);
+        if name.is_empty() || name.len() > MAX_SOUND_NAME_BYTES {
+            return None;
+        }
+        std::str::from_utf8(name).ok().map(str::to_owned)
     }
 
     /// A vector.
@@ -239,6 +267,23 @@ impl ServerMessage {
                 put_f32(&mut out, *yaw);
                 put_f32(&mut out, *pitch);
             }
+            Self::Sound(sound) => {
+                out.push(TAG_SOUND);
+                out.extend_from_slice(&sound.entity.to_le_bytes());
+                out.extend_from_slice(&[sound.channel, u8::from(sound.own)]);
+                put_vec3(&mut out, sound.origin);
+                put_f32(&mut out, sound.volume);
+                put_f32(&mut out, sound.attenuation);
+                out.extend_from_slice(sound.name.as_bytes());
+            }
+            Self::StaticSound(sound) => {
+                out.push(TAG_STATIC_SOUND);
+                put_vec3(&mut out, sound.origin);
+                put_f32(&mut out, sound.volume);
+                put_f32(&mut out, sound.attenuation);
+                out.extend_from_slice(sound.name.as_bytes());
+            }
+            Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
         }
         out
     }
@@ -260,9 +305,54 @@ impl ServerMessage {
                 let (yaw, pitch) = (reader.f32()?, reader.f32()?);
                 reader.finished().then_some(Self::SetView { yaw, pitch })
             }
+            TAG_SOUND => decode_sound(rest).map(Self::Sound),
+            TAG_STATIC_SOUND => decode_static_sound(rest).map(Self::StaticSound),
+            TAG_MUSIC => match rest {
+                [track] => Some(Self::Music(*track)),
+                _ => None,
+            },
             _ => None,
         }
     }
+}
+
+/// Whether a sound's volume and attenuation are ones the server can send.
+fn sound_values_fit(volume: f32, attenuation: f32) -> bool {
+    (0.0..=1.0).contains(&volume) && (0.0..=4.0).contains(&attenuation)
+}
+
+/// Reads a sound starting.
+fn decode_sound(bytes: &[u8]) -> Option<SoundStart> {
+    let mut reader = Reader { bytes };
+    let entity = u64::from_le_bytes(reader.take()?);
+    let channel = reader.byte().filter(|channel| *channel <= 7)?;
+    let own = reader.flag()?;
+    let origin = reader.vec3()?;
+    let (volume, attenuation) = (reader.f32()?, reader.f32()?);
+    let name = reader.sound_name()?;
+    sound_values_fit(volume, attenuation).then_some(SoundStart {
+        entity,
+        channel,
+        origin,
+        volume,
+        attenuation,
+        own,
+        name,
+    })
+}
+
+/// Reads a sound at a fixed place.
+fn decode_static_sound(bytes: &[u8]) -> Option<StaticSound> {
+    let mut reader = Reader { bytes };
+    let origin = reader.vec3()?;
+    let (volume, attenuation) = (reader.f32()?, reader.f32()?);
+    let name = reader.sound_name()?;
+    sound_values_fit(volume, attenuation).then_some(StaticSound {
+        origin,
+        volume,
+        attenuation,
+        name,
+    })
 }
 
 /// Text from a message, within the size limit.

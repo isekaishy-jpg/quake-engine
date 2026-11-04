@@ -33,6 +33,9 @@ local LIGHT_STYLES = {
 
 function worldspawn(self)
 	world = self
+	if self.sounds ~= 0 then
+		engine.music(self.sounds)
+	end
 	for index, pattern in LIGHT_STYLES do
 		engine.lightstyle(index, pattern)
 	end

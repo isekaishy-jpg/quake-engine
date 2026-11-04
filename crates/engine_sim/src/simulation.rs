@@ -114,6 +114,8 @@ pub struct Simulation {
     touched: Vec<u32>,
     /// The player's last yaw and pitch.
     view: (f32, f32),
+    /// Whether the player's jump button is down.
+    jump_down: bool,
 }
 
 /// Whether two boxes overlap.
@@ -152,7 +154,20 @@ impl Simulation {
             time: 0.0,
             touched: Vec::new(),
             view: (0.0, 0.0),
+            jump_down: false,
         }
+    }
+
+    /// Whether the player's jump button is down.
+    #[must_use]
+    pub fn jump_down(&self) -> bool {
+        self.jump_down
+    }
+
+    /// Notes whether the player's jump button is down, for scripts to see
+    /// before the move runs.
+    pub fn set_jump_down(&mut self, down: bool) {
+        self.jump_down = down;
     }
 
     /// The player's last yaw and pitch.

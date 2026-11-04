@@ -6,9 +6,11 @@ use std::rc::Rc;
 use std::time::{Duration, Instant};
 
 use engine_core::math::Vec3;
+use engine_core::player::Liquid;
+use engine_core::sound::{SoundStart, StaticSound};
 use engine_map::Entity as MapEntity;
 use engine_sim::{Callback, EntityId, MoveType, Simulation, Solid};
-use mlua::{Function, Lua, Value, Vector, VmState};
+use mlua::{Function, Lua, Table, Value, Vector, VmState};
 
 /// The prelude every game runs on.
 const PRELUDE: &str = include_str!("prelude.luau");
@@ -52,6 +54,12 @@ pub struct Outbox {
     pub light_styles: Vec<(u8, String)>,
     /// A yaw and pitch to turn the player to.
     pub view: Option<(f32, f32)>,
+    /// Sounds starting.
+    pub sounds: Vec<SoundStart>,
+    /// Sounds looping at fixed places.
+    pub static_sounds: Vec<StaticSound>,
+    /// A music track to play.
+    pub music: Option<u8>,
 }
 
 /// Turns a script's vector into an engine one.
@@ -88,6 +96,41 @@ fn no_field(name: &str) -> mlua::Error {
     mlua::Error::runtime(format!("no engine field called {name}"))
 }
 
+/// Refuses a sound's values, as `SV_StartSound` does.
+fn check_sound(volume: f32, attenuation: f32) -> mlua::Result<()> {
+    if !(0.0..=1.0).contains(&volume) {
+        return Err(mlua::Error::runtime(format!("sound volume {volume}")));
+    }
+    if !(0.0..=4.0).contains(&attenuation) {
+        return Err(mlua::Error::runtime(format!(
+            "sound attenuation {attenuation}"
+        )));
+    }
+    Ok(())
+}
+
+/// Reads a field only the player has, which is nil on anything else.
+fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
+    if id != sim.player_id() {
+        return Value::Nil;
+    }
+    let player = sim.player();
+    match field {
+        "waterlevel" => Value::Number(f64::from(player.water_level)),
+        "watertype" => Value::Number(match player.liquid {
+            Liquid::None => -1.0,
+            Liquid::Water => -3.0,
+            Liquid::Slime => -4.0,
+            Liquid::Lava => -5.0,
+        }),
+        "onground" => Value::Boolean(player.on_ground),
+        "button2" => Value::Boolean(sim.jump_down()),
+        "waterjump" => Value::Boolean(player.water_jump_time > 0.0),
+        "noclip" => Value::Boolean(player.noclip),
+        _ => Value::Nil,
+    }
+}
+
 /// Reads an engine field.
 fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::Result<Value> {
     let Some(entity) = sim.entity(id) else {
@@ -122,6 +165,9 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "view" => {
             let (yaw, pitch) = sim.view();
             vector(Vec3::new(pitch, yaw, 0.0))
+        }
+        "waterlevel" | "watertype" | "onground" | "button2" | "waterjump" | "noclip" => {
+            read_player_field(sim, id, field)
         }
         _ => return Err(no_field(field)),
     })
@@ -195,6 +241,8 @@ pub struct Game {
     call_started: Rc<Cell<Instant>>,
     /// The prelude's `dispatch`.
     dispatch: Function,
+    /// The player's table.
+    player: Table,
 }
 
 impl Game {
@@ -232,12 +280,13 @@ impl Game {
         let dispatch: Function = lua.globals().get("dispatch")?;
         let adopt: Function = lua.globals().get("adopt_player")?;
         let player = simulation.borrow().player_id();
-        adopt.call::<()>(id_to(player))?;
+        let player: Table = adopt.call(id_to(player))?;
         Ok(Self {
             lua,
             outbox,
             call_started,
             dispatch,
+            player,
         })
     }
 
@@ -334,7 +383,70 @@ impl Game {
                 Ok(())
             })?,
         )?;
+        Self::register_sound(lua, simulation, outbox, &engine)?;
         lua.globals().set("engine", engine)
+    }
+
+    /// Adds the sound half of the `engine` table.
+    fn register_sound(
+        lua: &Lua,
+        simulation: &Rc<RefCell<Simulation>>,
+        outbox: &Rc<RefCell<Outbox>>,
+        engine: &Table,
+    ) -> mlua::Result<()> {
+        let sim = Rc::clone(simulation);
+        let out = Rc::clone(outbox);
+        engine.set(
+            "sound",
+            lua.create_function(
+                move |_, (id, channel, name, volume, attenuation): (f64, u8, String, f32, f32)| {
+                    check_sound(volume, attenuation)?;
+                    if channel > 7 {
+                        return Err(mlua::Error::runtime(format!("sound channel {channel}")));
+                    }
+                    let sim = sim.borrow();
+                    let id = id_from(id);
+                    let Some(entity) = sim.entity(id) else {
+                        return Ok(());
+                    };
+                    let middle = (entity.mins + entity.maxs) * 0.5;
+                    out.borrow_mut().sounds.push(SoundStart {
+                        entity: id.to_bits(),
+                        channel,
+                        origin: sim.origin(id).unwrap_or(entity.origin) + middle,
+                        volume,
+                        attenuation,
+                        own: id == sim.player_id(),
+                        name,
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "ambientsound",
+            lua.create_function(
+                move |_, (origin, name, volume, attenuation): (Vector, String, f32, f32)| {
+                    check_sound(volume, attenuation)?;
+                    out.borrow_mut().static_sounds.push(StaticSound {
+                        origin: to_vec3(origin),
+                        volume,
+                        attenuation,
+                        name,
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "music",
+            lua.create_function(move |_, track: u8| {
+                out.borrow_mut().music = Some(track);
+                Ok(())
+            })?,
+        )
     }
 
     /// Reports a script's failure, which never stops the game.
@@ -382,6 +494,27 @@ impl Game {
             self.dispatch
                 .call::<()>((kind, id_to(id), other.map(id_to))),
         );
+    }
+
+    /// Runs `name` on the player, if the game has one.
+    fn run_on_player(&self, name: &str) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get(name);
+        match function {
+            Ok(Some(function)) => self.report(function.call::<()>(self.player.clone())),
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Runs the game's `PlayerPreThink`.
+    pub fn player_pre_think(&self) {
+        self.run_on_player("PlayerPreThink");
+    }
+
+    /// Runs the game's `PlayerPostThink`.
+    pub fn player_post_think(&self) {
+        self.run_on_player("PlayerPostThink");
     }
 
     /// Takes what scripts have asked for.
