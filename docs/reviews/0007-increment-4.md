@@ -35,6 +35,7 @@ These ran against the Steam data, read in place.
 | Every touch and target on all 117 maps | No errors. Teleports aimed at an `info_null` are skipped, as touching one stops the original game too |
 | `e1m1` door | Opens when approached, in captures |
 | `e1m1` exit | Walking into it loads `e1m2` |
+| `e1m1` sky and pillar lights | Drawn colours match the pak's textures, and by eye the original game: the sky is blue, and the pillars' amber is washed out by their white |
 | 13 logic tests on the real scripts | Doors, reach, blocking, plats, buttons, teleports, level changes, messages, walls and skill flags |
 | 13 script host tests | Sandbox, runaway loop, script errors and fields |
 | GPU tests | 8 pass, with a brush model drawn at an offset |

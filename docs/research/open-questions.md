@@ -13,6 +13,5 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | How much launch delay and correction feels right? | Testing in play | Projectiles |
 | Does one message per raw event keep up with an 8 kHz mouse? | A measurement on real hardware, then perhaps a dedicated input thread | Platform |
 | How should door logic be revamped? | The human's design, after the port plays through. The port matches `doors.qc`, and it may feel better with sound | Game scripts |
-| Do `e1m1`'s sky and pillar lights match the real game? | A look at the original on this machine. They felt off in play, purple sky and yellow pillar lights, but the drawn colours match the pak's textures and palette | Renderer |
 | Should the rerelease's coloured `.lit` light be read? | The human's decision. Every original level has one in the rerelease pak | Importer, renderer |
 | What's the product's real name? | The human's decision | Packaging |
