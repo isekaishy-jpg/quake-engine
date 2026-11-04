@@ -5,6 +5,7 @@ use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
 use engine_assets::{AssetError, FileSystem};
+use engine_client::{Look, LookScale};
 use engine_console::{Console, CvarFlags};
 use engine_core::time::{TickClock, TickRate};
 use engine_platform::{AppError, Frame, FrameOutcome, InputEvent, PlatformApp, ServiceOutcome};
@@ -33,6 +34,10 @@ pub(crate) struct World {
     pub(crate) frames: u64,
     /// Time since the host started.
     pub(crate) run_time: Duration,
+    /// The view.
+    pub(crate) look: Look,
+    /// Raw motion events received so far.
+    pub(crate) motion_events: u64,
 }
 
 /// The engine: everything the main loop drives.
@@ -75,6 +80,14 @@ impl Engine {
         let mut console = Console::new();
         commands::register(&mut console);
         console.register_cvar("show_input", "0", CvarFlags::default());
+        let saved = CvarFlags {
+            saved: true,
+            server: false,
+        };
+        console.register_cvar("m_capture", "0", CvarFlags::default());
+        console.register_cvar("sensitivity", "3", saved);
+        console.register_cvar("m_yaw", "0.022", saved);
+        console.register_cvar("m_pitch", "0.022", saved);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -85,6 +98,8 @@ impl Engine {
                 ticks: 0,
                 frames: 0,
                 run_time: Duration::ZERO,
+                look: Look::new(LookScale::from_settings(0.0, 0.0, 0.0)),
+                motion_events: 0,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,
@@ -101,7 +116,24 @@ impl Engine {
             }
         }
         self.console.execute(&mut self.world);
+        self.world.look.set_scale(self.look_scale());
         self.show_output();
+    }
+
+    /// The look scale from the cvars.
+    fn look_scale(&self) -> LookScale {
+        LookScale::from_settings(
+            self.cvar_number("sensitivity"),
+            self.cvar_number("m_yaw"),
+            self.cvar_number("m_pitch"),
+        )
+    }
+
+    /// The value of a cvar registered at startup.
+    fn cvar_number(&self, name: &str) -> f64 {
+        self.console
+            .cvar(name)
+            .map_or(0.0, |cvar| f64::from(cvar.number()))
     }
 
     /// Writes waiting console lines to standard output. This is the reporting
@@ -117,23 +149,11 @@ impl Engine {
         }
         let _ignored = output.flush();
     }
-
-    /// Shows input when the `show_input` cvar is on.
-    fn show_input(&mut self, events: &[InputEvent]) {
-        let enabled = self
-            .console
-            .cvar("show_input")
-            .is_some_and(|cvar| cvar.number() != 0.0);
-        if enabled {
-            for event in events {
-                self.console.print(format!("{event:?}"));
-            }
-        }
-    }
 }
 
 impl PlatformApp for Engine {
     fn started(&mut self) -> Result<(), AppError> {
+        self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add("exec quake.rc");
         Ok(())
@@ -153,14 +173,32 @@ impl PlatformApp for Engine {
         }
     }
 
-    fn frame(&mut self, frame: &Frame) -> FrameOutcome {
+    fn input(&mut self, event: &InputEvent, time: Duration) {
+        if let InputEvent::Motion { x, y } = *event {
+            self.world.look.motion(x, y);
+            self.world.motion_events += 1;
+        }
+        if self.cvar_number("show_input") != 0.0 && !matches!(event, InputEvent::Motion { .. }) {
+            self.console
+                .print(format!("{:.3} {event:?}", time.as_secs_f64()));
+        }
+    }
+
+    fn frame(&mut self, _frame: &Frame) -> FrameOutcome {
         self.world.frames += 1;
-        self.show_input(&frame.input);
         if self.world.quit {
             FrameOutcome::Stop
         } else {
             FrameOutcome::Continue
         }
+    }
+
+    fn mouse_capture(&self) -> bool {
+        self.cvar_number("m_capture") != 0.0
+    }
+
+    fn notice(&mut self, message: String) {
+        self.console.print(message);
     }
 
     fn stopping(&mut self) {

@@ -64,4 +64,10 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
         "{} ticks and {} frames in {seconds:.2} s",
         world.ticks, world.frames
     ));
+    console.print(format!(
+        "{} motion events, yaw {:.4}, pitch {:.4}",
+        world.motion_events,
+        world.look.yaw(),
+        world.look.pitch()
+    ));
 }

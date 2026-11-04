@@ -23,10 +23,13 @@
     - [0011: the platform host boundary](proposals/0011-platform-host.md)
     - [0012: the console, commands and cvars](proposals/0012-console.md)
     - [0013: the filesystem and packs](proposals/0013-filesystem-and-packs.md)
+    - [0014: the minimized window](proposals/0014-minimized-window.md)
+    - [0015: mouse look](proposals/0015-mouse.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
   - [0003: increment 1](reviews/0003-increment-1.md)
+  - [0004: the minimized window and mouse look](reviews/0004-minimized-and-mouse.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

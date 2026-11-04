@@ -6,7 +6,8 @@
 //!
 //! The application implements [`PlatformApp`] and calls [`run`] on the main
 //! thread. [`PlatformApp::service`] runs the simulation, including while the
-//! window is minimized, and [`PlatformApp::frame`] does presentation.
+//! window is minimized, [`PlatformApp::frame`] does presentation, and
+//! [`PlatformApp::input`] receives input as it arrives.
 //!
 //! May depend on `engine_core`. See proposal 0008.
 

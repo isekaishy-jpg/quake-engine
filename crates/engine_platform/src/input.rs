@@ -34,11 +34,11 @@ pub enum InputEvent {
         /// Down or up.
         pressed: bool,
     },
-    /// Relative mouse movement.
+    /// Raw mouse movement in device counts, while the mouse is captured.
     Motion {
-        /// Horizontal movement.
+        /// Horizontal counts.
         x: f64,
-        /// Vertical movement.
+        /// Vertical counts.
         y: f64,
     },
     /// The wheel turned, in lines. Positive is away from the user.

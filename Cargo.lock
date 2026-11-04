@@ -243,6 +243,7 @@ name = "engine_app"
 version = "0.0.0-alpha"
 dependencies = [
  "engine_assets",
+ "engine_client",
  "engine_console",
  "engine_core",
  "engine_platform",
