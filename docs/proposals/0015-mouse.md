@@ -4,7 +4,7 @@ Status: accepted, 2026-11-03, increment 1.
 
 ## Research
 
-- The human's direction: "Mousing can be modern quality(but should be deterministic)".
+- The human's direction: "Mousing can be modern quality(but should be deterministic)", and anything that modifies how the mouse behaves happens only when a user changes a setting.
 - Microsoft's [high-definition mouse article](https://docs.microsoft.com/windows/win32/dxtecharts/taking-advantage-of-high-dpi-mouse-movement) recommends `WM_INPUT`, because `WM_MOUSEMOVE` only reports whole pixels and carries pointer ballistics. `winit` uses `WM_INPUT` for `DeviceEvent::MouseMotion`, passing `lLastX` and `lLastY` as `f64`, so counts arrive as exact whole numbers.
 - `solapp` gates relative motion on focus, drains input at receipt, and stamps each record with a receipt time. It reports no native event time on this path, and its queue has no drop limit.
 - From `in_win.c` and `common.c`, the original's mouse look has these faults for this purpose:
@@ -22,7 +22,8 @@ Status: accepted, 2026-11-03, increment 1.
 - `engine_client::Look` holds the view. It keeps a count total per axis, and works out the angle from the total. Totals of whole numbers are exact in `f64`, so moving out and back returns to exactly the same angle.
 - Each raw event is applied on arrival, by itself. Pitch is clamped per event, in counts. Reading the view changes nothing.
 - A settings change folds the current angle into a new origin, so the view doesn't jump.
-- There's no smoothing and no filter. Acceleration isn't built, since nobody has asked for it.
+- Nothing changes how the mouse behaves unless the user sets it. The default is raw counts through `sensitivity`, `m_yaw` and `m_pitch`, and nothing else.
+- There's no smoothing, filter or acceleration yet. Any added later is a setting, off by default, and works from the raw event sequence, not frame time, so the view stays deterministic.
 - `engine_platform` delivers input as it arrives, with its receipt time, through `PlatformApp::input`, and no longer queues it for frames. It captures the mouse when `PlatformApp::mouse_capture` says so, and reports a failure through `PlatformApp::notice`.
 - `m_capture` is off by default, so the cursor is left alone until there's a game to play.
 

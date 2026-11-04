@@ -27,4 +27,4 @@ These ran against the Steam `id1` data, read in place.
 - The raw motion run isn't a clean count check. Hand movement on the same desktop mixed with the injected motion, so the 300 and 100 counts sent couldn't be told apart from it. A second run was skipped because the desktop wasn't idle.
 - Releasing capture with `m_capture 0` wasn't observed on its own.
 - Mouse buttons and the wheel remain unexercised.
-- A preview and 8 kHz mice are [open questions](../research/open-questions.md).
+- The Windows preview and 8 kHz mice are [open questions](../research/open-questions.md).

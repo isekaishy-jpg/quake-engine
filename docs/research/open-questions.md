@@ -14,6 +14,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | What exactly did CS2's sub-tick and Overwatch's command buffer do? | Primary sources. Only third-party accounts were found | Weapon timing, client clock |
 | How does Quake Live's `g_lagHax` work? | A reliable source. Only anecdotes were found | Lag compensation |
 | How much launch delay and correction feels right? | Testing in play | Projectiles |
-| Can a minimized window show a live preview? | A test with a renderer, since a minimized surface can't present | Renderer |
+| How should the Windows preview get its bitmap, and does Alt-Tab use it as the taskbar does? | A test with a renderer, using the last frame and subclassing the window. The docs only name the taskbar and peek | Platform, Renderer |
 | Does one message per raw event keep up with an 8 kHz mouse? | A measurement on real hardware, then perhaps a dedicated input thread | Platform |
 | What's the product's real name? | The human's decision | Packaging |
