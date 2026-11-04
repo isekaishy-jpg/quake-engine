@@ -14,6 +14,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | What exactly did CS2's sub-tick and Overwatch's command buffer do? | Primary sources. Only third-party accounts were found | Weapon timing, client clock |
 | How does Quake Live's `g_lagHax` work? | A reliable source. Only anecdotes were found | Lag compensation |
 | How much launch delay and correction feels right? | Testing in play | Projectiles |
-| Does a small low-rate [preview](windows-previews.md) of a minimized window hold up, and how does peek show an image smaller than the window? | A test once frames draw, by hovering and pressing Alt-Tab, measuring the cost of the small render | Platform, Renderer |
+| How does reduced-mode rendering reach the preview of a minimized window, which may have no surface to present to? | A test once frames draw, by hovering and pressing Alt-Tab. Routes: keep the window composed by handling minimize ourselves, with `DWMWA_CLOAK`, or the [iconic calls](windows-previews.md) | Platform, Renderer |
 | Does one message per raw event keep up with an 8 kHz mouse? | A measurement on real hardware, then perhaps a dedicated input thread | Platform |
 | What's the product's real name? | The human's decision | Packaging |

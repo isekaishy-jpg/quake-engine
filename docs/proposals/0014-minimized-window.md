@@ -15,24 +15,20 @@ Status: accepted, 2026-11-03, increment 1.
 
 ## Design
 
+The human's decision: go to a reduced mode while minimized, saving resources while keeping enough for the preview and Alt-Tab. A preview can only show what's rendered, so rendering carries on, smaller and slower.
+
 - The platform checks the window's state on each service visit.
-- While minimized, it stops asking for frames. On restore, it asks for one and frames resume.
-- Ticks carry on, because a server can't stop for one player's window.
+- While minimized, frames drop to `WindowConfig::reduced_frame_rate`, and `Frame::reduced` tells the application a small, cheap frame is enough. On restore, normal pacing returns.
+- The engine uses 10 frames a second to start with.
+- Ticks carry on at full rate, because a server can't stop for one player's window.
 - Input no longer waits for a frame. [Proposal 0015](0015-mouse.md) delivers it as it arrives.
 
 ## Proposal
 
-- **Selected approach:** save resources when minimized, and only then. A window that's merely behind others keeps its frames, so its preview stays live. A minimized window supplies its preview through the APIs above once there's an image to supply.
-- **Tradeoffs:** the taskbar shows whatever the system last had, which may be stale. Pausing a single-player game when minimized is a separate choice, left for when there's a game to pause.
-- **Acceptance criteria:** frames stop while minimized and resume on restore, and ticks stay at 72 a second throughout. The CPU saving can only be measured once frames draw something.
-- **Future extension:** with a renderer:
-  - `engine_platform` subclasses the window and sets `DWMWA_HAS_ICONIC_BITMAP`.
-  - It sets `DWMWA_FORCE_ICONIC_REPRESENTATION` when the window is minimized and clears it on restore, so a visible window keeps the automatic live view.
-  - While minimized, the renderer keeps drawing to one small off-screen image, with no swapchain, at a low rate, starting from about 10 a second. Poor frame rate and quality are fine, since the preview is tiny.
-  - The latest image is always ready, so a request is answered at once and Windows has no reason to fall back to its default. There's no need to know when a preview opens or closes.
-  - Each new image invalidates the last, so Windows asks again if a preview is showing. The low rate respects Microsoft's warning about refreshing often.
-  - The thumbnail takes that image, scaled to fit the size Windows asks for. Peek takes the same image, within the last restored size, because a minimized window's client area may read as zero.
-  - The [open questions](../research/open-questions.md) cover what needs measuring.
+- **Selected approach:** reduced mode, as above. A window that's merely behind others stays at full rate.
+- **Tradeoffs:** a minimized game still uses a little GPU time once frames draw. Pausing a single-player game when minimized is a separate choice, left for when there's a game to pause.
+- **Acceptance criteria:** frames drop to the reduced rate with `Frame::reduced` set, normal frames return on restore, and ticks stay at 72 a second throughout. CPU use doesn't rise. The GPU saving can only be measured once frames draw.
+- **Future extension:** the renderer reads `Frame::reduced` and draws small. What's still unknown is how that output reaches the preview, since a minimized window may have no surface to present to. The [open questions](../research/open-questions.md) list the routes to try.
 
 ## Review
 

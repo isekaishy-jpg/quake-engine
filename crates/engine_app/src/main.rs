@@ -18,6 +18,9 @@ const TITLE: &str = "Quake Engine";
 /// Frames per second until a renderer paces itself.
 const FRAME_CAP: u32 = 120;
 
+/// Frames per second while minimized, enough for the system's previews.
+const REDUCED_FRAME_RATE: u32 = 10;
+
 /// Starts the engine and reports a failure on standard error.
 fn main() -> ExitCode {
     match start() {
@@ -38,6 +41,7 @@ fn start() -> Result<(), Box<dyn std::error::Error>> {
         width: 1280,
         height: 720,
         frame_cap: Some(FRAME_CAP),
+        reduced_frame_rate: REDUCED_FRAME_RATE,
     };
     run(config, &mut engine)?;
     Ok(())

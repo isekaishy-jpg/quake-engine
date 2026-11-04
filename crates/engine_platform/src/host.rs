@@ -31,6 +31,8 @@ pub struct WindowConfig {
     pub height: u32,
     /// The most frames per second, or `None` when a renderer paces itself.
     pub frame_cap: Option<u32>,
+    /// Frames per second in reduced mode, while the window is minimized.
+    pub reduced_frame_rate: u32,
 }
 
 /// What the application learns at each frame.
@@ -38,6 +40,8 @@ pub struct WindowConfig {
 pub struct Frame {
     /// Time since the previous frame, zero on the first.
     pub delta: Duration,
+    /// Whether the window is minimized, so a small, cheap frame is enough.
+    pub reduced: bool,
 }
 
 /// Whether to keep running after a frame.
@@ -76,7 +80,8 @@ pub trait PlatformApp {
     /// `time` is when the host received it, since the host started.
     fn input(&mut self, event: &InputEvent, time: Duration);
 
-    /// Called for each frame. Frames stop while the window is minimized.
+    /// Called for each frame. While the window is minimized, frames slow to
+    /// [`WindowConfig::reduced_frame_rate`] and [`Frame::reduced`] is set.
     fn frame(&mut self, frame: &Frame) -> FrameOutcome;
 
     /// Whether the mouse should be captured for raw motion. Checked at each
@@ -127,7 +132,7 @@ struct Adapter<'app, A> {
     config: WindowConfig,
     /// The window, once created.
     target: Option<SAWindowTarget>,
-    /// Whether the window is minimized, so no frames are wanted.
+    /// Whether the window is minimized, so frames are in reduced mode.
     minimized: bool,
     /// Whether the mouse is captured, or was last asked to be.
     captured: bool,
@@ -197,7 +202,18 @@ impl<A: PlatformApp> Adapter<'_, A> {
         }
     }
 
-    /// Stops frames while minimized, and starts them again on restore.
+    /// The pacing for a minimized window.
+    fn reduced_pacing(&self) -> SAPacingPolicy {
+        let rate = self.config.reduced_frame_rate;
+        SAPacingPolicy::Forever {
+            foreground_rate: rate,
+            background_rate: rate,
+            foreground: true,
+            phase: SAFramePhase::Ordinary,
+        }
+    }
+
+    /// Enters reduced mode while minimized, and leaves it on restore.
     fn follow_minimized(&mut self, cx: &mut SAContext<'_, Self>, target: SAWindowTarget) {
         let Ok(observed) = cx.display_observed(target) else {
             return;
@@ -208,17 +224,13 @@ impl<A: PlatformApp> Adapter<'_, A> {
         if minimized != self.minimized {
             self.minimized = minimized;
             let pacing = if minimized {
-                SAPacingPolicy::Disabled
+                self.reduced_pacing()
             } else {
                 self.pacing()
             };
-            let result = cx.set_pacing(Some(target), pacing).and_then(|()| {
-                if minimized {
-                    Ok(())
-                } else {
-                    cx.request_frame()
-                }
-            });
+            let result = cx
+                .set_pacing(Some(target), pacing)
+                .and_then(|()| cx.request_frame());
             if let Err(error) = result {
                 self.app.notice(format!("frame pacing: {error}"));
             }
@@ -280,9 +292,11 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
     }
 
     fn frame(&mut self, cx: &mut SAContext<'_, Self>, frame: SAFrame) {
-        let frame = Frame { delta: frame.delta };
+        let frame = Frame {
+            delta: frame.delta,
+            reduced: self.minimized,
+        };
         let next = match self.app.frame(&frame) {
-            FrameOutcome::Continue if self.minimized => Ok(()),
             FrameOutcome::Continue => cx.request_frame(),
             FrameOutcome::Stop => Err(SAError::application("stop requested")),
         };

@@ -61,8 +61,8 @@ fn stuffcmds(console: &mut Console<World>, world: &mut World, _args: &Args) {
 fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
     let seconds = world.run_time.as_secs_f64();
     console.print(format!(
-        "{} ticks and {} frames in {seconds:.2} s",
-        world.ticks, world.frames
+        "{} ticks and {} frames, {} reduced, in {seconds:.2} s",
+        world.ticks, world.frames, world.reduced_frames
     ));
     console.print(format!(
         "{} motion events, yaw {:.4}, pitch {:.4}",

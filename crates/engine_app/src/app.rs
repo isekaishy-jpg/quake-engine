@@ -32,6 +32,8 @@ pub(crate) struct World {
     pub(crate) ticks: u64,
     /// Frames shown so far.
     pub(crate) frames: u64,
+    /// How many of those were in reduced mode.
+    pub(crate) reduced_frames: u64,
     /// Time since the host started.
     pub(crate) run_time: Duration,
     /// The view.
@@ -97,6 +99,7 @@ impl Engine {
                 startup_commands: options.startup_commands,
                 ticks: 0,
                 frames: 0,
+                reduced_frames: 0,
                 run_time: Duration::ZERO,
                 look: Look::new(LookScale::from_settings(0.0, 0.0, 0.0)),
                 motion_events: 0,
@@ -184,8 +187,9 @@ impl PlatformApp for Engine {
         }
     }
 
-    fn frame(&mut self, _frame: &Frame) -> FrameOutcome {
+    fn frame(&mut self, frame: &Frame) -> FrameOutcome {
         self.world.frames += 1;
+        self.world.reduced_frames += u64::from(frame.reduced);
         if self.world.quit {
             FrameOutcome::Stop
         } else {

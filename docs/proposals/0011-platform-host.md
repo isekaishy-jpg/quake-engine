@@ -17,7 +17,7 @@ Status: accepted, 2026-11-03, increment 1.
 - `PlatformApp::started` runs once, `service` runs for the simulation, `frame` runs for presentation, and `stopping` runs at shutdown.
 - `service` receives time since start and returns how long until it wants to run again, or a stop.
 - Input is delivered as engine-owned events named by physical key. Proposal 0015 changed this from queueing for frames to delivery on arrival.
-- `WindowConfig` carries title, size and an optional frame cap. The cap uses `Forever`, and no cap uses `RendererManaged`.
+- `WindowConfig` carries title, size, an optional frame cap and the reduced frame rate from proposal 0014. The cap uses `Forever`, and no cap uses `RendererManaged`.
 
 ## Proposal
 

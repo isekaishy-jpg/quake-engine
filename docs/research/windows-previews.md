@@ -46,6 +46,10 @@ The iconic calls are described as static bitmaps. There's no documented way to s
 - [`SetWindowSubclass`](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-setwindowsubclass) adds a handler, and has to run on the window's own thread. `RemoveWindowSubclass` takes it off.
 - `winit` has `with_msg_hook`, but it sits on the message loop. Messages sent straight to the window wouldn't pass through it, so subclassing looks safer. That's inference, and how Windows delivers these two messages isn't documented.
 
+## Keeping a window composed
+
+The [attribute page](https://learn.microsoft.com/en-us/windows/win32/api/dwmapi/ne-dwmapi-dwmwindowattribute) says `DWMWA_CLOAK` hides a window while it's "still composed by DWM". That makes it a candidate for keeping a live preview through minimizing, if the engine handles minimize itself. Whether a cloaked window keeps its taskbar preview and its place in Alt-Tab isn't documented.
+
 ## Not needed
 
 - [`ITaskbarList3`](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nn-shobjidl_core-itaskbarlist3) `RegisterTab` and [`ITaskbarList4::SetTabProperties`](https://learn.microsoft.com/en-us/windows/win32/api/shobjidl_core/nf-shobjidl_core-itaskbarlist4-settabproperties) are for tabs and documents inside one window.
