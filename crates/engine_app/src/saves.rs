@@ -130,6 +130,11 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     let origin = server.player_origin();
     world.leave_game();
     world.level = server.level().clone();
+    // From `Host_Loadgame_f`: the skill is the game's, not this session's.
+    let skill = world.level.settings.iter().find(|rule| rule.0 == "skill");
+    if let Some((_, skill)) = skill {
+        world.commands.push(format!("skill {skill}"));
+    }
     world.server = Some(server);
     world.set_collision(Rc::clone(&collision));
     world.client = Some(player_client(Box::new(client_end), collision, origin));

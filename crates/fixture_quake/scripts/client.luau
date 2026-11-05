@@ -677,6 +677,13 @@ function entity_splash(self)
 end
 
 -- The engine readies the player once the map has spawned.
+-- Who a player is. Their team is their pants colour, plus one so that 0 can
+-- mean none, from `Host_Color_f` and `Host_Spawn_f`.
+function ClientInfo(self, netname, colors)
+	self.netname = netname
+	self.team = bit32.band(colors, 15) + 1
+end
+
 function ClientConnect(self, name, saved, netname)
 	self.netname = netname or "player"
 	self.frags = self.frags or 0

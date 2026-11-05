@@ -142,6 +142,19 @@ const FAIR_RAMP: f64 = 2.0;
 /// The most of one thing said that's passed on.
 const MAX_SAY: usize = 128;
 
+/// The longest name, from `client_t`.
+const MAX_NAME: usize = 32;
+
+/// `text` with nothing in it that could pass for something else, and no longer
+/// than `limit` characters.
+fn plain_text(text: &str, limit: usize) -> String {
+    text.trim()
+        .chars()
+        .filter(|character| !character.is_control())
+        .take(limit)
+        .collect()
+}
+
 /// How much later than a shooter's ping a view can be, in seconds: the
 /// interpolation buffer, with a tick to spare.
 const VIEW_SLACK: f64 = 3.0 / 72.0;
@@ -170,6 +183,7 @@ impl Server {
         game.spawn_map(&map.entities);
         let host = simulation.borrow().player_id();
         game.connect_player(host, &level.name, level.parms.as_deref(), &level.host.name);
+        game.player_info(host, &level.host.name, level.host.colors);
         let mut seat = Seat::new(transport, level.host.clone());
         seat.player = Some(host);
         let mut server = Self {
@@ -354,10 +368,17 @@ impl Server {
             ClientMessage::Console(text) => self.console(index, &text),
             ClientMessage::Ready => self.seat_ready(index),
             ClientMessage::Info(info) => {
+                let name = plain_text(&info.name, MAX_NAME);
+                let name = if name.is_empty() {
+                    SeatInfo::default().name
+                } else {
+                    name
+                };
                 self.seats[index].info = SeatInfo {
-                    name: info.name,
+                    name,
                     colors: info.colors,
                 };
+                self.tell_game_who(index);
             }
         }
     }
@@ -525,7 +546,17 @@ impl Server {
         let name = self.seats[index].info.name.clone();
         self.game
             .connect_player(player, &self.level.name, saved.as_deref(), &name);
+        self.tell_game_who(index);
         self.retell(index);
+    }
+
+    /// Passes on who the player on `index` is, if they've got a player yet.
+    fn tell_game_who(&self, index: usize) {
+        let seat = &self.seats[index];
+        if let Some(player) = seat.player {
+            self.game
+                .player_info(player, &seat.info.name, seat.info.colors);
+        }
     }
 
     /// Tells everyone if gravity has changed, since prediction runs on it.
@@ -713,16 +744,9 @@ impl Server {
     /// alone if it's for the team and teams are being played. The mark tells
     /// clients it's someone talking, and nobody can type it.
     fn say(&mut self, index: usize, line: &str, team_only: bool) {
-        let plain = |text: &str| -> String {
-            text.trim()
-                .chars()
-                .filter(|character| !character.is_control())
-                .take(MAX_SAY)
-                .collect()
-        };
         let speaker = &self.seats[index].info;
-        let (name, team) = (plain(&speaker.name), speaker.colors & 15);
-        let line = plain(line);
+        let (name, team) = (speaker.name.clone(), speaker.colors & 15);
+        let line = plain_text(line, MAX_SAY);
         let message = ServerMessage::Print(format!("{TALK_MARK}{name}: {line}"));
         let teams = self
             .level

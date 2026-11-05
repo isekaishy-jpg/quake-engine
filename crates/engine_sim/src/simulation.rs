@@ -1134,8 +1134,9 @@ impl Simulation {
         Ok(())
     }
 
-    /// Triggers overlapping a monster, as `SV_LinkEdict` finds.
-    fn monster_touches(&self, touches: &mut Vec<Callback>) {
+    /// Triggers overlapping what's moved, as `SV_LinkEdict` finds: monsters,
+    /// and anything in flight. What's come to rest links no more.
+    fn moved_touches(&self, touches: &mut Vec<Callback>) {
         let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
         let triggers: Vec<(EntityId, Vec3, Vec3)> = self
             .entities
@@ -1150,13 +1151,17 @@ impl Simulation {
             })
             .collect();
         for (other, entity) in self.entities.iter() {
-            if entity.move_type != MoveType::Step || entity.solid == Solid::Not {
+            let flying = matches!(
+                entity.move_type,
+                MoveType::Toss | MoveType::Bounce | MoveType::Fly | MoveType::FlyMissile
+            ) && entity.velocity != Vec3::ZERO;
+            if !(entity.move_type == MoveType::Step || flying) || entity.solid == Solid::Not {
                 continue;
             }
             let low = entity.origin + entity.mins;
             let high = entity.origin + entity.maxs;
             for (id, trigger_low, trigger_high) in &triggers {
-                if boxes_touch(low, high, *trigger_low, *trigger_high) {
+                if *id != other && boxes_touch(low, high, *trigger_low, *trigger_high) {
                     touches.push(Callback::Touch {
                         id: *id,
                         other: Some(other),
@@ -1320,7 +1325,7 @@ impl Simulation {
                 }
             }
         }
-        self.monster_touches(&mut touches);
+        self.moved_touches(&mut touches);
         for player in &self.players {
             let state = player.state;
             if state.noclip || state.dead || state.frozen {

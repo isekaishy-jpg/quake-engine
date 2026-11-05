@@ -213,6 +213,84 @@ fn nothing_said_can_pass_for_something_else() {
 }
 
 #[test]
+fn a_players_team_is_their_pants_colour() {
+    let (mut server, mut host, mut guest) = two_players_with(1.0);
+    server
+        .exec(
+            r#"
+            local guest = find_all("netname", "guest")[1]
+            assert(guest.team == 14, "0x4d has pants of 13")
+            local host = find_all("netname", "player")[1]
+            assert(host.team == 1, "and the host's are 0")
+            T_Damage(guest, host, host, 10)
+            assert(guest.health == 90, "other teams can be hurt")
+            "#,
+        )
+        .expect("it holds");
+    guest.end.send(
+        ClientMessage::Info(PlayerInfo {
+            name: "guest".to_owned(),
+            colors: 0x40,
+        })
+        .encode(),
+    );
+    server.tick();
+    host.read();
+    guest.read();
+    server
+        .exec(
+            r#"
+            local guest = find_all("netname", "guest")[1]
+            local host = find_all("netname", "player")[1]
+            assert(guest.team == 1, "a change of colour is a change of team")
+            T_Damage(guest, host, host, 10)
+            assert(guest.health == 90, "and now they're on the same side")
+            "#,
+        )
+        .expect("it holds");
+}
+
+#[test]
+fn a_new_name_reaches_the_game_with_nothing_hidden_in_it() {
+    let (mut server, mut host, mut guest) = two_players();
+    guest.end.send(
+        ClientMessage::Info(PlayerInfo {
+            name: format!("{TALK_MARK}Ran\nger"),
+            colors: 0,
+        })
+        .encode(),
+    );
+    server.tick();
+    host.read();
+    guest.read();
+    server
+        .exec(r#"assert(#find_all("netname", "Ranger") == 1, "it's plain, and it's in")"#)
+        .expect("it holds");
+    guest.end.send(
+        ClientMessage::Info(PlayerInfo {
+            name: format!("{TALK_MARK}\n"),
+            colors: 0,
+        })
+        .encode(),
+    );
+    server.tick();
+    server
+        .exec(r#"assert(#find_all("netname", "player") == 2, "nothing left is no name")"#)
+        .expect("it holds");
+}
+
+#[test]
+fn a_save_from_before_no_backing_was_kept_still_reads() {
+    let mut state = serde_json::to_value(PlayerState::default()).expect("it writes");
+    state
+        .as_object_mut()
+        .expect("an object")
+        .remove("no_backing");
+    let read: PlayerState = serde_json::from_value(state).expect("it reads");
+    assert_eq!(read.no_backing, 0.0);
+}
+
+#[test]
 fn a_guest_can_be_put_out_but_the_host_cant() {
     let (mut server, mut host, mut guest) = two_players();
     assert_eq!(server.kick("nobody", "why"), None);

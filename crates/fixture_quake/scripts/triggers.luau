@@ -375,7 +375,9 @@ function trigger_hurt(self)
 end
 
 function trigger_push_touch(self, other)
-	if (other.health or 0) > 0 then
+	if other.classname == "grenade" then
+		other.velocity = self.movedir * (self.speed * 10)
+	elseif (other.health or 0) > 0 then
 		other.velocity = self.movedir * (self.speed * 10)
 		if other.classname == "player" and (other.fly_sound or 0) < time() then
 			other.fly_sound = time() + 1.5

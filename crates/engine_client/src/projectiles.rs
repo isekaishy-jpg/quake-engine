@@ -193,6 +193,9 @@ struct Flight {
     blast_used: bool,
     /// The command running when it was fired.
     fired_on: u32,
+    /// Whether a snapshot has shown its entity. A launch is reliable and a
+    /// snapshot isn't, so it can be heard of first.
+    seen: bool,
 }
 
 impl Flight {
@@ -267,6 +270,7 @@ impl Flights {
             model: 0,
             blast_used,
             fired_on,
+            seen: false,
         });
     }
 
@@ -288,15 +292,19 @@ impl Flights {
             model,
             blast_used: false,
             fired_on,
+            seen: false,
         });
     }
 
-    /// Forgets what the server no longer has, and guesses it never confirmed
-    /// by `give_up`, so a refused shot just goes away.
+    /// Forgets what the server no longer has, and what it never showed by
+    /// `give_up`, so a refused shot just goes away.
     pub fn retain(&mut self, alive: impl Fn(u64) -> bool, behind: f64, give_up: f64) {
-        self.flights.retain(|flight| match flight.entity {
-            Some(id) => alive(id),
-            None => behind - flight.seen_at < give_up,
+        self.flights.retain_mut(|flight| {
+            let shown = flight.entity.is_some_and(&alive);
+            let waited = behind - flight.seen_at < give_up;
+            let keep = shown || (!flight.seen && waited);
+            flight.seen |= shown;
+            keep
         });
     }
 

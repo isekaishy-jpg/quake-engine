@@ -1069,6 +1069,36 @@ fn a_teleport_waiting_to_be_used_leaves_what_stands_in_it_alone() {
 }
 
 #[test]
+fn a_wind_tunnel_takes_a_grenade_too() {
+    let tunnel = (
+        Vec3::new(-400.0, -32.0, -256.0),
+        Vec3::new(-200.0, 32.0, -100.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[&[
+        ("classname", "trigger_push"),
+        ("model", "*1"),
+        ("angle", "-1"),
+        ("speed", "1000"),
+    ]];
+    let map = map(&[tunnel], entities);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.1);
+    game.check(
+        r#"
+        flying = spawn()
+        flying.classname = "grenade"
+        flying.movetype = MOVETYPE_BOUNCE
+        flying.solid = SOLID_BBOX
+        setsize(flying, vector.zero, vector.zero)
+        setorigin(flying, vector.create(-300, 0, -200))
+        flying.velocity = vector.create(0, 0, -1)
+        "#,
+    );
+    game.wait(0.05);
+    game.check(r#"assert(flying.velocity.z > 1000, "it's thrown upwards")"#);
+}
+
+#[test]
 fn nobody_can_back_up_straight_after_a_teleport() {
     let trigger = (
         Vec3::new(-32.0, -32.0, -256.0),

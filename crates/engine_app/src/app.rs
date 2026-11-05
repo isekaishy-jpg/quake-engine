@@ -263,6 +263,8 @@ pub(crate) struct World {
     pub(crate) identity: SeatInfo,
     /// When a shot of ours can next be shown.
     shot_clock: ShotClock,
+    /// What [`LIVE_RULES`] last said.
+    rules_seen: Option<[f64; 4]>,
     /// The gravity last put in `sv_gravity`.
     gravity_shown: f32,
     /// What `sv_gravity` last said.
@@ -610,15 +612,21 @@ impl World {
     /// The rule of a shot that can go now, moving the time of the next one on.
     /// The second part says whether this carries on from the last shot.
     fn next_shot(&mut self) -> Option<(WeaponRule, bool)> {
-        let ammo = self.hud.ammo();
-        let rule = weapon_rule(self.hud.active_weapon(), ammo)?;
-        // A click from the dead is a wish to come back, not a shot.
-        let idle = self.hud.is_dead() || self.hud.intermission() != Intermission::None;
-        if self.server.is_some() || ammo < rule.ammo || idle {
+        let rule = self.weapon_ready()?;
+        if self.server.is_some() {
             return None;
         }
         let carrying_on = self.shot_clock.take(self.map_time, rule.refire)?;
         Some((rule, carrying_on))
+    }
+
+    /// The rule of the weapon in hand, if the player could fire it.
+    fn weapon_ready(&self) -> Option<WeaponRule> {
+        let ammo = self.hud.ammo();
+        let rule = weapon_rule(self.hud.active_weapon(), ammo)?;
+        // A click from the dead is a wish to come back, not a shot.
+        let idle = self.hud.is_dead() || self.hud.intermission() != Intermission::None;
+        (ammo >= rule.ammo && !idle).then_some(rule)
     }
 
     /// Shows a shot of the player's before the server answers. Nothing here
@@ -727,9 +735,12 @@ impl World {
             self.show_events(events);
         }
         // A held weapon keeps firing with no click to send.
-        if self.buttons.attack && self.is_playing_screen() {
+        let holding = self.buttons.attack && self.is_playing_screen();
+        if holding {
             self.hold_fire();
-        } else if let Some(client) = &mut self.client {
+        }
+        let stopped = !holding || self.weapon_ready().is_none();
+        if let (true, Some(client)) = (stopped, &mut self.client) {
             client.let_go_of_fire();
         }
         self.play_sounds();
@@ -1270,6 +1281,7 @@ impl Engine {
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
                 shot_clock: ShotClock::default(),
+                rules_seen: None,
                 gravity_shown: 800.0,
                 gravity_seen: 800.0,
                 showing_boxes: false,
@@ -1484,14 +1496,15 @@ impl Engine {
     /// console can then change it.
     #[expect(clippy::cast_possible_truncation, reason = "a gravity fits f32")]
     fn follow_rules(&mut self) {
-        let rules = LIVE_RULES.map(|name| (name, self.cvar_number(name)));
+        let rules = LIVE_RULES.map(|name| self.cvar_number(name));
         let wanted = self.cvar_number("sv_gravity") as f32;
-        let Some(server) = &mut self.world.server else {
+        // Only a change counts, or a loaded game would lose its own rules.
+        let seen = self.world.rules_seen.replace(rules);
+        let (Some(seen), Some(server)) = (seen, &mut self.world.server) else {
             return;
         };
-        for (name, value) in rules {
-            let known = server.level().settings.iter().find(|rule| rule.0 == name);
-            if known.map(|rule| rule.1) != Some(value) {
+        for ((name, value), old) in LIVE_RULES.iter().zip(rules).zip(seen) {
+            if value != old {
                 server.set_setting(name, value);
             }
         }

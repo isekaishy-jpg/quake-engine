@@ -1039,6 +1039,20 @@ impl Game {
         }
     }
 
+    /// Tells the game who player `id` is now, as `Host_Name_f` and
+    /// `Host_Color_f` do, through its `ClientInfo`.
+    pub fn player_info(&self, id: EntityId, netname: &str, colors: u8) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("ClientInfo");
+        match (function, self.player(id)) {
+            (Ok(Some(function)), Some(player)) => {
+                self.report(function.call::<()>((player, netname, colors)));
+            }
+            (Err(error), _) => self.report(Err(error)),
+            _ => {}
+        }
+    }
+
     /// Runs the game's `ClientDisconnect`, and forgets player `id`.
     pub fn disconnect_player(&self, id: EntityId) {
         self.run_on_player("ClientDisconnect", id);
