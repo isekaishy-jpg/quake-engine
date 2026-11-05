@@ -49,6 +49,10 @@ pub trait PictureSource {
     fn picture(&mut self, name: &str) -> Option<Picture>;
 }
 
+/// What marks a line of text as someone talking, from `Con_Print`. It's not
+/// drawn: the line is bright instead.
+pub const TALK_MARK: char = '\u{1}';
+
 /// A rectangle of a picture, drawn in pixels of the screen.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Quad {

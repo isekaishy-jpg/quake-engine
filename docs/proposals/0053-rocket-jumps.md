@@ -20,7 +20,7 @@ Status: accepted, 2026-11-04, increment 9.
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** quad damage doesn't enter into it, so a quad rocket jump is shown small until the server's numbers arrive. Other people's rockets aren't predicted, because nothing says when they were fired.
+- **Tradeoffs:** quad damage doesn't enter into it, so a quad rocket jump is shown small until the server's numbers arrive. Other people's rockets aren't predicted, because nothing says when they were fired. A rocket with no click behind it, which is held fire, is only known from the server's launch, so at 80 ms one fired at your feet can land first: 22 units off, against 32 without prediction. On a local game it's exact.
 - **Acceptance criteria:** with prediction, a rocket jump stays within a unit of the server at 40 and 80 ms, and at most half the error without it.
 - **Future extension:** quad damage, from the stats.
 

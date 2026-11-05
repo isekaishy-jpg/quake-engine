@@ -2,7 +2,7 @@
 
 use std::collections::VecDeque;
 
-use engine_core::canvas::{CHARACTER_SIZE, Canvas};
+use engine_core::canvas::{CHARACTER_SIZE, Canvas, TALK_MARK};
 
 /// The most lines kept.
 const MAX_LINES: usize = 1024;
@@ -66,6 +66,26 @@ fn typed(key: &str, shift: bool) -> Option<char> {
     }
 }
 
+/// The most that can be typed into a line of chat.
+const MAX_CHAT: usize = 96;
+
+/// Draws one line, in the bright font if it's someone talking.
+fn draw_line(canvas: &mut Canvas<'_>, x: f32, y: f32, line: &str) {
+    match line.strip_prefix(TALK_MARK) {
+        Some(talk) => canvas.bright_text(x, y, talk.as_bytes()),
+        None => canvas.text(x, y, line.as_bytes()),
+    }
+}
+
+/// A line of chat being typed over the view.
+#[derive(Clone, Debug, Default)]
+struct Chat {
+    /// What's been typed.
+    text: String,
+    /// Whether it's only for the team.
+    team: bool,
+}
+
 /// The console's text and what's being typed.
 #[derive(Clone, Debug, Default)]
 pub struct ConsoleView {
@@ -87,8 +107,8 @@ pub struct ConsoleView {
     down: f32,
     /// Whether Shift is held.
     shift: bool,
-    /// Whether it opened for one line of chat, and closes after it.
-    chat: bool,
+    /// A line of chat being typed, while the game goes on.
+    chat: Option<Chat>,
 }
 
 impl ConsoleView {
@@ -124,17 +144,57 @@ impl ConsoleView {
     /// Opens or closes it, starting with nothing typed.
     pub fn set_open(&mut self, open: bool) {
         self.open = open;
-        self.chat = false;
+        self.chat = None;
         self.input.clear();
         self.history_at = 0;
         self.scroll = 0;
     }
 
-    /// Opens it for one line to say to everyone.
-    pub fn open_chat(&mut self) {
-        self.set_open(true);
-        self.input.push_str("say ");
-        self.chat = true;
+    /// Starts a line of chat over the view, for the team or for everyone.
+    pub fn open_chat(&mut self, team: bool) {
+        self.chat = Some(Chat {
+            text: String::new(),
+            team,
+        });
+    }
+
+    /// Whether a line of chat is being typed.
+    #[must_use]
+    pub fn is_chatting(&self) -> bool {
+        self.chat.is_some()
+    }
+
+    /// Forgets a line of chat.
+    pub fn cancel_chat(&mut self) {
+        self.chat = None;
+    }
+
+    /// Takes a key for the line of chat, from `Key_Message`. Returns the
+    /// command to run, if one was entered.
+    pub fn chat_key(&mut self, key: &str) -> Option<String> {
+        let shift = self.shift;
+        let chat = self.chat.as_mut()?;
+        match key {
+            "ENTER" => {
+                let command = if chat.team { "say_team" } else { "say" };
+                // A quote would end the line early.
+                let text = chat.text.replace('"', "'");
+                self.chat = None;
+                return (!text.trim().is_empty()).then(|| format!("{command} \"{text}\""));
+            }
+            "ESCAPE" => self.chat = None,
+            "BACKSPACE" => {
+                let _last = chat.text.pop();
+            }
+            _ => {
+                if let Some(character) = typed(key, shift)
+                    && chat.text.len() < MAX_CHAT
+                {
+                    chat.text.push(character);
+                }
+            }
+        }
+        None
     }
 
     /// Forgets what's over the view.
@@ -190,10 +250,6 @@ impl ConsoleView {
                 self.print(&format!("{PROMPT}{line}"), f64::NEG_INFINITY);
                 self.history_at = 0;
                 self.scroll = 0;
-                if self.chat {
-                    self.chat = false;
-                    self.open = false;
-                }
                 if line.is_empty() {
                     return None;
                 }
@@ -244,14 +300,34 @@ impl ConsoleView {
         };
     }
 
-    /// Draws recent lines at the top of the view, at game time `time`.
-    pub fn draw_notify(&self, canvas: &mut Canvas<'_>, time: f64) {
+    /// Draws recent lines at the top of the view, at game time `time`, and
+    /// under them any line of chat, from `Con_DrawNotify`.
+    pub fn draw_notify(&self, canvas: &mut Canvas<'_>, time: f64, blink: bool) {
         let mut y = 0.0;
         for (arrived, line) in &self.notify {
             if time - arrived < NOTIFY_SECONDS && time >= *arrived {
-                canvas.text(0.0, y, line.as_bytes());
+                draw_line(canvas, 0.0, y, line);
                 y += CHARACTER_SIZE;
             }
+        }
+        if let Some(chat) = &self.chat {
+            let label = if chat.team { "say_team:" } else { "say:" };
+            canvas.text(CHARACTER_SIZE, y, label.as_bytes());
+            #[expect(clippy::cast_precision_loss, reason = "a short label")]
+            let left = (label.len() as f32 + 2.0) * CHARACTER_SIZE;
+            // A long line shows its end, which is where the typing is.
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "columns on a screen"
+            )]
+            let room = ((canvas.width() - left) / CHARACTER_SIZE).max(2.0) as usize - 1;
+            let shown = &chat.text[chat.text.len().saturating_sub(room)..];
+            let mut text = shown.to_owned();
+            if blink {
+                text.push('\u{b}');
+            }
+            canvas.text(left, y, text.as_bytes());
         }
     }
 
@@ -282,7 +358,7 @@ impl ConsoleView {
             if y < 0.0 {
                 break;
             }
-            canvas.text(CHARACTER_SIZE, y, line.as_bytes());
+            draw_line(canvas, CHARACTER_SIZE, y, line);
             y -= CHARACTER_SIZE;
         }
     }

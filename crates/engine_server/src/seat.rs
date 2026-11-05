@@ -21,6 +21,11 @@ const SNAPSHOT_HISTORY: usize = 64;
 /// How much each sample moves a measured ping, so short spikes don't count.
 const PING_SMOOTHING: f64 = 0.02;
 
+/// How many answers a level's first measure of ping takes. The lowest counts,
+/// since a client that's just finished loading can stall for a while, and
+/// that's no measure of its network.
+const PING_WARM_UP: u32 = 8;
+
 /// Seconds of silence after which someone's gone.
 const TIMEOUT_SECONDS: f64 = 10.0;
 
@@ -68,6 +73,8 @@ pub struct Seat {
     sent: VecDeque<(u32, f64)>,
     /// Their ping as measured here, in milliseconds, smoothed.
     ping: Option<f64>,
+    /// How many answers have counted this level, and the lowest of them.
+    warm_up: (u32, f64),
     /// Milliseconds added to their ping, moving gently towards what it should be.
     pub(crate) added: f64,
     /// Milliseconds of their ping made up for.
@@ -104,6 +111,7 @@ impl Seat {
             clock: 0.0,
             sent: VecDeque::with_capacity(SNAPSHOT_HISTORY),
             ping: None,
+            warm_up: (0, f64::INFINITY),
             added: 0.0,
             compensated: 0.0,
             over_ceiling: false,
@@ -224,6 +232,7 @@ impl Seat {
         self.seen = 0;
         self.player = None;
         self.shapes_told = 0;
+        self.warm_up = (0, f64::INFINITY);
     }
 
     /// Notes the last snapshot they received.
@@ -235,10 +244,17 @@ impl Seat {
         if let Some((_tick, sent)) = self.sent.iter().find(|(sent, _)| *sent == tick) {
             let added = self.added;
             let sample = ((self.clock - sent - tick_seconds) * 1000.0 - added).max(0.0);
-            self.ping = Some(
-                self.ping
-                    .map_or(sample, |ping| ping + (sample - ping) * PING_SMOOTHING),
-            );
+            let (count, lowest) = self.warm_up;
+            if count < PING_WARM_UP {
+                self.warm_up = (count + 1, lowest.min(sample));
+                if count + 1 == PING_WARM_UP {
+                    self.ping = Some(self.warm_up.1);
+                }
+            } else {
+                self.ping = self
+                    .ping
+                    .map(|ping| ping + (sample - ping) * PING_SMOOTHING);
+            }
         }
     }
 

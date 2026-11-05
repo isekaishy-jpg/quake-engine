@@ -121,6 +121,18 @@ struct TrailState {
     carried: f32,
 }
 
+/// The colour of the box a shot was judged against, which is red.
+const REWOUND_COLOR: u8 = 72;
+
+/// The colour of the box on the shooter's screen, which is green.
+const SEEN_COLOR: u8 = 56;
+
+/// The low corner of a player's box.
+const SEEN_BOX_LOW: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
+
+/// The high corner of a player's box.
+const SEEN_BOX_HIGH: Vec3 = Vec3::new(16.0, 16.0, 32.0);
+
 /// Everything the client shows that the server doesn't track.
 #[derive(Clone, Debug, Default)]
 pub struct Effects {
@@ -289,6 +301,13 @@ impl Effects {
         }
     }
 
+    /// Shows the box of a player at `origin`, as this client has them on
+    /// screen, to compare with the one the server judged a shot against.
+    pub fn show_seen_box(&mut self, origin: Vec3) {
+        let (low, high) = (origin + SEEN_BOX_LOW, origin + SEEN_BOX_HIGH);
+        self.particles.outline(low, high, SEEN_COLOR);
+    }
+
     /// Starts something the server sent.
     pub fn start(&mut self, effect: &Effect) {
         match *effect {
@@ -300,6 +319,7 @@ impl Effects {
             } => self.temp(kind, origin, end, entity),
             // The client's own flights follow these.
             Effect::Launch(_) => {}
+            Effect::Outline { low, high } => self.particles.outline(low, high, REWOUND_COLOR),
             Effect::Particles {
                 origin,
                 direction,

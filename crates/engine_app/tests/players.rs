@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use common::map;
+use engine_core::canvas::TALK_MARK;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
@@ -123,6 +124,11 @@ impl Player {
 
 /// A game with a host and one guest, who has loaded the level.
 fn two_players() -> (Server, Player, Player) {
+    two_players_with(0.0)
+}
+
+/// [`two_players`], with `teamplay` set.
+fn two_players_with(teamplay: f64) -> (Server, Player, Player) {
     let map = room();
     let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (host, server_end) = loopback();
@@ -138,6 +144,7 @@ fn two_players() -> (Server, Player, Player) {
             settings: vec![
                 ("skill".to_owned(), 1.0),
                 ("deathmatch".to_owned(), 1.0),
+                ("teamplay".to_owned(), teamplay),
                 // These clients don't answer snapshots, so have no ping.
                 ("sv_fair_enable".to_owned(), 0.0),
             ],
@@ -160,6 +167,49 @@ fn two_players() -> (Server, Player, Player) {
     host.read();
     guest.read();
     (server, host, guest)
+}
+
+/// What each hears when the guest sends `line`.
+fn heard(teamplay: f64, line: &str) -> (Vec<String>, Vec<String>) {
+    let (mut server, mut host, mut guest) = two_players_with(teamplay);
+    host.prints.clear();
+    guest.prints.clear();
+    guest
+        .end
+        .send(ClientMessage::Console(line.to_owned()).encode());
+    server.tick();
+    host.read();
+    guest.read();
+    (host.prints, guest.prints)
+}
+
+#[test]
+fn everyone_hears_a_guest_talk() {
+    let (host, guest) = heard(0.0, "say hello; there");
+    let expected = vec![format!("{TALK_MARK}guest: hello; there")];
+    assert_eq!(host, expected);
+    assert_eq!(guest, expected);
+}
+
+#[test]
+fn team_talk_stays_on_the_team_when_teams_are_played() {
+    let (host, guest) = heard(1.0, "say_team a secret");
+    assert!(host.is_empty(), "the host's on another team: {host:?}");
+    assert_eq!(guest.len(), 1, "and you hear yourself");
+    let (host, _guest) = heard(0.0, "say_team a secret");
+    assert_eq!(host.len(), 1, "with no teams, it's for everyone");
+}
+
+#[test]
+fn nothing_said_can_pass_for_something_else() {
+    let (host, _guest) = heard(0.0, "say one\u{1}\ntwo");
+    assert_eq!(host, vec![format!("{TALK_MARK}guest: onetwo")]);
+    let long = "x".repeat(200);
+    let (host, _guest) = heard(0.0, &format!("say {long}"));
+    assert!(host[0].len() < 150, "a line is kept to a sensible length");
+    let far_too_long = "x".repeat(100_000);
+    let (host, _guest) = heard(0.0, &format!("say {far_too_long}"));
+    assert!(host.is_empty(), "and the network won't carry this at all");
 }
 
 #[test]

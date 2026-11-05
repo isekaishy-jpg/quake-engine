@@ -96,4 +96,11 @@ pub enum Effect {
     },
     /// Something's been launched.
     Launch(Projectile),
+    /// A box to show for a moment, for seeing what a shot was judged against.
+    Outline {
+        /// Its low corner.
+        low: Vec3,
+        /// Its high corner.
+        high: Vec3,
+    },
 }

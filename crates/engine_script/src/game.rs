@@ -525,7 +525,7 @@ impl Game {
             })?,
         )?;
         Self::register_sound(lua, simulation, outbox, &engine)?;
-        Self::register_world(lua, simulation, &engine)?;
+        Self::register_world(lua, simulation, outbox, &engine)?;
         Self::register_effects(lua, outbox, &engine)?;
         lua.globals().set("engine", engine)
     }
@@ -534,6 +534,7 @@ impl Game {
     fn register_world(
         lua: &Lua,
         simulation: &Rc<RefCell<Simulation>>,
+        outbox: &Rc<RefCell<Outbox>>,
         engine: &Table,
     ) -> mlua::Result<()> {
         let sim = Rc::clone(simulation);
@@ -579,10 +580,17 @@ impl Game {
         )?;
         Self::register_walking(lua, simulation, engine)?;
         let sim = Rc::clone(simulation);
+        let rewind_out = Rc::clone(outbox);
         engine.set(
             "rewind",
             lua.create_function(move |_, id: f64| {
-                sim.borrow_mut().rewind(id_from(id));
+                let shooter = id_from(id);
+                sim.borrow_mut().rewind(shooter);
+                let shown = sim.borrow().shown_rewind(shooter);
+                let outlines = shown
+                    .into_iter()
+                    .map(|(low, high)| Effect::Outline { low, high });
+                rewind_out.borrow_mut().effects.extend(outlines);
                 Ok(())
             })?,
         )?;

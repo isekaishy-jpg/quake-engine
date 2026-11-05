@@ -83,6 +83,12 @@ impl Trail {
     }
 }
 
+/// How many pieces each edge of an outline has.
+const OUTLINE_STEPS: u8 = 6;
+
+/// How long an outline stays, in seconds.
+const OUTLINE_SECONDS: f32 = 2.0;
+
 /// Every live particle.
 #[derive(Clone, Debug)]
 pub struct Particles {
@@ -205,6 +211,36 @@ impl Particles {
                 motion: Motion::Fall,
             };
             self.add(particle);
+        }
+    }
+
+    /// Marks the edges of a box from `low` to `high` for a moment, in `color`.
+    pub fn outline(&mut self, low: Vec3, high: Vec3, color: u8) {
+        let corner = |bits: u8| {
+            Vec3::new(
+                if bits & 1 == 0 { low.x } else { high.x },
+                if bits & 2 == 0 { low.y } else { high.y },
+                if bits & 4 == 0 { low.z } else { high.z },
+            )
+        };
+        for from in 0..8u8 {
+            for axis in [1u8, 2, 4] {
+                if from & axis != 0 {
+                    continue;
+                }
+                let (start, end) = (corner(from), corner(from | axis));
+                for step in 0..=OUTLINE_STEPS {
+                    let share = f32::from(step) / f32::from(OUTLINE_STEPS);
+                    self.add(Particle {
+                        origin: start.lerp(end, share),
+                        color,
+                        velocity: Vec3::ZERO,
+                        ramp: 0.0,
+                        die: self.time + OUTLINE_SECONDS,
+                        motion: Motion::Still,
+                    });
+                }
+            }
         }
     }
 

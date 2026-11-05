@@ -17,7 +17,7 @@ use engine_client::{
     view_bob, view_idle, view_roll,
 };
 use engine_console::{Console, CvarFlags};
-use engine_core::canvas::Quad;
+use engine_core::canvas::{Quad, TALK_MARK};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
@@ -55,6 +55,9 @@ pub(crate) const TICK_SECONDS: f64 = 1.0 / 72.0;
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
 
+/// What someone talking sounds like, from `Con_Print`.
+const TALK_SOUND: &str = "misc/talk.wav";
+
 /// The name of the saved settings.
 pub(crate) const CONFIG_NAME: &str = "config.cfg";
 
@@ -82,7 +85,7 @@ struct AudioLevels {
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
 /// Settings a game can read, which go to it as each level starts.
-const LEVEL_SETTINGS: [&str; 18] = [
+const LEVEL_SETTINGS: [&str; 19] = [
     "sv_fair_enable",
     "sv_fair_floor",
     "sv_fair_width",
@@ -91,6 +94,7 @@ const LEVEL_SETTINGS: [&str; 18] = [
     "sv_fair_partial",
     "sv_fair_outlier",
     "sv_fair_interval",
+    "sv_unlag_debug",
     "sv_unlag_enable",
     "skill",
     "deathmatch",
@@ -420,6 +424,7 @@ impl World {
         }
         self.net_server = None;
         self.bots.clear();
+        self.console_view.cancel_chat();
         self.collision = None;
         self.connecting = None;
         self.client = None;
@@ -609,6 +614,20 @@ impl World {
             client.expect_own_sound(rule.sound);
         }
         self.play_local(rule.sound);
+    }
+
+    /// Shows the other players' boxes as they are on this screen.
+    fn show_seen_boxes(&mut self) {
+        let Some(client) = &mut self.client else {
+            return;
+        };
+        let players: Vec<u64> = client.scores().iter().map(|score| score.entity).collect();
+        let drawn = client.draw_entities_buffered(0.0);
+        for entity in drawn {
+            if players.contains(&entity.state.id) {
+                self.effects.show_seen_box(entity.state.origin);
+            }
+        }
     }
 
     /// Runs one tick of the game.
@@ -1113,6 +1132,7 @@ impl Engine {
             ("sv_fair_partial", "0.5"),
             ("sv_fair_outlier", "100"),
             ("sv_fair_interval", "30"),
+            ("sv_unlag_debug", "0"),
             ("sv_unlag_enable", "1"),
         ] {
             console.register_cvar(name, value, server_rule);
@@ -1235,6 +1255,9 @@ impl Engine {
         }
         let (prints, level) = self.world.take_server_news();
         for text in prints {
+            if text.starts_with(TALK_MARK) {
+                self.world.play_local(TALK_SOUND);
+            }
             self.console.print(text);
         }
         for command in std::mem::take(&mut self.world.commands) {
@@ -1323,6 +1346,10 @@ impl Engine {
             self.world.menu = menu;
         } else if self.world.console_view.is_open() {
             self.console_key(&key);
+        } else if self.world.console_view.is_chatting() {
+            if let Some(line) = self.world.console_view.chat_key(&key) {
+                self.console.add(&line);
+            }
         } else if key == "ESCAPE" {
             if !repeat {
                 self.console.add("togglemenu");
@@ -1351,6 +1378,10 @@ impl Engine {
         if let Some(client) = &mut self.world.client {
             let seed = client.send_fire(yaw, pitch, offset);
             self.world.guess_shot(seed);
+        }
+        let showing = self.console.cvar("sv_unlag_debug");
+        if showing.is_some_and(|cvar| cvar.value() != "0") {
+            self.world.show_seen_boxes();
         }
     }
 
@@ -1442,7 +1473,8 @@ impl Engine {
         }
         let mut output = std::io::stdout().lock();
         for line in lines {
-            let _ignored = writeln!(output, "{line}");
+            let plain = line.strip_prefix(TALK_MARK).unwrap_or(&line);
+            let _ignored = writeln!(output, "{plain}");
             self.world.console_view.print(&line, self.world.map_time);
         }
         let _ignored = output.flush();

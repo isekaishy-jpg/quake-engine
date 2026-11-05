@@ -22,6 +22,8 @@ pub struct FairSettings {
     pub outlier: f64,
     /// `sv_fair_interval`: seconds between zone updates.
     pub interval: f64,
+    /// `sv_unlag_debug`: whether shots show the boxes they're judged against.
+    pub show: bool,
     /// `sv_unlag_enable`: whether shots rewind at all.
     pub unlag: bool,
 }
@@ -38,6 +40,7 @@ impl Default for FairSettings {
             outlier: 100.0,
             interval: 30.0,
             unlag: true,
+            show: false,
         }
     }
 }
@@ -58,6 +61,7 @@ impl FairSettings {
                 "sv_fair_outlier" => rules.outlier = *value,
                 "sv_fair_interval" => rules.interval = *value,
                 "sv_unlag_enable" => rules.unlag = *value != 0.0,
+                "sv_unlag_debug" => rules.show = *value != 0.0,
                 _ => {}
             }
         }

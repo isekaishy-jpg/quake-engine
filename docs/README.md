@@ -72,6 +72,9 @@
     - [0051: the fair play zone](proposals/0051-the-fair-play-zone.md)
     - [0052: projectiles](proposals/0052-projectiles.md)
     - [0053: predicted rocket jumps](proposals/0053-rocket-jumps.md)
+    - [0054: chat](proposals/0054-chat.md)
+    - [0055: scores beside the bar](proposals/0055-scores-beside-the-bar.md)
+    - [0056: seeing what a shot was judged against](proposals/0056-seeing-a-shots-boxes.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -12,6 +12,7 @@ Status: accepted, 2026-11-04, increment 9.
 
 - `engine_server::fair` holds `FairSettings` and `Zone`, as plain arithmetic, tested against the record's tables.
 - A seat notes when each snapshot went, and how long its answer took, less the tick that waiting for a command costs. The client's own say counts for nothing, and it can only make itself look worse.
+- A level's first measure of a player's ping is the lowest of eight answers, because a client that's just finished loading can stall, and that's no measure of its network.
 - Every `sv_fair_interval` seconds the zone is worked out again. Delay and compensation then move at 2 ms a second, so timing doesn't jump in a fight, except that a newcomer starts where they should be, and losing help at the ceiling is immediate.
 - Added delay holds a seat's commands and snapshots, half each way.
 - A shooter's rewind is limited to what's compensated, plus the interpolation buffer and a tick. Over the ceiling there's no rewind.

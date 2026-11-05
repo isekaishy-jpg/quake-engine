@@ -80,6 +80,9 @@ const TAG_LAUNCH: u8 = 24;
 /// The tag of a shot, sent the moment it's fired.
 const TAG_FIRE: u8 = 23;
 
+/// A box to show for a moment.
+const TAG_OUTLINE: u8 = 25;
+
 /// The most commands in a move message.
 const MAX_MOVE_COMMANDS: usize = 8;
 
@@ -517,6 +520,11 @@ impl ServerMessage {
                 put_vec3(&mut out, launch.velocity);
                 out.extend_from_slice(&launch.time.to_le_bytes());
             }
+            Self::Effect(Effect::Outline { low, high }) => {
+                out.push(TAG_OUTLINE);
+                put_vec3(&mut out, *low);
+                put_vec3(&mut out, *high);
+            }
             Self::Effect(Effect::Temp {
                 kind,
                 origin,
@@ -626,6 +634,14 @@ impl ServerMessage {
                 reader
                     .finished()
                     .then_some(Self::Effect(Effect::Launch(launch)))
+            }
+            TAG_OUTLINE => {
+                let mut reader = Reader { bytes: rest };
+                let effect = Effect::Outline {
+                    low: reader.vec3()?,
+                    high: reader.vec3()?,
+                };
+                reader.finished().then_some(Self::Effect(effect))
             }
             TAG_PARTICLES => {
                 let mut reader = Reader { bytes: rest };

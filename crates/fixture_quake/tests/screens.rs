@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use engine_core::canvas::{Canvas, Picture, PictureSource, Quad};
 use engine_map::Contents;
-use fixture_quake::{Hud, Intermission, Menu, MenuHost, SAVE_SLOTS, Screen};
+use fixture_quake::{Hud, Intermission, Menu, MenuHost, SAVE_SLOTS, Score, Screen};
 
 /// Pictures of 16 by 16, each with its own number, remembering what was asked.
 #[derive(Default)]
@@ -123,6 +123,69 @@ fn the_dead_see_the_scores() {
     let names = bar(&hud);
     assert!(has(&names, "scorebar"));
     assert!(!has(&names, "sbar"));
+}
+
+/// Stats for a healthy player, with `deathmatch` set.
+fn deathmatch_stats(deathmatch: i32) -> Vec<i32> {
+    let mut numbers = stats(100, 0).to_vec();
+    numbers.push(deathmatch);
+    numbers
+}
+
+/// Eight players with their frags in order, the one at `own` being us.
+fn eight_players(own: usize) -> Vec<Score> {
+    (0..8)
+        .map(|place| Score {
+            name: format!("p{place}"),
+            frags: 8 - i32::try_from(place).expect("small"),
+            colors: 0,
+            own: place == own,
+        })
+        .collect()
+}
+
+/// How many lines of scores are beside the bar, with `deathmatch` set, on a
+/// screen `width` wide.
+fn lines_beside_the_bar(hud: &Hud, width: u32) -> usize {
+    let mut names = Names::default();
+    let mut canvas = Canvas::new(&mut names, (width, 400), 1);
+    hud.draw(&mut canvas, true);
+    let beside = ((width - 320) / 2 + 324) as f32;
+    let quads = canvas.into_quads();
+    let colours = quads.iter().filter(|quad| {
+        quad.place[0] == beside && quad.place[2] == beside + 40.0 && quad.place[3] <= 400.0
+    });
+    colours.count() / 2
+}
+
+#[test]
+fn deathmatch_shows_scores_beside_the_bar() {
+    let mut hud = Hud::new();
+    hud.set_stats(&deathmatch_stats(1), 1.0);
+    hud.set_scores(eight_players(7));
+    assert_eq!(lines_beside_the_bar(&hud, 640), 6, "as many as fit");
+    assert_eq!(lines_beside_the_bar(&hud, 480), 0, "if there's room");
+    hud.set_stats(&deathmatch_stats(0), 1.0);
+    assert_eq!(lines_beside_the_bar(&hud, 640), 0, "and only in deathmatch");
+}
+
+#[test]
+fn the_scores_beside_the_bar_stay_around_you() {
+    for own in 0..8 {
+        let mut hud = Hud::new();
+        hud.set_stats(&deathmatch_stats(1), 1.0);
+        hud.set_scores(eight_players(own));
+        let mut names = Names::default();
+        let mut canvas = Canvas::new(&mut names, (640, 400), 1);
+        hud.draw(&mut canvas, true);
+        // The marks either side of your frags.
+        let marked = canvas
+            .into_quads()
+            .iter()
+            .filter(|quad| quad.place[0] == 484.0 && quad.place[2] == 492.0)
+            .count();
+        assert_eq!(marked, 1, "you're always there, in place {own}");
+    }
 }
 
 #[test]

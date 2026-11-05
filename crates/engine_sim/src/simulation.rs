@@ -304,6 +304,8 @@ pub struct Simulation {
     pub(crate) player_view: Vec<bool>,
     /// Where players are taken to be, while a shot looks into the past.
     rewound: Vec<(EntityId, Vec3)>,
+    /// Whether shots show the boxes they're judged against.
+    showing_rewind: bool,
     /// The exact time of what scripts are running for.
     event_time: Option<f64>,
     /// Where doors, lifts and monsters have been lately, oldest first.
@@ -337,6 +339,7 @@ impl Simulation {
             check_index: 0,
             player_view: Vec::new(),
             rewound: Vec::new(),
+            showing_rewind: false,
             event_time: None,
             things_past: VecDeque::new(),
         };
@@ -406,6 +409,7 @@ impl Simulation {
             check_index,
             player_view,
             rewound: _,
+            showing_rewind: _,
             event_time: _,
             things_past: _,
         } = self;
@@ -442,6 +446,7 @@ impl Simulation {
             check_index: saved.check_index,
             player_view: saved.player_view,
             rewound: Vec::new(),
+            showing_rewind: false,
             event_time: None,
             things_past: VecDeque::new(),
         }
@@ -1230,6 +1235,28 @@ impl Simulation {
         });
         rewound.extend(at);
         self.rewound = rewound;
+    }
+
+    /// Sets whether shots show the boxes they're judged against.
+    pub fn set_showing_rewind(&mut self, showing: bool) {
+        self.showing_rewind = showing;
+    }
+
+    /// The boxes of the other players as `shooter`'s shot sees them, if those
+    /// are being shown.
+    #[must_use]
+    pub fn shown_rewind(&self, shooter: EntityId) -> Vec<(Vec3, Vec3)> {
+        if !self.showing_rewind {
+            return Vec::new();
+        }
+        self.rewound
+            .iter()
+            .filter(|(id, _)| *id != shooter && self.slot(*id).is_some())
+            .filter_map(|(id, origin)| {
+                let entity = self.entity(*id)?;
+                Some((*origin + entity.mins, *origin + entity.maxs))
+            })
+            .collect()
     }
 
     /// Puts players back after a shot.

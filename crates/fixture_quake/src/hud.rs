@@ -62,6 +62,10 @@ const FIRST_ITEM_BIT: u32 = 17;
 /// The bit of the first sigil.
 const FIRST_SIGIL_BIT: u32 = 28;
 
+/// How wide the screen has to be for scores beside the bar.
+const MINI_RANKING_WIDTH: f32 = 512.0;
+/// How many fit beside the bar and the inventory.
+const MINI_RANKING_LINES: usize = 6;
 /// `SBAR_HEIGHT`.
 const BAR_HEIGHT: f32 = 24.0;
 /// The bar's width, which it's centred by.
@@ -427,6 +431,39 @@ impl Hud {
         }
     }
 
+    /// Draws scores beside the bar, around the player's own, from
+    /// `Sbar_MiniDeathmatchOverlay`.
+    fn draw_mini_ranking(&self, canvas: &mut Canvas<'_>, x: f32, y: f32) {
+        if canvas.width() < MINI_RANKING_WIDTH {
+            return;
+        }
+        let total = self.scores.len();
+        let own = self.scores.iter().position(|score| score.own);
+        let first = own.map_or(0, |own| own.saturating_sub(MINI_RANKING_LINES / 2));
+        let first = first.min(total.saturating_sub(MINI_RANKING_LINES));
+        let left = x + BAR_WIDTH + 4.0;
+        let top = y - BAR_HEIGHT;
+        let shown = self.scores.iter().skip(first).take(MINI_RANKING_LINES);
+        for (line, score) in (0u8..).zip(shown) {
+            let row = top + 8.0 * f32::from(line);
+            canvas.fill(
+                [left, row + 1.0, left + 40.0, row + 4.0],
+                self.shirt(score.colors >> 4),
+            );
+            canvas.fill(
+                [left, row + 4.0, left + 40.0, row + 8.0],
+                self.shirt(score.colors),
+            );
+            let frags = format!("{:3}", score.frags);
+            canvas.text(left + 8.0, row, frags.as_bytes());
+            if score.own {
+                canvas.character(left, row, 16);
+                canvas.character(left + 32.0, row, 17);
+            }
+            canvas.text(left + 48.0, row, score.name.as_bytes());
+        }
+    }
+
     /// Holds the scores open, or lets them go.
     pub fn set_show_scores(&mut self, show: bool) {
         self.show_scores = show;
@@ -574,6 +611,9 @@ impl Hud {
         self.draw_inventory(canvas, x, y);
         if self.scores.len() > 1 {
             self.draw_frags(canvas, x, y - BAR_HEIGHT);
+        }
+        if self.stats[STAT_DEATHMATCH] != 0 {
+            self.draw_mini_ranking(canvas, x, y);
         }
         if self.show_scores || self.is_dead() {
             canvas.picture("scorebar", x, y);

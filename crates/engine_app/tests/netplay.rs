@@ -10,6 +10,7 @@ use std::time::Duration;
 
 use engine_assets::FileSystem;
 use engine_client::{Bot, BotSkill, Client, Path};
+use engine_core::entity::Effect;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_map::Map;
@@ -459,6 +460,174 @@ fn over_the_ceiling_means_leading_your_shots() {
     assert!(beyond < 10.0);
 }
 
+/// How far the box a shot was judged against is from where the shooter's
+/// screen had the target, and from where it had it six ticks later, which is
+/// about how much a shot would trail by with no rewind. Empty if none came.
+fn judged_box_errors(map: &Arc<Map>, showing: f64) -> Vec<(f32, f32)> {
+    let settings = [("deathmatch", 1.0), ("sv_unlag_debug", showing)];
+    let (mut server, mut host, world) = game(map, "dm3", &settings);
+    server.exec(COUNT_SHOTS).expect("the counter loads");
+    server.exec("rewinding = true").expect("it runs");
+    let still = BotSkill {
+        moves: false,
+        shoots: false,
+        ..BotSkill::default()
+    };
+    let target = BotSkill {
+        moves: true,
+        shoots: false,
+        patrol_seconds: 0.61,
+        ..BotSkill::default()
+    };
+    let mut bots = vec![
+        add_bot(&mut server, &world, network(60, 0, 0.0), still, 1),
+        add_bot(&mut server, &world, network(30, 0, 0.0), target, 2),
+    ];
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    server
+        .exec(
+            r#"
+            local host = find_all("netname", "player")[1]
+            setorigin(host, vector.create(0, 0, 4000))
+            host.frozen = true
+            setorigin(find_all("netname", "bot1")[1], vector.create(-880, -232, -16))
+            setorigin(find_all("netname", "bot2")[1], vector.create(-640, -232, -16))
+            "#,
+        )
+        .expect("it runs");
+    run(&mut server, &mut host, &mut bots, &world, 3.0);
+    let Some(target_id) = bots[0]
+        .client_mut()
+        .scores()
+        .iter()
+        .find(|score| score.name == "bot2")
+        .map(|score| score.entity)
+    else {
+        panic!("the target is on the scores");
+    };
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    let (mut seen, mut shots, mut judged) = (Vec::new(), Vec::new(), Vec::new());
+    for tick_number in 0..720 {
+        let client = bots[0].client_mut();
+        client.update_network(Duration::from_secs_f32(tick));
+        client.receive();
+        for effect in client.take_effects() {
+            // The host is up out of the way, and has a box as well.
+            if let Effect::Outline { low, .. } = effect
+                && low.z < 1000.0
+            {
+                judged.push(low + Vec3::new(16.0, 16.0, 24.0));
+            }
+        }
+        let drawn = client.draw_entities_buffered(f64::from(tick));
+        let place = drawn
+            .iter()
+            .find(|entity| entity.state.id == target_id)
+            .map_or(Vec3::ZERO, |entity| entity.state.origin);
+        seen.push(place);
+        let attack = tick_number % 40 == 0;
+        if attack {
+            shots.push(seen.len() - 1);
+            let _seed = client.send_fire(0.0, 0.0, 128);
+        }
+        let command = UserCommand {
+            attack,
+            ..UserCommand::default()
+        };
+        client.send_command(command, tick);
+        client.flush_network();
+        bots[1].tick(tick, &world);
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+        let _sounds = host.take_sounds();
+        let _effects = host.take_effects();
+    }
+    judged
+        .iter()
+        .zip(&shots)
+        .filter(|(_, shot)| **shot + 6 < seen.len())
+        .map(|(box_at, shot)| {
+            (
+                (*box_at - seen[*shot]).length(),
+                (*box_at - seen[*shot + 6]).length(),
+            )
+        })
+        .collect()
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_stall_while_joining_isnt_taken_for_a_bad_ping() {
+    let map = load("dm3");
+    let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
+    let skill = BotSkill {
+        moves: false,
+        shoots: false,
+        ..BotSkill::default()
+    };
+    let mut bots = vec![add_bot(&mut server, &world, network(20, 0, 0.0), skill, 1)];
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    let step = |server: &mut Server, host: &mut Client| {
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    };
+    // Hears the first snapshot, then stalls before it can answer, as a client
+    // does with a level to finish setting up.
+    let client = bots[0].client_mut();
+    client.flush_network();
+    for _ in 0..144 {
+        if client.last_answer().is_some() {
+            break;
+        }
+        step(&mut server, &mut host);
+        client.update_network(Duration::from_secs_f32(tick));
+        client.flush_network();
+        client.receive();
+    }
+    assert!(client.last_answer().is_some(), "it has to have joined");
+    for _ in 0..40 {
+        step(&mut server, &mut host);
+    }
+    client.send_command(UserCommand::default(), tick);
+    client.flush_network();
+    step(&mut server, &mut host);
+    for _ in 0..144 {
+        run(&mut server, &mut host, &mut bots, &world, 1.0 / 72.0);
+        let report = server.report();
+        let bot = report.iter().find(|seat| seat.name == "bot1");
+        assert!(!bot.expect("the bot").over_ceiling, "{:?}", bot);
+    }
+    let report = server.report();
+    let ping = report
+        .iter()
+        .find(|seat| seat.name == "bot1")
+        .map(|seat| seat.ping);
+    assert!(ping.expect("the bot") < 45.0, "{ping:?}");
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn the_box_a_shot_is_judged_against_is_the_one_on_the_screen() {
+    let map = load("dm3");
+    let errors = judged_box_errors(&map, 1.0);
+    assert!(errors.len() > 10, "they have to have fired: {errors:?}");
+    let count = errors.len() as f32;
+    let worst = errors.iter().map(|error| error.0).fold(0.0, f32::max);
+    let mean = errors.iter().map(|error| error.0).sum::<f32>() / count;
+    let later = errors.iter().map(|error| error.1).sum::<f32>() / count;
+    println!("{count} shots: {mean:.1} units off, {worst:.1} at worst, {later:.1} unrewound");
+    assert!(worst < 9.0, "no more than about two ticks of running");
+    assert!(
+        later > mean * 3.0,
+        "and the measure can tell the difference"
+    );
+    assert!(judged_box_errors(&map, 0.0).is_empty(), "only when asked");
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn a_shot_past_a_door_is_judged_where_the_door_was() {
@@ -588,7 +757,7 @@ fn a_clients_path_matches_the_servers_projectile() {
 /// A rocket jump at `ping`: fires at the floor, and returns the worst gap
 /// between where the client thinks it is and where the server says, over the
 /// jump, with and without predicting the knock.
-fn rocket_jump_error(ping: u64, predicting: bool) -> f32 {
+fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
     let map = load("dm3");
     let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
     let mut bots = vec![add_bot(
@@ -638,7 +807,7 @@ fn rocket_jump_error(ping: u64, predicting: bool) -> f32 {
         let client = bots[0].client_mut();
         client.update_network(Duration::from_secs_f32(tick));
         client.receive();
-        if tick_number == 0 {
+        if clicked && tick_number == 0 {
             // As a click does, before the server has heard of it.
             let start = client.predicted().origin + Vec3::new(0.14, 0.0, 8.0);
             let down = Vec3::new(0.017, 0.0, -1.0);
@@ -664,9 +833,21 @@ fn rocket_jump_error(ping: u64, predicting: bool) -> f32 {
 #[ignore = "needs game data"]
 fn predicting_a_rocket_jump_keeps_the_client_with_the_server() {
     for ping in [40, 80] {
-        let with = rocket_jump_error(ping, true);
-        let without = rocket_jump_error(ping, false);
+        let with = rocket_jump_error(ping, true, true);
+        let without = rocket_jump_error(ping, false, true);
         println!("{ping} ms: {with:.1} units with prediction, {without:.1} without");
         assert!(with * 2.0 < without, "it has to make a real difference");
+    }
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_rocket_with_no_click_behind_it_is_never_knocked_twice() {
+    // Held fire, and a host's own rockets, are only known from the server.
+    for ping in [0, 20, 40, 80] {
+        let with = rocket_jump_error(ping, true, false);
+        let without = rocket_jump_error(ping, false, false);
+        println!("{ping} ms: {with:.1} units with prediction, {without:.1} without");
+        assert!(with <= without + 0.1, "it mustn't make it worse");
     }
 }

@@ -20,7 +20,7 @@ Status: accepted, 2026-11-04, increment 9.
 - A player's frames are a full port of `player.qc`, replacing the short list kept for first person.
 - `ServerMessage::Scores` sends a list of names, frags and colours when it changes. `Hud` draws them.
 - Skins are recoloured as a model is loaded for a player's colours, into its own texture, since there are only as many as players.
-- `say` and `messagemode` give chat. `messagemode` opens the console's line for one message.
+- `say` and `messagemode` give chat, as [proposal 0054](0054-chat.md) has it.
 - Multiplayer in the menus has Join, Host and Setup: a typed address, a map and rules, and a name and colours.
 
 ## Proposal

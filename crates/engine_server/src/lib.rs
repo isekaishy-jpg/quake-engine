@@ -15,6 +15,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
+use engine_core::canvas::TALK_MARK;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::sound::StaticSound;
@@ -132,6 +133,9 @@ pub struct SeatReport {
 /// How fast added delay and compensation move towards their targets, in
 /// milliseconds a second, so timing never jumps in the middle of a fight.
 const FAIR_RAMP: f64 = 2.0;
+
+/// The most of one thing said that's passed on.
+const MAX_SAY: usize = 128;
 
 /// How much later than a shooter's ping a view can be, in seconds: the
 /// interpolation buffer, with a tick to spare.
@@ -432,6 +436,7 @@ impl Server {
         };
         let step = FAIR_RAMP * self.seconds;
         let rules = self.fair;
+        self.simulation.borrow_mut().set_showing_rewind(rules.show);
         for seat in &mut self.seats {
             let ping = seat.ping();
             let (compensated, over) = if rules.enable {
@@ -651,6 +656,34 @@ impl Server {
         self.game.player_post_think(id);
     }
 
+    /// `Host_Say`: passes on what the player on `index` said, to their team
+    /// alone if it's for the team and teams are being played. The mark tells
+    /// clients it's someone talking, and nobody can type it.
+    fn say(&mut self, index: usize, line: &str, team_only: bool) {
+        let plain = |text: &str| -> String {
+            text.trim()
+                .chars()
+                .filter(|character| !character.is_control())
+                .take(MAX_SAY)
+                .collect()
+        };
+        let speaker = &self.seats[index].info;
+        let (name, team) = (plain(&speaker.name), speaker.colors & 15);
+        let line = plain(line);
+        let message = ServerMessage::Print(format!("{TALK_MARK}{name}: {line}"));
+        let teams = self
+            .level
+            .settings
+            .iter()
+            .any(|(name, value)| name == "teamplay" && *value != 0.0);
+        for seat in &mut self.seats {
+            let hears = !(teams && team_only) || seat.info.colors & 15 == team;
+            if seat.player.is_some() && hears {
+                seat.send(&message);
+            }
+        }
+    }
+
     /// Sends `message` to everyone in the game.
     fn broadcast(&mut self, message: &ServerMessage) {
         for seat in &mut self.seats {
@@ -804,10 +837,9 @@ impl Server {
                     self.seats[index].send(&ServerMessage::Print(line));
                 }
             }
-            Some("say") => {
-                let line = text.trim_start().strip_prefix("say").unwrap_or("").trim();
-                let name = self.seats[index].info.name.clone();
-                self.broadcast(&ServerMessage::Print(format!("{name}: {line}")));
+            Some(command @ ("say" | "say_team")) => {
+                let line = text.trim_start().strip_prefix(command).unwrap_or("");
+                self.say(index, line, command == "say_team");
             }
             Some(command) if host || matches!(command, "kill") => {
                 let argument = words.collect::<Vec<_>>().join(" ");

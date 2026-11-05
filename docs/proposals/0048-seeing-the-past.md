@@ -19,10 +19,10 @@ Status: accepted, 2026-11-04, increment 9.
 
 ## Proposal
 
-- **Selected approach:** the above, for players.
-- **Tradeoffs:** a player can be hit just after reaching cover, the known price of favouring the shooter. Doors and platforms don't rewind yet. Monsters don't either, since co-op doesn't need it as much.
+- **Selected approach:** the above, for players, and since then for doors, platforms and monsters too.
+- **Tradeoffs:** a player can be hit just after reaching cover, the known price of favouring the shooter.
 - **Acceptance criteria:** tests show the buffer holding steady through gaps and jitter, and a shot at where a target was drawn 100 ms ago hitting, one 400 ms ago missing, and the target being back in place afterwards.
-- **Future extension:** the fair play zone, weapon sub-tick, half tick, launch events for projectiles and predicted rocket jumps. Those need tuning with real players, and wait in the plan.
+- **Future extension:** tuning with real players. The fair play zone, weapon timing, projectiles and rocket jumps followed in proposals 0050 to 0053.
 
 ## Review
 

@@ -82,7 +82,9 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("addbot", add_bot);
     console.register("removebots", remove_bots);
     console.register("say", say);
+    console.register("say_team", say_team);
     console.register("messagemode", message_mode);
+    console.register("messagemode2", message_mode_team);
     console.register("menu_multiplayer", open_menu);
     console.register("save", save);
     console.register("load", load);
@@ -401,10 +403,26 @@ fn say(console: &mut Console<World>, world: &mut World, args: &Args) {
     }
 }
 
-/// `messagemode`: types one line to say to everyone.
+/// `say_team text`: tells your team.
+fn say_team(console: &mut Console<World>, world: &mut World, args: &Args) {
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("say_team {}", args.rest()));
+    } else {
+        console.print("say_team needs a game running");
+    }
+}
+
+/// `messagemode`: types one line to say to everyone, over the view.
 fn message_mode(_console: &mut Console<World>, world: &mut World, _args: &Args) {
     if world.client.is_some() {
-        world.console_view.open_chat();
+        world.console_view.open_chat(false);
+    }
+}
+
+/// `messagemode2`: types one line to say to your team, over the view.
+fn message_mode_team(_console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if world.client.is_some() {
+        world.console_view.open_chat(true);
     }
 }
 

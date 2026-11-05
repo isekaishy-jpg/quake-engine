@@ -104,6 +104,12 @@ impl World {
             renderer,
         };
         let mut canvas = Canvas::new(&mut loader, size, scale);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "which half of a blink"
+        )]
+        let blink = ((run_time * 4.0) as u64).is_multiple_of(2);
         if running {
             self.hud.draw_tint(&mut canvas);
             if self.crosshair && playing && self.hud.intermission() == Intermission::None {
@@ -115,15 +121,9 @@ impl World {
                 draw_plaque(&mut canvas, PAUSE_PICTURE);
             }
             if playing {
-                self.console_view.draw_notify(&mut canvas, time);
+                self.console_view.draw_notify(&mut canvas, time, blink);
             }
         }
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "which half of a blink"
-        )]
-        let blink = ((run_time * 4.0) as u64).is_multiple_of(2);
         self.console_view.draw(&mut canvas, VERSION, blink);
         if self.menu.is_open() {
             // From `M_Draw`: the menus need something quiet behind them.
