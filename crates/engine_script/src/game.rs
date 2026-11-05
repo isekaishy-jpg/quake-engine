@@ -727,6 +727,37 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "find_path",
+            lua.create_function(move |lua, (from, to): (Vector, Vector)| {
+                let simulation = sim.borrow();
+                let nav = simulation.map().nav.as_ref();
+                let path = nav.and_then(|nav| nav.find_path(to_vec3(from), to_vec3(to)));
+                match path {
+                    Some(points) => {
+                        let list = lua.create_table()?;
+                        for (index, point) in points.into_iter().enumerate() {
+                            list.set(index + 1, from_vec3(point))?;
+                        }
+                        Ok(Some(list))
+                    }
+                    None => Ok(None),
+                }
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "spline_point",
+            lua.create_function(move |_, (name, share): (String, f32)| {
+                let simulation = sim.borrow();
+                let splines = &simulation.map().splines;
+                let found = splines.iter().find(|spline| spline.name == name);
+                Ok(found
+                    .and_then(|spline| spline.point_at(share))
+                    .map(from_vec3))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "changeyaw",
             lua.create_function(move |_, id: f64| {
                 sim.borrow_mut().change_yaw(id_from(id));

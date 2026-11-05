@@ -1,7 +1,7 @@
 //! Leaf lookups and visible sets.
 
 use engine_core::math::Vec3;
-use engine_map::{Leaf, Node, NodeChild, Plane, Tree};
+use engine_map::{Leaf, Node, NodeChild, Plane, Spline, Tree};
 
 /// A tree split at x = 0: leaf 1 in front and leaf 2 behind.
 fn tree() -> Tree {
@@ -82,4 +82,43 @@ fn everything_is_visible_without_a_set() {
     let mut flags = vec![false; 3];
     tree.mark_visible(2, &mut flags);
     assert_eq!(flags, [true; 3]);
+}
+
+/// A spline passes through its points, and a closed one comes back round.
+#[test]
+fn a_spline_passes_through_its_points() {
+    let points = vec![
+        Vec3::new(0.0, 0.0, 0.0),
+        Vec3::new(100.0, 0.0, 0.0),
+        Vec3::new(100.0, 100.0, 0.0),
+    ];
+    let open = Spline {
+        name: "a".to_owned(),
+        points: points.clone(),
+        closed: false,
+    };
+    let near = |a: Vec3, b: Vec3| (a - b).length() < 0.01;
+    assert!(near(open.point_at(0.0).expect("a point"), points[0]));
+    assert!(near(open.point_at(0.5).expect("a point"), points[1]));
+    assert!(near(open.point_at(1.0).expect("a point"), points[2]));
+    assert!(
+        near(open.point_at(5.0).expect("a point"), points[2]),
+        "it stops"
+    );
+    let closed = Spline {
+        closed: true,
+        ..open
+    };
+    assert!(
+        near(closed.point_at(1.0).expect("a point"), points[0]),
+        "round again"
+    );
+    let curve = closed.point_at(1.0 / 6.0).expect("a point");
+    assert!(curve.y.abs() > 0.01, "it's not a straight line: {curve:?}");
+}
+
+/// An empty spline has nowhere to be.
+#[test]
+fn an_empty_spline_has_no_point() {
+    assert_eq!(Spline::default().point_at(0.5), None);
 }

@@ -615,3 +615,18 @@ function engine.seeded(id, step)
 	value = (value * 1664525 + 1013904223) % 4294967296
 	return value / 4294967296
 end
+
+-- Walks an entity up to `distance` towards `goal`, along the way the map's nav
+-- says, for a monster or NPC to call from its think. Returns whether there's a
+-- way to go. With no nav it goes straight, as a map with no bake has none.
+function engine.walk_to(entity, goal, distance)
+	local path = engine.find_path(entity.origin, goal)
+	local next_point = goal
+	if path then
+		next_point = path[2] or path[1]
+	end
+	local from = entity.origin
+	local yaw = math.deg(math.atan2(next_point.y - from.y, next_point.x - from.x))
+	entity.ideal_yaw = yaw
+	return engine.walkmove(entity.id, yaw, distance), path ~= nil
+end

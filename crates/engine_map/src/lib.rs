@@ -11,6 +11,7 @@ mod light;
 mod live;
 mod map;
 mod material;
+mod nav;
 mod pool;
 mod probes;
 mod sky;
@@ -29,6 +30,7 @@ pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, PAINT_MASK, Shading, SlotImage,
     mip_chain,
 };
+pub use nav::{NavGrid, NavPlace, Spline};
 pub use pool::{ModelOccluder, OccluderSphere, Pool, PoolLook};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};

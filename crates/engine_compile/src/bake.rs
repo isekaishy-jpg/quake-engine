@@ -4,14 +4,15 @@
 //! records the text it was made from, so one that's out of date is ignored and
 //! the map falls back on playing unlit.
 
+use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary};
-use engine_map::{Face, FaceLight, Map, ProbeGrid};
+use engine_map::{Face, FaceLight, Map, NavGrid, NavPlace, ProbeGrid};
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 6;
+const BAKE_VERSION: u64 = 7;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -26,6 +27,64 @@ pub fn source_hash(text: &str) -> u64 {
 /// A number as text, so a 64 bit hash survives exactly.
 fn hash_text(hash: u64) -> String {
     format!("{hash:016x}")
+}
+
+/// A walkable grid as bytes.
+fn write_nav(nav: &NavGrid) -> Vec<u8> {
+    let mut out = Vec::new();
+    for value in [nav.origin.x, nav.origin.y, nav.origin.z, nav.spacing] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    let places = u32::try_from(nav.places.len()).unwrap_or(0);
+    for value in [nav.size[0], nav.size[1], places] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    for column in &nav.columns {
+        out.extend_from_slice(&column.to_le_bytes());
+    }
+    for place in &nav.places {
+        for value in [place.point.x, place.point.y, place.point.z] {
+            out.extend_from_slice(&value.to_le_bytes());
+        }
+        for link in place.links {
+            out.extend_from_slice(&link.to_le_bytes());
+        }
+    }
+    out
+}
+
+/// A walkable grid from bytes, if they make one.
+fn read_nav(bytes: &[u8]) -> Option<NavGrid> {
+    let (words, _) = bytes.as_chunks::<4>();
+    let mut words = words.iter().copied();
+    let mut float = || words.next().map(f32::from_le_bytes);
+    let origin = Vec3::new(float()?, float()?, float()?);
+    let spacing = float()?;
+    let mut number = || words.next().map(u32::from_le_bytes);
+    let size = [number()?, number()?];
+    let count = number()? as usize;
+    let columns: Option<Vec<u32>> = (0..=size[0] * size[1]).map(|_| number()).collect();
+    let mut places = Vec::with_capacity(count);
+    for _ in 0..count {
+        let mut word = || words.next();
+        let point = Vec3::new(
+            f32::from_le_bytes(word()?),
+            f32::from_le_bytes(word()?),
+            f32::from_le_bytes(word()?),
+        );
+        let mut place = NavPlace::at(point);
+        for link in &mut place.links {
+            *link = u32::from_le_bytes(word()?);
+        }
+        places.push(place);
+    }
+    Some(NavGrid {
+        origin,
+        spacing,
+        size,
+        columns: columns?,
+        places,
+    })
 }
 
 /// Writes `map`'s baked data as a compiled document.
@@ -61,6 +120,9 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     block.set("edges", Value::Bytes(map.light_edges.clone()));
     block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
     block.set("visibility", Value::Bytes(map.tree.visibility.clone()));
+    if let Some(nav) = &map.nav {
+        block.set("nav", Value::Bytes(write_nav(nav)));
+    }
     let mut starts = Vec::with_capacity(map.tree.leaves.len() * 4);
     for leaf in &map.tree.leaves {
         starts.extend_from_slice(&leaf.visibility.unwrap_or(u32::MAX).to_le_bytes());
@@ -173,7 +235,7 @@ fn read_probes(block: &Block) -> Option<ProbeGrid> {
         return None;
     }
     Some(ProbeGrid {
-        origin: engine_core::math::Vec3::new(x as f32, y as f32, z as f32),
+        origin: Vec3::new(x as f32, y as f32, z as f32),
         spacing: block.get("spacing")?.number()? as f32,
         size: [sx as u32, sy as u32, sz as u32],
         colors: colors
@@ -240,6 +302,7 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
                 u32::try_from(map.tree.leaves.len().saturating_sub(1)).unwrap_or(0);
         }
     }
+    map.nav = bytes_of(light, "nav").and_then(read_nav);
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {

@@ -2,13 +2,17 @@
 
 use std::sync::Arc;
 
-use engine_compile::{BakeInput, CompileError, bake_light, compile, placeholder_texture, read_map};
+use engine_compile::{
+    BakeInput, CompileError, apply_bake, bake_light, compile, placeholder_texture, read_map,
+    write_bake,
+};
 use engine_core::math::Vec3;
 use engine_format::from_text;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, Map, Material, MaterialLayer, MipLevel, PAINT_MASK,
     Texture, TextureKind,
 };
+use engine_physics::CollisionWorld;
 
 /// A map baked with placeholder textures, plus `textures` by name.
 fn baked(text: &str, textures: &[Texture]) -> Map {
@@ -491,4 +495,120 @@ fn a_map_with_no_bake_shows_everything() {
         world.face_count as usize,
         "every face is in a leaf"
     );
+}
+
+/// A room with a wall across it, and what's said to go in it.
+fn walled(extra: &str) -> Map {
+    baked(&format!("{TWO_ROOMS}{extra}"), &[])
+}
+
+/// Whether a line stays clear of the world for a player.
+fn walks_clear(map: &Arc<Map>, path: &[Vec3]) -> bool {
+    let world = CollisionWorld::new(Arc::clone(map));
+    path.windows(2).all(|pair| {
+        let lift = Vec3::new(0.0, 0.0, 4.0);
+        world
+            .with(&[])
+            .trace(pair[0] + lift, pair[1] + lift)
+            .fraction
+            >= 1.0
+    })
+}
+
+/// A way goes through a doorway, and never through the wall beside it.
+#[test]
+fn a_path_goes_through_a_doorway() {
+    let map = Arc::new(walled(
+        "brush { material = wall cuboid = -32 -256 0 32 -64 256 }\n\
+         brush { material = wall cuboid = -32 64 0 32 256 256 }\n",
+    ));
+    let nav = map.nav.as_ref().expect("baked");
+    let from = Vec3::new(-800.0, 200.0, 24.0);
+    let to = Vec3::new(800.0, 200.0, 24.0);
+    let path = nav.find_path(from, to).expect("a way");
+    assert!(path.len() >= 3, "it bends: {path:?}");
+    let crossing = path
+        .windows(2)
+        .find(|pair| pair[0].x < 0.0 && pair[1].x >= 0.0);
+    let pair = crossing.expect("it crosses over");
+    let share = -pair[0].x / (pair[1].x - pair[0].x);
+    let y = pair[0].y + (pair[1].y - pair[0].y) * share;
+    assert!(y.abs() < 64.0, "through the gap: {y}");
+    assert!(walks_clear(&map, &path), "{path:?}");
+}
+
+/// A sealed room has no way out.
+#[test]
+fn a_sealed_room_has_no_path() {
+    let map = walled("brush { material = wall cuboid = -32 -256 0 32 256 256 }\n");
+    let nav = map.nav.as_ref().expect("baked");
+    let from = Vec3::new(-800.0, 0.0, 24.0);
+    assert!(nav.find_path(from, Vec3::new(800.0, 0.0, 24.0)).is_none());
+    assert!(
+        nav.find_path(from, Vec3::new(-300.0, 100.0, 24.0))
+            .is_some()
+    );
+}
+
+/// In the open a way is straight, however many places it crosses.
+#[test]
+fn an_open_path_is_straight() {
+    let map = walled("");
+    let nav = map.nav.as_ref().expect("baked");
+    let path = nav
+        .find_path(
+            Vec3::new(-800.0, -100.0, 24.0),
+            Vec3::new(800.0, 100.0, 24.0),
+        )
+        .expect("a way");
+    assert_eq!(path.len(), 2, "{path:?}");
+}
+
+/// Stairs are climbed, and a floor over another keeps its own places.
+#[test]
+fn stairs_are_climbed_and_floors_stack() {
+    let mut steps = String::new();
+    for step in 0..8 {
+        let (x, z) = (-200 + step * 32, (step + 1) * 16);
+        steps.push_str(&format!(
+            "brush {{ material = wall cuboid = {x} -128 0 {} 128 {z} }}\n",
+            x + 32
+        ));
+    }
+    steps.push_str("brush { material = wall cuboid = 56 -128 0 700 128 128 }\n");
+    let map = walled(&steps);
+    let nav = map.nav.as_ref().expect("baked");
+    let path = nav
+        .find_path(Vec3::new(-500.0, 0.0, 24.0), Vec3::new(500.0, 0.0, 152.0))
+        .expect("up the stairs");
+    let last = path.last().expect("an end");
+    assert!((last.z - 152.0).abs() < 2.0, "on top: {last:?}");
+    let under = nav.nearest(Vec3::new(500.0, 200.0, 24.0)).expect("a place");
+    let over = nav.nearest(Vec3::new(500.0, 0.0, 152.0)).expect("a place");
+    assert_ne!(under, over);
+}
+
+/// Lava isn't a place to stand, so a way goes round it.
+#[test]
+fn a_path_goes_round_lava() {
+    let map = Arc::new(walled(
+        "brush { contents = lava material = lava cuboid = -128 -128 -32 128 256 -8 }\n",
+    ));
+    let nav = map.nav.as_ref().expect("baked");
+    assert!(nav.places.iter().all(|place| {
+        let over = place.point.x.abs() < 100.0 && place.point.y > -100.0 && place.point.y < 230.0;
+        !(over && place.point.z < 10.0)
+    }));
+}
+
+/// A bake keeps its walkable grid.
+#[test]
+fn a_bake_keeps_the_nav_grid() {
+    let working = read_map(&from_text(TWO_ROOMS).expect("parses")).expect("reads");
+    let baked_map = baked(TWO_ROOMS, &[]);
+    let bytes = write_bake(&baked_map, 7);
+    let mut source = |name: &str| placeholder_texture(name);
+    let mut map = compile(&working, &mut source).expect("compiles");
+    assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
+    assert_eq!(map.nav, baked_map.nav);
 }

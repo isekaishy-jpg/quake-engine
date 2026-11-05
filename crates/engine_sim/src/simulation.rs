@@ -545,7 +545,8 @@ impl Simulation {
     }
 
     /// The map.
-    pub(crate) fn map(&self) -> &Arc<Map> {
+    #[must_use]
+    pub fn map(&self) -> &Arc<Map> {
         &self.map
     }
 

@@ -16,6 +16,7 @@ use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::mega::bake_mega;
 use crate::mesh::PlacedMesh;
+use crate::nav::build_nav;
 use crate::source::{EntitySource, PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
 use crate::visibility::bake_visibility;
@@ -1323,6 +1324,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     map.paint = paint;
     let sight = |a: Vec3, b: Vec3| !blocked(&scene, scene.root, wide(a), wide(b));
     bake_visibility(map, &sight);
+    map.nav = Some(build_nav(map));
     let strokes = &working.paint;
     let mega = bake_mega(map, strokes, &|point, strokes| {
         paint_at(wide(point), strokes)

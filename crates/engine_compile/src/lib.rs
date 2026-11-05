@@ -12,6 +12,7 @@ mod light;
 mod material;
 mod mega;
 mod mesh;
+mod nav;
 mod source;
 mod stamp;
 mod stencil;

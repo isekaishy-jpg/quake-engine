@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Fog, Sky};
+use engine_map::{Clouds, Contents, Fog, Sky, Spline};
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
@@ -79,6 +79,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Lines for movement set out by hand.
+    pub splines: Vec<Spline>,
     /// How wide a tile is, or 0 for a map with no tiles.
     pub tile_size: f64,
     /// The parts of the map in files of their own.
@@ -320,6 +322,25 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     })
 }
 
+/// A spline, from its block.
+#[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
+fn read_spline(block: &Block) -> Spline {
+    let numbers = block
+        .get("points")
+        .and_then(Value::numbers)
+        .unwrap_or_default();
+    Spline {
+        name: block.name.clone().unwrap_or_default(),
+        points: numbers
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|[x, y, z]| Vec3::new(*x as f32, *y as f32, *z as f32))
+            .collect(),
+        closed: block.get("closed").and_then(Value::flag) == Some(true),
+    }
+}
+
 /// A tile, from its block.
 #[expect(clippy::cast_possible_truncation, reason = "grid places are small")]
 fn read_tile(block: &Block) -> Result<TileSource, CompileError> {
@@ -548,6 +569,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        splines: document.blocks_of("spline").map(read_spline).collect(),
         tile_size: document
             .blocks_of("tile_grid")
             .next()

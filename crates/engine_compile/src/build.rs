@@ -785,6 +785,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
     }
     builder.map.entities = entities;
     builder.map.light_tracks = tracks;
+    builder.map.splines.clone_from(&working.splines);
     #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
     let size = working.tile_size as f32;
     builder.map.tile_size = size;

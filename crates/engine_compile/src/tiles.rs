@@ -1,6 +1,7 @@
 //! Tiles: parts of a map in files of their own, in local coordinates, merged
 //! into place (proposal 0089).
 
+use engine_core::math::Vec3;
 use engine_format::Value;
 
 use crate::error::CompileError;
@@ -57,6 +58,7 @@ fn move_brush(brush: &mut Brush, offset: Point) {
 }
 
 /// Moves what `tile` holds by `offset`, and adds it to `map`.
+#[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
 pub(crate) fn merge_tile(map: &mut WorkingMap, mut tile: WorkingMap, offset: Point) {
     for brush in &mut tile.brushes {
         move_brush(brush, offset);
@@ -78,6 +80,12 @@ pub(crate) fn merge_tile(map: &mut WorkingMap, mut tile: WorkingMap, offset: Poi
             *point = add_scaled(*point, offset, 1.0);
         }
     }
+    for spline in &mut tile.splines {
+        for point in &mut spline.points {
+            *point = *point + Vec3::new(offset[0] as f32, offset[1] as f32, offset[2] as f32);
+        }
+    }
+    map.splines.append(&mut tile.splines);
     map.brushes.append(&mut tile.brushes);
     map.entities.append(&mut tile.entities);
     map.meshes.append(&mut tile.meshes);

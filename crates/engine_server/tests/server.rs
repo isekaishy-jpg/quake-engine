@@ -8,7 +8,7 @@ use std::sync::Arc;
 use common::room;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
-use engine_map::{Entity, Map};
+use engine_map::{Entity, Map, NavGrid, NavPlace, Spline};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
@@ -229,4 +229,51 @@ fn nothing_sleeps_with_no_reach_set() {
     .expect("server");
     let still = said(&mut server, &mut client, 1, 72, false);
     assert!(still.iter().any(|line| line.contains("tick")), "{still:?}");
+}
+
+/// Scripts can ask for a way across a map, and a point on a spline.
+#[test]
+fn scripts_find_paths_and_follow_splines() {
+    let script = r#"
+    function asker(self)
+        local path = engine.find_path(vector.create(0, 0, 0), vector.create(32, 0, 0))
+        engine.print("path " .. #path .. " " .. path[#path].x)
+                engine.print("spline " .. engine.spline_point("line", 1).x)
+        engine.print("no spline " .. tostring(engine.spline_point("none", 1) == nil))
+    end
+    "#;
+    let mut map = (*map_with(&[("asker", "0 0 -240")])).clone();
+    map.wake_reach = 0.0;
+    let mut first = NavPlace::at(Vec3::ZERO);
+    let mut second = NavPlace::at(Vec3::new(16.0, 0.0, 0.0));
+    let third = NavPlace::at(Vec3::new(32.0, 0.0, 0.0));
+    first.links[0] = 1;
+    second.links[0] = 2;
+    map.nav = Some(NavGrid {
+        origin: Vec3::ZERO,
+        spacing: 16.0,
+        size: [3, 1],
+        columns: vec![0, 1, 2, 3],
+        places: vec![first, second, third],
+    });
+    map.splines.push(Spline {
+        name: "line".to_owned(),
+        points: vec![Vec3::ZERO, Vec3::new(40.0, 0.0, 0.0)],
+        closed: false,
+    });
+    let world = Rc::new(CollisionWorld::new(Arc::new(map)));
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        Vec3::new(0.0, 0.0, -255.0),
+        &[("asker", script)],
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("server");
+    let lines = said(&mut server, &mut client, 1, 2, false).join("\n");
+    assert!(lines.contains("path 2 32"), "{lines}");
+    assert!(lines.contains("spline 40"), "{lines}");
+    assert!(lines.contains("no spline true"), "{lines}");
 }

@@ -43,7 +43,7 @@ Status is one of todo, doing or done.
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | done |
 | 19 | Visibility | Our own compiler, and entity culling from the plan | done |
 | 20 | Tiles | Grid, manifest, coordinates, the unloaded tile rule, sleeping entities, detail fade | done |
-| 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
+| 21 | Pathing | Waypoint splines, navmesh, doorway baseline | done |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
 | 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
 | 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | done |
@@ -68,3 +68,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 18 is done. The mega texture is one image with no streaming, for surfaces marked `mega`.
 - Stage 19 is done, with entity culling on real maps too.
 - Stage 20 is done, with all tiles loading with their map. Whether to stream geometry is in proposal 0089 for the human to review.
+- Stage 21 is done, with a walkable grid read from the player's hull in place of a polygon navmesh.

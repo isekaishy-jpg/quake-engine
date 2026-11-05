@@ -7,6 +7,7 @@ use engine_core::math::Vec3;
 use crate::emitter::Emitter;
 use crate::live::LiveLightSource;
 use crate::material::Material;
+use crate::nav::{NavGrid, Spline};
 use crate::pool::{ModelOccluder, Pool};
 use crate::probes::{LightTrack, ProbeGrid};
 use crate::sky::{Fog, Sky};
@@ -204,6 +205,10 @@ pub struct Map {
     pub light_edges: Vec<u8>,
     /// Baked lights that move between keyframes.
     pub light_tracks: Vec<LightTrack>,
+    /// Where things can walk, if it's been baked.
+    pub nav: Option<NavGrid>,
+    /// Lines for movement set out by hand.
+    pub splines: Vec<Spline>,
     /// How wide a tile is, or 0 for a map with no tiles.
     pub tile_size: f32,
     /// How far from every player an entity sleeps, or 0 if none ever do.
