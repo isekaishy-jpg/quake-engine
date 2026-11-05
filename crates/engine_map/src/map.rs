@@ -5,6 +5,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 
 use crate::material::Material;
+use crate::sky::Sky;
 
 use crate::tree::{ClipChild, NodeChild, Tree};
 
@@ -182,6 +183,8 @@ pub struct Map {
     pub tree: Tree,
     /// The entities.
     pub entities: Vec<Entity>,
+    /// The sky sphere, if the map has one.
+    pub sky: Option<Sky>,
 }
 
 impl Model {

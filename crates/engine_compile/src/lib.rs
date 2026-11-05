@@ -15,5 +15,5 @@ pub use build::{TextureSource, compile, compile_text};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
 pub use material::MaterialLibrary;
-pub use source::{Brush, BrushFace, EntitySource, WorkingMap, read_map};
+pub use source::{Brush, BrushFace, EntitySource, SkySource, WorkingMap, read_map};
 pub use texture::placeholder_texture;

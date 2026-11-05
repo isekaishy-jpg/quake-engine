@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_map::{AliasModel, Map, Sprite, Texture, TextureKind};
+use engine_map::{AliasModel, Map, Sky, Sprite, Texture, TextureKind};
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType, Device, DeviceMemory,
@@ -13,7 +13,7 @@ use vulkane::safe::{
 
 use super::{
     Backend, DEPTH_FORMAT, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap, GpuPicture,
-    GpuSprite, Scene,
+    GpuSprite, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::canvas_vertices;
@@ -101,7 +101,12 @@ pub(super) fn depth_image(
     clippy::cast_precision_loss,
     reason = "there are at most a few dozen lights"
 )]
-pub(super) fn frame_bytes(view: &View, aspect: f32, lights: &[LightDraw]) -> Vec<u8> {
+pub(super) fn frame_bytes(
+    view: &View,
+    aspect: f32,
+    lights: &[LightDraw],
+    sky: Option<&Sky>,
+) -> Vec<u8> {
     let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
     let matrix = view_projection(
         view.origin,
@@ -129,8 +134,36 @@ pub(super) fn frame_bytes(view: &View, aspect: f32, lights: &[LightDraw]) -> Vec
         .chain(&view.styles)
         .chain(&positions)
         .chain(&cuts)
+        .chain(&sky_values(sky))
     {
         out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+/// The sky's part of the frame uniforms.
+fn sky_values(sky: Option<&Sky>) -> [f32; SKY_BYTES / 4] {
+    let mut out = [0.0; SKY_BYTES / 4];
+    let Some(sky) = sky else {
+        return out;
+    };
+    out[..3].copy_from_slice(&sky.zenith);
+    out[3] = sky.horizon_height;
+    out[4..7].copy_from_slice(&sky.horizon);
+    out[8..11].copy_from_slice(&sky.ground);
+    out[12..15].copy_from_slice(&[
+        sky.sun_direction.x,
+        sky.sun_direction.y,
+        sky.sun_direction.z,
+    ]);
+    out[15] = sky.sun_size;
+    out[16..19].copy_from_slice(&sky.sun_color);
+    if let Some(clouds) = &sky.clouds {
+        out[20..23].copy_from_slice(&clouds.color);
+        out[23] = clouds.coverage;
+        out[24..26].copy_from_slice(&clouds.speed);
+        out[26] = clouds.scale;
+        out[27] = if clouds.image.is_some() { 2.0 } else { 1.0 };
     }
     out
 }
@@ -291,7 +324,7 @@ impl Backend {
             }
         }
 
-        let sets = u32::try_from(map.textures.len() + 1).unwrap_or(u32::MAX);
+        let sets = u32::try_from(map.textures.len() + 2).unwrap_or(u32::MAX);
         let material_count = map.textures.iter().filter(|t| t.material.is_some()).count();
         let images = sets.saturating_mul(8);
         let pool = DescriptorPool::new(
@@ -404,7 +437,30 @@ impl Backend {
             texture_sets.push(Some(set));
             textures.push(image);
         }
+        let sky_set = match &map.sky {
+            Some(sky) => {
+                let cloud = sky.clouds.as_ref().and_then(|clouds| clouds.image.as_ref());
+                let view = if let Some(cloud) = cloud {
+                    let levels: Vec<(u32, u32, &[u8])> = cloud
+                        .iter()
+                        .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
+                        .collect();
+                    textures.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
+                    textures.last().map(|image| &image.view)
+                } else {
+                    Some(&blank.view)
+                };
+                let set = pool.allocate(&self.texture_layout)?;
+                if let Some(view) = view {
+                    set.write_sampled_image(0, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                }
+                set.write_sampler(1, &self.material_sampler);
+                Some(set)
+            }
+            None => None,
+        };
         self.map = Some(GpuMap {
+            sky_set,
             material_sets,
             vertices,
             indices,
@@ -540,7 +596,8 @@ impl Backend {
         aspect: f32,
     ) -> Result<(), RenderError> {
         let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
-        let bytes = frame_bytes(view, aspect, lights);
+        let sky = scene.and_then(|scene| scene.map.sky.as_ref());
+        let bytes = frame_bytes(view, aspect, lights, sky);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene
             && !scene.drawables.particles.is_empty()

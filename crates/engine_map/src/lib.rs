@@ -9,6 +9,7 @@ mod alias;
 mod light;
 mod map;
 mod material;
+mod sky;
 mod sprite;
 mod tree;
 
@@ -19,5 +20,6 @@ pub use map::{
 pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, Shading, SlotImage, mip_chain,
 };
+pub use sky::{Clouds, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use tree::{ClipChild, ClipNode, Contents, Leaf, Node, NodeChild, Plane, Tree};

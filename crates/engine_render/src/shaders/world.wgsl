@@ -12,6 +12,17 @@ struct Frame {
     lights: array<vec4<f32>, 32>,
     // Each dynamic light's least light, four to an entry.
     light_cuts: array<vec4<f32>, 8>,
+    // The sky: its colours, then w of the first is the horizon's height.
+    sky_zenith: vec4<f32>,
+    sky_horizon: vec4<f32>,
+    sky_ground: vec4<f32>,
+    // xyz towards the sun, w its size.
+    sky_sun: vec4<f32>,
+    sky_sun_color: vec4<f32>,
+    // Colour, then w is the coverage.
+    sky_cloud: vec4<f32>,
+    // xy speed, z scale, w 0 for none, 1 procedural, 2 from an image.
+    sky_cloud_params: vec4<f32>,
 }
 
 @group(0) @binding(0) var<uniform> frame: Frame;

@@ -1,7 +1,8 @@
 //! A map document, read into typed brushes and entities.
 
+use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::Contents;
+use engine_map::{Clouds, Contents, Sky};
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
@@ -58,6 +59,17 @@ pub struct WorkingMap {
     pub brushes: Vec<Brush>,
     /// The entities.
     pub entities: Vec<EntitySource>,
+    /// The sky, if it has one.
+    pub sky: Option<SkySource>,
+}
+
+/// A map's sky, as written.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkySource {
+    /// The sky itself.
+    pub sky: Sky,
+    /// An image for the clouds, if it isn't procedural.
+    pub cloud_image: Option<String>,
 }
 
 /// A field's three numbers.
@@ -188,6 +200,56 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     })
 }
 
+/// A field's three numbers as `f32`, or `default`.
+fn color_of(block: &Block, key: &str, default: [f32; 3]) -> [f32; 3] {
+    #[expect(clippy::cast_possible_truncation, reason = "colours store f32")]
+    block
+        .get(key)
+        .and_then(point_of)
+        .map_or(default, |value| value.map(|part| part as f32))
+}
+
+/// Reads a `sky` block. The cloud layer is optional, and is an image or
+/// procedural, as the author chooses.
+fn read_sky(block: &Block) -> SkySource {
+    #[expect(clippy::cast_possible_truncation, reason = "skies store f32")]
+    let number = |block: &Block, key: &str, default: f32| {
+        block
+            .get(key)
+            .and_then(Value::number)
+            .map_or(default, |value| value as f32)
+    };
+    let defaults = Sky::default();
+    let clouds_block = block.children_of("clouds").next();
+    let clouds = clouds_block.map(|clouds| Clouds {
+        color: color_of(clouds, "color", [1.0, 1.0, 1.0]),
+        coverage: number(clouds, "coverage", 0.5),
+        speed: {
+            let [x, y, _] = color_of(clouds, "speed", [0.01, 0.003, 0.0]);
+            [x, y]
+        },
+        scale: number(clouds, "scale", 1.0),
+        image: None,
+    });
+    let [x, y, z] = color_of(block, "sun_direction", [0.4, 0.3, 0.8]);
+    SkySource {
+        sky: Sky {
+            zenith: color_of(block, "zenith", defaults.zenith),
+            horizon: color_of(block, "horizon", defaults.horizon),
+            ground: color_of(block, "ground", defaults.ground),
+            horizon_height: number(block, "horizon_height", defaults.horizon_height),
+            sun_direction: Vec3::new(x, y, z).normalized(),
+            sun_color: color_of(block, "sun_color", defaults.sun_color),
+            sun_size: number(block, "sun_size", defaults.sun_size),
+            clouds,
+        },
+        cloud_image: clouds_block
+            .and_then(|clouds| clouds.get("image"))
+            .and_then(Value::text)
+            .map(str::to_owned),
+    }
+}
+
 /// Reads a map document.
 ///
 /// # Errors
@@ -206,5 +268,6 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .blocks_of("entity")
             .map(read_entity)
             .collect::<Result<_, _>>()?,
+        sky: document.blocks_of("sky").next().map(read_sky),
     })
 }

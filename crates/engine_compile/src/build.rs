@@ -1,6 +1,7 @@
 //! Putting a map together.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
@@ -435,6 +436,14 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     builder.map.entities = entities;
+    if let Some(sky) = &working.sky {
+        let mut built = sky.sky.clone();
+        if let (Some(clouds), Some(image)) = (&mut built.clouds, &sky.cloud_image) {
+            let texture = builder.source.texture(image);
+            clouds.image = Some(Arc::new(texture.mips));
+        }
+        builder.map.sky = Some(built);
+    }
     builder.finish();
     let mut map = builder.map;
     for texture in &mut map.textures {

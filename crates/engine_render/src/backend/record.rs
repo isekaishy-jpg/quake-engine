@@ -13,6 +13,9 @@ use crate::renderer::View;
 use crate::sprite::{MAX_PARTICLE_DRAWS, ViewAxes, sprite_axes, sprite_push_bytes};
 use crate::world::BatchKind;
 
+/// The corners of the cube the sky sphere is drawn on.
+const SKY_SPHERE_CORNERS: u32 = 36;
+
 /// What recording a frame needs.
 pub(super) struct Recorder<'a> {
     /// The layouts.
@@ -111,11 +114,38 @@ impl Recorder<'_> {
         view: &View,
         size: (u32, u32),
     ) {
+        self.record_sky(rec, scene, size);
         self.record_world(rec, scene, view.time, size, false);
         self.record_models(rec, scene);
         self.record_world(rec, scene, view.time, size, true);
         self.record_sprites(rec, scene, view);
         self.record_particles(rec, scene);
+    }
+
+    /// Records the sky sphere, if there is one.
+    fn record_sky(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        size: (u32, u32),
+    ) {
+        let Some(set) = self
+            .map
+            .sky_set
+            .as_ref()
+            .filter(|_| scene.map.sky.is_some())
+        else {
+            return;
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&self.pipelines.sky_sphere);
+        rec.bind_graphics_descriptor_sets(&self.layouts.world, 0, &[&self.map.frame_set, set]);
+        rec.draw(SKY_SPHERE_CORNERS, 1, 0, 0);
     }
 
     /// Records the world and brush models: what's see-through, or the rest.
@@ -160,13 +190,21 @@ impl Recorder<'_> {
                 return;
             };
             if bound != Some(batch.kind) {
-                rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
+                if batch.kind == BatchKind::Sky && map.sky_set.is_some() {
+                    rec.bind_graphics_pipeline(&self.pipelines.sky_window);
+                } else {
+                    rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
+                }
                 bound = Some(batch.kind);
             }
             let set_layout = if matches!(batch.kind, BatchKind::Material | BatchKind::Blended) {
                 &self.layouts.material
             } else {
                 layout
+            };
+            let set = match (&map.sky_set, batch.kind) {
+                (Some(sky), BatchKind::Sky) => sky,
+                _ => set,
             };
             rec.bind_graphics_descriptor_sets(set_layout, 0, &[&map.frame_set, set]);
             rec.draw_indexed(count, 1, first, 0, 0);

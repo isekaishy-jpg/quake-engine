@@ -48,7 +48,10 @@ const INDEX_TYPE_U32: u32 = 1;
 
 /// Bytes in the frame uniforms: a matrix, two vectors, 64 styles, and each
 /// light's vector and least light.
-const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20;
+const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20 + SKY_BYTES;
+
+/// Bytes of sky values in the frame uniforms.
+const SKY_BYTES: usize = 112;
 
 /// Texture frames per second, from `R_TextureAnimation`.
 const ANIMATION_RATE: f32 = 5.0;
@@ -69,6 +72,7 @@ const MATERIAL_MAX_LOD: f32 = 16.0;
 const WORLD_SHADER: &str = concat!(
     include_str!("../shaders/world.wgsl"),
     include_str!("../shaders/material.wgsl"),
+    include_str!("../shaders/sky.wgsl"),
 );
 
 /// The overlay shader.
@@ -144,6 +148,8 @@ struct GpuMap {
     indices: GpuBuffer,
     /// Each texture's descriptor set, by map texture index.
     texture_sets: Vec<Option<DescriptorSet>>,
+    /// The cloud image's set, if the map has a sky sphere.
+    sky_set: Option<DescriptorSet>,
     /// Whether each texture's set is a material's.
     material_sets: Vec<bool>,
     /// Every material's parameters, kept alive for the sets.
@@ -238,6 +244,10 @@ struct Pipelines {
     liquid: GraphicsPipeline,
     /// Sky.
     sky: GraphicsPipeline,
+    /// The sky sphere, drawn behind everything.
+    sky_sphere: GraphicsPipeline,
+    /// Faces showing the sky sphere.
+    sky_window: GraphicsPipeline,
     /// Opaque and masked materials.
     material: GraphicsPipeline,
     /// See-through materials.

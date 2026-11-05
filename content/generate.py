@@ -85,7 +85,7 @@ def height_normal(height):
 def brick_base(x, y):
     h = brick_height(x, y)
     n = fractal(NOISE, x, y)
-    row, col = y // 32, ((x + (32 if (y // 32) % 2 else 0)) // 64)
+    row, col = y // 32, ((x + (32 if (y // 32) % 2 else 0)) // 64) % 4
     tone = 0.8 + 0.2 * ((row * 7 + col * 13) % 5) / 4
     if h < 0.5:
         return (clamp(90 + n * 40), clamp(88 + n * 40), clamp(84 + n * 40), 255)

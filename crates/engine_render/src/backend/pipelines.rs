@@ -267,6 +267,14 @@ impl Backend {
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,
             sky: pipeline("fs_sky")?,
+            sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_sky_sphere")
+                .stage(GraphicsShaderStage::Fragment, &shader, "fs_sky_sphere")
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(false, false)
+                .build(device)?,
+            sky_window: pipeline("fs_sky_window")?,
             material: material(false)?,
             blended: material(true)?,
             alias: Self::make_alias_pipeline(device, &layouts.alias, pass)?,
