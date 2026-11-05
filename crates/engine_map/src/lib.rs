@@ -32,7 +32,7 @@ pub use material::{
     mip_chain,
 };
 pub use nav::{NavGrid, NavPlace, Spline};
-pub use occluder::{ModelOccluder, OccluderSphere};
+pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};

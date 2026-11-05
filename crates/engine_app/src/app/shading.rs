@@ -26,6 +26,10 @@ const SUN_REACH: f32 = 4096.0;
 /// How wide the player's shade is.
 const CAPSULE_RADIUS: f32 = 22.0;
 
+/// How wide a model has to be to shade anything, which leaves out flames and
+/// small items.
+const LEAST_SHADE: f32 = 10.0;
+
 /// How many characters shade the light, nearest first.
 const MAX_CAPSULES: usize = 16;
 
@@ -239,19 +243,36 @@ fn model_spheres(map: &Map, eye: Vec3, instances: &[ModelInstance]) -> Vec<(Vec3
     out
 }
 
+/// Where the spheres of posed models are, for a view from `eye`: the whole of
+/// each far off, and its parts up close, as moving brush models are.
+fn posed_spheres(eye: Vec3, shades: &[Vec<(Vec3, f32)>]) -> Vec<(Vec3, f32)> {
+    let mut out = Vec::new();
+    for shade in shades {
+        let Some((whole, parts)) = shade.split_first() else {
+            continue;
+        };
+        if whole.1 < LEAST_SHADE {
+            continue;
+        }
+        if parts.is_empty() || (whole.0 - eye).length() > PART_DETAIL_REACH {
+            out.push(*whole);
+        } else {
+            out.extend_from_slice(parts);
+        }
+    }
+    out
+}
+
 /// The bodies shading light for a view from `eye`, with `body` being the
 /// player, and light coming the way the bake says.
 pub(super) fn capsule_draws(
     map: &Map,
     body: Vec3,
     eye: Vec3,
-    solid_boxes: &[(Vec3, Vec3)],
+    shades: &[Vec<(Vec3, f32)>],
     instances: &[ModelInstance],
 ) -> Vec<CapsuleDraw> {
-    let mut places: Vec<(Vec3, f32)> = solid_boxes
-        .iter()
-        .map(|(low, high)| ((*low + *high) * 0.5, (high.x - low.x) * 0.7))
-        .collect();
+    let mut places = posed_spheres(eye, shades);
     places.extend(model_spheres(map, eye, instances));
     places.sort_by(|a, b| (a.0 - eye).length().total_cmp(&(b.0 - eye).length()));
     places.truncate(MAX_CAPSULES - 1);

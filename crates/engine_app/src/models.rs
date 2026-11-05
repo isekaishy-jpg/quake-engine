@@ -6,8 +6,8 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_client::{BeamPiece, DrawnEntity};
 use engine_core::math::Vec3;
-use engine_map::{AliasModel, Map, Sprite};
-use engine_render::{EntityDraw, LightDraw, Renderer, SpriteDraw};
+use engine_map::{AliasModel, Map, OccluderSphere, Sprite, pose_occlusion};
+use engine_render::{EntityDraw, LightDraw, Renderer, SpriteDraw, model_matrix};
 use fixture_quake::{load_palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
 
 /// How fast bonus items spin, in degrees a second.
@@ -31,6 +31,8 @@ struct Loaded {
     number: u32,
     /// Its data, for frames and flags.
     model: Arc<AliasModel>,
+    /// The shade of each pose.
+    occlusion: Vec<Vec<OccluderSphere>>,
 }
 
 /// A sprite the renderer holds.
@@ -79,6 +81,19 @@ impl Lighting<'_> {
     }
 }
 
+/// Where the spheres of a model's pose are, as `draw` places them.
+fn posed_shade(occlusion: &[Vec<OccluderSphere>], draw: &EntityDraw) -> Vec<(Vec3, f32)> {
+    let matrix = model_matrix(draw.origin, draw.angles);
+    let place = |sphere: &OccluderSphere| {
+        let [x, y, z] = sphere.center;
+        let row =
+            |at: usize| matrix[at] * x + matrix[at + 4] * y + matrix[at + 8] * z + matrix[at + 12];
+        (Vec3::new(row(0), row(1), row(2)), sphere.radius)
+    };
+    let spheres = occlusion.get(draw.next_pose as usize);
+    spheres.into_iter().flatten().map(place).collect()
+}
+
 /// What a frame draws, besides the map.
 #[derive(Default)]
 pub(crate) struct DrawLists {
@@ -86,6 +101,8 @@ pub(crate) struct DrawLists {
     pub(crate) entities: Vec<EntityDraw>,
     /// The sprites.
     pub(crate) sprites: Vec<SpriteDraw>,
+    /// The shade of each model, as it's posed: the whole, then its parts.
+    pub(crate) shades: Vec<Vec<(Vec3, f32)>>,
 }
 
 /// Every model asked for so far, by name, and the server's numbers for them.
@@ -229,7 +246,7 @@ impl ModelBank {
             if model.spins {
                 angles.y = (time * SPIN_SPEED).rem_euclid(360.0);
             }
-            lists.entities.push(EntityDraw {
+            let draw = EntityDraw {
                 model: loaded.number,
                 pose: pose_of(entity.from_frame),
                 next_pose: pose_of(state.frame),
@@ -240,7 +257,9 @@ impl ModelBank {
                 ambient,
                 shade,
                 in_front: false,
-            });
+            };
+            lists.entities.push(draw);
+            lists.shades.push(posed_shade(&loaded.occlusion, &draw));
         }
     }
 
@@ -320,7 +339,13 @@ fn load_colored(
     let bytes = filesystem.read(name).ok()?;
     let model = Arc::new(parse_colored_mdl(&bytes, &palette, colors)?);
     let number = renderer.add_model(Arc::clone(&model)).ok()?;
-    Some(Arc::new(Asset::Models(vec![Loaded { number, model }])))
+    let occlusion = pose_occlusion(&model);
+    let loaded = Loaded {
+        number,
+        model,
+        occlusion,
+    };
+    Some(Arc::new(Asset::Models(vec![loaded])))
 }
 
 /// Loads `name`, and hands it to `renderer`.
@@ -346,7 +371,12 @@ fn load(
     for model in models {
         let model = Arc::new(model);
         let number = renderer.add_model(Arc::clone(&model)).ok()?;
-        parts.push(Loaded { number, model });
+        let occlusion = pose_occlusion(&model);
+        parts.push(Loaded {
+            number,
+            model,
+            occlusion,
+        });
     }
     Some(Arc::new(Asset::Models(parts)))
 }

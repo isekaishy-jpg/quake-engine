@@ -116,6 +116,7 @@
     - [0091: the platform catches up](proposals/0091-the-platform-catches-up.md)
   - Increment 12:
     - [0092: naming the Sol crates](proposals/0092-naming-the-sol-crates.md)
+    - [0093: what increment 11 left](proposals/0093-what-increment-11-left.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
