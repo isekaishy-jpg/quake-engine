@@ -37,10 +37,10 @@ Status: accepted, 2026-11-05, increment 12.
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** memory still grows with a world's geometry. By the measurement above, the largest grid holds about 1.3 GB rather than about 8.8 GB. Compiling a tiled map still needs all of it in memory. A far tile's faces each have one colour, so a sharp shadow across a far floor is lost until it's near.
+- **Tradeoffs:** memory still grows with a world's geometry. Measured, `wide_world`'s 256 tiles hold about 80 MB more than `tile_world`'s nine, so about 0.3 MB a tile, and the largest grid would hold about 1.7 GB rather than 8.8 GB. Compiling a tiled map still needs all of it in memory, and takes far longer per tile on a big map: `wide_world` bakes in 46 minutes, about six times as long a tile as `tile_world`. A far tile's faces each have one colour, so a sharp shadow across a far floor is lost until it's near.
 - **Acceptance criteria:** a tile map beyond the atlas's old limit loads and plays, memory for light and paths stays flat while walking across it, a path crosses chunks and agrees with the same path on a whole grid, a face with no detail draws in its average colour, and detail arrives and leaves without changing what's near the view.
 - **Future extension:** streaming geometry, if a world ever needs more than the largest grid.
 
 ## Review
 
-See the increment 12 review.
+`wide_world` repeats `tile_world`'s yards over a 16 by 16 grid. Flying corner to corner, memory stayed at about 450 MB, and the frame rate above 200. A real path crosses `tile_world` from its files. [Review 0016](../reviews/0016-increment-12.md) has what was found.

@@ -15,7 +15,7 @@ The note left these open. Each was chosen by recommendation so work could go on,
 | Tile grid | Flat, with one file per tile under a manifest | Simplest, and stacking can come with a version bump |
 | Placed thing IDs | A hidden 64-bit ID on each record | Stable through saves, and authors never see it |
 | Editor UI | `egui`, painted through `vulkane` | One window with the viewport, and the human's Scopework uses it |
-| Tile streaming | All of a map's tiles load with it, and the ring round players governs what's awake | Everything fits in memory today, and it makes the unloaded tile rule true by construction |
+| Tile streaming | Geometry and collision stay for every tile, and light and paths stream, in [proposal 0095](../proposals/0095-streaming-tiles.md). The ring round players governs what's awake | Collision is 12 KB a tile, so a player can't reach anything unloaded, and light and paths are what takes the room |
 
 ## Stages
 
@@ -72,4 +72,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 22 is done.
 - Stage 23 is done: `showcase`, `tile_world`, and maps for each area, all rebuildable.
 - Stage 24 is done, in [review 0015](../reviews/0015-increment-11.md).
-- What the report named as not done is finished in [review 0016](../reviews/0016-increment-12.md), apart from streaming, which waits on the human.
+- What the report named as not done is finished in [review 0016](../reviews/0016-increment-12.md), and streaming is in proposal 0095.

@@ -1,6 +1,6 @@
 # Proposal 0089: tiles
 
-Status: accepted, 2026-11-05, increment 11.
+Status: accepted, 2026-11-05, increment 11. [Proposal 0095](0095-streaming-tiles.md) streams light and paths, and found `Map` didn't need splitting.
 
 ## Research
 

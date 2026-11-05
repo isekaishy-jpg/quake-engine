@@ -1,6 +1,6 @@
 # Review 0016: increment 12
 
-Status: review record, 2026-11-05. Reviewed: proposals 0092 to 0094, and what increment 11's report named as not done.
+Status: review record, 2026-11-05. Reviewed: proposals 0092 to 0095, and what increment 11's report named as not done.
 
 The human pushed increment 11, and asked for what was left over, the rename included, to be finished.
 
@@ -22,17 +22,21 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 5 | Nearest-first redraws let something that never stops hold a far light back for ever, which figures would have made common | What's waited longest goes first |
 | 6 | Parts for every nearby model could push the furthest of a crowd out of the shader's 16 shades | Parts go to the nearest while there's room |
 | 7 | Capsules came from solid boxes, so corpses shaded nothing | Shades come from what's drawn |
+| 8 | Bounced light drew on 1024 samples across a whole map, so on a big map identical walls came out up to twice as bright as each other. `wide_world`'s far colours showed it | A tile keeps 128, and a point looks at nine tiles. A test that a room's bounce doesn't depend on a map's size fails without this |
+| 9 | Two versions of that test passed without the fix, because regular rooms and direct light hid the difference | Rewritten until it failed without the fix |
+| 10 | A redraw of shadows walked every face in the world | A shadow draws only the tiles its light reaches |
 
 ## Process
 
-- Three commits failed `cargo xtask check` first, on a lint in a test, unformatted Rust and a lint on a type. The gate held all three back, and each went in once it passed.
+- Four commits failed `cargo xtask check` first, on a lint in a test, unformatted Rust, a lint on a type and a lint on a cast. The gate held all four back, and each went in once it passed.
 - The real map suites were first run without `QUAKE_DIR`, and every test failed in no time at all. Run with it, they passed.
 - A shell command with a stray `cat` stalled until it was stopped, and the test fix it carried had to be run again.
+- A session started for the lints never ran, as its setup didn't finish, so none of that work has happened.
 
 ## Left for the human
 
 | What | Where it stands |
 |---|---|
-| Streaming tiles | `tile_world` bakes to 2.1 MB a tile on disk. All in memory, that's about 530 MB for a 16 by 16 grid and 2.1 GB for 32 by 32, and the largest grid allowed, 65 by 65, would be about 8.8 GB. It needs `Map` split by tile, through collision, the server, the renderer, visibility and bakes, and nothing today gets near that size, so it's left for the human to call, as proposal 0089 said |
+| Baking big maps | `wide_world` takes 46 minutes, about 11 seconds a tile against 1.7 for `tile_world`, so something in a bake grows faster than a map does. What it is hasn't been measured |
 | The host, worker and cache crates under the workspace lints | Measured at 1,703 items, about 800 of them doc comments to write by hand, with 47 uses of `unsafe` to allow by name. The open questions keep this apart from the rename. The test layout rule would also need test seams moved out of 189 places under `src/` |
 | Jumps, water and lifts in paths | The human set these for later |
