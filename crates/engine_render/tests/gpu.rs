@@ -906,3 +906,30 @@ fn a_flow_map_moves_its_surface() {
     let later = at(1.25, &mut renderer);
     assert_ne!(first, later);
 }
+
+/// A model's back faces show as an outline when its hull is on, in the
+/// outline's colour, where nothing shows otherwise.
+#[test]
+fn a_hull_shows_the_outline_colour() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let mut inside_out = triangle();
+    inside_out.corners.swap(1, 2);
+    let number = renderer.add_model(Arc::new(inside_out)).expect("model");
+    let draws = [draw_of(number)];
+    let plain = renderer
+        .capture(&view_from_above(), with_entity(&draws), 64, 64)
+        .expect("capture");
+    renderer.set_post(PostSettings {
+        outline_hull: true,
+        outline_color: [0.0, 1.0, 0.0],
+        ..PostSettings::default()
+    });
+    let outlined = renderer
+        .capture(&view_from_above(), with_entity(&draws), 64, 64)
+        .expect("capture");
+    assert_ne!(centre(&plain)[..3], [0, 255, 0], "nothing with it off");
+    assert_eq!(centre(&outlined)[..3], [0, 255, 0], "the hull shows");
+}

@@ -125,6 +125,8 @@ impl Backend {
         device: &Device,
         layout: &PipelineLayout,
         pass: &RenderPass,
+        entries: (&str, &str),
+        cull: CullMode,
     ) -> Result<GraphicsPipeline, RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(ALIAS_SHADER)
             .map_err(|error| RenderError(error.to_string()))?;
@@ -142,8 +144,8 @@ impl Backend {
             offset,
         };
         GraphicsPipelineBuilder::new(layout, pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+            .stage(GraphicsShaderStage::Vertex, &shader, entries.0)
+            .stage(GraphicsShaderStage::Fragment, &shader, entries.1)
             .vertex_input(
                 &[
                     binding(0, pose_stride),
@@ -161,7 +163,7 @@ impl Backend {
             .dynamic_viewport_scissor()
             // Quake's triangles wind clockwise. A weapon sits close enough for
             // the near plane to open it up, and this keeps its inside hidden.
-            .cull_mode(CullMode::BACK)
+            .cull_mode(cull)
             .front_face(FrontFace::CLOCKWISE)
             .depth_test(true, true)
             .build(device)
@@ -279,7 +281,20 @@ impl Backend {
             sky_window: pipeline("fs_sky_window")?,
             material: material(false)?,
             blended: material(true)?,
-            alias: Self::make_alias_pipeline(device, &layouts.alias, pass)?,
+            alias: Self::make_alias_pipeline(
+                device,
+                &layouts.alias,
+                pass,
+                ("vs_main", "fs_main"),
+                CullMode::BACK,
+            )?,
+            alias_hull: Self::make_alias_pipeline(
+                device,
+                &layouts.alias,
+                pass,
+                ("vs_hull", "fs_hull"),
+                CullMode::FRONT,
+            )?,
             sprite,
             particle,
         })

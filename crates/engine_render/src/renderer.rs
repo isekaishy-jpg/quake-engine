@@ -132,6 +132,8 @@ pub struct PostSettings {
     pub outline_color: [f32; 3],
     /// Stencil rays: 0 for none, 1 for a box each, 2 for chunky, 3 for full.
     pub rays: u8,
+    /// Whether models are outlined by a pushed-out hull.
+    pub outline_hull: bool,
     /// How wide fake rounded edges are, in pixels, or 0 for none.
     pub rounded_edges: f32,
     /// Whether fog reads the light in the probes.

@@ -30,6 +30,8 @@ pub(super) struct Recorder<'a> {
     particles: &'a GpuBuffer,
     /// The map.
     map: &'a GpuMap,
+    /// Whether models get hull outlines.
+    outline_hull: bool,
 }
 
 /// A model's position, as push constant bytes.
@@ -120,6 +122,7 @@ impl Backend {
             sprites: &self.sprites,
             particles: &self.particles,
             map: self.map.as_ref()?,
+            outline_hull: self.post.outline_hull,
         })
     }
 }
@@ -266,9 +269,27 @@ impl Recorder<'_> {
         if scene.drawables.entities.is_empty() {
             return;
         }
-        let layout = &self.layouts.alias;
+        if self.outline_hull {
+            rec.bind_graphics_pipeline(&self.pipelines.alias_hull);
+            self.record_model_draws(rec, scene, true);
+        }
         rec.bind_graphics_pipeline(&self.pipelines.alias);
+        self.record_model_draws(rec, scene, false);
+    }
+
+    /// Records each model with the pipeline that's bound. A hull leaves out
+    /// what's kept in front, which is the view's own weapon.
+    fn record_model_draws(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        hull: bool,
+    ) {
+        let layout = &self.layouts.alias;
         for draw in scene.drawables.entities {
+            if hull && draw.in_front {
+                continue;
+            }
             let Some(gpu) = self.models.get(draw.model as usize) else {
                 continue;
             };

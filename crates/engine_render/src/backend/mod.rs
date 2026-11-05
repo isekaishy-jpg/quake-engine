@@ -91,7 +91,10 @@ const WORLD_SHADER: &str = concat!(
 );
 
 /// The overlay shader.
-const ALIAS_SHADER: &str = include_str!("../shaders/alias.wgsl");
+const ALIAS_SHADER: &str = concat!(
+    include_str!("../shaders/frame.wgsl"),
+    include_str!("../shaders/alias.wgsl"),
+);
 
 /// The shader of sprites and particles.
 const SPRITE_SHADER: &str = include_str!("../shaders/sprite.wgsl");
@@ -281,6 +284,8 @@ struct Pipelines {
     blended: GraphicsPipeline,
     /// Alias models.
     alias: GraphicsPipeline,
+    /// Outlines of models, as a pushed-out hull.
+    alias_hull: GraphicsPipeline,
     /// Sprites.
     sprite: GraphicsPipeline,
     /// Particles.

@@ -1,11 +1,5 @@
-// Alias models: two poses blended, lit per vertex (proposal 0033).
-
-struct Frame {
-    view_projection: mat4x4<f32>,
-    eye: vec4<f32>,
-    params: vec4<f32>,
-    styles: array<vec4<f32>, 16>,
-}
+// Alias models: two poses blended, lit per vertex (proposal 0033). This follows
+// frame.wgsl in one module.
 
 struct Draw {
     model: mat4x4<f32>,
@@ -53,6 +47,32 @@ fn vs_main(in: VertexIn) -> VertexOut {
     // Light comes along -x, as in R_DrawEntitiesOnList.
     out.light = draw.light.x + draw.light.y * max(turned.x, 0.0);
     return out;
+}
+
+// The same model pushed out along its normals, with its front faces culled:
+// what shows round its edge is an outline (proposal 0081).
+@vertex
+fn vs_hull(in: VertexIn) -> VertexOut {
+    let blend = draw.scale.w;
+    let pose = mix(vec3<f32>(in.position_a.xyz), vec3<f32>(in.position_b.xyz), blend);
+    let local = pose * draw.scale.xyz + draw.offset.xyz;
+    let normal = mix(in.normal_a.xyz, in.normal_b.xyz, blend);
+    let world = draw.model * vec4<f32>(local, 1.0);
+    // Wider with distance, so a line keeps its width on screen.
+    let away = length(world.xyz - frame.eye.xyz);
+    let width = max(frame.post_params.y, 1.0) * away * 0.0016;
+    let pushed = world.xyz + normalize((draw.model * vec4<f32>(normal, 0.0)).xyz) * width;
+
+    var out: VertexOut;
+    out.clip = frame.view_projection * vec4<f32>(pushed, 1.0);
+    out.uv = in.uv;
+    out.light = 1.0;
+    return out;
+}
+
+@fragment
+fn fs_hull(in: VertexOut) -> @location(0) vec4<f32> {
+    return vec4<f32>(frame.outline.rgb, 1.0);
 }
 
 @fragment
