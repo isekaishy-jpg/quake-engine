@@ -14,7 +14,7 @@ use super::{
     Pipelines, SPRITE_SHADER, WORLD_SHADER,
 };
 use crate::alias::POSE_CORNER_BYTES;
-use crate::canvas::{MAX_QUADS, VERTEX_FLOATS};
+use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
 use crate::sprite::PARTICLE_BYTES;
 use crate::world::Vertex;
@@ -114,6 +114,8 @@ impl Backend {
             pictures: Vec::new(),
             vertices,
             batches: Vec::new(),
+            ui: UiFrame::default(),
+            ui_first: 0,
         })
     }
 

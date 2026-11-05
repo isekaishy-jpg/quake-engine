@@ -1,0 +1,28 @@
+[package]
+name = "engine_editor"
+description = "The editor: the first tool on the development platform."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "engine-editor"
+path = "src/main.rs"
+
+[dependencies]
+egui.workspace = true
+engine_assets.workspace = true
+engine_compile.workspace = true
+engine_core.workspace = true
+engine_format.workspace = true
+engine_map.workspace = true
+engine_platform.workspace = true
+engine_render.workspace = true
+engine_tools.workspace = true
+png.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

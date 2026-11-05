@@ -873,6 +873,7 @@ impl PlatformApp for Engine {
                 };
                 self.key(name, pressed, false);
             }
+            InputEvent::Pointer { .. } => {}
             InputEvent::FocusLost => {
                 self.world.buttons.release();
                 self.console.add("m_capture 0");

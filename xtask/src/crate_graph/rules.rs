@@ -68,6 +68,19 @@ pub const CRATE_RULES: &[CrateRule] = &[
         ],
     },
     CrateRule {
+        name: "engine_editor",
+        may_depend_on: &[
+            "engine_assets",
+            "engine_compile",
+            "engine_core",
+            "engine_format",
+            "engine_map",
+            "engine_platform",
+            "engine_render",
+            "engine_tools",
+        ],
+    },
+    CrateRule {
         name: "engine_test_maps",
         may_depend_on: &["engine_core", "engine_map"],
     },
@@ -286,7 +299,7 @@ pub struct FormatRule {
 /// The format libraries.
 pub const FORMAT_RULES: &[FormatRule] = &[FormatRule {
     dependency: "serde_json",
-    users: &["engine_app", "engine_tools"],
+    users: &["engine_app", "engine_editor", "engine_tools"],
 }];
 
 /// The edition every workspace package uses.

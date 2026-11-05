@@ -104,6 +104,12 @@ impl Session {
         Ok(target)
     }
 
+    /// Where it's saved, if it has been.
+    #[must_use]
+    pub fn saved_path(&self) -> Option<PathBuf> {
+        self.path.clone()
+    }
+
     /// The map as text.
     #[must_use]
     pub fn text(&self) -> String {

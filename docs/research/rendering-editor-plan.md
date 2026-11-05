@@ -27,26 +27,32 @@ Status is one of todo, doing or done.
 | 3 | Containers | Reusable items by name, layered, as folders and packs | done |
 | 4 | Materials | One image type, materials, shading models, 8 slots, the Quake importer's mapping | done |
 | 5 | Sampling | Filter modes, anisotropy, generated mips | done |
-| 6 | Surface maps | Specular, normal, emissive, height, parallax, tint, detail | todo |
-| 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | todo |
+| 6 | Surface maps | Specular, normal, emissive, height, parallax, tint, detail | done |
+| 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | doing |
 | 8 | Alpha | Modes, sorting, alpha to coverage | todo |
 | 9 | Anti-aliasing | MSAA and SMAA as settings | todo |
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
-| 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | todo |
+| 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | doing |
 | 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
 | 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | todo |
 | 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | todo |
 | 15 | Small lights | Torch shader, flipbooks, particles | todo |
-| 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | todo |
-| 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | todo |
+| 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | doing |
+| 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | doing |
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | todo |
 | 19 | Visibility | Our own compiler, and entity culling from the plan | todo |
 | 20 | Tiles | Grid, manifest, streaming, coordinates, the unloaded tile rule, sleeping entities | todo |
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
-| 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | todo |
-| 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | todo |
+| 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
+| 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
 | 24 | Reviews | Circular quality and bug passes until none are left | todo |
 
 ## Log
 
 Newest last. A line is added when a stage's state changes.
+
+- Stages 1 to 6 and 10 are done. Cel, matcap, triplanar, hex tiling, flipbooks and parallax arrived with materials.
+- Stage 11 still owes distance field shadows and runtime keyframe blending.
+- Stage 7 still owes painted masks and flattening on compile.
+- Stage 16 still owes outlines. Stage 17 still owes decals, hotspots, flow maps, reflections and rounded edges.
+- Stage 22 has the core, command line, MCP and editor. Stage 23 has the feature tour.

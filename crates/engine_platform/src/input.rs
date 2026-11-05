@@ -41,6 +41,13 @@ pub enum InputEvent {
         /// Vertical counts.
         y: f64,
     },
+    /// The pointer moved, in pixels of the window.
+    Pointer {
+        /// Across from the left.
+        x: f64,
+        /// Down from the top.
+        y: f64,
+    },
     /// The wheel turned, in lines. Positive is away from the user.
     Wheel {
         /// Lines turned.
@@ -163,6 +170,10 @@ pub(crate) fn translate(event: &SAInputEvent) -> Option<InputEvent> {
                 pressed: *state == SAButtonState::Pressed,
             })
         }
+        SAInputEvent::PointerMoved(position) => Some(InputEvent::Pointer {
+            x: position.x,
+            y: position.y,
+        }),
         SAInputEvent::RelativeMotion { x, y } => Some(InputEvent::Motion { x: *x, y: *y }),
         SAInputEvent::Wheel { delta, .. } => Some(InputEvent::Wheel {
             lines: match *delta {

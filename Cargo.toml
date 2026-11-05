@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/engine_app",
+    "crates/engine_editor",
     "crates/engine_tools",
     "crates/engine_compile",
     "crates/engine_format",
@@ -45,6 +46,8 @@ publish = false
 
 # Every dependency is declared once here, pinned exactly, and inherited.
 [workspace.dependencies]
+# Proposal 0074: the editor's UI, private to `engine_editor`.
+egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
 # Proposal 0008: typed `cargo metadata` access for the crate-graph rule test.
 cargo_metadata = { version = "=0.23.1", default-features = false }
 
@@ -56,6 +59,7 @@ engine_console = { path = "crates/engine_console" }
 engine_format = { path = "crates/engine_format" }
 engine_compile = { path = "crates/engine_compile" }
 engine_tools = { path = "crates/engine_tools" }
+engine_editor = { path = "crates/engine_editor" }
 engine_map = { path = "crates/engine_map" }
 engine_test_maps = { path = "crates/engine_test_maps" }
 engine_movement = { path = "crates/engine_movement" }

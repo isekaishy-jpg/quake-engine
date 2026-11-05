@@ -24,7 +24,7 @@ use vulkane::safe::{
 };
 
 use crate::alias::ALIAS_PUSH_SIZE;
-use crate::canvas::QuadBatch;
+use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::RenderError;
 use crate::renderer::{Capture, Drawables, Target, TextureFilter, View};
 use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
@@ -192,6 +192,10 @@ struct CanvasPass {
     vertices: GpuBuffer,
     /// What to draw this frame.
     batches: Vec<QuadBatch>,
+    /// A UI to draw over that.
+    ui: UiFrame,
+    /// Where the UI's vertices start.
+    ui_first: u32,
 }
 
 /// A model on the GPU.
@@ -730,6 +734,13 @@ impl Backend {
         self.material_sampler = material_sampler;
         self.filter = Some(filter);
         Ok(())
+    }
+
+    /// Sets the UI to draw over the next frames.
+    pub(crate) fn set_ui(&mut self, ui: UiFrame) {
+        if let Some(canvas) = &mut self.canvas {
+            canvas.ui = ui;
+        }
     }
 
     /// Notes the window's new size.

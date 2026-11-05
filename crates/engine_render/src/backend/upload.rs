@@ -16,7 +16,7 @@ use super::{
     GpuSprite, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
-use crate::canvas::canvas_vertices;
+use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
@@ -222,11 +222,13 @@ impl Backend {
         let (floats, batches) = canvas_vertices(quads, size);
         let mut mapped = canvas.vertices.memory.map()?;
         let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
-        for (value, chunk) in floats.iter().zip(target) {
+        let ui_first = floats.len() / VERTEX_FLOATS;
+        for (value, chunk) in floats.iter().chain(&canvas.ui.vertices).zip(target) {
             *chunk = value.to_le_bytes();
         }
         drop(mapped);
         canvas.batches = batches;
+        canvas.ui_first = u32::try_from(ui_first).unwrap_or(0);
         Ok(())
     }
 

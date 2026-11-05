@@ -72,7 +72,9 @@ impl Backend {
         canvas: Option<&CanvasPass>,
         size: (u32, u32),
     ) {
-        let Some(canvas) = canvas.filter(|canvas| !canvas.batches.is_empty()) else {
+        let Some(canvas) =
+            canvas.filter(|canvas| !canvas.batches.is_empty() || !canvas.ui.batches.is_empty())
+        else {
             return;
         };
         #[expect(
@@ -89,6 +91,23 @@ impl Backend {
             };
             rec.bind_graphics_descriptor_sets(&canvas.layout, 0, &[&picture.set]);
             rec.draw(batch.count, 1, batch.first, 0);
+        }
+        for batch in &canvas.ui.batches {
+            let Some(picture) = canvas.pictures.get(batch.picture as usize) else {
+                continue;
+            };
+            let [left, top, right, bottom] = batch.clip;
+            if right <= left || bottom <= top {
+                continue;
+            }
+            rec.set_scissor(
+                i32::try_from(left).unwrap_or(0),
+                i32::try_from(top).unwrap_or(0),
+                right - left,
+                bottom - top,
+            );
+            rec.bind_graphics_descriptor_sets(&canvas.layout, 0, &[&picture.set]);
+            rec.draw(batch.count, 1, canvas.ui_first + batch.first, 0);
         }
     }
 

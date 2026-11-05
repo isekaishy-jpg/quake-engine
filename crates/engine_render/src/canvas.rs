@@ -23,6 +23,28 @@ pub struct QuadBatch {
     pub count: u32,
 }
 
+/// A run of UI triangles, clipped to a rectangle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct UiBatch {
+    /// The picture.
+    pub picture: u32,
+    /// The first vertex.
+    pub first: u32,
+    /// How many vertices.
+    pub count: u32,
+    /// The left, top, right and bottom edges of what's shown, in pixels.
+    pub clip: [u32; 4],
+}
+
+/// A UI's triangles for a frame, drawn over everything (proposal 0074).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct UiFrame {
+    /// Vertices, as clip space position, texture coordinates and colour.
+    pub vertices: Vec<f32>,
+    /// What to draw.
+    pub batches: Vec<UiBatch>,
+}
+
 /// The vertices of `quads` on a picture of `size`, and the runs to draw them
 /// in. Quads past [`MAX_QUADS`] are dropped.
 #[must_use]

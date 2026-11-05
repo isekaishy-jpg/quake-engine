@@ -10,6 +10,7 @@ use engine_map::{AliasModel, Map, Sprite};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
+use crate::canvas::UiFrame;
 use crate::error::RenderError;
 use crate::sprite::{LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
@@ -195,6 +196,11 @@ impl Renderer {
     /// Returns an error if the device refuses a new sampler.
     pub fn set_filter(&mut self, filter: TextureFilter) -> Result<(), RenderError> {
         self.backend.set_filter(filter)
+    }
+
+    /// Sets the UI to draw over the next frames.
+    pub fn set_ui(&mut self, ui: UiFrame) {
+        self.backend.set_ui(ui);
     }
 
     /// Chooses whether frames wait for the display. Waiting paces them

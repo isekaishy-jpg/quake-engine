@@ -18,10 +18,22 @@ pub(crate) fn value_from_json(json: &Json) -> Option<Value> {
     }
 }
 
+/// JSON for a number, as a whole number where it is one.
+fn number_to_json(number: f64) -> Json {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "checked to be whole and small"
+    )]
+    let whole = number as i64;
+    #[expect(clippy::cast_precision_loss, reason = "compared only when small")]
+    let exact = number.fract() == 0.0 && number.abs() < 9e15 && whole as f64 == number;
+    if exact { json!(whole) } else { json!(number) }
+}
+
 /// JSON from a document value.
 pub(crate) fn value_to_json(value: &Value) -> Json {
     match value {
-        Value::Number(number) => json!(number),
+        Value::Number(number) => number_to_json(*number),
         Value::Text(text) => json!(text),
         Value::Flag(flag) => json!(flag),
         Value::List(values) => Json::Array(values.iter().map(value_to_json).collect()),
