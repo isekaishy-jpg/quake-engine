@@ -5,7 +5,7 @@ use std::rc::Rc;
 
 use engine_core::math::Vec3;
 use engine_map::Contents;
-use engine_physics::{CollisionWorld, PointContents, enter_box};
+use engine_physics::{CollisionWorld, enter_box};
 
 use crate::simulation::{Callback, Entity, MoveType, Simulation, Solid};
 use crate::table::EntityId;
@@ -348,7 +348,11 @@ impl Simulation {
         world: &CollisionWorld,
         callbacks: &mut Vec<Callback>,
     ) {
-        let wet = matches!(world.contents(entity.origin), PointContents::Liquid(_));
+        // Sky counts, as `SV_CheckWaterTransition` has anything past water.
+        let wet = !matches!(
+            world.map_contents(entity.origin),
+            Contents::Empty | Contents::Solid
+        );
         if entity.water_known && wet != entity.in_water {
             callbacks.push(Callback::Splash(id));
         }

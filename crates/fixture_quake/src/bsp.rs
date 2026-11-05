@@ -91,7 +91,7 @@ fn import_texture(source: &BspMipTexture, palette: &Palette) -> Texture {
         };
         if width == 0
             || height == 0
-            || indices.len() != usize::try_from(width * height).unwrap_or(0)
+            || Some(indices.len()) != width.checked_mul(height).map(|size| size as usize)
         {
             break;
         }
@@ -230,10 +230,42 @@ fn face_light(face: &BspFace, points: &[Vec3], axes: &[TexelAxis; 2]) -> Option<
     })
 }
 
+/// `CONTENTS_SKY`, as a file has it.
+const CONTENTS_SKY: i32 = -6;
+
+/// The number of the leaves' lump.
+const LEAF_LUMP: usize = 10;
+
+/// Which leaves are sky, in order. `qbsp` calls them solid, which they aren't:
+/// a rocket flies on into one, and is gone when it gets to the far side.
+fn sky_leaves(bsp: &[u8]) -> Vec<bool> {
+    let size = match bsp.get(..VERSION_SIZE) {
+        Some([29, 0, 0, 0]) => 28,
+        Some(b"2PSB") => 32,
+        Some(b"BSP2") => 44,
+        _ => return Vec::new(),
+    };
+    let at = VERSION_SIZE + LEAF_LUMP * 8;
+    let number = |at: usize| -> Option<usize> {
+        let field = bsp.get(at..at + 4)?.try_into().ok()?;
+        usize::try_from(u32::from_le_bytes(field)).ok()
+    };
+    let lump = number(at)
+        .zip(number(at + 4))
+        .and_then(|(offset, length)| bsp.get(offset..offset.checked_add(length)?));
+    lump.map_or_else(Vec::new, |lump| {
+        lump.chunks_exact(size)
+            .map(|leaf| leaf[..4] == CONTENTS_SKY.to_le_bytes())
+            .collect()
+    })
+}
+
 /// A leaf's contents. The BSP29 values arrive as `qbsp` flags.
-fn contents(leaf: &BspLeaf) -> Contents {
+fn contents(leaf: &BspLeaf, sky: bool) -> Contents {
     let flags = leaf.contents.0;
-    if flags.contains(BspLeafContentFlags::SOLID) {
+    if sky {
+        Contents::Sky
+    } else if flags.contains(BspLeafContentFlags::SOLID) {
         Contents::Solid
     } else if flags.contains(BspLeafContentFlags::WATER) {
         Contents::Water
@@ -267,8 +299,8 @@ fn clip_child(child: BspNodeRef) -> ClipChild {
     }
 }
 
-/// Builds the tree.
-fn import_tree(bsp: &BspData) -> Tree {
+/// Builds the tree, with `sky` saying which leaves are sky.
+fn import_tree(bsp: &BspData, sky: &[bool]) -> Tree {
     let planes = bsp
         .planes
         .iter()
@@ -293,8 +325,9 @@ fn import_tree(bsp: &BspData) -> Tree {
     let leaves = bsp
         .leaves
         .iter()
-        .map(|leaf| Leaf {
-            contents: contents(leaf),
+        .enumerate()
+        .map(|(number, leaf)| Leaf {
+            contents: contents(leaf, sky.get(number).copied().unwrap_or(false)),
             visibility: match leaf.visdata {
                 VisDataRef::Offset(offset) => u32::try_from(offset).ok(),
                 VisDataRef::Cluster(_) => None,
@@ -451,6 +484,7 @@ pub fn without_stray_tail(bsp: &[u8]) -> &[u8] {
 ///
 /// Returns [`MapError`] if the file can't be parsed.
 pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<Map, MapError> {
+    let sky = sky_leaves(bsp);
     let bsp = BspData::parse(BspParseInput {
         bsp: without_stray_tail(bsp),
         lit,
@@ -520,7 +554,7 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
         models,
         lit: !light.is_empty(),
         light,
-        tree: import_tree(&bsp),
+        tree: import_tree(&bsp, &sky),
         entities,
     })
 }

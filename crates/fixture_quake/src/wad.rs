@@ -47,8 +47,8 @@ fn image(width: u32, height: u32, pixels: &[u8], palette: &Palette, clear: u8) -
 #[must_use]
 pub fn parse_picture(bytes: &[u8], palette: &Palette) -> Option<Image> {
     let (width, height) = (number(bytes, 0)?, number(bytes, 4)?);
-    let count = usize::try_from(width).ok()? * usize::try_from(height).ok()?;
-    let pixels = bytes.get(8..8 + count)?;
+    let count = usize::try_from(width.checked_mul(height)?).ok()?;
+    let pixels = bytes.get(8..8usize.checked_add(count)?)?;
     Some(image(width, height, pixels, palette, CLEAR))
 }
 
@@ -68,7 +68,9 @@ impl Wad {
         }
         let count = usize::try_from(number(bytes, 4)?).ok()?;
         let directory = usize::try_from(number(bytes, 8)?).ok()?;
-        debug_assert!(directory >= HEADER_SIZE);
+        if directory < HEADER_SIZE || count > bytes.len() / ENTRY_SIZE {
+            return None;
+        }
         let mut lumps = HashMap::with_capacity(count);
         for index in 0..count {
             let entry = bytes.get(directory + index * ENTRY_SIZE..)?;
@@ -77,7 +79,7 @@ impl Wad {
             let name = entry.get(ENTRY_SIZE - NAME_SIZE..ENTRY_SIZE)?;
             let end = name.iter().position(|&byte| byte == 0).unwrap_or(NAME_SIZE);
             let name = String::from_utf8_lossy(&name[..end]).to_lowercase();
-            lumps.insert(name, bytes.get(start..start + size)?.to_vec());
+            lumps.insert(name, bytes.get(start..start.checked_add(size)?)?.to_vec());
         }
         Some(Self { lumps })
     }

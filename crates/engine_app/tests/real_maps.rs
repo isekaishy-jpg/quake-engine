@@ -465,6 +465,83 @@ fn e1m8_has_its_low_gravity_and_nowhere_else_does() {
     assert!((35.0..60.0).contains(&height), "{height}");
 }
 
+/// Lua that gets ready to fire rockets.
+const ROCKETS_AND_SKY: &str = r#"
+    blasts = 0
+    local real = T_RadiusDamage
+    T_RadiusDamage = function(...)
+        blasts += 1
+        return real(...)
+    end
+    player = find_all("classname", "player")[1]
+    function fire(from, direction)
+        local rocket = spawn()
+        rocket.owner = player
+        rocket.movetype = MOVETYPE_FLYMISSILE
+        rocket.solid = SOLID_BBOX
+        rocket.velocity = direction * 1000
+        rocket.touch = T_MissileTouch
+        setmodel(rocket, "progs/missile.mdl")
+        setsize(rocket, vector.zero, vector.zero)
+        setorigin(rocket, from)
+        return rocket
+    end
+"#;
+
+#[test]
+#[ignore = "needs game data"]
+fn a_rocket_that_reaches_the_sky_just_goes() {
+    let (mut server, _client, map) = start(&base(), "e1m5");
+    let world = CollisionWorld::new(Arc::clone(&map));
+    let collision = world.with(&[]);
+    let model = &map.models[0];
+    let (low, high) = (model.mins, model.maxs);
+    let steps = |from: f32, to: f32| {
+        (0..)
+            .map(move |n| from + n as f32 * 16.0)
+            .take_while(move |at| *at < to)
+    };
+    let under_sky = steps(low.x, high.x)
+        .flat_map(|x| steps(low.y, high.y).map(move |y| (x, y)))
+        .flat_map(|(x, y)| steps(low.z, high.z).map(move |z| Vec3::new(x, y, z)))
+        .find(|place| {
+            let up = *place + Vec3::new(0.0, 0.0, 256.0);
+            let stop = collision.move_box(*place, Vec3::ZERO, Vec3::ZERO, up);
+            world.map_contents(*place) == Contents::Empty
+                && stop.fraction < 1.0
+                && world.map_contents(stop.end) == Contents::Sky
+        })
+        .expect("this level has sky over open air");
+    // High up, away from whoever's standing about.
+    let up = under_sky + Vec3::new(0.0, 0.0, 256.0);
+    let stop = collision.move_box(under_sky, Vec3::ZERO, Vec3::ZERO, up);
+    let under_sky = stop.end - Vec3::new(0.0, 0.0, 40.0);
+    assert_eq!(world.map_contents(under_sky), Contents::Empty);
+    server.exec(ROCKETS_AND_SKY).expect("it's ready");
+    let from = format!(
+        "vector.create({}, {}, {})",
+        under_sky.x, under_sky.y, under_sky.z
+    );
+    server
+        .exec(&format!("rocket = fire({from}, vector.create(0, 0, 1))"))
+        .expect("it fires");
+    for _ in 0..144 {
+        server.tick();
+    }
+    server
+        .exec(r#"assert(rawget(rocket, "_removed") and blasts == 0, "gone without a blast")"#)
+        .expect("it holds");
+    server
+        .exec(&format!("rocket = fire({from}, vector.create(0, 0, -1))"))
+        .expect("it fires");
+    for _ in 0..144 {
+        server.tick();
+    }
+    server
+        .exec(r#"assert(blasts == 1, "the control: the ground blows it up")"#)
+        .expect("it holds");
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn a_saved_game_keeps_its_gravity() {

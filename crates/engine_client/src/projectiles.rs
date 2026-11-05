@@ -8,6 +8,7 @@
 use engine_core::entity::{ModelInstance, Projectile};
 use engine_core::math::Vec3;
 use engine_core::time::TICK_SECONDS;
+use engine_map::Contents;
 use engine_physics::CollisionWorld;
 
 /// A tick, which is what the server moves things by.
@@ -124,7 +125,9 @@ impl Path {
             position = trace.end;
             flown += STEP;
             if trace.fraction < 1.0 {
-                if impact.is_none() {
+                // What flies straight just goes if it ends up in the sky.
+                let gone = !launch.bounces && world.map_contents(position) == Contents::Sky;
+                if impact.is_none() && !gone {
                     impact = Some((launch.time + f64::from(flown), position));
                 }
                 if !launch.bounces {
