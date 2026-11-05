@@ -7,7 +7,7 @@ mod shots;
 mod sound;
 mod view;
 
-use self::shading::StencilGates;
+use self::shading::{Flames, StencilGates};
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -110,6 +110,8 @@ pub(crate) struct World {
     step: StepSmoother,
     /// Which stencil boxes are open.
     gates: StencilGates,
+    /// What small fires are doing.
+    flames: Flames,
     /// The movement buttons held.
     pub(crate) buttons: Buttons,
     /// Key bindings.
@@ -321,6 +323,7 @@ impl World {
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.shot_clock.reset();
         self.gates = StencilGates::default();
+        self.flames = Flames::default();
         let map = Arc::clone(map);
         self.map_time = 0.0;
         self.hud = Hud::new();
@@ -561,6 +564,7 @@ impl Engine {
                 server: None,
                 step: StepSmoother::default(),
                 gates: StencilGates::default(),
+                flames: Flames::default(),
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,

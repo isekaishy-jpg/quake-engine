@@ -1,13 +1,15 @@
-//! Ray stencils, from entities (proposal 0076).
+//! Ray stencils and flames, from entities (proposals 0076 and 0079).
 
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::Value;
-use engine_map::{RayStencil, stencil_boxes};
+use engine_map::{Emitter, RayStencil, stencil_boxes};
 
 use crate::build::TextureSource;
 use crate::error::CompileError;
+use crate::geometry::Point;
+use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::EntitySource;
 
 /// The value of a field.
@@ -39,6 +41,75 @@ fn number_of(entity: &EntitySource, key: &str, default: f32) -> f32 {
     field(entity, key)
         .and_then(Value::number)
         .map_or(default, |value| value as f32)
+}
+
+/// How tall a flame is unless it says.
+const FLAME_SIZE: f32 = 24.0;
+
+/// A quad as two triangles, seen from both sides.
+fn both_sides(corners: [Point; 4], material: &str) -> [PlacedTriangle; 4] {
+    let [a, b, c, d] = corners;
+    let (uv_a, uv_b, uv_c, uv_d) = ([0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]);
+    let triangle = |points, uvs| PlacedTriangle {
+        points,
+        uvs,
+        material: material.to_owned(),
+    };
+    [
+        triangle([a, b, c], [uv_a, uv_b, uv_c]),
+        triangle([a, c, d], [uv_a, uv_c, uv_d]),
+        triangle([c, b, a], [uv_c, uv_b, uv_a]),
+        triangle([d, c, a], [uv_d, uv_c, uv_a]),
+    ]
+}
+
+/// The faces and emitters of `flame` entities: two crossed quads each, with
+/// the flame's animation in its material, and no collision.
+pub(crate) fn build_flames<'a>(
+    flames: impl Iterator<Item = &'a EntitySource>,
+) -> (PlacedMesh, Vec<Emitter>) {
+    let mut faces = PlacedMesh::default();
+    let mut emitters = Vec::new();
+    for flame in flames {
+        let Some(origin) = points_of(flame, "origin").first().copied() else {
+            continue;
+        };
+        let size = number_of(flame, "size", FLAME_SIZE);
+        let material = field(flame, "material")
+            .and_then(Value::text)
+            .unwrap_or("torch_flame");
+        let (x, y, z) = (
+            f64::from(origin.x),
+            f64::from(origin.y),
+            f64::from(origin.z),
+        );
+        let half = f64::from(size) * 0.5;
+        let top = z + f64::from(size);
+        faces.triangles.extend(both_sides(
+            [
+                [x - half, y, z],
+                [x + half, y, z],
+                [x + half, y, top],
+                [x - half, y, top],
+            ],
+            material,
+        ));
+        faces.triangles.extend(both_sides(
+            [
+                [x, y - half, z],
+                [x, y + half, z],
+                [x, y + half, top],
+                [x, y - half, top],
+            ],
+            material,
+        ));
+        emitters.push(Emitter {
+            origin: origin + Vec3::new(0.0, 0.0, size * 0.5),
+            light_radius: number_of(flame, "light", size * 6.0),
+            sparks: number_of(flame, "sparks", 3.0),
+        });
+    }
+    (faces, emitters)
 }
 
 /// Builds a `ray_stencil` entity.

@@ -199,6 +199,19 @@ impl Particles {
         }
     }
 
+    /// A spark rising off a small fire at `origin`.
+    pub fn spark(&mut self, origin: Vec3) {
+        let particle = Particle {
+            origin: origin + self.spread(8, 1.0),
+            color: RAMP_FIRE[0],
+            velocity: self.spread(16, 1.0) + Vec3::new(0.0, 0.0, 28.0),
+            ramp: 0.0,
+            die: self.time + 1.0,
+            motion: Motion::Fire,
+        };
+        self.add(particle);
+    }
+
     /// `R_RunParticleEffect`: a puff around `origin`, drifting along `direction`.
     pub fn puff(&mut self, origin: Vec3, direction: Vec3, color: u8, count: u32) {
         if count >= EXPLOSION_COUNT {

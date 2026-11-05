@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 
+use crate::emitter::Emitter;
 use crate::material::Material;
 use crate::pool::{ModelOccluder, Pool};
 use crate::probes::ProbeGrid;
@@ -188,6 +189,8 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// Small fixed fires.
+    pub emitters: Vec<Emitter>,
     /// The shade moving models cast.
     pub occluders: Vec<ModelOccluder>,
     /// Bodies of liquid.

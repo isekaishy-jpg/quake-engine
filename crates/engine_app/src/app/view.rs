@@ -253,6 +253,13 @@ impl World {
                 model_flags: 0,
             };
             lights = self.update_effects(time + leftover, &drawn, player);
+            if let Some(map) = &self.map {
+                let (flames, sparks) = self.flames.update(map, origin, time, frame_seconds);
+                lights.extend(flames);
+                for spark in sparks {
+                    self.effects.spark(spark);
+                }
+            }
             if let Some(map) = self.map.clone() {
                 let lighting = Lighting {
                     map: &map,

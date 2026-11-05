@@ -166,6 +166,11 @@ impl Effects {
         &self.particles
     }
 
+    /// Sends a spark up from `origin`.
+    pub fn spark(&mut self, origin: Vec3) {
+        self.particles.spark(origin);
+    }
+
     /// The lights shining now.
     pub fn lights(&self) -> impl Iterator<Item = &DynamicLight> {
         self.lights

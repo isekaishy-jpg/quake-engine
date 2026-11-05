@@ -17,7 +17,7 @@ use crate::geometry::{
 };
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, WorkingMap, read_map};
-use crate::stencil::build_stencil;
+use crate::stencil::{build_flames, build_stencil};
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
 /// Supplies textures for materials.
@@ -518,8 +518,12 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         materials: HashMap::new(),
         planes: PlaneSet::default(),
     };
-    let world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
+    let flames = working.entities.iter().filter(|e| e.kind == "flame");
+    let (flame_faces, emitters) = build_flames(flames);
+    let mut world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
+    world_meshes.push(&flame_faces);
     builder.add_model(&working.brushes, &world_meshes)?;
+    builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);
     let is_world = |kind: &str| kind == "worldspawn";
     if !working.entities.iter().any(|entity| is_world(&entity.kind)) {

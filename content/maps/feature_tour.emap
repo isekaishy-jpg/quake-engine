@@ -274,7 +274,7 @@ entity {
 
 entity {
     origin = [8 160 132]
-    type = "prop_flame"
+    type = "flame"
     prefab = "torch"
     id = 36
 }
@@ -299,7 +299,7 @@ entity {
 
 entity {
     origin = [8 608 132]
-    type = "prop_flame"
+    type = "flame"
     prefab = "torch"
     id = 39
 }

@@ -15,7 +15,7 @@ return {
             },
             {
                 block = "entity",
-                type = "prop_flame",
+                type = "flame",
                 origin = { 0, 0, 36 },
             },
         }

@@ -329,3 +329,19 @@ fn a_bad_mesh_says_what_is_wrong() {
     let error = read_mesh(&from_text(text).expect("text")).expect_err("no such corner");
     assert!(error.to_string().contains("corner"), "{error}");
 }
+
+/// A flame is crossed faces seen from both sides, with no collision, and
+/// something that flickers and sparks.
+#[test]
+fn a_flame_has_faces_and_an_emitter() {
+    let plain = room();
+    let text = format!("{ROOM}\nentity f {{ type = flame origin = 0 100 -200 size = 32 }}\n");
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = Arc::new(compile_text(&text, &mut source).expect("compiles"));
+    assert_eq!(map.faces.len(), plain.faces.len() + 8);
+    let emitter = map.emitters[0];
+    assert_eq!(emitter.origin, Vec3::new(0.0, 100.0, -184.0));
+    assert!((emitter.light_radius - 192.0).abs() < 0.01);
+    let world = CollisionWorld::new(Arc::clone(&map));
+    assert!(!world.in_solid(emitter.origin), "nothing to walk into");
+}

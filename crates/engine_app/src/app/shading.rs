@@ -5,7 +5,7 @@ use engine_client::Client;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{Map, OccluderSphere, RayStencil, STENCIL_GRID};
-use engine_render::CapsuleDraw;
+use engine_render::{CapsuleDraw, LightDraw};
 
 /// A stencil's occlusion grid.
 pub(super) type StencilMask = [f32; STENCIL_GRID * STENCIL_GRID];
@@ -34,6 +34,71 @@ const PART_DETAIL_REACH: f32 = 512.0;
 
 /// How dark a character's shade is at its strongest.
 const CAPSULE_STRENGTH: f32 = 0.7;
+
+/// How many flames light a frame, nearest first.
+const MAX_FLAMES: usize = 8;
+
+/// How far off a flame is seen to spark or light anything.
+const FLAME_REACH: f32 = 1200.0;
+
+/// How strong a flame's light is. Baked light does most of the work, so this is
+/// only the flicker on top of it.
+const FLAME_LIGHT: f32 = 0.35;
+
+/// The sparks owed by each of a map's flames.
+#[derive(Debug, Default)]
+pub(super) struct Flames {
+    /// How many sparks each is owed, so slow rates add up.
+    owed: Vec<f32>,
+}
+
+impl Flames {
+    /// The flickering lights near `eye`, and the sparks they give off in
+    /// `seconds`, as places to start them.
+    pub(super) fn update(
+        &mut self,
+        map: &Map,
+        eye: Vec3,
+        time: f32,
+        seconds: f32,
+    ) -> (Vec<LightDraw>, Vec<Vec3>) {
+        self.owed.resize(map.emitters.len(), 0.0);
+        let mut near: Vec<(usize, f32)> = map
+            .emitters
+            .iter()
+            .enumerate()
+            .map(|(index, emitter)| (index, (emitter.origin - eye).length()))
+            .filter(|(_, distance)| *distance < FLAME_REACH)
+            .collect();
+        near.sort_by(|a, b| a.1.total_cmp(&b.1));
+        near.truncate(MAX_FLAMES);
+        let mut lights = Vec::with_capacity(near.len());
+        let mut sparks = Vec::new();
+        for (index, _) in near {
+            let emitter = &map.emitters[index];
+            lights.push(LightDraw {
+                origin: emitter.origin,
+                radius: emitter.light_radius * flicker(time, emitter.origin) * FLAME_LIGHT,
+                min_light: 0.0,
+            });
+            self.owed[index] += emitter.sparks * seconds;
+            while self.owed[index] >= 1.0 {
+                self.owed[index] -= 1.0;
+                sparks.push(emitter.origin);
+            }
+        }
+        (lights, sparks)
+    }
+}
+
+/// How a flame's light moves at `time`, around 1. Each flame has its own
+/// rhythm, from where it stands.
+fn flicker(time: f32, place: Vec3) -> f32 {
+    let phase = place.x * 0.37 + place.y * 0.11;
+    let slow = (time * 7.3 + phase).sin();
+    let fast = (time * 17.1 + phase * 1.7).sin();
+    1.0 + slow * 0.08 + fast * 0.05
+}
 
 /// Which of a map's stencil boxes are open.
 #[derive(Debug, Default)]

@@ -6,6 +6,7 @@
 //! May depend on `engine_core`. See proposal 0008.
 
 mod alias;
+mod emitter;
 mod light;
 mod map;
 mod material;
@@ -17,6 +18,7 @@ mod stencil;
 mod tree;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
+pub use emitter::Emitter;
 pub use map::{
     Animation, Entity, Face, FaceLight, Map, MipLevel, Model, TexelAxis, Texture, TextureKind,
 };
