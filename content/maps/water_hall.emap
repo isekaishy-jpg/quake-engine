@@ -6,6 +6,7 @@ entity world {
     type = worldspawn
     sun_intensity = 110
     sun_size = 16
+    sun_crisp = true
     ambient = 8
     light_spacing = 16
 }

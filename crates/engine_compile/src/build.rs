@@ -15,6 +15,7 @@ use crate::geometry::{
     Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
     solid_corners, split,
 };
+use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, DecalSource, WorkingMap, read_map};
 use crate::stencil::{build_flames, build_stencil};
@@ -676,8 +677,16 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
             fields: vec![("classname".to_owned(), "worldspawn".to_owned())],
         });
     }
+    let tracks = light_tracks(working);
+    let mut next_track = tracks.iter();
     for entity in &working.entities {
         let mut fields = vec![("classname".to_owned(), entity.kind.clone())];
+        // Scripts drive a track by its styles, from here.
+        let keyed = entity.kind.starts_with("light")
+            && entity.fields.iter().any(|(key, _)| key == "keyframes");
+        if keyed && let Some(track) = next_track.next() {
+            fields.push(("keyframe_style".to_owned(), track.first_style.to_string()));
+        }
         if let Some(name) = &entity.name {
             fields.push(("targetname".to_owned(), name.clone()));
         }
@@ -710,6 +719,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     builder.map.entities = entities;
+    builder.map.light_tracks = tracks;
     builder.map.pools = pools_of(working);
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;

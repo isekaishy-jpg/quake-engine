@@ -6,8 +6,9 @@ entity world {
     type = worldspawn
     sun_intensity = 150
     sun_size = 12
+    sun_crisp = true
+    light_spacing = 32
     ambient = 40
-    light_spacing = 8
 }
 sky {
     zenith = 0.2 0.38 0.65

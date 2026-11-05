@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_compile::{BakeInput, CompileError, bake_light, compile, placeholder_texture, read_map};
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{BOUNCE_STYLE, Face, Map, MipLevel, Texture, TextureKind};
+use engine_map::{BOUNCE_STYLE, CRISP_STYLE, Face, Map, MipLevel, Texture, TextureKind};
 
 /// A map baked with placeholder textures, plus `textures` by name.
 fn baked(text: &str, textures: &[Texture]) -> Map {
@@ -197,4 +197,86 @@ fn keyframes_each_get_a_style_and_probes_follow_the_light() {
         .sample(Vec3::new(-250.0, 250.0, 250.0))
         .expect("a sample");
     assert!(near.brightness > far.brightness, "{near:?} {far:?}");
+}
+
+/// A crisp light keeps its light whole on a layer of its own, and says where
+/// its shadow's edge falls.
+#[test]
+fn a_crisp_light_records_where_its_shadow_ends() {
+    let text = format!(
+        "{ROOM}\nbrush {{ material = pillar cuboid = -32 -32 -256 32 32 256 }}\n\
+         entity lamp {{ type = light origin = -200 0 0 intensity = 900 crisp = true }}\n"
+    );
+    let map = baked(&text, &[]);
+    assert_eq!(map.light_edges.len(), map.light.len());
+    let number = map
+        .textures
+        .iter()
+        .position(|texture| texture.name == "floor")
+        .expect("a texture");
+    // The pillar cuts the floor into pieces, so all of them count.
+    let mut places = Vec::new();
+    let on_top = |face: &&Face| {
+        let first = face.first_point as usize;
+        map.points[first..first + face.point_count as usize]
+            .iter()
+            .all(|point| (point.z + 256.0).abs() < 0.01)
+    };
+    let faces = map.faces.iter().filter(|f| f.texture as usize == number);
+    for face in faces.filter(on_top) {
+        let Some(light) = face.light else {
+            continue;
+        };
+        let Some(layer) = light.styles.iter().position(|s| *s == CRISP_STYLE) else {
+            continue;
+        };
+        let count = (light.width * light.height) as usize;
+        let first = light.first_sample as usize + layer * count;
+        places.extend(first..first + count);
+    }
+    let edge = |at: &usize| map.light_edges[*at];
+    let lit = places.iter().filter(|at| edge(at) > 128).count();
+    let shaded = places.iter().filter(|at| edge(at) < 128).count();
+    assert!(lit > 0 && shaded > 0, "{lit} lit, {shaded} shaded");
+    let near = places
+        .iter()
+        .filter(|at| edge(at).abs_diff(128) < 60)
+        .count();
+    assert!(near > 0, "some samples are near the edge");
+    // Light behind the pillar is still there, for the edge to cut.
+    let shadowed = places.iter().find(|at| edge(at) < 100).expect("in shadow");
+    let color = map.light[*shadowed];
+    assert!(color.iter().any(|part| *part > 0), "{color:?}");
+}
+
+/// With no crisp lights, edges say nothing is cut.
+#[test]
+fn other_lights_have_no_edges() {
+    let text = format!("{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 300 }}\n");
+    let map = baked(&text, &[]);
+    assert!(map.light_edges.iter().all(|edge| *edge == 255));
+}
+
+/// A keyframed light is a track of its styles, and tells scripts its first.
+#[test]
+fn keyframes_make_a_track() {
+    let text = format!(
+        "{ROOM}\nentity swing {{ type = light intensity = 300 period = 6 \
+         keyframes = -100 0 0  0 0 0  100 0 0 }}\n"
+    );
+    let map = baked(&text, &[]);
+    let track = map.light_tracks[0];
+    assert_eq!(track.count, 3);
+    assert!((track.period - 6.0).abs() < 0.001);
+    let swing = map
+        .entities
+        .iter()
+        .find(|e| {
+            e.fields
+                .iter()
+                .any(|(k, v)| k == "targetname" && v == "swing")
+        })
+        .expect("the entity");
+    let field = swing.fields.iter().find(|(k, _)| k == "keyframe_style");
+    assert_eq!(field.map(|(_, v)| v.as_str()), Some("48"));
 }

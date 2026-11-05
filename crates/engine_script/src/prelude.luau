@@ -593,3 +593,16 @@ function dispatch(kind, id, other_id)
 		callback(entity, other_id and entities[other_id] or ent(nil))
 	end
 end
+
+-- Sets a keyframed light that has no period, by how far round its keyframes it
+-- is, from 0 to 1. An entity's `keyframe_style` is its first style.
+function engine.light_track(first, count, phase)
+    local place = (phase % 1) * count
+    for index = 0, count - 1 do
+        local away = math.abs(index - place)
+        local strength = math.max(0, 1 - math.min(away, count - away))
+        -- 'm' is normal brightness, and 'a' is none.
+        local letter = string.char(97 + math.floor(strength * 12 + 0.5))
+        engine.lightstyle(first + index, letter)
+    end
+end

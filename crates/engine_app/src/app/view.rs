@@ -221,6 +221,11 @@ impl World {
             };
             instances = client.draw_instances(fraction);
             styles = client.light_styles(self.map_time);
+            if let Some(map) = &self.map {
+                for track in &map.light_tracks {
+                    track.blend(&mut styles, time);
+                }
+            }
             punch = client.punch(fraction);
             let (kick_pitch, kick_roll) = self.kick.update(frame_seconds);
             let right = self.listener.right;

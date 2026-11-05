@@ -1,7 +1,7 @@
 //! The light on a point, from the floor below it.
 
 use engine_core::math::Vec3;
-use engine_map::{Face, FaceLight, Leaf, Map, Node, NodeChild, Plane, TexelAxis, Tree};
+use engine_map::{Face, FaceLight, Leaf, LightTrack, Map, Node, NodeChild, Plane, TexelAxis, Tree};
 
 /// A floor at z = 0 with a lit face over x and y from 0 to 16, with 2 by 2
 /// samples, in style 3.
@@ -70,4 +70,37 @@ fn a_point_over_no_face_is_dark() {
 fn a_map_with_no_light_is_fully_bright() {
     let map = Map::default();
     assert!((map.light_at(Vec3::ZERO, &[1.0; 64]) - 255.0).abs() < 1e-3);
+}
+
+/// A track brightens each keyframe in turn, and shares light between two as
+/// it moves, coming back round to the first.
+#[test]
+fn a_track_blends_between_its_keyframes() {
+    let track = LightTrack {
+        first_style: 2,
+        count: 3,
+        period: 3.0,
+    };
+    let at = |time: f32| {
+        let mut styles = [9.0; 6];
+        track.blend(&mut styles, time);
+        styles
+    };
+    assert_eq!(at(0.0), [9.0, 9.0, 1.0, 0.0, 0.0, 9.0]);
+    assert_eq!(at(1.0), [9.0, 9.0, 0.0, 1.0, 0.0, 9.0]);
+    assert_eq!(at(1.5), [9.0, 9.0, 0.0, 0.5, 0.5, 9.0]);
+    assert_eq!(at(2.5), [9.0, 9.0, 0.5, 0.0, 0.5, 9.0]);
+}
+
+/// A track with no period is a script's to drive.
+#[test]
+fn a_track_with_no_period_is_left_alone() {
+    let track = LightTrack {
+        first_style: 0,
+        count: 2,
+        period: 0.0,
+    };
+    let mut styles = [0.25; 2];
+    track.blend(&mut styles, 1.0);
+    assert_eq!(styles, [0.25; 2]);
 }

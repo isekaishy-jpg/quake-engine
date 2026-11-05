@@ -26,7 +26,7 @@ pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, Shading, SlotImage, mip_chain,
 };
 pub use pool::{ModelOccluder, OccluderSphere, Pool, PoolLook};
-pub use probes::{BOUNCE_STYLE, ProbeGrid, ProbeSample};
+pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};

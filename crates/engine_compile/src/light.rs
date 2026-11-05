@@ -8,7 +8,8 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    AlphaMode, BOUNCE_STYLE, Face, FaceLight, Map, Material, MipLevel, ProbeGrid, TextureKind,
+    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, FaceLight, LightTrack, Map, Material, MipLevel,
+    ProbeGrid, TextureKind,
 };
 
 use crate::error::CompileError;
@@ -61,6 +62,8 @@ struct BakeLight {
     profile: Vec<f64>,
     /// Whether it's the sun, shining from infinitely far along `direction`.
     sun: bool,
+    /// Whether its shadows stay sharp however coarse the light map is.
+    crisp: bool,
 }
 
 /// A see-through surface that colours light passing through it.
@@ -286,6 +289,7 @@ fn light_on(
     light: &BakeLight,
     point: Point,
     normal: Point,
+    shadows: bool,
 ) -> ([f64; 3], Point) {
     let none = ([0.0; 3], [0.0; 3]);
     let to_light = if light.sun {
@@ -363,7 +367,11 @@ fn light_on(
             up,
             offset[1] * light.size,
         );
-        if !shadowed(scene, start, target) {
+        if !shadows {
+            for part in &mut seen {
+                *part += 1.0;
+            }
+        } else if !shadowed(scene, start, target) {
             let tint = through_glass(scene, start, target);
             for (part, value) in seen.iter_mut().zip(tint) {
                 *part += value;
@@ -407,6 +415,43 @@ fn text_of<'a>(entity: &'a EntitySource, key: &str) -> Option<&'a str> {
 /// The next style free for keyframes, after the scripts' switchable range.
 const FIRST_KEYFRAME_STYLE: u8 = 48;
 
+/// The last style free for keyframes.
+const LAST_KEYFRAME_STYLE: u8 = CRISP_STYLE - 1;
+
+/// How many visibility samples cross a light sample, along each side, to find
+/// a crisp shadow's edge.
+const EDGE_DETAIL: i32 = 4;
+
+/// How far an edge is looked for, in those samples.
+const EDGE_REACH: i32 = 6;
+
+/// The keyframed lights of `working`, as tracks. Their styles follow the same
+/// order as the bake gives them.
+#[must_use]
+pub fn light_tracks(working: &WorkingMap) -> Vec<LightTrack> {
+    let mut tracks = Vec::new();
+    let mut next = FIRST_KEYFRAME_STYLE;
+    for entity in working
+        .entities
+        .iter()
+        .filter(|e| e.kind.starts_with("light"))
+    {
+        let field = entity.fields.iter().find(|(name, _)| name == "keyframes");
+        let Some(keys) = field.and_then(|(_, value)| value.numbers()) else {
+            continue;
+        };
+        let count = u8::try_from(keys.as_chunks::<3>().0.len()).unwrap_or(0);
+        #[expect(clippy::cast_possible_truncation, reason = "tracks store f32")]
+        tracks.push(LightTrack {
+            first_style: next,
+            count,
+            period: number(entity, "period").unwrap_or(4.0) as f32,
+        });
+        next = next.saturating_add(count).min(LAST_KEYFRAME_STYLE);
+    }
+    tracks
+}
+
 /// Reads the fixed lights. A light with `keyframes` gives one baked light at
 /// each, each on its own style, so its motion can be blended at runtime.
 fn read_lights(
@@ -434,7 +479,7 @@ fn read_lights(
             clippy::cast_sign_loss,
             reason = "styles are small numbers"
         )]
-        let style = number(entity, "style").unwrap_or(0.0).clamp(0.0, 62.0) as u8;
+        let style = number(entity, "style").unwrap_or(0.0).clamp(0.0, 47.0) as u8;
         let base = BakeLight {
             origin,
             color: point_of(entity, "color").unwrap_or([1.0, 1.0, 1.0]),
@@ -448,6 +493,10 @@ fn read_lights(
             cookie,
             profile,
             sun: false,
+            crisp: entity
+                .fields
+                .iter()
+                .any(|(name, value)| name == "crisp" && value.flag() == Some(true)),
         };
         let keyframes = entity
             .fields
@@ -459,7 +508,7 @@ fn read_lights(
                 let mut light = base.clone();
                 light.origin = *key;
                 light.style = next_style;
-                next_style = next_style.saturating_add(1).min(BOUNCE_STYLE - 1);
+                next_style = next_style.saturating_add(1).min(LAST_KEYFRAME_STYLE);
                 lights.push(light);
             }
         } else {
@@ -552,6 +601,8 @@ struct FaceBake {
     albedo: [f64; 3],
     /// How much surface it has.
     area: f64,
+    /// How far each sample is from the edge of a crisp shadow, if it has any.
+    edges: Option<Vec<u8>>,
 }
 
 /// `place` moved onto a convex face, just inside its edges. The grid of a
@@ -610,7 +661,7 @@ fn face_area(map: &Map, face: &Face) -> f64 {
 }
 
 /// The extents of a face in texels, spaced by `spacing`.
-fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Point>)> {
+fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Point>, GridFrame)> {
     let space = face_space(map, face)?;
     let first = face.first_point as usize;
     let points = map.points.get(first..first + face.point_count as usize)?;
@@ -642,6 +693,24 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
     )]
     let texels_per_sample = spacing as u32;
     let corners: Vec<Point> = points.iter().map(|point| wide(*point)).collect();
+    let place_at = |x: f64, y: f64| {
+        let s = f64::from(origin[0]) + x * spacing;
+        let t = f64::from(origin[1]) + y * spacing;
+        solve(
+            &space.rows,
+            [
+                s - space.rows[0][3],
+                t - space.rows[1][3],
+                space.plane.distance,
+            ],
+        )
+    };
+    let start = place_at(0.0, 0.0)?;
+    let frame = GridFrame {
+        start,
+        across: add_scaled(place_at(1.0, 0.0)?, start, -1.0),
+        down: add_scaled(place_at(0.0, 1.0)?, start, -1.0),
+    };
     let mut positions = Vec::with_capacity((width * height) as usize);
     for y in 0..height {
         for x in 0..width {
@@ -666,6 +735,7 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
             styles: [Face::NO_STYLE; 4],
         },
         positions,
+        frame,
     ))
 }
 
@@ -697,21 +767,29 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
     }
     let space = face_space(map, face)?;
     let normal = space.plane.normal;
-    let (light, points) = light_grid(map, face, spacing)?;
+    let (light, points, grid) = light_grid(map, face, spacing)?;
     let count = points.len();
     let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
     let mut directions = vec![[0.0; 3]; count];
+    let crisp_light = scene.lights.iter().find(|source| source.crisp);
+    let edges =
+        crisp_light.map(|source| crisp_edges(scene, source, map, face, normal, &grid, &light));
     for source in scene.lights {
-        let at = match layers.iter().position(|(style, _)| *style == source.style) {
+        let style = if source.crisp {
+            CRISP_STYLE
+        } else {
+            source.style
+        };
+        let at = match layers.iter().position(|(known, _)| *known == style) {
             Some(at) => at,
             None if layers.len() + 1 < MAX_LAYERS => {
-                layers.push((source.style, vec![[0.0; 3]; count]));
+                layers.push((style, vec![[0.0; 3]; count]));
                 layers.len() - 1
             }
             None => continue,
         };
         for (index, point) in points.iter().enumerate() {
-            let (color, direction) = light_on(scene, source, *point, normal);
+            let (color, direction) = light_on(scene, source, *point, normal, !source.crisp);
             let energy = color[0] + color[1] + color[2];
             if energy > 0.0 {
                 let sample = &mut layers[at].1[index];
@@ -730,7 +808,93 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         normal,
         albedo: albedo_of(map, face),
         area: face_area(map, face),
+        edges,
     })
+}
+
+/// Where a light sample grid sits in the world.
+#[derive(Clone, Copy, Debug)]
+struct GridFrame {
+    /// Its first sample.
+    start: Point,
+    /// From one sample to the next along a row.
+    across: Point,
+    /// From one row to the next.
+    down: Point,
+}
+
+/// How far each sample of a face is from the edge of `source`'s shadow: 128 at
+/// the edge, more when lit. Looking at a finer grid than the samples, this keeps
+/// where an edge falls, which a blur of samples loses.
+fn crisp_edges(
+    scene: &Scene<'_>,
+    source: &BakeLight,
+    map: &Map,
+    face: &Face,
+    normal: Point,
+    grid: &GridFrame,
+    light: &FaceLight,
+) -> Vec<u8> {
+    let first = face.first_point as usize;
+    let corners: Vec<Point> = map.points[first..first + face.point_count as usize]
+        .iter()
+        .map(|point| wide(*point))
+        .collect();
+    let size = |value: u32| i32::try_from(value).unwrap_or(0);
+    let (width, height) = (size(light.width), size(light.height));
+    let (fine_width, fine_height) = (width * EDGE_DETAIL, height * EDGE_DETAIL);
+    let count = |value: i32| usize::try_from(value).unwrap_or(0);
+    let scale = 1.0 / f64::from(EDGE_DETAIL);
+    let visible = |x: i32, y: i32| {
+        let along = (f64::from(x) + 0.5) * scale - 0.5;
+        let across = (f64::from(y) + 0.5) * scale - 0.5;
+        let place = add_scaled(
+            add_scaled(grid.start, grid.across, along),
+            grid.down,
+            across,
+        );
+        let place = onto_face(&corners, normal, place);
+        let (color, _) = light_on(scene, source, place, normal, true);
+        color[0] + color[1] + color[2] > 0.0
+    };
+    let mut seen = Vec::with_capacity(count(fine_width * fine_height));
+    for y in 0..fine_height {
+        for x in 0..fine_width {
+            seen.push(visible(x, y));
+        }
+    }
+    let at = |x: i32, y: i32| {
+        let x = x.clamp(0, fine_width - 1);
+        let y = y.clamp(0, fine_height - 1);
+        seen[count(y * fine_width + x)]
+    };
+    let mut edges = Vec::with_capacity(count(width * height));
+    for y in 0..height {
+        for x in 0..width {
+            let (middle_x, middle_y) = (
+                x * EDGE_DETAIL + EDGE_DETAIL / 2,
+                y * EDGE_DETAIL + EDGE_DETAIL / 2,
+            );
+            let lit = at(middle_x, middle_y);
+            let mut nearest = f64::from(EDGE_REACH);
+            for dy in -EDGE_REACH..=EDGE_REACH {
+                for dx in -EDGE_REACH..=EDGE_REACH {
+                    if at(middle_x + dx, middle_y + dy) != lit {
+                        nearest = nearest.min(f64::from(dx * dx + dy * dy).sqrt());
+                    }
+                }
+            }
+            let share = nearest / f64::from(EDGE_REACH) * 127.0;
+            let signed = if lit { 128.0 + share } else { 128.0 - share };
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "between 1 and 255"
+            )]
+            edges.push(signed as u8);
+        }
+    }
+    edges
 }
 
 /// A patch of lit surface that bounces light on.
@@ -750,7 +914,12 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource>
     for bake in bakes.iter().flatten() {
         for (index, point) in bake.points.iter().enumerate() {
             let mut lit = [0.0; 3];
-            for (_, samples) in &bake.layers {
+            for (style, samples) in &bake.layers {
+                // A crisp layer holds light as if nothing shaded it.
+                let edge = bake.edges.as_ref().and_then(|edges| edges.get(index));
+                if *style == CRISP_STYLE && edge.is_some_and(|edge| *edge < 128) {
+                    continue;
+                }
                 for part in 0..3 {
                     lit[part] += samples[index][part];
                 }
@@ -899,7 +1068,7 @@ fn bake_probes(
         for (side, normal) in SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
             for source in scene.lights {
-                let (color, from) = light_on(scene, source, *point, *normal);
+                let (color, from) = light_on(scene, source, *point, *normal, true);
                 let energy = color[0] + color[1] + color[2];
                 direction = add_scaled(direction, from, energy);
                 for part in 0..3 {
@@ -976,6 +1145,11 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
                 cookie: None,
                 profile: Vec::new(),
                 sun: true,
+                crisp: world.is_some_and(|w| {
+                    w.fields
+                        .iter()
+                        .any(|(k, v)| k == "sun_crisp" && v.flag() == Some(true))
+                }),
             });
         }
     }
@@ -1064,6 +1238,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
 
     let mut samples = Vec::new();
     let mut directions = Vec::new();
+    let mut edges = Vec::new();
     let mut lit_faces = Vec::with_capacity(faces.len());
     for (bake, bounce) in bakes.into_iter().zip(bounced) {
         let (Some(mut bake), Some(bounce)) = (bake, bounce) else {
@@ -1077,6 +1252,10 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             light.styles[index] = *style;
             samples.extend(layer.iter().map(|color| to_bytes(*color)));
             directions.extend(bake.directions.iter().map(|d| direction_bytes(*d)));
+            match bake.edges.as_ref().filter(|_| *style == CRISP_STYLE) {
+                Some(found) => edges.extend_from_slice(found),
+                None => edges.resize(edges.len() + layer.len(), u8::MAX),
+            }
         }
         lit_faces.push(Some(light));
     }
@@ -1085,6 +1264,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     }
     map.light = samples;
     map.light_directions = directions;
+    map.light_edges = edges;
     map.probes = probes;
     map.lit = true;
     Ok(())

@@ -246,7 +246,8 @@ fn copy_light(
                 };
                 let at = ((top + y) * side + left + style * width + x) * ATLAS_PIXEL;
                 bytes[at..at + 3].copy_from_slice(sample);
-                bytes[at + 3] = 255;
+                let edge = map.light_edges.get(first + y * width + x);
+                bytes[at + 3] = edge.copied().unwrap_or(255);
                 if let Some(direction) = map.light_directions.get(first + y * width + x) {
                     directions[at..at + 3].copy_from_slice(direction);
                     directions[at + 3] = 255;

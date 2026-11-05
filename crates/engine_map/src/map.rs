@@ -7,7 +7,7 @@ use engine_core::math::Vec3;
 use crate::emitter::Emitter;
 use crate::material::Material;
 use crate::pool::{ModelOccluder, Pool};
-use crate::probes::ProbeGrid;
+use crate::probes::{LightTrack, ProbeGrid};
 use crate::sky::{Fog, Sky};
 use crate::stencil::RayStencil;
 
@@ -189,6 +189,11 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// How far each light sample is from a shadow's edge, for crisp styles:
+    /// 128 is the edge, and above it is lit. Empty if nothing is crisp.
+    pub light_edges: Vec<u8>,
+    /// Baked lights that move between keyframes.
+    pub light_tracks: Vec<LightTrack>,
     /// Small fixed fires.
     pub emitters: Vec<Emitter>,
     /// The shade moving models cast.

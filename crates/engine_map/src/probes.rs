@@ -6,6 +6,39 @@ use engine_core::math::Vec3;
 /// from direct light lets moving things block one without the other.
 pub const BOUNCE_STYLE: u8 = 63;
 
+/// The light style whose samples are drawn crisp, by the edges beside them.
+pub const CRISP_STYLE: u8 = 62;
+
+/// Baked lights that move through some styles in turn, blended by time.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LightTrack {
+    /// Its first style.
+    pub first_style: u8,
+    /// How many styles it has, one for each keyframe.
+    pub count: u8,
+    /// How many seconds a trip round takes, or 0 if a script drives it.
+    pub period: f32,
+}
+
+impl LightTrack {
+    /// Sets its styles for `time`: each keyframe is brightest at its own moment
+    /// and fades into the next, so light seems to move between them.
+    pub fn blend(&self, styles: &mut [f32], time: f32) {
+        if self.period <= 0.0 || self.count == 0 {
+            return;
+        }
+        let count = f32::from(self.count);
+        let place = (time / self.period).rem_euclid(1.0) * count;
+        for index in 0..self.count {
+            let away = (f32::from(index) - place).abs();
+            let around = away.min(count - away);
+            if let Some(style) = styles.get_mut(usize::from(self.first_style + index)) {
+                *style = (1.0 - around).max(0.0);
+            }
+        }
+    }
+}
+
 /// Light at points through a map's space, from six sides each.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ProbeGrid {
