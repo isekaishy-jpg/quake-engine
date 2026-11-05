@@ -1167,6 +1167,181 @@ fn a_shadow_is_drawn_only_when_it_changes() {
     assert_eq!(frame(&mut renderer, 31.0), 0, "and stopped");
 }
 
+/// A flat, wide model over the surface, as something for shadows to come from.
+fn figure(renderer: &mut Renderer) -> u32 {
+    let mut model = triangle();
+    for pose in &mut model.poses {
+        for vertex in pose {
+            vertex.position[2] = 0;
+        }
+    }
+    model.scale = Vec3::new(1.0, 1.0, 1.0);
+    model.offset = Vec3::ZERO;
+    renderer.add_model(Arc::new(model)).expect("model")
+}
+
+/// A figure at `origin`, in its pose.
+fn figure_at(model: u32, origin: Vec3, pose: u32) -> EntityDraw {
+    EntityDraw {
+        model,
+        pose,
+        next_pose: pose,
+        origin,
+        ambient: 1.0,
+        ..EntityDraw::default()
+    }
+}
+
+/// How much blue a capture of `entities` has, under `light` with and without
+/// its shadows, from `view`.
+fn blue_with_shadows(
+    renderer: &mut Renderer,
+    view: &View,
+    entities: &[EntityDraw],
+    light: Vec3,
+) -> [u64; 2] {
+    [false, true].map(|shadows| {
+        let lights = [blue_light(light, shadows)];
+        let drawables = Drawables {
+            entities,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        let capture = renderer.capture(view, drawables, 64, 64).expect("capture");
+        capture
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| u64::from(pixel[2]))
+            .sum::<u64>()
+    })
+}
+
+/// A figure blocks a moving light, as a brush model does.
+#[test]
+fn a_figure_casts_a_live_shadow() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let model = figure(&mut renderer);
+    let entities = [figure_at(model, Vec3::new(20.0, 20.0, 30.0), 0)];
+    let light = Vec3::new(64.0, 64.0, 60.0);
+    let [open, blocked] = blue_with_shadows(&mut renderer, &view_from_above(), &entities, light);
+    assert!(blocked + 5000 < open, "{open} {blocked}");
+}
+
+/// A lamp overhead throws a figure's shadow on the floor, which is the tile of
+/// a light that looks straight down. The eye is higher, to see past the figure.
+#[test]
+fn a_lamp_overhead_casts_a_figure_on_the_floor() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let model = figure(&mut renderer);
+    let entities = [figure_at(model, Vec3::new(20.0, 20.0, 30.0), 0)];
+    let view = View {
+        origin: Vec3::new(64.0, 64.0, 300.0),
+        ..view_from_above()
+    };
+    let light = Vec3::new(64.0, 64.0, 100.0);
+    let [open, blocked] = blue_with_shadows(&mut renderer, &view, &entities, light);
+    assert!(blocked + 1000 < open, "{open} {blocked}");
+}
+
+/// Standing still costs nothing, and a new pose redraws what it can shade.
+#[test]
+fn a_figure_redraws_shadows_only_when_it_changes() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let model = figure(&mut renderer);
+    let lights = [blue_light(Vec3::new(64.0, 64.0, 60.0), true)];
+    let frame = |renderer: &mut Renderer, entities: &[EntityDraw]| {
+        let drawables = Drawables {
+            entities,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 16, 16)
+            .expect("capture");
+        renderer.shadow_redraws()
+    };
+    let at = Vec3::new(20.0, 20.0, 30.0);
+    let standing = [figure_at(model, at, 0)];
+    let far_off = [figure_at(model, Vec3::new(9000.0, 0.0, 0.0), 0)];
+    let lit_differently = [EntityDraw {
+        ambient: 0.5,
+        ..standing[0]
+    }];
+    let turned = [EntityDraw {
+        angles: Vec3::new(0.0, 45.0, 0.0),
+        ..standing[0]
+    }];
+    assert_eq!(frame(&mut renderer, &standing), 1, "the first frame");
+    assert_eq!(frame(&mut renderer, &standing), 0, "it stood still");
+    assert_eq!(frame(&mut renderer, &lit_differently), 0, "only its light");
+    assert_eq!(frame(&mut renderer, &turned), 1, "it turned");
+    assert_eq!(frame(&mut renderer, &turned), 0, "and stopped");
+    assert_eq!(frame(&mut renderer, &[]), 1, "it left");
+    assert_eq!(frame(&mut renderer, &far_off), 0, "out of reach");
+}
+
+/// Something that never stops moving can't hold a far light back for ever, and
+/// a redraw that had to wait still happens after everything's stopped.
+#[test]
+fn every_light_gets_its_turn() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let model = figure(&mut renderer);
+    let lights: Vec<LiveLight> = (0_u16..4)
+        .map(|index| LiveLight {
+            id: u32::from(index),
+            ..blue_light(Vec3::new(f32::from(index) * 10.0, 64.0, 60.0), true)
+        })
+        .collect();
+    let frame = |renderer: &mut Renderer, entities: &[EntityDraw]| {
+        let drawables = Drawables {
+            entities,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 16, 16)
+            .expect("capture");
+        renderer.shadow_redraws()
+    };
+    let at = |height: f32| [figure_at(model, Vec3::new(20.0, 20.0, height), 0)];
+    assert_eq!(frame(&mut renderer, &at(30.0)), 2);
+    assert_eq!(frame(&mut renderer, &at(30.0)), 2, "the rest of the first");
+    assert_eq!(frame(&mut renderer, &at(30.0)), 0, "all drawn");
+    assert_eq!(frame(&mut renderer, &at(31.0)), 2, "four lights want it");
+    assert_eq!(frame(&mut renderer, &at(31.0)), 2, "the two left waiting");
+    assert_eq!(frame(&mut renderer, &at(31.0)), 0, "nothing's owed");
+}
+
 /// However many lights change, a frame only redraws its budget of shadows.
 #[test]
 fn shadow_redraws_stay_within_budget() {

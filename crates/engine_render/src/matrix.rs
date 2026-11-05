@@ -2,6 +2,17 @@
 
 use engine_core::math::{Vec3, view_axes};
 
+/// `a` after `b`, for matrices stored column by column.
+pub(crate) fn multiply(a: &[f32; 16], b: &[f32; 16]) -> [f32; 16] {
+    let mut out = [0.0; 16];
+    for column in 0..4 {
+        for row in 0..4 {
+            out[column * 4 + row] = (0..4).map(|k| a[k * 4 + row] * b[column * 4 + k]).sum();
+        }
+    }
+    out
+}
+
 /// The nearest distance drawn.
 const NEAR: f32 = 4.0;
 

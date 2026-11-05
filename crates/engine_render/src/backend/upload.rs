@@ -15,6 +15,7 @@ use vulkane::safe::{
     MemoryPropertyFlags, PhysicalDevice, PipelineStage,
 };
 
+use super::shadow::shadow_figures;
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
     GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
@@ -866,8 +867,10 @@ impl Backend {
         let live = scene.map_or(&[][..], |scene| scene.drawables.live_lights);
         let slots = match scene.filter(|_| self.post.live_shadows) {
             Some(scene) => {
+                let figures = shadow_figures(&self.models, scene.drawables.entities);
+                let instances = scene.drawables.instances;
                 self.shadows
-                    .plan(live, scene.drawables.instances, scene.map, view.origin)
+                    .plan(live, instances, &figures, scene.map, view.origin)
             }
             None => {
                 self.shadows.rest();

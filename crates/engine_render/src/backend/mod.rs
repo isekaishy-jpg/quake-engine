@@ -909,7 +909,10 @@ impl Backend {
         };
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
-        self.shadows.record(rec, self.map.as_ref(), &ranges);
+        let entities = wanted.map_or(&[][..], |scene| scene.drawables.entities);
+        let figures = shadow::shadow_figures(&self.models, entities);
+        self.shadows
+            .record(rec, self.map.as_ref(), &ranges, &figures);
         // The scene reads what shadows wrote.
         rec.memory_barrier(
             PipelineStage::ALL_GRAPHICS,

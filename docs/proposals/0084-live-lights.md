@@ -14,13 +14,13 @@ Status: accepted, 2026-11-05, increment 11.
 - The view picks the nearest `r_live_lights` of them, at most 64.
 - `cluster_masks` marks a 16 by 9 by 16 grid, with slices spaced by distance, from each light's bounds on screen. The shaders find a pixel's cluster and walk its bits. Baked light and these add up in `light()`, so materials get them too.
 - A light with shadows has six 256 pixel tiles of a 2048 pixel atlas, so ten can have shadows. A tile is redrawn only when its light has moved or changed, or a moving model near it has moved, and at most two lights a frame are redrawn, nearest first, so a burst of change spreads out.
-- Shadows are drawn from an index buffer of the whole world's opaque faces, plus moving brush models. Characters keep their capsules.
+- Shadows are drawn from an index buffer of the whole world's opaque faces, plus moving brush models and alias models in the pose they're drawn in. Capsules stay for baked light, which has no shadow map. Standing still costs nothing: a figure only redraws a shadow when its pose, place or angles change. What's waited longest for a redraw goes first, so figures that never stop can't hold a far light back, and a light that had to wait is still redrawn after everything stops.
 - Models take these lights through the same sum as other dynamic lights.
 
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** characters cast capsules, not silhouettes, from these lights. A light past the first ten shadowed ones shines through walls until one frees up, so `shadows` should be used with care.
+- **Tradeoffs:** every figure near a shadowed light redraws it each frame it moves, which the budget of two a frame holds down at the price of a slower shadow. A light past the first ten shadowed ones shines through walls until one frees up, so `shadows` should be used with care.
 - **Acceptance criteria:** a live light brightens what it reaches in its colour and leaves the rest alone, a pixel only walks lights in its cluster, a wall between stops it, a shadow is kept when nothing moves and redrawn when something does, and redraws stay within budget.
 - **Future extension:** none planned.
 

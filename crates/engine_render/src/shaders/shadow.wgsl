@@ -2,8 +2,10 @@
 
 struct Tile {
     matrix: mat4x4<f32>,
-    // Where the model being drawn has moved to.
+    // Where the model being drawn has moved to, or a figure's offset.
     offset: vec4<f32>,
+    // A figure's scale, with how far to blend its poses in w.
+    scale: vec4<f32>,
 }
 
 var<immediate> tile: Tile;
@@ -11,6 +13,16 @@ var<immediate> tile: Tile;
 @vertex
 fn vs_shadow(@location(0) position: vec3<f32>) -> @builtin(position) vec4<f32> {
     return tile.matrix * vec4<f32>(position + tile.offset.xyz, 1.0);
+}
+
+// An alias model, its two poses blended as they are when it's drawn.
+@vertex
+fn vs_figure(
+    @location(0) pose_a: vec4<u32>,
+    @location(1) pose_b: vec4<u32>,
+) -> @builtin(position) vec4<f32> {
+    let pose = mix(vec3<f32>(pose_a.xyz), vec3<f32>(pose_b.xyz), tile.scale.w);
+    return tile.matrix * vec4<f32>(pose * tile.scale.xyz + tile.offset.xyz, 1.0);
 }
 
 // A triangle over a whole tile, at the far end of depth.
