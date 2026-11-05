@@ -6,14 +6,16 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Map, Model, Node, NodeChild, Plane, Pool,
-    PoolLook, TexelAxis, Texture, TextureKind, Tree,
+    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Map, Model, ModelOccluder, Node, NodeChild,
+    OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
 };
 
 use crate::error::CompileError;
 use crate::geometry::{
-    Plane3, Point, Polygon, Split, clip_behind, plane_polygon, solid_corners, split,
+    Plane3, Point, Polygon, Split, add_scaled, clip_behind, dot, plane_polygon, solid_corners,
+    split,
 };
+use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, WorkingMap, read_map};
 use crate::stencil::build_stencil;
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
@@ -151,6 +153,38 @@ fn texel_axes(face: &BrushFace) -> [TexelAxis; 2] {
         axis(across, face.scale[0], face.offset[0]),
         axis(down, face.scale[1], face.offset[1]),
     ]
+}
+
+/// The texture axes that put `across` and `down` texels at a triangle's
+/// corners, or `None` for a triangle with no area.
+fn uv_axes(points: &[Point; 3], across: [f64; 3], down: [f64; 3]) -> Option<[TexelAxis; 2]> {
+    let first = add_scaled(points[1], points[0], -1.0);
+    let second = add_scaled(points[2], points[0], -1.0);
+    let (aa, ab, bb) = (dot(first, first), dot(first, second), dot(second, second));
+    let determinant = aa * bb - ab * ab;
+    if determinant.abs() < 1e-9 {
+        return None;
+    }
+    let axis = |values: [f64; 3]| {
+        let (du, dv) = (values[1] - values[0], values[2] - values[0]);
+        let share_first = (du * bb - dv * ab) / determinant;
+        let share_second = (dv * aa - du * ab) / determinant;
+        let direction = add_scaled(
+            [
+                first[0] * share_first,
+                first[1] * share_first,
+                first[2] * share_first,
+            ],
+            second,
+            share_second,
+        );
+        #[expect(clippy::cast_possible_truncation, reason = "faces store f32")]
+        TexelAxis {
+            axis: vec3(direction),
+            offset: (values[0] - dot(direction, points[0])) as f32,
+        }
+    };
+    Some([axis(across), axis(down)])
 }
 
 /// What's left of `polygon`, on `brush`, after removing what `other` hides.
@@ -310,8 +344,38 @@ impl Builder<'_> {
         Some(())
     }
 
-    /// Adds a model for `brushes`, and returns its number.
-    fn add_model(&mut self, brushes: &[Brush]) -> Result<u32, CompileError> {
+    /// Adds a triangle of a mesh.
+    fn add_triangle(&mut self, triangle: &PlacedTriangle) -> Option<()> {
+        let texture = self.texture_of(&triangle.material);
+        let image = self.map.textures.get(texture as usize)?.mips.first();
+        let size = image.map_or((64.0, 64.0), |mip| {
+            (f64::from(mip.width), f64::from(mip.height))
+        });
+        let across = triangle.uvs.map(|uv| uv[0] * size.0);
+        let down = triangle.uvs.map(|uv| uv[1] * size.1);
+        let Some(axes) = uv_axes(&triangle.points, across, down) else {
+            return Some(());
+        };
+        let first_point = u32::try_from(self.map.points.len()).ok()?;
+        self.map
+            .points
+            .extend(triangle.points.iter().map(|p| vec3(*p)));
+        self.map.faces.push(Face {
+            first_point,
+            point_count: 3,
+            texture,
+            axes,
+            light: None,
+        });
+        Some(())
+    }
+
+    /// Adds a model for `brushes` and `meshes`, and returns its number.
+    fn add_model(
+        &mut self,
+        brushes: &[Brush],
+        meshes: &[&PlacedMesh],
+    ) -> Result<u32, CompileError> {
         let too_big = || CompileError::Bad("the map is too big".to_owned());
         let first_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
         let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
@@ -329,9 +393,22 @@ impl Builder<'_> {
                 self.add_face(&flipped, face).ok_or_else(too_big)?;
             }
         }
+        for triangle in meshes.iter().flat_map(|mesh| &mesh.triangles) {
+            for point in &triangle.points {
+                for axis in 0..3 {
+                    low[axis] = low[axis].min(point[axis]);
+                    high[axis] = high[axis].max(point[axis]);
+                }
+            }
+            self.add_triangle(triangle).ok_or_else(too_big)?;
+        }
         if low[0] > high[0] {
             (low, high) = ([0.0; 3], [0.0; 3]);
         }
+        // Hulls are in the trees, but they cut no faces.
+        let mut solids = brushes.to_vec();
+        solids.extend(meshes.iter().flat_map(|mesh| mesh.hulls.iter().cloned()));
+        let brushes = solids.as_slice();
         let face_count = u32::try_from(self.map.faces.len())
             .map_err(|_| too_big())?
             .saturating_sub(first_face);
@@ -441,7 +518,8 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         materials: HashMap::new(),
         planes: PlaneSet::default(),
     };
-    builder.add_model(&working.brushes)?;
+    let world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
+    builder.add_model(&working.brushes, &world_meshes)?;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);
     let is_world = |kind: &str| kind == "worldspawn";
     if !working.entities.iter().any(|entity| is_world(&entity.kind)) {
@@ -460,9 +538,20 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
                 .iter()
                 .map(|(key, value)| (key.clone(), field_text(value))),
         );
-        if !entity.brushes.is_empty() {
-            let number = builder.add_model(&entity.brushes)?;
+        let meshes: Vec<&PlacedMesh> = entity.placed.iter().collect();
+        if !entity.brushes.is_empty() || !meshes.is_empty() {
+            let number = builder.add_model(&entity.brushes, &meshes)?;
             fields.push(("model".to_owned(), format!("*{number}")));
+            let spheres: Vec<OccluderSphere> = meshes
+                .iter()
+                .flat_map(|mesh| mesh.occluders.clone())
+                .collect();
+            if !spheres.is_empty() {
+                builder.map.occluders.push(ModelOccluder {
+                    model: number,
+                    spheres,
+                });
+            }
         }
         let shown = Entity { fields };
         if is_world(&entity.kind) {
@@ -494,6 +583,15 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     Ok(map)
+}
+
+/// Reads a map from its text.
+///
+/// # Errors
+///
+/// Returns an error if the text can't be read.
+pub fn read_map_text(text: &str) -> Result<WorkingMap, CompileError> {
+    read_map(&from_text(text)?)
 }
 
 /// Compiles a map from its text.

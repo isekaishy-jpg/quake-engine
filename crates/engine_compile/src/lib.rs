@@ -9,16 +9,23 @@ mod error;
 mod geometry;
 mod light;
 mod material;
+mod mesh;
 mod source;
 mod stencil;
 mod texture;
 mod tree;
 
 pub use bake::{apply_bake, source_hash, write_bake};
-pub use build::{TextureSource, compile, compile_text};
+pub use build::{TextureSource, compile, compile_text, read_map_text};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
 pub use light::{BakeInput, ImageReader, bake_light};
 pub use material::MaterialLibrary;
-pub use source::{Brush, BrushFace, EntitySource, SkySource, WaterSource, WorkingMap, read_map};
+pub use mesh::{
+    LoadedMesh, Mesh, MeshPart, PlacedMesh, PlacedTriangle, occluders_of, place_mesh, read_mesh,
+    read_occlusion, resolve_meshes, write_occlusion,
+};
+pub use source::{
+    Brush, BrushFace, EntitySource, MeshPlacement, SkySource, WaterSource, WorkingMap, read_map,
+};
 pub use texture::placeholder_texture;

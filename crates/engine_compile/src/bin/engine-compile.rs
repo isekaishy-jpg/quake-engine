@@ -1,6 +1,7 @@
 //! Compiles maps from the command line: `engine-compile <content> <map> ...`.
 //!
-//! Writes `maps/<map>.ebake` in the content directory.
+//! Writes `maps/<map>.ebake` in the content directory. With `--occlusion`
+//! first, the names are meshes, and it writes `meshes/<mesh>.eocc`.
 
 #![expect(clippy::print_stdout, reason = "this tool's output is its report")]
 #![expect(clippy::print_stderr, reason = "this tool reports its failures")]
@@ -13,10 +14,26 @@ use std::time::Instant;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, MaterialLibrary, bake_light, compile, read_map, source_hash, write_bake,
+    BakeInput, MaterialLibrary, bake_light, compile, occluders_of, read_map, source_hash,
+    write_bake, write_occlusion,
 };
 use engine_format::from_text;
 use engine_map::{MipLevel, Texture};
+
+/// Writes the occlusion sidecar of the mesh called `name`.
+fn write_sidecar(
+    content: &Path,
+    filesystem: &FileSystem,
+    name: &str,
+) -> Result<(), Box<dyn Error>> {
+    let mut library = MaterialLibrary::new(filesystem);
+    let loaded = library.mesh(name)?;
+    let spheres = occluders_of(&loaded.mesh);
+    let out = content.join("meshes").join(format!("{name}.eocc"));
+    std::fs::write(&out, write_occlusion(&spheres))?;
+    println!("{name}: {} spheres", spheres.len());
+    Ok(())
+}
 
 /// Compiles one map.
 fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<(), Box<dyn Error>> {
@@ -24,8 +41,9 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     let path = format!("maps/{name}.emap");
     let bytes = filesystem.read(&path)?;
     let text = std::str::from_utf8(&bytes)?;
-    let working = read_map(&from_text(text)?)?;
+    let mut working = read_map(&from_text(text)?)?;
     let mut library = MaterialLibrary::new(filesystem);
+    library.place_meshes(&mut working)?;
     let mut failure = None;
     let mut textures = |material: &str| {
         library.load(material).unwrap_or_else(|error| {
@@ -60,15 +78,22 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
 fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
     let Some(content) = arguments.next() else {
-        eprintln!("usage: engine-compile <content directory> <map> ...");
+        eprintln!("usage: engine-compile <content directory> [--occlusion] <name> ...");
         return ExitCode::FAILURE;
     };
     let content = Path::new(&content);
     let mut filesystem = FileSystem::new();
     filesystem.mount(Box::new(DirectoryArchive::new(content)));
     let mut failed = false;
+    let mut arguments = arguments.peekable();
+    let sidecars = arguments.next_if(|first| first == "--occlusion").is_some();
     for name in arguments {
-        if let Err(error) = compile_map(content, &filesystem, &name) {
+        let done = if sidecars {
+            write_sidecar(content, &filesystem, &name)
+        } else {
+            compile_map(content, &filesystem, &name)
+        };
+        if let Err(error) = done {
             eprintln!("{name}: {error}");
             failed = true;
         }

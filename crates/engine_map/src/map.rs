@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 
 use crate::material::Material;
-use crate::pool::Pool;
+use crate::pool::{ModelOccluder, Pool};
 use crate::probes::ProbeGrid;
 use crate::sky::{Fog, Sky};
 use crate::stencil::RayStencil;
@@ -188,6 +188,8 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// The shade moving models cast.
+    pub occluders: Vec<ModelOccluder>,
     /// Bodies of liquid.
     pub pools: Vec<Pool>,
     /// Surfaces that shape visible rays.

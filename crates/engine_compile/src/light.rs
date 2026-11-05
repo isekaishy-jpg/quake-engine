@@ -13,6 +13,7 @@ use engine_map::{
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
+use crate::mesh::PlacedMesh;
 use crate::source::{EntitySource, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
 
@@ -84,8 +85,97 @@ struct Scene<'a> {
     planes: PlaneSet,
     /// See-through surfaces.
     glass: Vec<Glass>,
+    /// Meshes, which block light by their triangles.
+    meshes: Vec<MeshShadow>,
     /// The fixed lights.
     lights: &'a [BakeLight],
+}
+
+/// A mesh's triangles, with bounds to pass most rays by.
+struct MeshShadow {
+    /// Its low corner.
+    low: Point,
+    /// Its high corner.
+    high: Point,
+    /// Its triangles.
+    triangles: Vec<[Point; 3]>,
+}
+
+impl MeshShadow {
+    /// The shadow of `mesh`, if it has triangles.
+    fn of(mesh: &PlacedMesh) -> Option<Self> {
+        let first = mesh.triangles.first()?.points[0];
+        let (mut low, mut high) = (first, first);
+        for point in mesh.triangles.iter().flat_map(|triangle| &triangle.points) {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(point[axis]);
+                high[axis] = high[axis].max(point[axis]);
+            }
+        }
+        let triangles = mesh
+            .triangles
+            .iter()
+            .map(|triangle| triangle.points)
+            .collect();
+        Some(Self {
+            low,
+            high,
+            triangles,
+        })
+    }
+
+    /// Whether the segment from `a` to `b` could touch these bounds.
+    fn near(&self, a: Point, b: Point) -> bool {
+        let (mut enter, mut leave) = (0.0_f64, 1.0_f64);
+        for axis in 0..3 {
+            let change = b[axis] - a[axis];
+            if change.abs() < 1e-9 {
+                if a[axis] < self.low[axis] || a[axis] > self.high[axis] {
+                    return false;
+                }
+                continue;
+            }
+            let first = (self.low[axis] - a[axis]) / change;
+            let second = (self.high[axis] - a[axis]) / change;
+            enter = enter.max(first.min(second));
+            leave = leave.min(first.max(second));
+        }
+        enter <= leave
+    }
+
+    /// Whether the segment from `a` to `b` passes through a triangle, away
+    /// from its ends, so a surface doesn't shade itself.
+    fn hit(&self, a: Point, b: Point) -> bool {
+        let ray = add_scaled(b, a, -1.0);
+        self.near(a, b)
+            && self.triangles.iter().any(|triangle| {
+                let first = add_scaled(triangle[1], triangle[0], -1.0);
+                let second = add_scaled(triangle[2], triangle[0], -1.0);
+                let across = cross(ray, second);
+                let determinant = dot(first, across);
+                if determinant.abs() < 1e-9 {
+                    return false;
+                }
+                let inverse = 1.0 / determinant;
+                let offset = add_scaled(a, triangle[0], -1.0);
+                let u = dot(offset, across) * inverse;
+                if !(0.0..=1.0).contains(&u) {
+                    return false;
+                }
+                let up = cross(offset, first);
+                let v = dot(ray, up) * inverse;
+                if v < 0.0 || u + v > 1.0 {
+                    return false;
+                }
+                let along = dot(second, up) * inverse;
+                along > 0.001 && along < 0.999
+            })
+    }
+}
+
+/// Whether anything solid is between `a` and `b`: brushes or meshes.
+fn shadowed(scene: &Scene<'_>, a: Point, b: Point) -> bool {
+    blocked(scene, scene.root, a, b) || scene.meshes.iter().any(|mesh| mesh.hit(a, b))
 }
 
 /// Whether `child` has solid anywhere between `a` and `b`.
@@ -273,7 +363,7 @@ fn light_on(
             up,
             offset[1] * light.size,
         );
-        if !blocked(scene, scene.root, start, target) {
+        if !shadowed(scene, start, target) {
             let tint = through_glass(scene, start, target);
             for (part, value) in seen.iter_mut().zip(tint) {
                 *part += value;
@@ -460,6 +550,63 @@ struct FaceBake {
     normal: Point,
     /// The face's average colour, for what it bounces.
     albedo: [f64; 3],
+    /// How much surface it has.
+    area: f64,
+}
+
+/// `place` moved onto a convex face, just inside its edges. The grid of a
+/// thin face reaches well past it, where the light isn't the face's own.
+fn onto_face(corners: &[Point], normal: Point, place: Point) -> Point {
+    #[expect(clippy::cast_precision_loss, reason = "faces have few corners")]
+    let share = 1.0 / corners.len() as f64;
+    let middle = corners
+        .iter()
+        .fold([0.0; 3], |sum, corner| add_scaled(sum, *corner, share));
+    let mut out = place;
+    let mut moved = false;
+    // Twice, as moving onto one edge can leave a point past the one next to it.
+    for _ in 0..2 {
+        for (index, corner) in corners.iter().enumerate() {
+            let next = corners[(index + 1) % corners.len()];
+            let Some(mut inward) = normalized(cross(normal, add_scaled(next, *corner, -1.0)))
+            else {
+                continue;
+            };
+            if dot(inward, add_scaled(middle, *corner, -1.0)) < 0.0 {
+                inward = inward.map(|part| -part);
+            }
+            let distance = dot(inward, add_scaled(out, *corner, -1.0));
+            if distance < 0.0 {
+                out = add_scaled(out, inward, -distance);
+                moved = true;
+            }
+        }
+    }
+    if moved {
+        out = add_scaled(out, add_scaled(middle, out, -1.0), 0.02);
+    }
+    out
+}
+
+/// How much surface a face has.
+fn face_area(map: &Map, face: &Face) -> f64 {
+    let first = face.first_point as usize;
+    let count = face.point_count as usize;
+    let Some(corners) = map.points.get(first..first + count) else {
+        return 0.0;
+    };
+    let Some(start) = corners.first().map(|corner| wide(*corner)) else {
+        return 0.0;
+    };
+    let mut doubled = [0.0; 3];
+    for pair in corners[1..].windows(2) {
+        let across = cross(
+            add_scaled(wide(pair[0]), start, -1.0),
+            add_scaled(wide(pair[1]), start, -1.0),
+        );
+        doubled = add_scaled(doubled, across, 1.0);
+    }
+    dot(doubled, doubled).sqrt() * 0.5
 }
 
 /// The extents of a face in texels, spaced by `spacing`.
@@ -494,6 +641,7 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
         reason = "small"
     )]
     let texels_per_sample = spacing as u32;
+    let corners: Vec<Point> = points.iter().map(|point| wide(*point)).collect();
     let mut positions = Vec::with_capacity((width * height) as usize);
     for y in 0..height {
         for x in 0..width {
@@ -504,7 +652,8 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
                 t - space.rows[1][3],
                 space.plane.distance,
             ];
-            positions.push(solve(&space.rows, rhs)?);
+            let place = solve(&space.rows, rhs)?;
+            positions.push(onto_face(&corners, space.plane.normal, place));
         }
     }
     Some((
@@ -580,6 +729,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         points,
         normal,
         albedo: albedo_of(map, face),
+        area: face_area(map, face),
     })
 }
 
@@ -606,13 +756,18 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource>
                 }
             }
             if lit[0] + lit[1] + lit[2] > 1.0 {
+                // A sample sends out only its share of the face: a sliver has
+                // more samples than its area is worth.
+                #[expect(clippy::cast_precision_loss, reason = "counts are small")]
+                let share = bake.area / bake.points.len() as f64;
+                let area = share.min(spacing * spacing);
                 sources.push(BounceSource {
                     point: *point,
                     normal: bake.normal,
                     color: [
-                        lit[0] * bake.albedo[0],
-                        lit[1] * bake.albedo[1],
-                        lit[2] * bake.albedo[2],
+                        lit[0] * bake.albedo[0] * area,
+                        lit[1] * bake.albedo[1] * area,
+                        lit[2] * bake.albedo[2] * area,
                     ],
                 });
             }
@@ -620,7 +775,7 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource>
     }
     let step = (sources.len() / MAX_BOUNCE_SOURCES).max(1);
     #[expect(clippy::cast_precision_loss, reason = "counts are small")]
-    let weight = (step as f64) * spacing * spacing;
+    let weight = step as f64;
     let mut picked: Vec<BounceSource> = sources.into_iter().step_by(step).collect();
     for source in &mut picked {
         source.color = source.color.map(|part| part * weight);
@@ -654,7 +809,7 @@ fn bounced_at(
             continue;
         }
         let end = add_scaled(source.point, source.normal, SURFACE_OFFSET);
-        if blocked(scene, scene.root, start, end) {
+        if shadowed(scene, start, end) {
             continue;
         }
         let share = here * there / squared * gain;
@@ -885,6 +1040,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         root,
         planes,
         glass,
+        meshes: working.placed.iter().filter_map(MeshShadow::of).collect(),
         lights: &lights,
     };
 

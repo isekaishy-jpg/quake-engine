@@ -336,9 +336,12 @@ fn content_files(session: &Session) -> FileSystem {
 
 /// `validate`.
 fn validate(session: &Session) -> Result<Json, String> {
-    let working = read_map(&session.document).map_err(|error| error.to_string())?;
+    let mut working = read_map(&session.document).map_err(|error| error.to_string())?;
     let filesystem = content_files(session);
     let mut library = MaterialLibrary::new(&filesystem);
+    library
+        .place_meshes(&mut working)
+        .map_err(|error| error.to_string())?;
     let mut failure = None;
     let mut missing = Vec::new();
     let mut textures = |material: &str| {
@@ -373,9 +376,12 @@ fn validate(session: &Session) -> Result<Json, String> {
 /// `compile`.
 fn bake(session: &Session) -> Result<Json, String> {
     let path = session.path.as_ref().ok_or("save the map first")?;
-    let working = read_map(&session.document).map_err(|error| error.to_string())?;
+    let mut working = read_map(&session.document).map_err(|error| error.to_string())?;
     let filesystem = content_files(session);
     let mut library = MaterialLibrary::new(&filesystem);
+    library
+        .place_meshes(&mut working)
+        .map_err(|error| error.to_string())?;
     let mut failure = None;
     let mut textures = |material: &str| {
         library.load(material).unwrap_or_else(|error| {

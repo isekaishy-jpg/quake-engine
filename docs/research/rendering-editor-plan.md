@@ -45,6 +45,7 @@ Status is one of todo, doing or done.
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
 | 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
+| 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | doing |
 | 24 | Reviews | Circular quality and bug passes until none are left | todo |
 
 ## Log

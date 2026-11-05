@@ -317,7 +317,7 @@ impl Editor {
         let Ok(document) = from_text(&text) else {
             return;
         };
-        let working = match read_map(&document) {
+        let mut working = match read_map(&document) {
             Ok(working) => working,
             Err(error) => {
                 self.log.push(format!("map: {error}"));
@@ -327,6 +327,10 @@ impl Editor {
         let mut filesystem = FileSystem::new();
         filesystem.mount(Box::new(DirectoryArchive::new(&self.content)));
         let mut library = MaterialLibrary::new(&filesystem);
+        if let Err(error) = library.place_meshes(&mut working) {
+            self.log.push(format!("compile: {error}"));
+            return;
+        }
         let mut textures = |material: &str| {
             library
                 .load(material)

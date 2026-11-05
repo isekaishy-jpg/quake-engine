@@ -2,8 +2,9 @@
 //! stencil's boxes are open, and who shades what (proposal 0076).
 
 use engine_client::Client;
+use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
-use engine_map::{Map, RayStencil, STENCIL_GRID};
+use engine_map::{Map, OccluderSphere, RayStencil, STENCIL_GRID};
 use engine_render::CapsuleDraw;
 
 /// A stencil's occlusion grid.
@@ -27,6 +28,9 @@ const CAPSULE_RADIUS: f32 = 22.0;
 
 /// How many characters shade the light, nearest first.
 const MAX_CAPSULES: usize = 16;
+
+/// How near a model shows its parts' shade, rather than the whole of it.
+const PART_DETAIL_REACH: f32 = 512.0;
 
 /// How dark a character's shade is at its strongest.
 const CAPSULE_STRENGTH: f32 = 0.7;
@@ -109,6 +113,32 @@ fn box_is_clear(stencil: &RayStencil, area: [f32; 4], light: Vec3, client: &Clie
     client.line_is_clear(point + towards * TEST_START, end, stencil.sun)
 }
 
+/// Where the spheres of moving models are, as a view from `eye` sees them:
+/// the whole of one far off, and its parts up close.
+fn model_spheres(map: &Map, eye: Vec3, instances: &[ModelInstance]) -> Vec<(Vec3, f32)> {
+    let mut out = Vec::new();
+    for instance in instances {
+        let Some(found) = map.occluders.iter().find(|o| o.model == instance.model) else {
+            continue;
+        };
+        let place = |sphere: &OccluderSphere| {
+            let [x, y, z] = sphere.center;
+            (Vec3::new(x, y, z) + instance.origin, sphere.radius)
+        };
+        let Some(whole) = found.spheres.first() else {
+            continue;
+        };
+        let (middle, _) = place(whole);
+        let parts = found.spheres.get(1..).unwrap_or_default();
+        if parts.is_empty() || (middle - eye).length() > PART_DETAIL_REACH {
+            out.push(place(whole));
+        } else {
+            out.extend(parts.iter().map(place));
+        }
+    }
+    out
+}
+
 /// The bodies shading light for a view from `eye`, with `body` being the
 /// player, and light coming the way the bake says.
 pub(super) fn capsule_draws(
@@ -116,11 +146,13 @@ pub(super) fn capsule_draws(
     body: Vec3,
     eye: Vec3,
     solid_boxes: &[(Vec3, Vec3)],
+    instances: &[ModelInstance],
 ) -> Vec<CapsuleDraw> {
     let mut places: Vec<(Vec3, f32)> = solid_boxes
         .iter()
         .map(|(low, high)| ((*low + *high) * 0.5, (high.x - low.x) * 0.7))
         .collect();
+    places.extend(model_spheres(map, eye, instances));
     places.sort_by(|a, b| (a.0 - eye).length().total_cmp(&(b.0 - eye).length()));
     places.truncate(MAX_CAPSULES - 1);
     places.push((body, CAPSULE_RADIUS));

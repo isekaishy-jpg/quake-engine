@@ -286,7 +286,7 @@ impl World {
                 // From `V_CalcRefdef`, with the status bar's 2 units.
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
-                capsules = capsule_draws(&map, body, origin, &bodies);
+                capsules = capsule_draws(&map, body, origin, &bodies, &instances);
                 if !frozen {
                     lists.entities.extend(self.models.draw_weapon(
                         u32::from(model),

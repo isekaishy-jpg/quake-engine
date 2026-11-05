@@ -6,6 +6,7 @@ use engine_map::{Clouds, Contents, Fog, Sky};
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
+use crate::mesh::PlacedMesh;
 
 /// One side of a brush.
 #[derive(Clone, Debug, PartialEq)]
@@ -50,6 +51,23 @@ pub struct EntitySource {
     pub fields: Vec<(String, Value)>,
     /// Its own geometry, if it has any.
     pub brushes: Vec<Brush>,
+    /// The mesh that's its model, if it has one.
+    pub mesh: Option<MeshPlacement>,
+    /// That mesh, once placed.
+    pub placed: Option<PlacedMesh>,
+}
+
+/// Where a mesh goes.
+#[derive(Clone, Debug, PartialEq)]
+pub struct MeshPlacement {
+    /// Its name, under `meshes/`.
+    pub source: String,
+    /// Where its origin goes.
+    pub origin: Point,
+    /// Its pitch, yaw and roll, in degrees.
+    pub angles: Point,
+    /// How much it's stretched along each of its axes.
+    pub scale: Point,
 }
 
 /// A map as it's edited.
@@ -61,6 +79,10 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Meshes in the world.
+    pub meshes: Vec<MeshPlacement>,
+    /// Those meshes, once placed.
+    pub placed: Vec<PlacedMesh>,
     /// What's changed about how liquids look.
     pub water: Option<WaterSource>,
     /// Fog, if it has any.
@@ -197,10 +219,18 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
         .and_then(Value::text)
         .ok_or_else(|| CompileError::Bad("an entity needs a type".to_owned()))?
         .to_owned();
+    let mesh = block
+        .get("mesh")
+        .is_some()
+        .then(|| read_placement(block, "mesh"));
+    let mesh = mesh.transpose()?;
+    // A mesh entity's place is its model's, as a brush entity's is.
+    let placing = |key: &str| mesh.is_some() && matches!(key, "origin" | "angles" | "scale");
     let fields = block
         .fields
         .iter()
-        .filter(|(key, _)| !matches!(key.as_str(), "type" | "id" | "prefab"))
+        .filter(|(key, _)| !matches!(key.as_str(), "type" | "id" | "prefab" | "mesh"))
+        .filter(|(key, _)| !placing(key))
         .cloned()
         .collect();
     let brushes = block
@@ -212,6 +242,28 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
         kind,
         fields,
         brushes,
+        mesh,
+        placed: None,
+    })
+}
+
+/// Where `block` puts the mesh its `key` names.
+fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileError> {
+    let source = block
+        .get(key)
+        .and_then(Value::text)
+        .ok_or_else(|| CompileError::Bad("a mesh needs a name".to_owned()))?
+        .to_owned();
+    let triple = |key: &str, default: Point| block.get(key).and_then(point_of).unwrap_or(default);
+    let scale = block
+        .get("scale")
+        .and_then(Value::number)
+        .map_or_else(|| triple("scale", [1.0; 3]), |scale| [scale; 3]);
+    Ok(MeshPlacement {
+        source,
+        origin: triple("origin", [0.0; 3]),
+        angles: triple("angles", [0.0; 3]),
+        scale,
     })
 }
 
@@ -316,6 +368,11 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        meshes: document
+            .blocks_of("mesh")
+            .map(|block| read_placement(block, "source"))
+            .collect::<Result<Vec<_>, _>>()?,
+        placed: Vec::new(),
         water: document.blocks_of("water").next().map(read_water),
     })
 }

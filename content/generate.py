@@ -14,6 +14,7 @@ SIZE = 256
 ROOT = os.path.dirname(os.path.abspath(__file__))
 TEXTURES = os.path.join(ROOT, 'textures')
 MATERIALS = os.path.join(ROOT, 'materials')
+MESHES = os.path.join(ROOT, 'meshes')
 
 
 def write_png(name, pixels, size=SIZE):
@@ -268,11 +269,75 @@ MATERIALS_TEXT = {
 }
 
 
+def ring(sides, radius, z):
+    return [(radius * math.cos(i * 2 * math.pi / sides),
+             radius * math.sin(i * 2 * math.pi / sides), z) for i in range(sides)]
+
+
+def lathe(name, material, rings, sides=12):
+    '''A part turned from (radius, height) pairs, closed at each end.'''
+    points, uvs, triangles = [], [], []
+    for row, (radius, z) in enumerate(rings):
+        for i, point in enumerate(ring(sides, radius, z)):
+            points.append(point)
+            uvs.append((i / sides, row / (len(rings) - 1)))
+    for row in range(len(rings) - 1):
+        for i in range(sides):
+            a = row * sides + i
+            b = row * sides + (i + 1) % sides
+            c = a + sides
+            d = b + sides
+            triangles += [(a, b, d), (a, d, c)]
+    for row, flip in ((0, True), (len(rings) - 1, False)):
+        middle = len(points)
+        points.append((0.0, 0.0, rings[row][1]))
+        uvs.append((0.5, 0.5))
+        for i in range(sides):
+            a = row * sides + i
+            b = row * sides + (i + 1) % sides
+            triangles.append((a, middle, b) if flip else (a, b, middle))
+    return (name, material, points, uvs, triangles)
+
+
+def numbers(rows):
+    return ' '.join('%g' % value for row in rows for value in row)
+
+
+def write_mesh(name, parts, hulls):
+    lines = ['format 1 mesh', '']
+    for part, material, points, uvs, triangles in parts:
+        lines += ['part %s {' % part,
+                  '    material = %s' % material,
+                  '    points = ' + numbers(points),
+                  '    uvs = ' + numbers(uvs),
+                  '    triangles = ' + numbers(triangles),
+                  '}']
+    for hull in hulls:
+        lines.append('hull { cuboid = ' + numbers([hull]) + ' }')
+    with open(os.path.join(MESHES, name + '.emesh'), 'w', encoding='utf-8', newline='\n') as f:
+        f.write('\n'.join(lines) + '\n')
+
+
+MESH_PARTS = {
+    'statue': ([
+        lathe('plinth', 'stone', [(40, 0), (40, 16), (30, 24)]),
+        lathe('body', 'metal', [(22, 24), (26, 60), (18, 96), (20, 112)]),
+        lathe('head', 'shiny', [(6, 112), (14, 122), (15, 134), (8, 146), (1, 150)]),
+    ], [(-40, -40, 0, 40, 40, 24), (-24, -24, 24, 24, 24, 150)]),
+    'barrel': ([
+        lathe('staves', 'metal', [(14, 0), (18, 16), (19, 28), (18, 40), (14, 56)]),
+    ], []),
+}
+
+
 def main():
     os.makedirs(TEXTURES, exist_ok=True)
     os.makedirs(MATERIALS, exist_ok=True)
     for name, pixels in IMAGES.items():
         write_png(name, pixels)
+    os.makedirs(MESHES, exist_ok=True)
+    for name, (parts, hulls) in MESH_PARTS.items():
+        write_mesh(name, parts, hulls)
     for name, body in MATERIALS_TEXT.items():
         with open(os.path.join(MATERIALS, name + '.emat'), 'w', encoding='utf-8', newline='\n') as f:
             f.write('format 1 material\n\nsurface {\n    ' + body + '\n}\n')

@@ -4,7 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{MaterialLibrary, apply_bake, compile_text, source_hash};
+use engine_compile::{MaterialLibrary, apply_bake, compile, read_map_text, source_hash};
 use engine_map::Texture;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
@@ -23,7 +23,9 @@ pub(crate) fn load_level(
         return fixture_quake::load_level(filesystem, name);
     };
     let text = std::str::from_utf8(&bytes)?;
+    let mut working = read_map_text(text)?;
     let mut library = MaterialLibrary::new(filesystem);
+    library.place_meshes(&mut working)?;
     let mut failure = None;
     let mut textures = |material: &str| {
         library.load(material).unwrap_or_else(|error| {
@@ -31,7 +33,7 @@ pub(crate) fn load_level(
             Texture::default()
         })
     };
-    let mut map = compile_text(text, &mut textures)?;
+    let mut map = compile(&working, &mut textures)?;
     if let Some(error) = failure {
         return Err(error.into());
     }

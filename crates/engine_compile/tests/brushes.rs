@@ -2,9 +2,13 @@
 
 use std::sync::Arc;
 
-use engine_compile::{compile_text, placeholder_texture};
+use engine_compile::{
+    LoadedMesh, compile, compile_text, occluders_of, placeholder_texture, read_map_text, read_mesh,
+    read_occlusion, resolve_meshes, write_occlusion,
+};
 use engine_core::math::Vec3;
-use engine_map::{Contents, Map, NodeChild, PoolLook};
+use engine_format::from_text;
+use engine_map::{Contents, Face, Map, NodeChild, PoolLook};
 use engine_physics::CollisionWorld;
 
 /// A closed room from -256 to 256 with 32 unit walls, and a pillar.
@@ -201,4 +205,127 @@ water {{ caustics = 0.25 absorption = 0.5 }}
     assert!((look.caustics - 0.25).abs() < 0.001);
     assert!((look.absorption - 0.5).abs() < 0.001);
     assert_eq!(look.color, usual.color, "what's unset stays usual");
+}
+
+/// A square of two triangles, with its UVs across a whole image.
+const SQUARE: &str = r#"
+format 1 mesh
+part top {
+    material = stone
+    points = 0 0 0  64 0 0  64 64 0  0 64 0
+    uvs = 0 0  1 0  1 1  0 1
+    triangles = 0 1 2  0 2 3
+}
+hull { cuboid = 0 0 -8 64 64 0 }
+"#;
+
+/// The last of the world's faces, which a mesh in the world ends with.
+fn last_world_face(map: &Map) -> &Face {
+    let world = &map.models[0];
+    &map.faces[(world.first_face + world.face_count - 1) as usize]
+}
+
+/// The room, with `SQUARE` placed by `mesh`.
+fn room_with_mesh(mesh: &str) -> Map {
+    let mut working = read_map_text(&format!("{ROOM}\n{mesh}\n")).expect("reads");
+    let square = read_mesh(&from_text(SQUARE).expect("text")).expect("a mesh");
+    let mut read = |_: &str| {
+        Ok(LoadedMesh {
+            mesh: Arc::new(square.clone()),
+            occluders: occluders_of(&square),
+        })
+    };
+    resolve_meshes(&mut working, &mut read).expect("placed");
+    let mut source = |name: &str| placeholder_texture(name);
+    compile(&working, &mut source).expect("compiles")
+}
+
+/// Each triangle is a face, in place, and its UVs reach its corners.
+#[test]
+fn a_placed_mesh_is_faces_with_its_uvs() {
+    let plain = room();
+    let map = room_with_mesh("mesh { source = square origin = -128 -128 -200 }");
+    assert_eq!(map.faces.len(), plain.faces.len() + 2);
+    let face = last_world_face(&map);
+    let first = face.first_point as usize;
+    let corners = &map.points[first..first + 3];
+    assert_eq!(corners[0], Vec3::new(-128.0, -128.0, -200.0));
+    let width = 64.0;
+    let across: Vec<f32> = corners.iter().map(|p| face.axes[0].project(*p)).collect();
+    assert!((across[0] - 0.0).abs() < 0.01, "{across:?}");
+    assert!((across[1] - width).abs() < 0.01, "{across:?}");
+}
+
+/// A placement turns and stretches.
+#[test]
+fn a_placement_turns_and_scales() {
+    let map =
+        room_with_mesh("mesh { source = square origin = 0 0 -200 angles = 0 90 0 scale = 2 }");
+    let face = last_world_face(&map);
+    let first = face.first_point as usize;
+    let far = map.points[first + 1];
+    assert!((far.x + 128.0).abs() < 0.01, "{far:?}");
+    assert!((far.y - 128.0).abs() < 0.01, "{far:?}");
+}
+
+/// A hull blocks movement, and cuts nothing out of what's around it.
+#[test]
+fn a_hull_collides_without_cutting_faces() {
+    let plain = room();
+    let map = Arc::new(room_with_mesh(
+        "mesh { source = square origin = -128 -128 -256 }",
+    ));
+    assert_eq!(map.faces.len(), plain.faces.len() + 2, "the floor is whole");
+    let world = CollisionWorld::new(Arc::clone(&map));
+    assert!(world.in_solid(Vec3::new(-100.0, -100.0, -258.0)));
+    let middle = Vec3::new(-96.0, -96.0, -259.0);
+    assert_eq!(contents_at(&map, middle), Contents::Solid);
+}
+
+/// An entity's mesh is its model, and its sidecar goes with it.
+#[test]
+fn a_mesh_entity_has_a_model_and_a_shade() {
+    let map =
+        room_with_mesh("entity lift_1 { type = func_door mesh = square origin = -128 -128 -200 }");
+    let found = map
+        .entities
+        .iter()
+        .find(|e| {
+            e.fields
+                .iter()
+                .any(|(k, v)| k == "targetname" && v == "lift_1")
+        })
+        .expect("the entity");
+    let model = found
+        .fields
+        .iter()
+        .find(|(k, _)| k == "model")
+        .expect("model");
+    let number: u32 = model.1.trim_start_matches('*').parse().expect("a number");
+    assert!(
+        !found.fields.iter().any(|(k, _)| k == "origin"),
+        "its place is its model's"
+    );
+    let occluder = map.occluders.first().expect("a shade");
+    assert_eq!(occluder.model, number);
+    let middle = occluder.spheres[0].center;
+    assert!((middle[0] + 96.0).abs() < 0.01, "{middle:?}");
+}
+
+/// A sidecar reads back as what was written.
+#[test]
+fn a_sidecar_round_trips() {
+    let square = read_mesh(&from_text(SQUARE).expect("text")).expect("a mesh");
+    let spheres = occluders_of(&square);
+    assert_eq!(spheres.len(), 1, "one part has only the whole");
+    let text = write_occlusion(&spheres);
+    assert_eq!(read_occlusion(&from_text(&text).expect("text")), spheres);
+}
+
+/// A triangle that names a corner the part lacks says so.
+#[test]
+fn a_bad_mesh_says_what_is_wrong() {
+    let text = "format 1 mesh\npart p { material = m points = 0 0 0 uvs = 0 0 triangles = 0 1 2 }";
+    let error = read_mesh(&from_text(text).expect("text")).expect_err("no such corner");
+    assert!(error.to_string().contains("corner"), "{error}");
 }

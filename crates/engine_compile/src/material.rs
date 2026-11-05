@@ -4,13 +4,15 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_format::{Block, Document, Value, from_text};
+use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, Shading, SlotImage,
     Texture, TextureKind, mip_chain,
 };
 
 use crate::error::CompileError;
+use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
+use crate::source::WorkingMap;
 use crate::texture::placeholder_texture;
 
 /// Decodes a PNG into RGBA bytes.
@@ -75,8 +77,18 @@ fn numbers<const N: usize>(block: &Block, key: &str, default: [f32; N]) -> [f32;
     out
 }
 
+/// A document from its bytes, in text or binary.
+fn document_of(bytes: &[u8]) -> Result<Document, CompileError> {
+    match std::str::from_utf8(bytes) {
+        Ok(text) => Ok(from_text(text)?),
+        Err(_) => Ok(from_binary(bytes)?),
+    }
+}
+
 /// Loads materials by name, keeping each image once.
 pub struct MaterialLibrary<'a> {
+    /// Meshes read so far.
+    meshes: HashMap<String, LoadedMesh>,
     /// Where files come from.
     filesystem: &'a FileSystem,
     /// Images already decoded, by path.
@@ -141,6 +153,7 @@ impl<'a> MaterialLibrary<'a> {
         Self {
             filesystem,
             images: HashMap::new(),
+            meshes: HashMap::new(),
         }
     }
 
@@ -157,6 +170,44 @@ impl<'a> MaterialLibrary<'a> {
         let image = Arc::new(mip_chain(width, height, rgba));
         self.images.insert(path.to_owned(), Arc::clone(&image));
         Ok(image)
+    }
+
+    /// Places the meshes of `working`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if one can't be read.
+    pub fn place_meshes(&mut self, working: &mut WorkingMap) -> Result<(), CompileError> {
+        resolve_meshes(working, &mut |name| self.mesh(name))
+    }
+
+    /// The mesh called `name`, with its sidecar's volume if it has one.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be read.
+    pub fn mesh(&mut self, name: &str) -> Result<LoadedMesh, CompileError> {
+        if let Some(loaded) = self.meshes.get(name) {
+            return Ok(loaded.clone());
+        }
+        let path = format!("meshes/{name}.emesh");
+        let bytes = self
+            .filesystem
+            .read(&path)
+            .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
+        let mesh = read_mesh(&document_of(&bytes)?)?;
+        let occluders = self
+            .filesystem
+            .read(&format!("meshes/{name}.eocc"))
+            .ok()
+            .and_then(|bytes| document_of(&bytes).ok())
+            .map_or_else(Vec::new, |document| read_occlusion(&document));
+        let loaded = LoadedMesh {
+            mesh: Arc::new(mesh),
+            occluders,
+        };
+        self.meshes.insert(name.to_owned(), loaded.clone());
+        Ok(loaded)
     }
 
     /// The image at `path`, for what isn't a material, such as a light's

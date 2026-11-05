@@ -1,0 +1,37 @@
+format 1 map
+
+# Meshes as map geometry: statues in the world, turned and stretched, and a
+# barrel that's an entity's model. Their shadows come from their triangles.
+entity world {
+    type = worldspawn
+    sun_intensity = 150
+    sun_size = 12
+    ambient = 40
+    light_spacing = 8
+}
+sky {
+    zenith = 0.2 0.38 0.65
+    horizon = 0.85 0.82 0.75
+    sun_direction = 0.55 0.35 0.7
+}
+brush { material = stone cuboid = -512 -512 -32 512 512 0 }
+brush { material = brick cuboid = -544 -544 -32 -512 544 320 }
+brush { material = brick cuboid = 512 -544 -32 544 544 320 }
+brush { material = brick cuboid = -512 -544 -32 512 -512 320 }
+brush { material = brick cuboid = -512 512 -32 512 544 320 }
+brush { contents = sky material = sky cuboid = -544 -544 320 544 544 352 }
+
+mesh { source = statue origin = 0 0 0 }
+mesh { source = statue origin = -220 160 0 angles = 0 45 0 scale = 1.4 }
+mesh { source = statue origin = 200 -180 0 scale = 0.7 1.6 1 }
+
+entity start { type = info_player_start origin = -380 -300 24 angle = 40 }
+entity lift_barrel {
+    type = func_door
+    mesh = barrel
+    origin = -120 -140 0
+    angle = -2
+    lip = -64
+    wait = 2
+    speed = 40
+}
