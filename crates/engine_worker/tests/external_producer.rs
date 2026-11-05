@@ -1,0 +1,285 @@
+use std::num::NonZeroUsize;
+use std::panic::{AssertUnwindSafe, catch_unwind};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Barrier, Mutex};
+use std::thread;
+
+use engine_worker::{
+    DemandSnapshot, ExecutionClass, ExternalOptions, Outcome, OwnedLimits, Priority,
+    ProducerControl, Runtime, RuntimeConfig, ShutdownError, SpawnError, SpawnOptions, TaskStatus,
+    WorkerConfig,
+};
+
+fn runtime(records: usize) -> Runtime {
+    let config = RuntimeConfig::new(3, [WorkerConfig::new(1); 3]).unwrap();
+    let limits = OwnedLimits::new(records, 8, [8; 3], [1; 3]).unwrap();
+    Runtime::builder(config)
+        .with_owned_limits(limits)
+        .with_demand_limits(vec![Priority::new(0), Priority::new(5)], 8)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn external_outcome_occupies_metadata_without_using_worker_handoff() {
+    let mut runtime = runtime(1);
+    let (producer, mut task, _) = runtime.external::<u32>(ExternalOptions::default()).unwrap();
+    let rejected = runtime
+        .lane(ExecutionClass::Low)
+        .try_spawn(SpawnOptions::default(), || 9_u32)
+        .err()
+        .unwrap();
+    assert_eq!(rejected.reason, SpawnError::Full);
+    assert!(producer.complete(7).is_ok());
+    assert_eq!(task.completion().wait().unwrap(), TaskStatus::Succeeded);
+    assert!(matches!(task.try_take(), Some(Outcome::Success(value)) if *value == 7));
+    let (cpu, _) = runtime
+        .lane(ExecutionClass::Low)
+        .try_spawn(SpawnOptions::default(), || 9_u32)
+        .unwrap();
+    assert_eq!(cpu.completion().wait().unwrap(), TaskStatus::Succeeded);
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn cancellation_and_drop_publish_one_terminal_outcome_and_return_late_value() {
+    let mut runtime = runtime(2);
+    let set = runtime.work_set(NonZeroUsize::new(1).unwrap()).unwrap();
+    let (producer, mut task, control) = runtime
+        .external::<String>(ExternalOptions {
+            work_set: Some(&set),
+            ..Default::default()
+        })
+        .unwrap();
+    set.cancel();
+    assert_eq!(task.completion().wait().unwrap(), TaskStatus::Cancelled);
+    let late = String::from("provider still owns this");
+    assert_eq!(
+        producer.complete(late).unwrap_err(),
+        "provider still owns this"
+    );
+    control.cancel();
+    drop(producer);
+    assert!(matches!(task.try_take(), Some(Outcome::Cancelled)));
+    assert!(set.progress().is_drained());
+
+    let (producer, mut task, _) = runtime.external::<u8>(ExternalOptions::default()).unwrap();
+    drop(producer);
+    assert_eq!(task.completion().wait().unwrap(), TaskStatus::Abandoned);
+    assert!(matches!(task.try_take(), Some(Outcome::Abandoned)));
+
+    let pending_set = runtime.work_set(NonZeroUsize::new(1).unwrap()).unwrap();
+    let (set_producer, mut set_task, _) = runtime
+        .external::<u32>(ExternalOptions {
+            work_set: Some(&pending_set),
+            ..Default::default()
+        })
+        .unwrap();
+    let (ordinary_producer, mut ordinary_task, _) =
+        runtime.external::<u32>(ExternalOptions::default()).unwrap();
+    assert_eq!(runtime.shutdown(), Err(ShutdownError::LiveExternal));
+    runtime.abandon();
+    for task in [&mut set_task, &mut ordinary_task] {
+        assert_eq!(task.completion().wait().unwrap(), TaskStatus::Abandoned);
+        assert!(matches!(task.try_take(), Some(Outcome::Abandoned)));
+    }
+    assert_eq!(set_producer.complete(17), Err(17));
+    assert_eq!(ordinary_producer.complete(19), Err(19));
+    assert!(pending_set.is_drained());
+}
+
+#[test]
+fn concurrent_completion_and_cancel_publish_exactly_once() {
+    let mut runtime = runtime(1);
+    let (producer, mut task, control) =
+        runtime.external::<u32>(ExternalOptions::default()).unwrap();
+    let barrier = Arc::new(Barrier::new(2));
+    let worker_barrier = Arc::clone(&barrier);
+    let completion = thread::spawn(move || {
+        worker_barrier.wait();
+        producer.complete(11)
+    });
+    barrier.wait();
+    control.cancel();
+    let completion = completion.join().unwrap();
+    match completion {
+        Ok(()) => {
+            assert_eq!(task.completion().wait().unwrap(), TaskStatus::Succeeded);
+            assert!(matches!(task.try_take(), Some(Outcome::Success(value)) if *value == 11));
+        }
+        Err(value) => {
+            assert_eq!(value, 11);
+            assert_eq!(task.completion().wait().unwrap(), TaskStatus::Cancelled);
+            assert!(matches!(task.try_take(), Some(Outcome::Cancelled)));
+        }
+    }
+    assert!(task.try_take().is_none());
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn fallible_external_result_preserves_error_and_provider_demand_versions() {
+    for baseline in [None, Some(Priority::new(5))] {
+        let mut runtime = runtime(2);
+        let observed = Arc::new(Mutex::new(Vec::<DemandSnapshot>::new()));
+        let sent = Arc::clone(&observed);
+        let (producer, mut task, _) = runtime
+            .external::<Result<u32, &'static str>>(ExternalOptions {
+                priority: baseline,
+                provider_demand: Some(Arc::new(move |snapshot| {
+                    sent.lock().unwrap().push(snapshot);
+                })),
+                ..Default::default()
+            })
+            .unwrap();
+        let interest = task.completion().demand(Priority::new(0)).unwrap();
+        while runtime.service_demand(1) {}
+        interest.defer().unwrap();
+        while runtime.service_demand(1) {}
+        interest.refresh(Priority::new(0)).unwrap();
+        while runtime.service_demand(1) {}
+        drop(interest);
+        while runtime.service_demand(1) {}
+        assert_eq!(task.completion().status(), None);
+        let snapshots = observed.lock().unwrap();
+        assert_eq!(
+            snapshots
+                .iter()
+                .map(|snapshot| (snapshot.priority, snapshot.active))
+                .collect::<Vec<_>>(),
+            vec![
+                (baseline, baseline.is_some()),
+                (Some(Priority::new(0)), true),
+                (Some(Priority::new(0)), false),
+                (Some(Priority::new(0)), true),
+                (baseline, baseline.is_some()),
+            ],
+            "baseline: {baseline:?}",
+        );
+        assert!(
+            snapshots
+                .windows(2)
+                .all(|pair| pair[0].version < pair[1].version)
+        );
+        drop(snapshots);
+        assert!(producer.complete_fallible(Err("failed")).is_ok());
+        assert_eq!(
+            task.completion().wait().unwrap(),
+            TaskStatus::ApplicationFailed
+        );
+        assert!(
+            matches!(task.try_take(), Some(Outcome::Success(value)) if *value == Err("failed"))
+        );
+        runtime.shutdown().unwrap();
+    }
+}
+
+#[test]
+fn panicking_provider_demand_and_cleanup_do_not_interrupt_settlement() {
+    let mut runtime = runtime(1);
+    let (producer, task, _) = runtime
+        .external::<u32>(ExternalOptions {
+            priority: Some(Priority::new(5)),
+            provider_demand: Some(Arc::new(|_| panic!("provider demand failed"))),
+            ..Default::default()
+        })
+        .unwrap();
+    let interest = task.completion().demand(Priority::new(0)).unwrap();
+    while runtime.service_demand(1) {}
+    assert!(producer.complete(42).is_ok());
+    assert_eq!(task.completion().wait().unwrap(), TaskStatus::Succeeded);
+    drop(interest);
+    runtime.shutdown().unwrap();
+
+    struct PanicOnDrop(Arc<AtomicBool>);
+    impl Drop for PanicOnDrop {
+        fn drop(&mut self) {
+            if !self.0.swap(true, Ordering::SeqCst) {
+                panic!("provider capture cleanup failed");
+            }
+        }
+    }
+
+    // Final callback cleanup must not interrupt settlement or the abandonment
+    // loop, regardless of the external-record iteration order.
+    for abandon in [false, true] {
+        let mut runtime = self::runtime(2);
+        let dropped = Arc::new(AtomicBool::new(false));
+        let mut operations = Vec::new();
+        for _ in 0..2 {
+            let capture = PanicOnDrop(Arc::clone(&dropped));
+            operations.push(
+                runtime
+                    .external::<u32>(ExternalOptions {
+                        provider_demand: Some(Arc::new(move |_| {
+                            std::hint::black_box(&capture);
+                        })),
+                        ..Default::default()
+                    })
+                    .unwrap(),
+            );
+        }
+        let result = catch_unwind(AssertUnwindSafe(|| {
+            if abandon {
+                runtime.abandon();
+            } else {
+                for (producer, _, _) in &operations {
+                    assert!(producer.complete(42).is_ok());
+                }
+            }
+        }));
+        assert!(
+            result.is_ok(),
+            "provider cleanup escaped: abandon={abandon}"
+        );
+        assert!(dropped.load(Ordering::SeqCst));
+        for (_, task, _) in &operations {
+            assert_eq!(
+                task.completion().status(),
+                Some(if abandon {
+                    TaskStatus::Abandoned
+                } else {
+                    TaskStatus::Succeeded
+                }),
+            );
+        }
+        if !abandon {
+            runtime.shutdown().unwrap();
+        }
+    }
+
+    struct ObserveDrop(Arc<Mutex<Option<bool>>>);
+    impl Drop for ObserveDrop {
+        fn drop(&mut self) {
+            *self.0.lock().unwrap() = Some(thread::panicking());
+        }
+    }
+
+    // A callback may settle its own node, leaving the invocation's Arc as the
+    // final reference. Drop that reference only after catching its panic, or a
+    // panicking capture destructor would abort the process during unwinding.
+    let mut runtime = self::runtime(1);
+    let control_slot = Arc::new(Mutex::new(None::<ProducerControl>));
+    let callback_slot = Arc::clone(&control_slot);
+    let drop_observation = Arc::new(Mutex::new(None));
+    let capture = ObserveDrop(Arc::clone(&drop_observation));
+    let (_producer, task, control) = runtime
+        .external::<u32>(ExternalOptions {
+            provider_demand: Some(Arc::new(move |_| {
+                std::hint::black_box(&capture);
+                let control = callback_slot.lock().unwrap().take();
+                if let Some(control) = control {
+                    control.cancel();
+                    panic!("provider failed after cancelling itself");
+                }
+            })),
+            ..Default::default()
+        })
+        .unwrap();
+    *control_slot.lock().unwrap() = Some(control);
+    let _interest = task.completion().demand(Priority::new(0)).unwrap();
+    while runtime.service_demand(1) {}
+    assert_eq!(task.completion().status(), Some(TaskStatus::Cancelled));
+    assert_eq!(*drop_observation.lock().unwrap(), Some(false));
+    runtime.shutdown().unwrap();
+}

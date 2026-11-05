@@ -15,7 +15,7 @@ The human set these on 2026-11-03.
 5. **Rendering and sound are decoupled from physics.** Simulation runs on a pegged rate that doesn't depend on frame rate.
 6. **Physics has a `box3d` backend,** with game movement rebuilt on top, so the platform is there if we want to change things later.
 7. **Rendering is built on `vulkane`.** Rendering features are remade there.
-8. **The Sol crates are part of this engine.** `solapp`, `solworker` and `solcache` live here as repository crates and can be changed here.
+8. **The host, worker and cache crates are part of this engine.** `engine_host`, `engine_worker` and `engine_cache` live here as repository crates and can be changed here.
 9. **Online play is server-authoritative, with fair play as a goal.** Behaviour is controlled by server settings, not hardcoded.
 10. **Original game data is never committed.** The engine loads it from the user's own copy.
 11. **The first end goal is the port.** The finished product plays Quake, the fixture, so we know it works.

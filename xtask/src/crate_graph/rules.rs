@@ -37,7 +37,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
     },
     CrateRule {
         name: "engine_platform",
-        may_depend_on: &["engine_core", "solapp"],
+        may_depend_on: &["engine_core", "engine_host"],
     },
     CrateRule {
         name: "engine_assets",
@@ -174,20 +174,20 @@ pub const CRATE_RULES: &[CrateRule] = &[
         ],
     },
     CrateRule {
-        name: "solapp",
-        may_depend_on: &["solworker", "solcache"],
+        name: "engine_host",
+        may_depend_on: &["engine_worker", "engine_cache"],
     },
     CrateRule {
-        name: "solworker",
+        name: "engine_worker",
         may_depend_on: &[],
     },
     CrateRule {
-        name: "solcache",
+        name: "engine_cache",
         may_depend_on: &[],
     },
     CrateRule {
-        name: "solcache-solworker-example",
-        may_depend_on: &["solcache", "solworker"],
+        name: "engine_cache_worker_example",
+        may_depend_on: &["engine_cache", "engine_worker"],
     },
     CrateRule {
         name: "xtask",
@@ -195,14 +195,14 @@ pub const CRATE_RULES: &[CrateRule] = &[
     },
 ];
 
-/// Packages that keep their own lint settings for now. The Sol crates were
-/// written to their own standard, and bringing them under the workspace
-/// lints is its own item (proposal 0009).
+/// Packages that keep their own lint settings for now. `engine_host`,
+/// `engine_worker` and `engine_cache` were written to their own standard, and
+/// bringing them under the workspace lints is its own item (proposal 0009).
 pub const LINT_EXEMPT: &[&str] = &[
-    "solapp",
-    "solworker",
-    "solcache",
-    "solcache-solworker-example",
+    "engine_host",
+    "engine_worker",
+    "engine_cache",
+    "engine_cache_worker_example",
 ];
 
 /// An external dependency that is a swappable backend and therefore private
@@ -218,7 +218,7 @@ pub struct BackendRule {
 /// The backends. Swapping one stays local to its owner.
 pub const BACKEND_RULES: &[BackendRule] = &[
     BackendRule {
-        dependency: "solapp",
+        dependency: "engine_host",
         owner: "engine_platform",
     },
     BackendRule {

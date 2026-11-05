@@ -171,7 +171,7 @@ Where the authorities disagree, the higher item wins. An exception MUST be local
 
 ## 12. Tests
 
-- Tests MUST NOT be collocated with production code, apart from the Sol crates until they are brought under this guide (proposal 0009). Files under `src/` MUST NOT contain `#[cfg(test)] mod tests` or test-only implementations.
+- Tests MUST NOT be collocated with production code, apart from `engine_host`, `engine_worker` and `engine_cache` until they are brought under this guide (proposal 0009). Files under `src/` MUST NOT contain `#[cfg(test)] mod tests` or test-only implementations.
 - Tests belong in dedicated `tests/` trees, organized by module and observable behavior. Test-only shared code belongs under those trees or in an explicit test-support crate.
 - Tests SHOULD exercise public module behavior. Private implementation details MUST NOT be made public only to make them directly testable.
 - A test MUST be deterministic and isolated from execution order, wall-clock timing, the public internet, and developer-machine state.

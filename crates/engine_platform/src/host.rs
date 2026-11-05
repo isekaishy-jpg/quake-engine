@@ -1,16 +1,10 @@
-//! Running the application on `solapp`.
+//! Running the application on `engine_host`.
 
 use std::error::Error;
 use std::time::Duration;
 
 use engine_core::window::NativeWindow;
-use solapp::{
-    SAApplication, SAContext, SADisplayRequest, SADisplayTransition, SADisplayTransitionState,
-    SAError, SAEvent, SAEventFilter, SAFrame, SAFramePhase, SAHost, SAHostConfig, SAInputMode,
-    SAMonitorSnapshot, SAPacingPolicy, SAPhysicalSize, SAPresentationStatus, SAPriority,
-    SAPropagation, SAServiceBudget, SAServicePoint, SAServicePoints, SAServiceReport,
-    SAServiceRequest, SAServiceSpec, SAStopProgress, SAWindowAccess, SAWindowSpec, SAWindowTarget,
-};
+use engine_host as backend;
 
 use crate::error::PlatformError;
 use crate::input::{InputEvent, translate};
@@ -53,7 +47,7 @@ pub struct WindowConfig {
 #[derive(Debug)]
 pub struct Window {
     /// The host's lease.
-    access: SAWindowAccess,
+    access: backend::WindowAccess,
 }
 
 impl Window {
@@ -64,7 +58,7 @@ impl Window {
     /// Returns [`PlatformError::Host`] if the window is gone, or isn't a kind
     /// the engine can draw into.
     pub fn native(&self) -> Result<NativeWindow, PlatformError> {
-        let host = |error: SAError| PlatformError::Host(error.to_string());
+        let host = |error: backend::Error| PlatformError::Host(error.to_string());
         let native = self.access.native_ref().map_err(host)?;
         let hwnd = native.hwnd().map_err(host)?.get();
         let hinstance = native
@@ -148,7 +142,7 @@ pub trait PlatformApp {
 /// Returns [`PlatformError::Host`] when the host cannot start or fails, and
 /// [`PlatformError::Startup`] when [`PlatformApp::started`] fails.
 pub fn run<A: PlatformApp>(config: WindowConfig, app: &mut A) -> Result<(), PlatformError> {
-    let mut host = SAHost::new(SAHostConfig::default())
+    let mut host = backend::Host::new(backend::HostConfig::default())
         .map_err(|rejected| PlatformError::Host(rejected.into_parts().1.to_string()))?;
     let mut adapter = Adapter {
         app,
@@ -167,14 +161,14 @@ pub fn run<A: PlatformApp>(config: WindowConfig, app: &mut A) -> Result<(), Plat
         .map_err(|error| PlatformError::Host(error.to_string()))
 }
 
-/// The `solapp` application wrapping a [`PlatformApp`].
+/// The `engine_host` application wrapping a [`PlatformApp`].
 struct Adapter<'app, A> {
     /// The wrapped application.
     app: &'app mut A,
     /// The window to open.
     config: WindowConfig,
     /// The window, once created.
-    target: Option<SAWindowTarget>,
+    target: Option<backend::WindowTarget>,
     /// Whether the window is minimized, so frames are in reduced mode.
     minimized: bool,
     /// Whether the mouse is captured, or was last asked to be.
@@ -186,25 +180,25 @@ struct Adapter<'app, A> {
 /// Passes input straight to the application.
 fn on_input<A: PlatformApp>(
     adapter: &mut Adapter<'_, A>,
-    _cx: &mut SAContext<'_, Adapter<'_, A>>,
-    event: &SAEvent<'_, (), ()>,
-) -> SAPropagation {
-    if let SAEvent::Input(record) = event
+    _cx: &mut backend::Context<'_, Adapter<'_, A>>,
+    event: &backend::Event<'_, (), ()>,
+) -> backend::Propagation {
+    if let backend::Event::Input(record) = event
         && Some(record.target) == adapter.target
         && let Some(input) = translate(&record.event)
     {
         adapter.app.input(&input, record.stamp.receipt.elapsed());
     }
-    SAPropagation::Continue
+    backend::Propagation::Continue
 }
 
 impl<A: PlatformApp> Adapter<'_, A> {
     /// Creates the window, subscribes to input, and starts frames and the
     /// simulation service.
-    fn start(&mut self, cx: &mut SAContext<'_, Self>) -> Result<(), SAError> {
-        let spec = SAWindowSpec {
+    fn start(&mut self, cx: &mut backend::Context<'_, Self>) -> Result<(), backend::Error> {
+        let spec = backend::WindowSpec {
             title: self.config.title.clone(),
-            size: SAPhysicalSize {
+            size: backend::PhysicalSize {
                 width: self.config.width,
                 height: self.config.height,
             },
@@ -217,8 +211,8 @@ impl<A: PlatformApp> Adapter<'_, A> {
         let recipient = cx.create_recipient()?;
         cx.subscribe(
             recipient,
-            SAEventFilter::Input,
-            SAPriority::new(0.0)?,
+            backend::EventFilter::Input,
+            backend::Priority::new(0.0)?,
             on_input::<A>,
         )?;
         cx.set_pacing(Some(target), self.pacing())?;
@@ -226,10 +220,10 @@ impl<A: PlatformApp> Adapter<'_, A> {
         if self.config.mode == WindowMode::Borderless {
             Self::enter_borderless(cx, target)?;
         }
-        let _service = cx.register_service(SAServiceSpec {
-            points: SAServicePoints::only(SAServicePoint::PreUpdate)
-                .union(SAServicePoints::ORDINARY),
-            budget: SAServiceBudget { records: 1 },
+        let _service = cx.register_service(backend::ServiceSpec {
+            points: backend::ServicePoints::only(backend::ServicePoint::PreUpdate)
+                .union(backend::ServicePoints::ORDINARY),
+            budget: backend::ServiceBudget { records: 1 },
             fallback_interval: SERVICE_FALLBACK,
         })?;
         Ok(())
@@ -237,12 +231,12 @@ impl<A: PlatformApp> Adapter<'_, A> {
 
     /// Asks for borderless fullscreen on the monitor the window opened on.
     fn enter_borderless(
-        cx: &mut SAContext<'_, Self>,
-        target: SAWindowTarget,
-    ) -> Result<(), SAError> {
+        cx: &mut backend::Context<'_, Self>,
+        target: backend::WindowTarget,
+    ) -> Result<(), backend::Error> {
         let monitors = cx.monitors(target)?;
         let position = cx.display_observed(target)?.geometry.position;
-        let holds_window = |monitor: &&SAMonitorSnapshot| {
+        let holds_window = |monitor: &&backend::MonitorSnapshot| {
             position.is_some_and(|at| {
                 let right = i64::from(monitor.position.x) + i64::from(monitor.size.width);
                 let bottom = i64::from(monitor.position.y) + i64::from(monitor.size.height);
@@ -257,7 +251,7 @@ impl<A: PlatformApp> Adapter<'_, A> {
             .find(holds_window)
             .or_else(|| monitors.first());
         if let Some(monitor) = monitor {
-            let request = SADisplayRequest::Borderless {
+            let request = backend::DisplayRequest::Borderless {
                 monitor: monitor.id.clone(),
             };
             let _receipt = cx
@@ -268,31 +262,35 @@ impl<A: PlatformApp> Adapter<'_, A> {
     }
 
     /// The pacing for a window that can be seen.
-    fn pacing(&self) -> SAPacingPolicy {
+    fn pacing(&self) -> backend::PacingPolicy {
         match self.config.frame_cap {
-            Some(rate) => SAPacingPolicy::Forever {
+            Some(rate) => backend::PacingPolicy::Forever {
                 foreground_rate: rate,
                 background_rate: rate,
                 foreground: true,
-                phase: SAFramePhase::Ordinary,
+                phase: backend::FramePhase::Ordinary,
             },
-            None => SAPacingPolicy::RendererManaged,
+            None => backend::PacingPolicy::RendererManaged,
         }
     }
 
     /// The pacing for a minimized window.
-    fn reduced_pacing(&self) -> SAPacingPolicy {
+    fn reduced_pacing(&self) -> backend::PacingPolicy {
         let rate = self.config.reduced_frame_rate;
-        SAPacingPolicy::Forever {
+        backend::PacingPolicy::Forever {
             foreground_rate: rate,
             background_rate: rate,
             foreground: true,
-            phase: SAFramePhase::Ordinary,
+            phase: backend::FramePhase::Ordinary,
         }
     }
 
     /// Enters reduced mode while minimized, and leaves it on restore.
-    fn follow_minimized(&mut self, cx: &mut SAContext<'_, Self>, target: SAWindowTarget) {
+    fn follow_minimized(
+        &mut self,
+        cx: &mut backend::Context<'_, Self>,
+        target: backend::WindowTarget,
+    ) {
         let Ok(observed) = cx.display_observed(target) else {
             return;
         };
@@ -316,13 +314,17 @@ impl<A: PlatformApp> Adapter<'_, A> {
     }
 
     /// Captures or releases the mouse if the application changed its mind.
-    fn follow_capture(&mut self, cx: &mut SAContext<'_, Self>, target: SAWindowTarget) {
+    fn follow_capture(
+        &mut self,
+        cx: &mut backend::Context<'_, Self>,
+        target: backend::WindowTarget,
+    ) {
         let wanted = self.app.mouse_capture();
         if wanted == self.captured {
             return;
         }
         self.captured = wanted;
-        let mode = SAInputMode {
+        let mode = backend::InputMode {
             relative_motion: wanted,
             confine_pointer: wanted,
         };
@@ -335,45 +337,47 @@ impl<A: PlatformApp> Adapter<'_, A> {
     }
 }
 
-impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
+impl<A: PlatformApp> backend::Application for Adapter<'_, A> {
     type Message = ();
     type LocalEvent = ();
 
-    fn started(&mut self, cx: &mut SAContext<'_, Self>) -> Result<(), SAError> {
+    fn started(&mut self, cx: &mut backend::Context<'_, Self>) -> Result<(), backend::Error> {
         self.start(cx)?;
-        let target = self.target.ok_or(SAError::application("no window"))?;
+        let target = self
+            .target
+            .ok_or(backend::Error::application("no window"))?;
         let window = Window {
             access: cx.acquire_window(target)?,
         };
         self.app.started(window).map_err(|error| {
             let message = error.to_string();
             self.startup_error = Some(message.clone());
-            SAError::application(message)
+            backend::Error::application(message)
         })
     }
 
     fn service(
         &mut self,
-        cx: &mut SAContext<'_, Self>,
-        request: SAServiceRequest,
-    ) -> SAServiceReport {
+        cx: &mut backend::Context<'_, Self>,
+        request: backend::ServiceRequest,
+    ) -> backend::ServiceReport {
         if let Some(target) = self.target {
             self.follow_minimized(cx, target);
             self.follow_capture(cx, target);
         }
         match self.app.service(request.raw.elapsed()) {
             ServiceOutcome::After(delay) => match request.raw.checked_add(delay) {
-                Ok(deadline) => SAServiceReport::WaitUntil(deadline),
-                Err(_overflow) => SAServiceReport::Quiescent,
+                Ok(deadline) => backend::ServiceReport::WaitUntil(deadline),
+                Err(_overflow) => backend::ServiceReport::Quiescent,
             },
             ServiceOutcome::Stop => {
                 cx.request_stop();
-                SAServiceReport::Quiescent
+                backend::ServiceReport::Quiescent
             }
         }
     }
 
-    fn frame(&mut self, cx: &mut SAContext<'_, Self>, frame: SAFrame) {
+    fn frame(&mut self, cx: &mut backend::Context<'_, Self>, frame: backend::Frame) {
         let frame = Frame {
             delta: frame.delta,
             now: frame.raw.elapsed(),
@@ -387,28 +391,28 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
 
     fn display_transition(
         &mut self,
-        cx: &mut SAContext<'_, Self>,
-        transition: &SADisplayTransition,
+        cx: &mut backend::Context<'_, Self>,
+        transition: &backend::DisplayTransition,
     ) {
         match &transition.state {
             // The renderer rebuilds from the resize that follows, so nothing
             // needs holding back here.
-            SADisplayTransitionState::AwaitingPresentation => {
+            backend::DisplayTransitionState::AwaitingPresentation => {
                 let result =
-                    cx.report_presentation(transition.receipt, SAPresentationStatus::Ready);
+                    cx.report_presentation(transition.receipt, backend::PresentationStatus::Ready);
                 if let Err(error) = result {
                     self.app.notice(format!("display: {error}"));
                 }
             }
-            SADisplayTransitionState::Failed(error) => {
+            backend::DisplayTransitionState::Failed(error) => {
                 self.app.notice(format!("display: {error}"));
             }
             _ => {}
         }
     }
 
-    fn stopping(&mut self, _cx: &mut SAContext<'_, Self>) -> SAStopProgress {
+    fn stopping(&mut self, _cx: &mut backend::Context<'_, Self>) -> backend::StopProgress {
         self.app.stopping();
-        SAStopProgress::Settled
+        backend::StopProgress::Settled
     }
 }

@@ -1,0 +1,488 @@
+//! Mutation-aware owner-local dispatch with live gap markers per nested call.
+
+use crate::host::Application;
+use crate::identity::{Arena, RecipientId, SlotKey, SubscriptionId};
+use crate::{Context, Error, HostId, IdentityKind};
+
+/// Finite dispatch priority. Higher values run first; newest equal runs first.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Priority(f64);
+impl Priority {
+    /// Validates finite priority and normalizes signed zero as equal.
+    pub fn new(value: f64) -> Result<Self, Error> {
+        if !value.is_finite() {
+            return Err(Error::InvalidInput("priority must be finite"));
+        }
+        Ok(Self(if value == 0.0 { 0.0 } else { value }))
+    }
+}
+impl Default for Priority {
+    fn default() -> Self {
+        Self(0.0)
+    }
+}
+
+/// Whether routing continues to the next eligible subscriber.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Propagation {
+    /// Continue this dispatch's traversal.
+    Continue,
+    /// Stop this dispatch only; enclosing nested dispatch remains independent.
+    Stop,
+}
+
+/// The family a subscription receives. Local dispatch is owner-only.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum EventFilter {
+    /// All implemented event families.
+    All,
+    /// Borrowed application-local events.
+    Local,
+    /// Owned transferable posts addressed to this recipient.
+    Posted,
+    /// Claimed one-shot timers addressed to this recipient.
+    Timer,
+    /// Normalized native input records.
+    Input,
+}
+
+/// A borrowed view of an event; retaining its payload requires explicit copying.
+pub enum Event<'event, M, L> {
+    /// An owner-local event borrowed for the dispatch call.
+    Local(&'event L),
+    /// A transferable post; routing completion settles its receipt.
+    Posted {
+        /// The accepted post's durable receipt.
+        receipt: &'event crate::post::PostReceipt,
+        /// The owned payload, borrowed only during routing.
+        message: &'event M,
+    },
+    /// A claimed timer whose payload remains alive through all handlers.
+    Timer {
+        /// The timer token; cancelling it now reports Claimed.
+        id: crate::identity::TimerId,
+        /// Its original raw deadline.
+        deadline: crate::time::RawDeadline,
+        /// One sample shared by every claim in this explicit pump.
+        sample: crate::time::RawTime,
+        /// The owner-local payload borrowed for callback routing.
+        event: &'event L,
+    },
+    /// A normalized, owned input record borrowed during delivery.
+    Input(&'event crate::input::InputRecord),
+}
+
+impl<M, L> Event<'_, M, L> {
+    pub(crate) fn filter(&self) -> EventFilter {
+        match self {
+            Self::Local(_) => EventFilter::Local,
+            Self::Posted { .. } => EventFilter::Posted,
+            Self::Timer { .. } => EventFilter::Timer,
+            Self::Input(_) => EventFilter::Input,
+        }
+    }
+}
+
+/// Function-pointer callback; mutable state lives in the separately borrowed app.
+pub type Handler<A> = for<'cx, 'event> fn(
+    &mut A,
+    &mut Context<'cx, A>,
+    &Event<'event, <A as Application>::Message, <A as Application>::LocalEvent>,
+) -> Propagation;
+
+/// Result of a completed dispatch; it does not mean domain publication.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DispatchReport {
+    /// Final propagation decision.
+    pub propagation: Propagation,
+    /// Number of callbacks that returned normally.
+    pub callbacks: usize,
+}
+
+/// Observed recipient retirement state, including active callback retention.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecipientState {
+    /// Whether future calls and posts to this generation have been disabled.
+    pub retired: bool,
+    /// Active nested callbacks that can still refer to application state.
+    pub active_callbacks: usize,
+}
+
+pub(crate) struct Recipient {
+    pub(crate) alive: bool,
+    pub(crate) active: usize,
+}
+pub(crate) struct Subscription<A: Application> {
+    pub(crate) recipient: RecipientId,
+    filter: EventFilter,
+    handler: Handler<A>,
+    alive: bool,
+    active: usize,
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct Rank {
+    priority: f64,
+    sequence: u64,
+}
+impl Rank {
+    fn precedes(self, other: Self) -> bool {
+        self.priority > other.priority
+            || (self.priority == other.priority && self.sequence > other.sequence)
+    }
+}
+
+pub(crate) struct Dispatch<A: Application> {
+    pub(crate) recipients: Arena<Recipient>,
+    subscriptions: Arena<Subscription<A>>,
+    order: Vec<(Rank, SlotKey)>,
+    markers: Vec<usize>,
+    #[cfg(test)]
+    pub(crate) fail_next_marker_reservation: bool,
+    #[cfg(test)]
+    pub(crate) fail_next_order_reservation: bool,
+    #[cfg(test)]
+    retirement_steps: (usize, usize),
+    next_sequence: u64,
+    pub(crate) depth: usize,
+}
+
+impl<A: Application> Dispatch<A> {
+    pub(crate) fn new() -> Self {
+        Self {
+            recipients: Arena::new(IdentityKind::Recipient),
+            subscriptions: Arena::new(IdentityKind::Subscription),
+            order: Vec::new(),
+            markers: Vec::new(),
+            #[cfg(test)]
+            fail_next_marker_reservation: false,
+            #[cfg(test)]
+            fail_next_order_reservation: false,
+            #[cfg(test)]
+            retirement_steps: (0, 0),
+            next_sequence: 1,
+            depth: 0,
+        }
+    }
+    pub(crate) fn recipient(&self, host: HostId, id: RecipientId) -> Result<&Recipient, Error> {
+        if id.host != host {
+            return Err(Error::ForeignHost);
+        }
+        self.recipients.get(id.key).ok_or(Error::StaleIdentity)
+    }
+    pub(crate) fn live_recipient(&self, host: HostId, id: RecipientId) -> Result<(), Error> {
+        if !self.recipient(host, id)?.alive {
+            return Err(Error::StaleIdentity);
+        }
+        Ok(())
+    }
+    pub(crate) fn subscribe(
+        &mut self,
+        host: HostId,
+        recipient: RecipientId,
+        filter: EventFilter,
+        priority: Priority,
+        handler: Handler<A>,
+    ) -> Result<SubscriptionId, Error> {
+        self.live_recipient(host, recipient)?;
+        let sequence = self.next_sequence;
+        self.next_sequence = sequence
+            .checked_add(1)
+            .ok_or(Error::IdentityExhausted(IdentityKind::Subscription))?;
+        let key = self.subscriptions.reserve()?;
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_order_reservation) {
+            return Err(Error::AllocationFailed);
+        }
+        self.order
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        let rank = Rank {
+            priority: priority.0,
+            sequence,
+        };
+        let index = self
+            .order
+            .partition_point(|(current, _)| current.precedes(rank));
+        self.order.insert(index, (rank, key));
+        // Native registration skips markers and inserts immediately before the
+        // first ordinary record. An insertion at the same gap is AFTER markers.
+        for marker in &mut self.markers {
+            if index < *marker {
+                *marker += 1;
+            }
+        }
+        self.subscriptions.insert(
+            key,
+            Subscription {
+                recipient,
+                filter,
+                handler,
+                alive: true,
+                active: 0,
+            },
+        );
+        Ok(SubscriptionId { host, key })
+    }
+    pub(crate) fn unsubscribe(&mut self, host: HostId, id: SubscriptionId) -> Result<(), Error> {
+        if id.host != host {
+            return Err(Error::ForeignHost);
+        }
+        let record = self
+            .subscriptions
+            .get_mut(id.key)
+            .ok_or(Error::StaleIdentity)?;
+        if !record.alive {
+            return Err(Error::StaleIdentity);
+        }
+        record.alive = false;
+        if let Some(index) = self.order.iter().position(|(_, key)| *key == id.key) {
+            self.order.remove(index);
+            for marker in &mut self.markers {
+                if index < *marker {
+                    *marker -= 1;
+                }
+            }
+        }
+        if record.active == 0 {
+            self.subscriptions.remove(id.key);
+        }
+        Ok(())
+    }
+    pub(crate) fn retire_recipient(
+        &mut self,
+        host: HostId,
+        id: RecipientId,
+    ) -> Result<RecipientState, Error> {
+        self.live_recipient(host, id)?;
+        let recipient = self
+            .recipients
+            .get_mut(id.key)
+            .ok_or(Error::StaleIdentity)?;
+        recipient.alive = false;
+        let active_callbacks = recipient.active;
+        // Traverse occupied order once, retaining active records until release.
+        // No callback or user destructor runs here. At each removal `write` is
+        // its gap after earlier removals: moving markers strictly beyond it
+        // gives new_gap = old_gap - removed_entries_before_old_gap.
+        // Work is O(S + R * D), bounded by O(S * (D + 1)); vector growth and
+        // ordinary insertion/unsubscription are separate operations.
+        let mut write = 0;
+        for read in 0..self.order.len() {
+            #[cfg(test)]
+            {
+                self.retirement_steps.0 += 1;
+            }
+            let entry = self.order[read];
+            let record = self
+                .subscriptions
+                .get_mut(entry.1)
+                .expect("occupied order retains its subscription");
+            if record.recipient == id && record.alive {
+                record.alive = false;
+                if record.active == 0 {
+                    self.subscriptions.remove(entry.1);
+                }
+                for marker in &mut self.markers {
+                    #[cfg(test)]
+                    {
+                        self.retirement_steps.1 += 1;
+                    }
+                    if write < *marker {
+                        *marker -= 1;
+                    }
+                }
+            } else {
+                self.order[write] = entry;
+                write += 1;
+            }
+        }
+        self.order.truncate(write);
+        if active_callbacks == 0 {
+            self.recipients.remove(id.key);
+        }
+        Ok(RecipientState {
+            retired: true,
+            active_callbacks,
+        })
+    }
+    pub(crate) fn prepare_marker(&mut self) -> Result<(), Error> {
+        #[cfg(test)]
+        if std::mem::take(&mut self.fail_next_marker_reservation) {
+            return Err(Error::AllocationFailed);
+        }
+        self.markers
+            .try_reserve(1)
+            .map_err(|_| Error::AllocationFailed)?;
+        Ok(())
+    }
+    pub(crate) fn begin(&mut self) -> Result<usize, Error> {
+        self.prepare_marker()?;
+        let index = self.markers.len();
+        self.markers.push(0);
+        Ok(index)
+    }
+    pub(crate) fn end(&mut self, marker: usize) {
+        debug_assert_eq!(marker + 1, self.markers.len());
+        self.markers.pop();
+    }
+    pub(crate) fn next(
+        &mut self,
+        marker: usize,
+        target: Option<RecipientId>,
+        filter: EventFilter,
+    ) -> Option<SlotKey> {
+        let start = self.markers[marker];
+        let next = self.order[start..]
+            .iter()
+            .enumerate()
+            .find_map(|(offset, (_, key))| {
+                let record = self.subscriptions.get(*key)?;
+                let eligible = record.alive
+                    && (record.filter == EventFilter::All || record.filter == filter)
+                    && target.is_none_or(|target| record.recipient == target)
+                    && self
+                        .recipients
+                        .get(record.recipient.key)
+                        .is_some_and(|recipient| recipient.alive);
+                eligible.then_some((start + offset, *key))
+            });
+        if let Some((index, key)) = next {
+            self.markers[marker] = index + 1;
+            Some(key)
+        } else {
+            self.markers[marker] = self.order.len();
+            None
+        }
+    }
+    pub(crate) fn claim(&mut self, key: SlotKey) -> (Handler<A>, RecipientId) {
+        let record = self
+            .subscriptions
+            .get_mut(key)
+            .expect("selected subscription retained until callback claim");
+        record.active += 1;
+        let recipient = record.recipient;
+        let handler = record.handler;
+        self.recipients
+            .get_mut(recipient.key)
+            .expect("selected recipient is retained")
+            .active += 1;
+        (handler, recipient)
+    }
+    pub(crate) fn release(&mut self, key: SlotKey, recipient: RecipientId) {
+        let record = self
+            .subscriptions
+            .get_mut(key)
+            .expect("active subscription cannot be reclaimed");
+        record.active -= 1;
+        if !record.alive && record.active == 0 {
+            self.subscriptions.remove(key);
+        }
+        let record = self
+            .recipients
+            .get_mut(recipient.key)
+            .expect("active recipient cannot be reclaimed");
+        record.active -= 1;
+        if !record.alive && record.active == 0 {
+            self.recipients.remove(recipient.key);
+        }
+    }
+}
+
+#[cfg(test)]
+impl<A: Application> Dispatch<A> {
+    pub(crate) fn test_retirement_steps(&self) -> (usize, usize) {
+        self.retirement_steps
+    }
+    // The pre-compaction implementation remains an independent mutation oracle.
+    pub(crate) fn reference_retire_recipient(
+        &mut self,
+        host: HostId,
+        id: RecipientId,
+    ) -> Result<RecipientState, Error> {
+        self.live_recipient(host, id)?;
+        let recipient = self.recipients.get_mut(id.key).unwrap();
+        recipient.alive = false;
+        let active_callbacks = recipient.active;
+        loop {
+            let key = self
+                .subscriptions
+                .iter()
+                .find(|(_, record)| record.recipient == id && record.alive)
+                .map(|(key, _)| key);
+            let Some(key) = key else {
+                break;
+            };
+            self.unsubscribe(host, SubscriptionId { host, key })?;
+        }
+        if active_callbacks == 0 {
+            self.recipients.remove(id.key);
+        }
+        Ok(RecipientState {
+            retired: true,
+            active_callbacks,
+        })
+    }
+
+    pub(crate) fn test_markers(&self) -> &[usize] {
+        &self.markers
+    }
+
+    pub(crate) fn assert_same_routing_order(&self, other: &Self) {
+        let view = |dispatch: &Self| {
+            dispatch
+                .order
+                .iter()
+                .map(|(rank, key)| {
+                    let record = dispatch.subscriptions.get(*key).unwrap();
+                    (
+                        rank.priority,
+                        rank.sequence,
+                        record.recipient,
+                        record.filter,
+                        record.handler as usize,
+                        record.active,
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(view(self), view(other));
+    }
+
+    pub(crate) fn assert_same_registry(&self, other: &Self) {
+        assert_eq!(self.markers, other.markers);
+        assert_eq!(
+            self.order
+                .iter()
+                .map(|(rank, key)| (rank.priority, rank.sequence, *key))
+                .collect::<Vec<_>>(),
+            other
+                .order
+                .iter()
+                .map(|(rank, key)| (rank.priority, rank.sequence, *key))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            self.subscriptions
+                .iter()
+                .map(|(key, record)| (key, record.recipient, record.alive, record.active))
+                .collect::<Vec<_>>(),
+            other
+                .subscriptions
+                .iter()
+                .map(|(key, record)| (key, record.recipient, record.alive, record.active))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(
+            self.recipients
+                .iter()
+                .map(|(key, record)| (key, record.alive, record.active))
+                .collect::<Vec<_>>(),
+            other
+                .recipients
+                .iter()
+                .map(|(key, record)| (key, record.alive, record.active))
+                .collect::<Vec<_>>()
+        );
+    }
+}

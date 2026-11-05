@@ -1,0 +1,10 @@
+[package]
+name = "engine_cache_worker_example"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+
+[dependencies]
+engine_cache = { path = "../.." }
+engine_worker = { path = "../../../engine_worker" }

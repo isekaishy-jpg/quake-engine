@@ -10,7 +10,7 @@ use std::{fmt, io};
 ///
 /// `cargo fmt` runs without `--all`: on this virtual workspace it covers
 /// exactly the members, while `--all` would also reach local path
-/// dependencies such as the sibling SolApp checkout (proposal 0009).
+/// dependencies such as the patched crates under `vendor/` (proposal 0009).
 pub const REQUIRED_CHECKS: [&[&str]; 3] = [
     &["fmt", "--", "--check"],
     &[

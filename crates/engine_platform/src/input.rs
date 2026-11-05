@@ -2,7 +2,7 @@
 //!
 //! Keys are named by physical position, so bindings work on any layout.
 
-use solapp::{SAButtonState, SAInputEvent, SAMouseButton, SAPhysicalKey, SAScrollDelta};
+use engine_host as backend;
 
 /// A mouse button.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -146,43 +146,43 @@ pub fn key_name(scan: u32) -> Option<&'static str> {
 }
 
 /// The engine's events for one host event.
-pub(crate) fn translate(event: &SAInputEvent) -> Option<InputEvent> {
+pub(crate) fn translate(event: &backend::InputEvent) -> Option<InputEvent> {
     match event {
-        SAInputEvent::Key {
-            physical: SAPhysicalKey::ScanCode(scan),
+        backend::InputEvent::Key {
+            physical: backend::PhysicalKey::ScanCode(scan),
             state,
             repeat,
             ..
         } => Some(InputEvent::Key {
             name: key_name(*scan)?,
-            pressed: *state == SAButtonState::Pressed,
+            pressed: *state == backend::ButtonState::Pressed,
             repeat: *repeat,
         }),
-        SAInputEvent::MouseButton { button, state, .. } => {
+        backend::InputEvent::MouseButton { button, state, .. } => {
             let button = match button {
-                SAMouseButton::Left => MouseButton::Left,
-                SAMouseButton::Right => MouseButton::Right,
-                SAMouseButton::Middle => MouseButton::Middle,
+                backend::MouseButton::Left => MouseButton::Left,
+                backend::MouseButton::Right => MouseButton::Right,
+                backend::MouseButton::Middle => MouseButton::Middle,
                 _ => return None,
             };
             Some(InputEvent::Button {
                 button,
-                pressed: *state == SAButtonState::Pressed,
+                pressed: *state == backend::ButtonState::Pressed,
             })
         }
-        SAInputEvent::PointerMoved(position) => Some(InputEvent::Pointer {
+        backend::InputEvent::PointerMoved(position) => Some(InputEvent::Pointer {
             x: position.x,
             y: position.y,
         }),
-        SAInputEvent::RelativeMotion { x, y } => Some(InputEvent::Motion { x: *x, y: *y }),
-        SAInputEvent::Wheel { delta, .. } => Some(InputEvent::Wheel {
+        backend::InputEvent::RelativeMotion { x, y } => Some(InputEvent::Motion { x: *x, y: *y }),
+        backend::InputEvent::Wheel { delta, .. } => Some(InputEvent::Wheel {
             lines: match *delta {
-                SAScrollDelta::Lines { y, .. } => y,
-                SAScrollDelta::Pixels { y, .. } => y / WHEEL_PIXELS_PER_LINE,
+                backend::ScrollDelta::Lines { y, .. } => y,
+                backend::ScrollDelta::Pixels { y, .. } => y / WHEEL_PIXELS_PER_LINE,
             },
         }),
-        SAInputEvent::Focus(false) => Some(InputEvent::FocusLost),
-        SAInputEvent::Geometry { size, .. } => Some(InputEvent::Resized {
+        backend::InputEvent::Focus(false) => Some(InputEvent::FocusLost),
+        backend::InputEvent::Geometry { size, .. } => Some(InputEvent::Resized {
             width: size.width,
             height: size.height,
         }),

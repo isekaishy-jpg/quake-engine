@@ -1,6 +1,6 @@
 //! Application host boundary: window, input, pacing and lifecycle.
 //!
-//! The backend is `solapp`, and nothing of it appears in this crate's public
+//! The backend is `engine_host`, and nothing of it appears in this crate's public
 //! API, so the host can be replaced without touching other crates (proposal
 //! 0011).
 //!

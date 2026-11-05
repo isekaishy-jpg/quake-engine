@@ -114,6 +114,8 @@
     - [0089: tiles](proposals/0089-tiles.md)
     - [0090: pathing](proposals/0090-pathing.md)
     - [0091: the platform catches up](proposals/0091-the-platform-catches-up.md)
+  - Increment 12:
+    - [0092: naming the Sol crates](proposals/0092-naming-the-sol-crates.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -753,6 +753,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_cache"
+version = "0.1.0"
+
+[[package]]
+name = "engine_cache_worker_example"
+version = "0.1.0"
+dependencies = [
+ "engine_cache",
+ "engine_worker",
+]
+
+[[package]]
 name = "engine_client"
 version = "0.0.0-alpha"
 dependencies = [
@@ -809,6 +821,16 @@ name = "engine_format"
 version = "0.0.0-alpha"
 
 [[package]]
+name = "engine_host"
+version = "0.1.0"
+dependencies = [
+ "engine_cache",
+ "engine_worker",
+ "windows",
+ "winit",
+]
+
+[[package]]
 name = "engine_map"
 version = "0.0.0-alpha"
 dependencies = [
@@ -853,7 +875,7 @@ name = "engine_platform"
 version = "0.0.0-alpha"
 dependencies = [
  "engine_core",
- "solapp",
+ "engine_host",
 ]
 
 [[package]]
@@ -927,6 +949,14 @@ name = "engine_ui"
 version = "0.0.0-alpha"
 dependencies = [
  "engine_core",
+]
+
+[[package]]
+name = "engine_worker"
+version = "0.1.0"
+dependencies = [
+ "crossbeam-channel",
+ "micropool",
 ]
 
 [[package]]
@@ -2692,36 +2722,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "dd538fb6910ac1099850255cf94a94df6551fbdd602454387d0adb2d1ca6dead"
 dependencies = [
  "serde",
-]
-
-[[package]]
-name = "solapp"
-version = "0.1.0"
-dependencies = [
- "solcache",
- "solworker",
- "windows",
- "winit",
-]
-
-[[package]]
-name = "solcache"
-version = "0.1.0"
-
-[[package]]
-name = "solcache-solworker-example"
-version = "0.1.0"
-dependencies = [
- "solcache",
- "solworker",
-]
-
-[[package]]
-name = "solworker"
-version = "0.1.0"
-dependencies = [
- "crossbeam-channel",
- "micropool",
 ]
 
 [[package]]

@@ -11,7 +11,7 @@ Done, in proposals 0001 to 0009, apart from:
 | Item | What research has to establish |
 |---|---|
 | Luau formatting | Which tool enforces `docs/style.md`, such as `StyLua` in `xtask` |
-| Sol crates under the workspace lints | About 800 warnings to work through |
+| `engine_host`, `engine_worker` and `engine_cache` under the workspace lints | About 800 warnings to work through |
 
 ## Dependencies
 
@@ -21,7 +21,7 @@ One item each, covering fit, version, licence, how it's integrated, and how it's
 
 | Item | What research has to establish |
 |---|---|
-| App host integration | How the engine sits on `solapp`, and what stays free of it |
+| App host integration | How the engine sits on `engine_host`, and what stays free of it |
 | Main loop | Accumulator, frame and tick order, minimized behaviour, stalls |
 | Console, commands and cvars | Structure, threading and persistence |
 | Filesystem and packs | Search paths, pak reading and the `assets_manager` source |
@@ -95,16 +95,3 @@ Every client is sent every entity, so a cheating client can see through walls, a
 | Movers | Decide if doors and lifts are culled at all. Prediction collides with `instances`, so one that's dropped mustn't leave the client walking through it |
 | Leaving and coming back | Check what `delta_from` and the client do when something leaves the set and returns: no false removals, no sliding in from an old position, and projectiles on shared paths still drawn |
 | Tests | Something behind a wall isn't sent, with a control in plain view. Nothing pops in at corners. Lag compensation and bots still work. Traffic is measured again, and netplay passes at 2% loss |
-
-### Aligning the Sol crates
-
-`solapp`, `solworker` and `solcache` kept the names they arrived with, so they don't line up with the `engine_*` crates. This is a rename and nothing else: no behaviour changes, and bringing them under the workspace lints or reviewing them stays a [separate question](open-questions.md). To add to an increment, in this order:
-
-| Step | What it covers |
-|---|---|
-| Choose the names | The human's decision. A starting point is `engine_host`, `engine_worker` and `engine_cache`, since `engine_app` and `engine_platform` are taken. Decide the crates and the public names together |
-| Rename the crates | Their folders, packages and `Cargo.toml` entries, and `solcache-solworker-example` |
-| Rename the API | Public names in each crate that should match the engine's style, with `engine_platform`, the only user of `solapp`, moving with them. The tests' `SOLAPP_*` and `SOLWORKER_*` variables go too |
-| Update the rules | `xtask/src/crate_graph/rules.rs`, `LINT_EXEMPT` and the test layout check's skip list, keeping the same boundaries |
-| Update the docs | Current docs and each crate's `pubdocs`. Accepted proposals and reviews are records, so they keep the old names, and the new proposal gives the mapping |
-| Check | `cargo xtask check`, real map and netplay tests, and a search that finds the old names only in the records |

@@ -1,0 +1,298 @@
+# Execution and work graphs
+
+[Guide index](README.md)
+
+## Own one runtime and configure the complete budget
+
+An application normally owns one `Runtime` and gives subsystems reusable
+`Lane` handles. Lane clones select an existing runtime and execution class;
+they neither create pools nor keep workers alive after the runtime is dropped.
+
+`RuntimeConfig::new` takes an aggregate worker budget and three
+`WorkerConfig` entries in **Low, Mid, High** order. Zero disables a class;
+enabled classes have at least one worker. The sum may be below the budget but
+cannot exceed it. A zero budget is valid only when all three classes are disabled.
+Account for the main thread, renderer/provider threads and other runtimes when
+choosing this budget; the number of logical CPUs is not automatically the number
+of additional workers an application should create.
+
+| Mechanism | Meaning | Host decision |
+| --- | --- | --- |
+| `ExecutionClass` | Separate workers and queues for Low, Mid and High. | Which capacity class should execute this stage? |
+| `ThreadPriority` | Optional OS worker priority request. Setup can fail. | Is the request appropriate and supported on this platform? |
+| `Priority` | Configured rank for resource demand; smaller ranks come first within the resource route. | Which pending resource matters more to its consumers? |
+
+These are distinct controls. A resource priority change does not move a job to
+another execution class, create workers or interrupt running work. High is not a
+real-time deadline guarantee. A common application policy assigns current-frame
+preparation to High and throughput-oriented preparation to Low, using Mid for
+selected services. Class assignment follows stage latency and ownership needs,
+not just a file extension or subsystem name.
+
+Construction is fallible. All workers finish setup before the runtime becomes
+available; startup failure joins workers already created. `with_worker_setup`
+may install per-worker state, but its hooks can run concurrently and cannot wait
+for another hook or work on the runtime being constructed. Helping callers have
+not run these hooks.
+
+`Runtime::builder(config).build()` enables scoped execution. Enable owned
+scheduling explicitly with `with_owned_limits`. Additional capacity, demand and
+physical-access policies are opt-in builder settings, described in
+[resources](resources.md) and [rendering](rendering.md).
+
+Sources: [configuration](../src/runtime/config.rs), [builder](../src/runtime.rs).
+
+### Applying the recovered Forever startup policy
+
+Topology discovery and policy selection belong to the application host (`engine_host`
+in the base integration). `engine_worker` does not infer physical cores or reserved threads.
+The recovered Forever initializer computes
+`clamp(physical_core_count - reserved_threads, 2, 64)`, then clamps each nonzero
+class request independently to that maximum, with a minimum of two. This is
+not an aggregate worker cap. Use saturating subtraction when expressing the
+formula with unsigned host values.
+
+The captured settings request six workers per class and reserve one core. They
+produce 5/5/5 on the captured six-core machine and 6/6/6 on a ten-core machine.
+These are observed settings, not universal defaults. To express the latter
+through `engine_worker`, supply an aggregate budget of at least 18 and request Low/Mid/High
+OS priorities with `WorkerConfig::with_priority`: `BelowNormal`, `Normal`,
+and `AboveNormal` map to Windows relative priorities -1/0/+1. Worker startup
+reports a failure if it cannot apply a requested priority. The recovered path
+does not justify adding processor affinity. Native zero-request classes create
+no workers; `engine_worker` now accepts that configuration. Nonempty scoped and owned work on
+a disabled lane returns `ClassDisabled(class)` without invoking closures or
+redirecting them. Rejection returns the caller's owned inputs. Group creation is
+also rejected. Empty owned batches remain successful no-ops. Enable a class or
+explicitly perform appropriate work outside `engine_worker`; zero does not select an implicit
+inline executor. Setup hooks and OS priority application run only for workers
+actually created. Runtime-owned external producers and owner delivery remain
+independent of CPU-class enablement.
+
+Set owned handoff capacities deliberately alongside worker counts. Six workers
+with one handoff slot do not provide six-way owned execution. Provider slots,
+admitted decode count and renderer recording width are separate constraints;
+increasing workers does not increase them. Record all these settings in
+performance captures, and keep the captured policy distinct from workload
+tuning. The observations above concern selected initializer and platform-wrapper
+paths in Forever 1.60.1.69913; they do not establish every native configuration.
+
+## Choose the lifetime before choosing the operation
+
+| Need | Available API | Boundary |
+| --- | --- | --- |
+| Two transferable borrowed branches | `Lane::join` | Both branches and captures settle before return. |
+| Transferable work overlapping caller-only state | `join_with_owner` | Owner closure executes on the calling thread; both branches settle before return. |
+| Disjoint borrowed slices | `for_each_chunk` | All mutable chunks settle before return. |
+| Shared read-only input | `for_each_read_chunk` | All read-only chunks settle before return. |
+| Work outliving the submitting call | `try_spawn` and related methods | Accepted operation and output are `Send + 'static`; explicit outcome observation. |
+| Many owned jobs with common options | `try_spawn_batch`, `try_spawn_batch_fallible` | Ordered accepted prefix and recoverable suffix; independent outcomes and cancellation. |
+| A retained wave | `group`, `try_spawn_in`, `Group` | Membership is sealed, then accepted members settle. |
+| Successive retained waves | `batch`, `Batch::begin` | Previous wave must be sealed and complete before renewal. |
+| Prerequisite-gated successor | `try_spawn_after`, `try_spawn_after_in` | No worker is occupied while waiting for prerequisite readiness. |
+| Typed result transformation | `Task::try_then`, `Shared::try_then` and outcome/fallible variants | Ownership or shared observation moves into the accepted continuation. |
+
+Borrowing is useful when a lexical join matches the real consumer boundary. Do
+not turn an entire frame into many immediate joins if later work could have been
+admitted early and overlapped. Owned work is useful when the producer should
+return to other responsibilities while the operation remains in flight.
+
+Borrowed operations can execute on workers or assisting callers. Both branches
+of a join must remain valid when execution is serial. In particular, the owner
+branch of `join_with_owner` must not wait through a side channel for the worker
+branch: without a foreground slot, owner-then-worker serial execution is legal.
+Same-lane nesting is supported; blocking scoped calls across lanes or runtimes
+are rejected. Express cross-class transitions with owned dependencies instead.
+
+Chunk callbacks receive a stable starting index. This identifies data placement,
+not callback execution order. A panic does not roll back already mutated items;
+remaining scoped chunks settle before the caught panic is returned. The host
+must decide whether the partially updated domain state can be used.
+
+Source: [scoped operations](../src/execution/scope.rs).
+
+## Submit, overlap, join and consume
+
+Use `Group` as the completion boundary for a wave whose accepted members must
+settle before a consumer proceeds. For recurring work, retain an `Batch` and
+begin a new group generation after the preceding wave is sealed and complete.
+The application retains result handles and any domain storage separately.
+
+1. Admit meaningful chunks into the group and retain their result handles.
+   Preserve rejected inputs and admission errors; rejection is not membership.
+2. Seal membership, including on an admission-error path. Where ownership
+   allows, admit downstream stages behind `group.completion()` without first
+   waiting for the producer wave.
+3. Perform independent coordinator work while admitted jobs execute.
+4. At the consumer boundary, use `wait_helping` if remaining work can finish
+   without services this caller must provide. It helps eligible members of that
+   exact group and handles internal parking and readiness rechecks. Otherwise
+   keep the required host services progressing as described in [lifecycle](lifecycle.md).
+5. Check admission errors, completion status and relevant task outcomes before
+   consuming or publishing results. A successful return from `wait_helping`
+   establishes settlement, not successful job outcomes.
+
+For example, launch evaluation and independent visibility work, prepare unrelated
+owner state, then join each wave where draw preparation needs its results.
+Recording can depend on a separate draw/finalization completion boundary. Avoid
+one frame-wide group when consumers need different subsets, and avoid an
+immediate join after each submission when independent work could overlap.
+
+Completion is distinct from a wake notification. Internal notifications let a
+waiter recheck its predicate; they do not authorize consuming an unfinished
+result, executing an owner callback or resetting GPU storage. Applications use
+the group APIs rather than reproducing internal counters or wait registration.
+Hosts with a combined native wait can optionally
+[watch the group completion](notifications.md) and recheck this same terminal
+predicate after a signal. Each `Batch` wave needs its own completion binding;
+an old binding remains tied to the previous wave.
+
+## Build a dependency graph with useful overlap
+
+A generic frame might have the following arrangement:
+
+```mermaid
+flowchart LR
+    S[Owner snapshots] --> A[Parallel evaluation]
+    S --> C[Independent spatial work]
+    A --> O[Ordered owner events]
+    O -->|resume if needed| A
+    O --> D[Draw preparation]
+    C --> D
+    D --> F[Finalization and ordering]
+    F --> R[Command recording]
+    P[Owner reserves recording contexts] --> R
+```
+
+The event loop represents application semantics, not an automatic scheduler
+cycle. Each actual generation must have an acyclic dependency graph. The owner
+may admit a new evaluation wave after delivering an event from the previous one.
+
+Admit a successor behind its prerequisites as soon as its inputs and lifetime
+are represented safely. The submitting thread need not first wait for those
+prerequisites. Reserve contexts and submission order while unrelated CPU work
+runs. Wait at the real consumer boundary rather than after each submission.
+
+Use task completion for one producer and group completion when the next stage
+requires the whole wave's settlement. A completion token carries status, not the
+result data: capture the corresponding task/shared handle or retain the data
+owner separately. GPU completion needs its own boundary.
+
+`SuccessOnly` suppresses a successor if any prerequisite fails.
+`OutcomeAware` permits the successor to run on terminal failure too; its closure
+must inspect the relevant outcomes. This is useful for recovery and cleanup.
+Do not make a group member depend on its own group's completion. Arbitrary
+cycles through callbacks, locks or multiple groups are not generally detected.
+
+The [frame example](../examples/frame_pipeline.rs) admits finalization before
+waiting for preparation, uses two distinct groups and publishes on an owner.
+
+Source: [owned submission](../src/execution/owned.rs).
+
+## Seal membership and preserve failures
+
+`Group::seal` closes membership. Until sealing, even a group with no pending
+jobs is not complete. An empty sealed group succeeds. Group status is successful
+only if all accepted members succeed; a member failure yields
+`PrerequisiteFailed` at the aggregate boundary. Inspect individual outcomes for
+specific errors.
+
+A rejected submission never became a member and does not fail the group. The
+caller must retain that admission failure. Otherwise, a partially admitted
+phase can appear to be a successful complete phase. [Coherent publication](resources.md)
+explains one composition for workloads that cannot start partially.
+
+Dropping a group or batch does not seal, cancel or wait. Explicitly seal every
+wave even on admission failure. `Batch::begin` reuses eligible internal storage,
+but retained handles keep observing their original wave. It neither returns
+mutable job inputs nor resets domain buffers for you.
+
+Sources: [groups](../src/execution/group.rs), [batches](../src/execution/batch.rs).
+
+## Submit an owned wave together
+
+`Lane::try_spawn_batch` accepts a `Vec<F>` and `BatchSpawnOptions` containing
+the ordinary spawn options, optional group, common prerequisites and dependency
+policy. Each closure can capture a different descriptor. Every accepted member
+returns its own task and producer control. `try_spawn_batch_fallible` additionally
+marks a returned application `Err` as failure for success-only dependencies;
+ordinary `try_spawn_batch` treats that same value as successful execution.
+
+This is the direct route for a caller-formed pose, culling or draw wave with owned
+inputs. Keep the existing class assignment, useful chunk sizes and consumer
+boundary. Use scoped APIs for borrowed work and the existing stage APIs for
+resource ranks, delivery tickets, work sets or required reservations. Those
+options are not provided by this batch API.
+
+On success, the returned vector follows input order. On rejection,
+`BatchSpawnRejected` contains `reason`, ordered `accepted` task/control pairs,
+untouched `remaining` operations and the original options. Always preserve both
+parts. Earlier accepted jobs may already have run when the method rejects a
+later member. Retrying the original vector would duplicate work. Retry only the
+remaining suffix after arranging progress, or report the phase failure and
+settle the accepted work. The [owned wave example](../examples/owned_wave.rs)
+demonstrates rejection without silently discarding accepted handles.
+
+`Full` is temporary capacity pressure; `TooLarge` means the next member cannot
+fit configured policy. The whole vector need not fit at once. An empty vector
+is a successful no-op even on a closed or owned-disabled runtime. Nonempty calls
+validate common group/context rules before admission, but sealing, shutdown or
+capacity can stop a later bounded portion. No particular partial-prefix length
+is guaranteed under concurrency.
+
+Neither method runs a submitted operation inline as a saturation fallback.
+`CallerEligible` allows explicit helping after acceptance; workers may start
+before submission returns. Dropping handles or a rejection receipt does not
+cancel accepted jobs. Cancellation is per member and does not cancel siblings.
+Input order describes admission and returned handles, not execution or completion
+order.
+
+`Batch` remains the retained group owner: call `begin`, submit one or more
+vectors with its group, and seal at the actual producer boundary, including on
+error. The new methods do not seal or renew it. A rejected suffix is not group
+membership, so a successful accepted group does not prove the requested phase
+was fully admitted. Use [coherent publication](resources.md#coherent-publication-is-an-application-composition)
+when live-state mutation must wait for all required admissions.
+
+Batching amortizes initial admission, attachment and publication coordination in
+bounded portions. A portion with at least two members and exactly one common
+prerequisite shares one physical registration and a bounded release pass.
+Multiple prerequisites, including duplicate completion tokens, retain independent
+per-member registrations. Each job still consumes its own record and logical
+prerequisite edges, carries its own demand, and completes or cancels independently.
+Cancelling a member promptly detaches its interest; it does not cancel siblings.
+Backend handoff can publish several independent wrappers with one queue
+notification when handoff capacity permits. Per-job completion notifications
+remain. Batching does not impose a fairness deadline, remove CPU costs or
+guarantee lower frame time.
+
+## Helping is explicit and restricted
+
+Owned jobs default to `CallerEligibility::WorkerOnly`. Mark a job
+`CallerEligible` only when it is safe on any permitted helping caller. This rules
+out assumptions about worker-local indices, worker-only TLS, thread-affine
+destruction and implicit access to a worker's scratch buffer.
+
+`Group::help_ready` attempts one ready eligible member of that exact group.
+It does not recursively help every prerequisite group. If the needed producer
+is in another group, that producer must have its own progress route. At a
+consumer boundary, explicitly help/wait the known producer groups before their
+gated successor group, or service both in the host loop. Submit the successor
+early to preserve overlap; helping producers does not require delaying its
+admission. A logically finished caller-run job may still have an outstanding
+backend wrapper occupying a handoff slot, so successor-only helping can leave
+ready producer work idle until a worker drains those wrappers.
+`wait_helping` helps and then parks until the group settles. It does not pump
+owner callbacks or a native event loop. It is suitable only when the remaining
+work can finish without services that the waiting caller must provide.
+
+An invocation must not wait on its own group or on a group that needs its
+suspended enclosing invocation. A participating worker must not become the sole
+blocked executor needed by remaining worker-only jobs. Some invalid contexts are
+rejected, but application dependency design remains responsible for liveness.
+
+`try_spawn` never executes the operation inline on the submitting caller.
+`submit_or_run` may do so on runnable saturation, for explicitly eligible work.
+It still needs record and edge capacity; backend handoff pressure alone does not
+trigger inline execution. Choose this route only where synchronous execution is
+acceptable for latency, stack depth and reentrancy.

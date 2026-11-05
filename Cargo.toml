@@ -23,15 +23,15 @@ members = [
     "crates/engine_test_maps",
     "crates/engine_ui",
     "crates/fixture_quake",
-    "crates/solapp",
-    "crates/solcache",
-    "crates/solcache/examples/solworker",
-    "crates/solworker",
+    "crates/engine_host",
+    "crates/engine_cache",
+    "crates/engine_cache/examples/engine_worker",
+    "crates/engine_worker",
     "xtask",
 ]
 default-members = ["crates/engine_app"]
 
-# Patched third-party sources used by the Sol crates. They are dependencies,
+# Patched third-party sources. They are dependencies,
 # not engine code (proposal 0009).
 exclude = ["vendor/winit", "vendor/micropool", "vendor/vulkane", "vendor/box3d"]
 
@@ -102,7 +102,7 @@ png = { version = "=0.18.0", default-features = false }
 # copy adds mipmapped images and samplers, and `fetch-spec` stays off.
 vulkane = { path = "vendor/vulkane", default-features = false, features = ["naga"] }
 # Proposal 0011: the application host, private to `engine_platform`.
-solapp = { path = "crates/solapp" }
+engine_host = { path = "crates/engine_host" }
 
 # Lints beyond the defaults, enabled one by one (proposal 0005).
 [workspace.lints.rust]

@@ -42,7 +42,7 @@ The iconic calls are described as static bitmaps. There's no documented way to s
 
 ## Receiving the messages
 
-- The messages go to the window. `solapp` gives the `HWND` through `acquire_window`.
+- The messages go to the window. `engine_host` gives the `HWND` through `acquire_window`.
 - [`SetWindowSubclass`](https://learn.microsoft.com/en-us/windows/win32/api/commctrl/nf-commctrl-setwindowsubclass) adds a handler, and has to run on the window's own thread. `RemoveWindowSubclass` takes it off.
 - `winit` has `with_msg_hook`, but it sits on the message loop. Messages sent straight to the window wouldn't pass through it, so subclassing looks safer. That's inference, and how Windows delivers these two messages isn't documented.
 

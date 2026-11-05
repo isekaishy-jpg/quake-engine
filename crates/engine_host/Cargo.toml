@@ -1,0 +1,24 @@
+[package]
+name = "engine_host"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+publish = false
+description = "Owner-thread Windows host with input, services, display, topology and shell integration"
+
+[features]
+default = []
+engine_worker = ["dep:engine_worker"]
+
+[dependencies]
+winit = { path = "../../vendor/winit", version = "=0.30.13", default-features = false, features = ["rwh_06"] }
+windows = { version = "=0.62.2", features = ["Win32_System_Com", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging"] }
+engine_worker = { path = "../engine_worker", optional = true }
+
+[dev-dependencies]
+engine_cache = { path = "../engine_cache" }
+engine_worker = { path = "../engine_worker" }
+
+[[test]]
+name = "capture_transfer"
+harness = false

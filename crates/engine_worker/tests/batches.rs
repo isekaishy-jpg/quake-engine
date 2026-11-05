@@ -1,0 +1,238 @@
+use std::num::NonZeroUsize;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::time::{Duration, Instant};
+
+use engine_worker::{
+    BatchError, BatchSpawnOptions, DeliveryStatus, DependencyPolicy, ExecutionClass, Outcome,
+    OwnedLimits, Phase, PumpBudget, Runtime, RuntimeConfig, SpawnError, SpawnOptions, TaskStatus,
+    WorkerConfig,
+};
+
+const TIMEOUT: Duration = Duration::from_secs(5);
+
+fn runtime() -> Runtime {
+    let config = RuntimeConfig::new(3, [WorkerConfig::new(1); 3]).unwrap();
+    let limits = OwnedLimits::new(32, 32, [16; 3], [4; 3]).unwrap();
+    Runtime::builder(config)
+        .with_owned_limits(limits)
+        .build()
+        .unwrap()
+}
+
+#[test]
+fn reusable_batch_resets_failure_and_exposes_each_wave_to_other_clients() {
+    let mut runtime = runtime();
+    let low = runtime.lane(ExecutionClass::Low);
+    let high = runtime.lane(ExecutionClass::High);
+    let mut batch = low.batch();
+    assert_eq!(batch.class(), ExecutionClass::Low);
+    assert!(batch.current().is_none());
+
+    let first = batch.begin().unwrap().clone();
+    let first_done = first.completion();
+    let failed = low
+        .try_spawn_batch_fallible(
+            BatchSpawnOptions {
+                group: Some(&first),
+                ..Default::default()
+            },
+            (0..2)
+                .map(|_| || Err::<(), _>("first wave failed"))
+                .collect(),
+        )
+        .unwrap();
+    assert_eq!(batch.begin().err(), Some(BatchError::Busy));
+    assert_eq!(batch.current().unwrap().completion().status(), None);
+    first.seal();
+    first.wait_helping().unwrap();
+    for (task, _) in failed {
+        assert_eq!(task.status(), Some(TaskStatus::ApplicationFailed));
+    }
+    assert_eq!(first_done.status(), Some(TaskStatus::PrerequisiteFailed));
+
+    let second = batch.begin().unwrap().clone();
+    let second_done = second.completion();
+    assert_eq!(second_done.status(), None);
+    assert_eq!(first_done.status(), Some(TaskStatus::PrerequisiteFailed));
+    assert_eq!(
+        first.completion().status(),
+        Some(TaskStatus::PrerequisiteFailed)
+    );
+    assert_eq!(
+        low.try_spawn_in(&first, SpawnOptions::default(), || ())
+            .err()
+            .unwrap()
+            .reason,
+        SpawnError::InvalidGroup
+    );
+
+    let mut owner = runtime
+        .owner(0usize, NonZeroUsize::new(2).unwrap())
+        .unwrap();
+    let phase = Phase(1);
+    owner.set_phase(phase).unwrap();
+    let (delivery, _) = owner
+        .on_ready(&second_done, phase, |state, status| {
+            assert_eq!(status, TaskStatus::Succeeded);
+            *state += 1;
+        })
+        .unwrap();
+    let (mut dependent, _) = high
+        .try_spawn_after(
+            SpawnOptions::default(),
+            std::slice::from_ref(&second_done),
+            DependencyPolicy::SuccessOnly,
+            || 31usize,
+        )
+        .unwrap();
+    let members = low
+        .try_spawn_batch(
+            BatchSpawnOptions {
+                group: Some(&second),
+                ..Default::default()
+            },
+            (29..31).map(|value| move || value).collect(),
+        )
+        .unwrap();
+    assert_eq!(batch.begin().err(), Some(BatchError::Busy));
+    second.seal();
+    second.wait_helping().unwrap();
+    assert_eq!(second_done.status(), Some(TaskStatus::Succeeded));
+    assert_eq!(first_done.status(), Some(TaskStatus::PrerequisiteFailed));
+    for (task, _) in members {
+        assert_eq!(task.status(), Some(TaskStatus::Succeeded));
+    }
+    // Group completion precedes downstream activation; owner delivery has its
+    // own completion boundary and may need a later pump.
+    let deadline = Instant::now() + TIMEOUT;
+    let mut invoked = 0;
+    while delivery.status() != DeliveryStatus::Published {
+        assert!(Instant::now() < deadline, "owner delivery did not complete");
+        invoked += owner.pump(phase, PumpBudget::new(2)).unwrap().invoked;
+        std::thread::yield_now();
+    }
+    assert_eq!(invoked, 1);
+    assert_eq!(*owner.state(), 1);
+    assert_eq!(delivery.status(), DeliveryStatus::Published);
+    owner.close();
+    assert_eq!(
+        dependent.completion().wait_timeout(TIMEOUT).unwrap(),
+        Some(TaskStatus::Succeeded)
+    );
+    assert_eq!(dependent.try_take(), Some(Outcome::Success(31)));
+
+    let third = batch.begin().unwrap().clone();
+    assert_eq!(third.completion().status(), None);
+    third.seal();
+    assert_eq!(third.completion().status(), Some(TaskStatus::Succeeded));
+    assert_eq!(first_done.status(), Some(TaskStatus::PrerequisiteFailed));
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn batch_begin_waits_for_member_cleanup_and_rejects_closed_runtime() {
+    struct BlockingDrop {
+        entered: mpsc::Sender<()>,
+        release: mpsc::Receiver<()>,
+    }
+
+    impl Drop for BlockingDrop {
+        fn drop(&mut self) {
+            self.entered.send(()).unwrap();
+            self.release.recv_timeout(TIMEOUT).unwrap();
+        }
+    }
+
+    let mut runtime = runtime();
+    let lane = runtime.lane(ExecutionClass::Mid);
+    let mut batch = lane.batch();
+    let first = batch.begin().unwrap().clone();
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let capture = BlockingDrop {
+        entered: entered_tx,
+        release: release_rx,
+    };
+    let (member, _) = lane
+        .try_spawn_in(&first, SpawnOptions::default(), move || {
+            let _capture = capture;
+            7usize
+        })
+        .unwrap();
+    first.seal();
+    entered_rx.recv_timeout(TIMEOUT).unwrap();
+    assert_eq!(batch.begin().err(), Some(BatchError::Busy));
+    assert_eq!(batch.current().unwrap().completion().status(), None);
+    assert!(!first.is_complete());
+    release_tx.send(()).unwrap();
+    first.wait_helping().unwrap();
+    assert_eq!(member.status(), Some(TaskStatus::Succeeded));
+
+    let second = batch.begin().unwrap().clone();
+    let (started_tx, started_rx) = mpsc::channel();
+    let (finish_tx, finish_rx) = mpsc::channel();
+    let (accepted, _) = lane
+        .try_spawn_in(&second, SpawnOptions::default(), move || {
+            started_tx.send(()).unwrap();
+            finish_rx.recv_timeout(TIMEOUT).unwrap();
+            11usize
+        })
+        .unwrap();
+    started_rx.recv_timeout(TIMEOUT).unwrap();
+    runtime.begin_shutdown();
+    second.seal();
+    finish_tx.send(()).unwrap();
+    second.wait_helping().unwrap();
+    assert_eq!(accepted.status(), Some(TaskStatus::Succeeded));
+    assert_eq!(
+        batch.begin().err(),
+        Some(BatchError::Admission(SpawnError::Closed))
+    );
+    assert_eq!(
+        batch.current().unwrap().completion().status(),
+        Some(TaskStatus::Succeeded)
+    );
+    runtime.shutdown().unwrap();
+}
+
+#[test]
+fn dropping_batch_owner_leaves_accepted_members_running() {
+    let mut runtime = runtime();
+    let lane = runtime.lane(ExecutionClass::Low);
+    let (entered_tx, entered_rx) = mpsc::channel();
+    let (release_tx, release_rx) = mpsc::channel();
+    let (blocker, _) = lane
+        .try_spawn(SpawnOptions::default(), move || {
+            entered_tx.send(()).unwrap();
+            release_rx.recv_timeout(TIMEOUT).unwrap();
+        })
+        .unwrap();
+    entered_rx.recv_timeout(TIMEOUT).unwrap();
+
+    let mut batch = lane.batch();
+    let retained = batch.begin().unwrap().clone();
+    let ran = Arc::new(AtomicBool::new(false));
+    let ran_by_member = Arc::clone(&ran);
+    let (member, _) = lane
+        .try_spawn_in(&retained, SpawnOptions::default(), move || {
+            ran_by_member.store(true, Ordering::SeqCst);
+        })
+        .unwrap();
+    drop(batch);
+    assert_eq!(member.status(), None);
+    retained.seal();
+    release_tx.send(()).unwrap();
+    assert_eq!(
+        member.completion().wait_timeout(TIMEOUT).unwrap(),
+        Some(TaskStatus::Succeeded)
+    );
+    retained.wait_helping().unwrap();
+    assert!(ran.load(Ordering::SeqCst));
+    assert_eq!(retained.completion().status(), Some(TaskStatus::Succeeded));
+    assert_eq!(
+        blocker.completion().wait_timeout(TIMEOUT).unwrap(),
+        Some(TaskStatus::Succeeded)
+    );
+    runtime.shutdown().unwrap();
+}
