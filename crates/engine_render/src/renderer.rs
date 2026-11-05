@@ -120,8 +120,9 @@ struct LoadedMap {
 /// What the final pass does (proposal 0075).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostSettings {
-    /// Whether hard edges are smoothed.
-    pub edge_smoothing: bool,
+    /// How hard edges are smoothed: 0 not at all, 1 by a quick blend, 2 by
+    /// searching along each edge for its ends.
+    pub edge_smoothing: u8,
     /// Outlines: 0 for none, 1 for full, 2 for semi.
     pub outline: u8,
     /// How wide outlines are, in pixels.
@@ -243,6 +244,16 @@ impl Renderer {
     /// Sets what the final pass does.
     pub fn set_post(&mut self, post: PostSettings) {
         self.backend.set_post(post);
+    }
+
+    /// Sets how many samples a pixel scenes have: 1, 2, 4 or 8, as far as the
+    /// device goes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if what depends on it can't be rebuilt.
+    pub fn set_antialiasing(&mut self, samples: u32) -> Result<(), RenderError> {
+        self.backend.set_antialiasing(samples)
     }
 
     /// Sets the UI to draw over the next frames.

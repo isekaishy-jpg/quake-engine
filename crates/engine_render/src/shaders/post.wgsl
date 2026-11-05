@@ -80,6 +80,69 @@ fn smoothed(at: vec2<i32>, uv: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(scene, scene_sampler, uv + towards * share, 0.0).rgb;
 }
 
+// Smooths edges by finding how far each runs, so a long shallow stair blends
+// along its length and the texture beside it stays sharp.
+fn searched(at: vec2<i32>, uv: vec2<f32>) -> vec3<f32> {
+    let centre = load_color(at);
+    let middle = luma(centre);
+    let north = luma(load_color(at + vec2<i32>(0, -1)));
+    let south = luma(load_color(at + vec2<i32>(0, 1)));
+    let east = luma(load_color(at + vec2<i32>(1, 0)));
+    let west = luma(load_color(at + vec2<i32>(-1, 0)));
+    let highest = max(middle, max(max(north, south), max(east, west)));
+    let lowest = min(middle, min(min(north, south), min(east, west)));
+    if highest - lowest < max(0.05, highest * 0.12) {
+        return centre;
+    }
+    let size = vec2<f32>(textureDimensions(scene));
+    let across_rows = abs(north + south - 2.0 * middle) >= abs(east + west - 2.0 * middle);
+    var along = vec2<i32>(1, 0);
+    var towards = vec2<i32>(0, -1);
+    var first = north;
+    var second = south;
+    if !across_rows {
+        along = vec2<i32>(0, 1);
+        towards = vec2<i32>(-1, 0);
+        first = west;
+        second = east;
+    }
+    var other = first;
+    if abs(second - middle) > abs(first - middle) {
+        towards = -towards;
+        other = second;
+    }
+    let edge = (middle + other) * 0.5;
+    let step_size = abs(other - middle) * 0.25;
+    // Walks both ways along the edge until it stops being one.
+    var ahead = 12;
+    var behind = 12;
+    for (var step = 1; step <= 12; step = step + 1) {
+        let forward = at + along * step;
+        let level = (luma(load_color(forward)) + luma(load_color(forward + towards))) * 0.5;
+        if abs(level - edge) >= step_size {
+            ahead = step;
+            break;
+        }
+    }
+    for (var step = 1; step <= 12; step = step + 1) {
+        let backward = at - along * step;
+        let level = (luma(load_color(backward)) + luma(load_color(backward + towards))) * 0.5;
+        if abs(level - edge) >= step_size {
+            behind = step;
+            break;
+        }
+    }
+    let nearest = f32(min(ahead, behind));
+    let span = f32(ahead + behind);
+    // Near an end of its run a pixel takes in more of what's across the edge.
+    let share = 0.5 - nearest / span;
+    if share <= 0.0 {
+        return centre;
+    }
+    let offset = vec2<f32>(towards) * share / size;
+    return textureSampleLevel(scene, scene_sampler, uv + offset, 0.0).rgb;
+}
+
 // How strongly a pixel is on an outline, from 0 to 1.
 fn outline_strength(at: vec2<i32>, uv: vec2<f32>, depth: f32) -> f32 {
     let mode = frame.outline.w;
@@ -527,7 +590,9 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.clip.xy);
     let depth = load_depth(at);
     var color = load_color(at);
-    if frame.post_params.x > 0.5 {
+    if frame.post_params.x > 1.5 {
+        color = searched(at, in.uv);
+    } else if frame.post_params.x > 0.5 {
         color = smoothed(at, in.uv);
     }
     color = rounded_edges(color, at, in.uv, depth);

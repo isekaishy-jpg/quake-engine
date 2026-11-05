@@ -29,15 +29,15 @@ Status is one of todo, doing or done.
 | 5 | Sampling | Filter modes, anisotropy, generated mips | done |
 | 6 | Surface maps | Specular, normal, emissive, height, parallax, tint, detail | done |
 | 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | doing |
-| 8 | Alpha | Modes, sorting, alpha to coverage | todo |
-| 9 | Anti-aliasing | MSAA and SMAA as settings | todo |
+| 8 | Alpha | Modes, sorting, coverage masks | done |
+| 9 | Anti-aliasing | MSAA and an edge search as settings | done |
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
 | 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | doing |
 | 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
 | 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | done |
 | 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | done |
 | 15 | Small lights | Torch shader, flipbooks, particles | done |
-| 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | doing |
+| 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | done |
 | 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | done |
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | todo |
 | 19 | Visibility | Our own compiler, and entity culling from the plan | todo |
@@ -60,3 +60,4 @@ Newest last. A line is added when a stage's state changes.
 - The final pass is in, with edge smoothing, post-process outlines and height fog.
 - Stage 14 is done: stencil rays with boxes, light in water and the fog grid. Stage 13 has capsules and owes sidecars and per-part detail.
 - Meshes were missing from the stages, so stage 25 added them. Stages 13, 15, 17 and 25 are done.
+- Stages 8, 9 and 16 are done. `r_aa 2` is an edge search in place of SMAA's tables, chosen after a side by side.

@@ -14,8 +14,8 @@ use engine_map::{
     SpriteImage, TextureKind,
 };
 use engine_render::{
-    CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
-    PostSettings, Renderer, SpriteDraw, Target, View,
+    BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
+    PostSettings, Renderer, SpriteDraw, Target, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -932,4 +932,86 @@ fn a_hull_shows_the_outline_colour() {
         .expect("capture");
     assert_ne!(centre(&plain)[..3], [0, 255, 0], "nothing with it off");
     assert_eq!(centre(&outlined)[..3], [0, 255, 0], "the hull shows");
+}
+
+/// A view from high enough to see the square's edges, turned so they slant.
+fn slanted_view() -> View {
+    View {
+        origin: Vec3::new(64.0, 64.0, 160.0),
+        roll: 17.0,
+        ..view_from_above()
+    }
+}
+
+/// With several samples a pixel a scene still draws the same, and a slanted
+/// edge gains shades between its two sides.
+#[test]
+fn samples_soften_an_edge() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = slanted_view();
+    let shades = |capture: &Capture| {
+        let (pixels, _) = capture.rgba.as_chunks::<4>();
+        let mut seen: Vec<[u8; 3]> = pixels.iter().map(|[r, g, b, _]| [*r, *g, *b]).collect();
+        seen.sort_unstable();
+        seen.dedup();
+        seen.len()
+    };
+    let plain = renderer
+        .capture(&view, Drawables::default(), 96, 96)
+        .expect("capture");
+    renderer.set_antialiasing(4).expect("samples");
+    let soft = renderer
+        .capture(&view, Drawables::default(), 96, 96)
+        .expect("capture");
+    assert_eq!(centre(&plain), centre(&soft), "the same surface");
+    assert!(shades(&soft) > shades(&plain), "edges have shades between");
+}
+
+/// Blended faces draw far to near, so the nearer shows over the further.
+#[test]
+fn blended_faces_draw_far_to_near() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let glass = Arc::new(Material {
+        alpha: AlphaMode::Blend,
+        shading: Shading::Unlit,
+        ..Material::default()
+    });
+    let mut built = map(1);
+    built.textures[0].mips = image_of(2, |_, _| [255, 0, 0, 128]);
+    built.textures[0].material = Some(glass);
+    let mesh = build_world(&built).expect("a mesh");
+    let blended = mesh.batches.iter().filter(|b| b.kind == BatchKind::Blended);
+    assert!(blended.count() > 1, "each face stands alone");
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert!(centre(&capture)[0] > 100);
+}
+
+/// Searching along edges changes pixels on one, and leaves flat ones alone.
+#[test]
+fn edge_search_only_touches_edges() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = slanted_view();
+    let plain = renderer
+        .capture(&view, Drawables::default(), 96, 96)
+        .expect("capture");
+    renderer.set_post(PostSettings {
+        edge_smoothing: 2,
+        ..PostSettings::default()
+    });
+    let soft = renderer
+        .capture(&view, Drawables::default(), 96, 96)
+        .expect("capture");
+    assert_eq!(centre(&plain), centre(&soft), "flat pixels stay");
+    assert_ne!(plain.rgba, soft.rgba, "edges change");
 }

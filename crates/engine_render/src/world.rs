@@ -59,8 +59,10 @@ pub enum BatchKind {
     Liquid,
     /// Sky.
     Sky,
-    /// A material, opaque or masked.
+    /// An opaque material.
     Material,
+    /// A material with holes.
+    Masked,
     /// A see-through material, drawn after everything else.
     Blended,
 }
@@ -96,6 +98,8 @@ pub struct WorldMesh {
     pub face_batches: Vec<Option<u32>>,
     /// The batches.
     pub batches: Vec<Batch>,
+    /// Where each batch's faces are, for sorting what's see-through.
+    pub batch_centers: Vec<Vec3>,
     /// The triangles of every brush model, batch after batch.
     pub model_indices: Vec<u32>,
     /// Each model's batches, with their first index and count, by model
@@ -136,10 +140,10 @@ fn batch_kind(texture: &Texture) -> Option<BatchKind> {
         return None;
     }
     if let Some(material) = texture.material.as_ref().filter(|_| uses_material(texture)) {
-        return Some(if material.alpha == AlphaMode::Blend {
-            BatchKind::Blended
-        } else {
-            BatchKind::Material
+        return Some(match material.alpha {
+            AlphaMode::Blend => BatchKind::Blended,
+            AlphaMode::Mask => BatchKind::Masked,
+            AlphaMode::Opaque => BatchKind::Material,
         });
     }
     match texture.kind {
@@ -149,6 +153,16 @@ fn batch_kind(texture: &Texture) -> Option<BatchKind> {
         TextureKind::Sky => Some(BatchKind::Sky),
         TextureKind::Hidden => None,
     }
+}
+
+/// The middle of a face's corners.
+fn face_center(map: &Map, face: &Face) -> Vec3 {
+    let points = map.face_points(face);
+    #[expect(clippy::cast_precision_loss, reason = "faces have few corners")]
+    let share = 1.0 / points.len().max(1) as f32;
+    points
+        .iter()
+        .fold(Vec3::ZERO, |sum, point| sum + *point * share)
 }
 
 /// Whether `face` samples the lightmap.
@@ -325,6 +339,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
                 texture: u32::try_from(index).ok()?,
                 kind,
             });
+            mesh.batch_centers.push(Vec3::ZERO);
         }
     }
     mesh.face_indices = vec![Vec::new(); map.faces.len()];
@@ -337,13 +352,22 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             let Some(face) = map.faces.get(at) else {
                 continue;
             };
-            let Some(batch) = batch_of_texture
+            let Some(mut batch) = batch_of_texture
                 .get(face.texture as usize)
                 .copied()
                 .flatten()
             else {
                 continue;
             };
+            // What's see-through is drawn far to near, so each face stands
+            // alone.
+            if mesh.batches[batch as usize].kind == BatchKind::Blended {
+                let shared = mesh.batches[batch as usize].clone();
+                batch = u32::try_from(mesh.batches.len()).ok()?;
+                mesh.batches.push(shared);
+                mesh.batch_centers.push(face_center(map, face));
+                per_batch.push(Vec::new());
+            }
             let first = u32::try_from(mesh.vertices.len()).ok()?;
             for &point in map.face_points(face) {
                 mesh.vertices.push(make_vertex(

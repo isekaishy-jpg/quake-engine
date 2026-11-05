@@ -272,6 +272,8 @@ struct Pipelines {
     cutout: GraphicsPipeline,
     /// Liquids.
     liquid: GraphicsPipeline,
+    /// Masked materials.
+    masked: GraphicsPipeline,
     /// Sky.
     sky: GraphicsPipeline,
     /// The sky sphere, drawn behind everything.
@@ -301,6 +303,7 @@ impl Pipelines {
             BatchKind::Liquid => &self.liquid,
             BatchKind::Sky => &self.sky,
             BatchKind::Material => &self.material,
+            BatchKind::Masked => &self.masked,
             BatchKind::Blended => &self.blended,
         }
     }
@@ -341,6 +344,8 @@ pub(crate) struct Backend {
     capture_pass: RenderPass,
     /// The pass a scene is drawn in.
     scene_pass: RenderPass,
+    /// How many samples a pixel scenes have.
+    samples: u32,
     /// Where the scene is drawn.
     scene_target: Option<post::SceneTarget>,
     /// The layout of the final pass's set.
@@ -564,7 +569,8 @@ impl Backend {
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
         };
-        let pipelines = Self::make_pipelines(&device, &layouts, &present_pass)?;
+        let scene_pass = post::make_scene_pass(&device, 1)?;
+        let pipelines = Self::make_pipelines(&device, &layouts, &scene_pass, 1)?;
         let texture_sampler = Sampler::new_mipmapped(
             &device,
             SamplerCreateInfo {
@@ -601,8 +607,7 @@ impl Backend {
         let command_pool = CommandPool::new(&device, queue_family)?;
         let frame_done = Fence::new(&device)?;
         let available = Semaphore::binary(&device)?;
-        let post_pipeline = Self::make_post_pipeline(&device, &post_layout, &present_pass)?;
-        let scene_pass = post::make_scene_pass(&device)?;
+        let post_pipeline = Self::make_post_pipeline(&device, &post_layout, &present_pass, 1)?;
         let mut backend = Self {
             surface,
             window: None,
@@ -621,6 +626,7 @@ impl Backend {
             present_pass,
             capture_pass,
             scene_pass,
+            samples: 1,
             scene_target: None,
             post_pipeline,
             post_set_layout,
@@ -822,6 +828,11 @@ impl Backend {
     /// Sets the final pass's settings.
     pub(crate) fn set_post(&mut self, post: PostSettings) {
         self.post = post;
+    }
+
+    /// Sets how many samples a pixel scenes have, as far as the device goes.
+    pub(crate) fn set_antialiasing(&mut self, samples: u32) -> Result<(), RenderError> {
+        self.set_samples(samples)
     }
 
     /// Records the scene into its target.

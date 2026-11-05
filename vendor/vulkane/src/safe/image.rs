@@ -171,6 +171,16 @@ impl std::ops::BitOr for ImageUsage {
     }
 }
 
+/// The flag for `samples` samples a pixel.
+pub(crate) fn sample_bits(samples: u32) -> VkSampleCountFlagBits {
+    match samples {
+        2 => SAMPLE_COUNT_2_BIT,
+        4 => SAMPLE_COUNT_4_BIT,
+        8 => SAMPLE_COUNT_8_BIT,
+        _ => SAMPLE_COUNT_1_BIT,
+    }
+}
+
 /// Parameters for [`Image::new_2d`].
 #[derive(Debug, Clone, Copy)]
 pub struct Image2dCreateInfo {
@@ -227,6 +237,15 @@ impl Image {
         Self::new_2d_array_with_pnext(device, info, 1, 1, pnext)
     }
 
+    /// Create a 2D image with `samples` samples a pixel. Engine extension.
+    pub fn new_2d_multisampled(
+        device: &Device,
+        info: Image2dCreateInfo,
+        samples: u32,
+    ) -> Result<Self> {
+        Self::new_2d_full(device, info, 1, 1, samples, None)
+    }
+
     /// Create a 2D image with explicit array layers and mip levels.
     /// Solstice extension; existing single-level constructors remain unchanged.
     pub fn new_2d_array(
@@ -243,6 +262,17 @@ impl Image {
         info: Image2dCreateInfo,
         layers: u32,
         mips: u32,
+        pnext: Option<&super::pnext::PNextChain>,
+    ) -> Result<Self> {
+        Self::new_2d_full(device, info, layers, mips, 1, pnext)
+    }
+
+    fn new_2d_full(
+        device: &Device,
+        info: Image2dCreateInfo,
+        layers: u32,
+        mips: u32,
+        samples: u32,
         pnext: Option<&super::pnext::PNextChain>,
     ) -> Result<Self> {
         if info.width == 0
@@ -273,7 +303,7 @@ impl Image {
             },
             mipLevels: mips,
             arrayLayers: layers,
-            samples: SAMPLE_COUNT_1_BIT,
+            samples: sample_bits(samples),
             tiling: VkImageTiling::IMAGE_TILING_OPTIMAL,
             usage: info.usage.0,
             sharingMode: VkSharingMode::SHARING_MODE_EXCLUSIVE,

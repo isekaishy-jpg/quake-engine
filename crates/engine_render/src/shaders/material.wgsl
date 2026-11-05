@@ -235,10 +235,6 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         base = vec4<f32>(base.rgb * detail.rgb * 2.0, base.a);
     }
 
-    if material.flags.y == 1 && base.a < material.more.z {
-        discard;
-    }
-
     var normal = surface_at.normal;
     if material.slots_a.x >= 0 {
         let bump = read_slot(material.slots_a.x, uv, dx, dy).xyz * 2.0 - vec3<f32>(1.0);
@@ -302,10 +298,35 @@ fn material_color(in: VertexOut) -> vec4<f32> {
 
     // An opaque surface's alpha says how much the final pass mirrors it.
     var alpha = 1.0 - material.extra.x;
-    if material.flags.y == 2 {
+    if material.flags.y != 0 {
         alpha = base.a;
     }
     return vec4<f32>(raised(color), alpha);
+}
+
+struct MaskedOut {
+    @location(0) color: vec4<f32>,
+    @builtin(sample_mask) mask: u32,
+}
+
+// A masked surface covers some of a pixel's samples, by how far alpha is past
+// its cutoff here, which keeps thin edges from crawling.
+@fragment
+fn fs_masked(in: VertexOut) -> MaskedOut {
+    let shaded = material_color(in);
+    let coverage = clamp(
+        (shaded.a - material.more.z) / max(fwidth(shaded.a), 0.0001) + 0.5,
+        0.0,
+        1.0,
+    );
+    let count = u32(coverage * frame.stencil_params.w + 0.5);
+    if count == 0u {
+        discard;
+    }
+    var out: MaskedOut;
+    out.color = vec4<f32>(shaded.rgb, 1.0 - material.extra.x);
+    out.mask = (1u << count) - 1u;
+    return out;
 }
 
 @fragment

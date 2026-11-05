@@ -40,7 +40,7 @@ struct Frame {
     stencil_across: array<vec4<f32>, 4>,
     stencil_down: array<vec4<f32>, 4>,
     stencil_light: array<vec4<f32>, 4>,
-    // x how many stencils.
+    // x how many stencils, y steps along a ray, z how blurred, w samples a pixel.
     stencil_params: vec4<f32>,
     // Each stencil's occlusion grid, four cells to an entry.
     stencil_mask: array<vec4<f32>, 256>,

@@ -127,6 +127,7 @@ impl Backend {
         pass: &RenderPass,
         entries: (&str, &str),
         cull: CullMode,
+        samples: u32,
     ) -> Result<GraphicsPipeline, RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(ALIAS_SHADER)
             .map_err(|error| RenderError(error.to_string()))?;
@@ -164,6 +165,7 @@ impl Backend {
             // Quake's triangles wind clockwise. A weapon sits close enough for
             // the near plane to open it up, and this keeps its inside hidden.
             .cull_mode(cull)
+            .samples(samples)
             .front_face(FrontFace::CLOCKWISE)
             .depth_test(true, true)
             .build(device)
@@ -175,6 +177,7 @@ impl Backend {
         device: &Device,
         layouts: &Layouts,
         pass: &RenderPass,
+        samples: u32,
     ) -> Result<(GraphicsPipeline, GraphicsPipeline), RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(SPRITE_SHADER)
             .map_err(|error| RenderError(error.to_string()))?;
@@ -185,6 +188,7 @@ impl Backend {
             .dynamic_viewport_scissor()
             .cull_mode(CullMode::NONE)
             .depth_test(true, true)
+            .samples(samples)
             .build(device)?;
         let particle = GraphicsPipelineBuilder::new(&layouts.particle, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
@@ -213,6 +217,7 @@ impl Backend {
             .dynamic_viewport_scissor()
             .cull_mode(CullMode::NONE)
             .depth_test(true, false)
+            .samples(samples)
             .build(device)?;
         Ok((sprite, particle))
     }
@@ -222,6 +227,7 @@ impl Backend {
         device: &Device,
         layouts: &Layouts,
         pass: &RenderPass,
+        samples: u32,
     ) -> Result<Pipelines, RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(WORLD_SHADER)
             .map_err(|error| RenderError(error.to_string()))?;
@@ -252,24 +258,27 @@ impl Backend {
                 .dynamic_viewport_scissor()
                 .cull_mode(CullMode::NONE)
                 .depth_test(true, true)
+                .samples(samples)
                 .build(device)
         };
-        let material = |blended: bool| {
+        let material = |blended: bool, entry: &str| {
             GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-                .stage(GraphicsShaderStage::Fragment, &shader, "fs_material")
+                .stage(GraphicsShaderStage::Fragment, &shader, entry)
                 .vertex_input(&bindings, &attributes)
                 .dynamic_viewport_scissor()
                 .cull_mode(CullMode::NONE)
                 .depth_test(true, !blended)
                 .alpha_blending(blended)
+                .samples(samples)
                 .build(device)
         };
-        let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass)?;
+        let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass, samples)?;
         Ok(Pipelines {
             solid: pipeline("fs_solid")?,
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,
+            masked: material(false, "fs_masked")?,
             sky: pipeline("fs_sky")?,
             sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_sky_sphere")
@@ -277,16 +286,18 @@ impl Backend {
                 .dynamic_viewport_scissor()
                 .cull_mode(CullMode::NONE)
                 .depth_test(false, false)
+                .samples(samples)
                 .build(device)?,
             sky_window: pipeline("fs_sky_window")?,
-            material: material(false)?,
-            blended: material(true)?,
+            material: material(false, "fs_material")?,
+            blended: material(true, "fs_material")?,
             alias: Self::make_alias_pipeline(
                 device,
                 &layouts.alias,
                 pass,
                 ("vs_main", "fs_main"),
                 CullMode::BACK,
+                samples,
             )?,
             alias_hull: Self::make_alias_pipeline(
                 device,
@@ -294,6 +305,7 @@ impl Backend {
                 pass,
                 ("vs_hull", "fs_hull"),
                 CullMode::FRONT,
+                samples,
             )?,
             sprite,
             particle,

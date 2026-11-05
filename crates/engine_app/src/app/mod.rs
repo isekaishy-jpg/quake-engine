@@ -515,6 +515,7 @@ impl Engine {
         console.register_cvar("r_outline_width", "1", saved);
         console.register_cvar("r_outline_fade", "1500", saved);
         console.register_cvar("r_rays", "3", saved);
+        console.register_cvar("r_msaa", "1", saved);
         console.register_cvar("r_edges", "0", saved);
         console.register_cvar("r_outline_hull", "0", saved);
         console.register_cvar("r_fog_grid", "0", saved);
@@ -666,7 +667,7 @@ impl Engine {
             reason = "small settings"
         )]
         let post = PostSettings {
-            edge_smoothing: self.cvar_number("r_aa") != 0.0,
+            edge_smoothing: self.cvar_number("r_aa").clamp(0.0, 2.0) as u8,
             outline: self.cvar_number("r_outline").clamp(0.0, 2.0) as u8,
             outline_width: self.cvar_number("r_outline_width") as f32,
             outline_fade: self.cvar_number("r_outline_fade") as f32,
@@ -676,8 +677,17 @@ impl Engine {
             outline_hull: self.cvar_number("r_outline_hull") != 0.0,
             fog_grid: self.cvar_number("r_fog_grid") != 0.0,
         };
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to a small count"
+        )]
+        let samples = self.cvar_number("r_msaa").clamp(1.0, 8.0) as u32;
         if let Some(renderer) = &mut self.world.renderer {
             renderer.set_post(post);
+            if let Err(error) = renderer.set_antialiasing(samples) {
+                self.console.print(format!("r_msaa: {error}"));
+            }
         }
         let vsync = self.cvar_number("vid_vsync") != 0.0;
         if let Some(renderer) = &mut self.world.renderer {

@@ -163,6 +163,8 @@ pub(super) struct FrameExtras<'a> {
     capsules: &'a [CapsuleDraw],
     /// Bodies of liquid.
     pools: &'a [Pool],
+    /// How many samples a pixel the scene has.
+    samples: u32,
     /// Where the view is, to choose among them.
     eye: Vec3,
     /// The baked light in the air.
@@ -226,6 +228,9 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     };
     out[65] = steps;
     out[66] = blur;
+    #[expect(clippy::cast_precision_loss, reason = "eight at most")]
+    let samples = extra.samples as f32;
+    out[67] = samples;
     let base = 68 + 1024;
     let shown = capsules.len().min(16);
     for (index, capsule) in capsules.iter().take(16).enumerate() {
@@ -305,7 +310,7 @@ fn post_values(
     }
     out[24..27].copy_from_slice(&post.outline_color);
     out[27] = f32::from(post.outline);
-    out[28] = f32::from(u8::from(post.edge_smoothing));
+    out[28] = f32::from(post.edge_smoothing);
     out[29] = post.outline_width;
     out[30] = post.outline_fade;
     out[31] = post.rounded_edges;
@@ -793,6 +798,7 @@ impl Backend {
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             eye: view.origin,
+            samples: self.samples,
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);

@@ -179,6 +179,7 @@ pub struct GraphicsPipelineBuilder<'a> {
     viewport_width: u32,
     viewport_height: u32,
     blend_enable: bool,
+    samples: u32,
     depth_test: bool,
     depth_write: bool,
     depth_compare_op: CompareOp,
@@ -212,6 +213,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             viewport_width: 1,
             viewport_height: 1,
             blend_enable: false,
+            samples: 1,
             depth_test: false,
             depth_write: false,
             depth_compare_op: CompareOp::LESS_OR_EQUAL,
@@ -276,6 +278,12 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
     pub fn front_face(mut self, face: FrontFace) -> Self {
         self.front_face = face;
+        self
+    }
+
+    /// How many samples a pixel its render pass has. Engine extension.
+    pub fn samples(mut self, samples: u32) -> Self {
+        self.samples = samples;
         self
     }
 
@@ -457,7 +465,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
         let multisample_state = VkPipelineMultisampleStateCreateInfo {
             sType: VkStructureType::STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO,
-            rasterizationSamples: SAMPLE_COUNT_1_BIT,
+            rasterizationSamples: super::image::sample_bits(self.samples),
             sampleShadingEnable: 0,
             minSampleShading: 1.0,
             pSampleMask: std::ptr::null(),

@@ -95,6 +95,18 @@ pub struct RenderPass {
 impl RenderPass {
     /// Create a new single-subpass render pass.
     pub fn new(device: &Device, info: RenderPassCreateInfo<'_>) -> Result<Self> {
+        Self::new_multisampled(device, info, 1, None)
+    }
+
+    /// Create a render pass whose attachments have `samples` samples a pixel,
+    /// resolving its first colour into `resolve` if given. That attachment
+    /// comes after the others. Engine extension.
+    pub fn new_multisampled(
+        device: &Device,
+        info: RenderPassCreateInfo<'_>,
+        samples: u32,
+        resolve: Option<AttachmentDescription>,
+    ) -> Result<Self> {
         let create = device
             .inner
             .dispatch
@@ -107,7 +119,7 @@ impl RenderPass {
         for (i, a) in info.color_attachments.iter().enumerate() {
             raw_attachments.push(VkAttachmentDescription {
                 format: a.format.0,
-                samples: SAMPLE_COUNT_1_BIT,
+                samples: super::image::sample_bits(samples),
                 loadOp: a.load_op.0,
                 storeOp: a.store_op.0,
                 stencilLoadOp: VkAttachmentLoadOp::ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -128,7 +140,7 @@ impl RenderPass {
             let attach_idx = raw_attachments.len() as u32;
             raw_attachments.push(VkAttachmentDescription {
                 format: d.format.0,
-                samples: SAMPLE_COUNT_1_BIT,
+                samples: super::image::sample_bits(samples),
                 loadOp: d.load_op.0,
                 storeOp: d.store_op.0,
                 stencilLoadOp: VkAttachmentLoadOp::ATTACHMENT_LOAD_OP_DONT_CARE,
@@ -147,10 +159,33 @@ impl RenderPass {
             p_depth_ref = std::ptr::null();
         }
 
+        let mut resolve_refs: Vec<VkAttachmentReference> = Vec::new();
+        if let Some(r) = resolve {
+            resolve_refs.push(VkAttachmentReference {
+                attachment: raw_attachments.len() as u32,
+                layout: VkImageLayout::IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
+            });
+            raw_attachments.push(VkAttachmentDescription {
+                format: r.format.0,
+                samples: SAMPLE_COUNT_1_BIT,
+                loadOp: r.load_op.0,
+                storeOp: r.store_op.0,
+                stencilLoadOp: VkAttachmentLoadOp::ATTACHMENT_LOAD_OP_DONT_CARE,
+                stencilStoreOp: VkAttachmentStoreOp::ATTACHMENT_STORE_OP_DONT_CARE,
+                initialLayout: r.initial_layout.0,
+                finalLayout: r.final_layout.0,
+                ..Default::default()
+            });
+        }
         let subpass = VkSubpassDescription {
             pipelineBindPoint: VkPipelineBindPoint::PIPELINE_BIND_POINT_GRAPHICS,
             colorAttachmentCount: color_refs.len() as u32,
             pColorAttachments: color_refs.as_ptr(),
+            pResolveAttachments: if resolve_refs.is_empty() {
+                std::ptr::null()
+            } else {
+                resolve_refs.as_ptr()
+            },
             pDepthStencilAttachment: p_depth_ref,
             ..Default::default()
         };

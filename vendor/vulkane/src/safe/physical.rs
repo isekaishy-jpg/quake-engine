@@ -1007,6 +1007,14 @@ impl PhysicalDeviceProperties {
         self.raw.limits.timestampPeriod
     }
 
+    /// The most samples a pixel both colour and depth can have, up to 8.
+    /// Engine extension.
+    pub fn max_samples(&self) -> u32 {
+        let limits = &self.raw.limits;
+        let counts = limits.framebufferColorSampleCounts & limits.framebufferDepthSampleCounts;
+        [8, 4, 2].into_iter().find(|bit| counts & bit != 0).unwrap_or(1)
+    }
+
     /// Maximum push constant size in bytes guaranteed by this device.
     /// Vulkan guarantees at least 128 bytes; most desktop GPUs report 256.
     pub fn max_push_constants_size(&self) -> u32 {

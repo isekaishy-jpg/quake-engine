@@ -137,9 +137,9 @@ impl Recorder<'_> {
         size: (u32, u32),
     ) {
         self.record_sky(rec, scene, size);
-        self.record_world(rec, scene, view.time, size, false);
+        self.record_world(rec, scene, view, size, false);
         self.record_models(rec, scene);
-        self.record_world(rec, scene, view.time, size, true);
+        self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
         self.record_particles(rec, scene);
     }
@@ -175,7 +175,7 @@ impl Recorder<'_> {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: &Scene<'_>,
-        time: f32,
+        view: &View,
         size: (u32, u32),
         see_through: bool,
     ) {
@@ -194,7 +194,7 @@ impl Recorder<'_> {
             clippy::cast_sign_loss,
             reason = "time is never negative, and the frame count wraps by design"
         )]
-        let step = (time * ANIMATION_RATE) as u32;
+        let step = (view.time * ANIMATION_RATE) as u32;
         let mut bound = None;
         let mut draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
                         batch: u32,
@@ -219,7 +219,10 @@ impl Recorder<'_> {
                 }
                 bound = Some(batch.kind);
             }
-            let set_layout = if matches!(batch.kind, BatchKind::Material | BatchKind::Blended) {
+            let set_layout = if matches!(
+                batch.kind,
+                BatchKind::Material | BatchKind::Masked | BatchKind::Blended
+            ) {
                 &self.layouts.material
             } else {
                 layout
@@ -231,6 +234,45 @@ impl Recorder<'_> {
             rec.bind_graphics_descriptor_sets(set_layout, 0, &[&map.frame_set, set]);
             rec.draw_indexed(count, 1, first, 0, 0);
         };
+        if see_through {
+            // Far to near, so each shows through the next.
+            let mut order = Vec::new();
+            let center = |batch: u32| {
+                let place = scene.mesh.batch_centers.get(batch as usize);
+                place.copied().unwrap_or(Vec3::ZERO)
+            };
+            for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
+                if count > 0 {
+                    let distance = (center(batch) - view.origin).length();
+                    order.push((distance, Vec3::ZERO, batch, first, count, 0));
+                }
+            }
+            for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
+                let Some(ranges) = scene.mesh.model_ranges.get(instance.model as usize) else {
+                    continue;
+                };
+                for range in ranges {
+                    let first = scene.mesh.world_index_count + range.first;
+                    let at = center(range.batch) + instance.origin;
+                    let distance = (at - view.origin).length();
+                    order.push((
+                        distance,
+                        instance.origin,
+                        range.batch,
+                        first,
+                        range.count,
+                        instance.frame,
+                    ));
+                }
+            }
+            order.sort_by(|a, b| b.0.total_cmp(&a.0));
+            for (_, origin, batch, first, count, frame) in order {
+                let bytes = offset_bytes(origin);
+                rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
+                draw(rec, batch, first, count, frame);
+            }
+            return;
+        }
         rec.push_constants(
             layout,
             ShaderStageFlags::VERTEX,
