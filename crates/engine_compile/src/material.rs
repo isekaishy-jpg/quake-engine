@@ -153,7 +153,11 @@ fn hotspots_of(block: &Block) -> Vec<[f32; 4]> {
 }
 
 /// A document from its bytes, in text or binary.
-fn document_of(bytes: &[u8]) -> Result<Document, CompileError> {
+///
+/// # Errors
+///
+/// Returns an error if they aren't one.
+pub fn document_of(bytes: &[u8]) -> Result<Document, CompileError> {
     match std::str::from_utf8(bytes) {
         Ok(text) => Ok(from_text(text)?),
         Err(_) => Ok(from_binary(bytes)?),

@@ -874,8 +874,13 @@ impl Backend {
     fn view_area(&self, extent: (u32, u32)) -> ((u32, u32), (u32, u32)) {
         match self.view_area {
             Some([x, y, width, height]) if width > 0 && height > 0 => {
-                let (x, y) = (x.min(extent.0 - 1), y.min(extent.1 - 1));
-                ((x, y), (width.min(extent.0 - x), height.min(extent.1 - y)))
+                let x = x.min(extent.0.saturating_sub(1));
+                let y = y.min(extent.1.saturating_sub(1));
+                let size = (
+                    width.min(extent.0.saturating_sub(x)).max(1),
+                    height.min(extent.1.saturating_sub(y)).max(1),
+                );
+                ((x, y), size)
             }
             _ => ((0, 0), extent),
         }

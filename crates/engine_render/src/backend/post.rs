@@ -171,7 +171,9 @@ impl Backend {
     /// Sets how many samples a pixel scenes have, and rebuilds what depends
     /// on it.
     pub(super) fn set_samples(&mut self, samples: u32) -> Result<(), RenderError> {
-        let samples = samples.min(self.physical.properties().max_samples()).max(1);
+        // Devices count samples in powers of two, so 3 means 2.
+        let most = self.physical.properties().max_samples();
+        let samples = 1 << samples.clamp(1, most).ilog2();
         if samples == self.samples {
             return Ok(());
         }

@@ -281,3 +281,34 @@ fn scripts_find_paths_and_follow_splines() {
     assert!(lines.contains("seeded true"), "{lines}");
     assert!(lines.contains("walking true"), "{lines}");
 }
+
+/// A brush entity far from the origin wakes by where it stands, not by its
+/// origin, which is only how far it's moved.
+#[test]
+fn a_brush_entity_sleeps_by_its_bounds() {
+    let script = r#"
+    function mover(self)
+        self.mins = vector.create(150, -8, -250)
+        self.maxs = vector.create(170, 8, -230)
+        self.nextthink = 0.1
+        self.think = function(me)
+            engine.print("tick")
+            me.nextthink = engine.time() + 0.1
+        end
+    end
+    "#;
+    let map = map_with(&[("mover", "0 0 0")]);
+    let world = Rc::new(CollisionWorld::new(map));
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        Vec3::new(160.0, 0.0, -255.0),
+        &[("mover", script)],
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("server");
+    let lines = said(&mut server, &mut client, 1, 72, false);
+    assert!(lines.iter().any(|line| line.contains("tick")), "{lines:?}");
+}

@@ -8,7 +8,7 @@ use std::time::Duration;
 
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
-use engine_compile::{MaterialLibrary, apply_bake, compile, read_map, source_hash};
+use engine_compile::{MaterialLibrary, apply_bake, compile, map_hash, read_map};
 use engine_core::math::Vec3;
 use engine_editor::camera::{Camera, FOV, Keys};
 use engine_format::from_text;
@@ -470,10 +470,8 @@ impl Editor {
         };
         if let Some(path) = saved_map_path(&self.session)
             && let Ok(bytes) = std::fs::read(path.with_extension("ebake"))
-            && let Ok(saved) = std::fs::read_to_string(&path)
         {
-            let hash = source_hash(&format!("{saved}{used}"));
-            let _applied = apply_bake(&mut map, &bytes, hash);
+            let _applied = apply_bake(&mut map, &bytes, map_hash(&document, &used));
         }
         let map = Arc::new(map);
         if let Err(error) = renderer.load_map(Arc::clone(&map)) {

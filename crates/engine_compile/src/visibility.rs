@@ -1,5 +1,7 @@
 //! Working out which cells can see each other (proposal 0088).
 
+use std::ops::Not;
+
 use engine_core::math::Vec3;
 use engine_map::{Contents, Map};
 
@@ -104,14 +106,21 @@ pub(crate) fn bake_visibility(map: &mut Map, clear: &(dyn Fn(Vec3, Vec3) -> bool
     }
     // One cell wider, so a thin gap the samples missed can't show a hole.
     let boxes = &map.tree.leaf_boxes;
+    let around: Vec<Vec<usize>> = (0..count)
+        .map(|leaf| {
+            let others = spatial.iter().copied();
+            others
+                .filter(|other| {
+                    samples[leaf].is_empty().not() && neighbours(boxes[leaf], boxes[*other])
+                })
+                .collect()
+        })
+        .collect();
     let mut wide = sees.clone();
     for from in &spatial {
         for to in &spatial {
-            if !sees[*from][*to] {
-                continue;
-            }
-            for next in &spatial {
-                if neighbours(boxes[*to], boxes[*next]) {
+            if sees[*from][*to] {
+                for next in &around[*to] {
                     wide[*from][*next] = true;
                 }
             }

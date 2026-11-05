@@ -614,9 +614,12 @@ impl Server {
         let Some(entity) = simulation.entity(id) else {
             return true;
         };
+        // A brush model's origin is how far it's moved, not where it is, so
+        // this goes by the middle of its bounds.
+        let middle = entity.origin + (entity.mins + entity.maxs) * 0.5;
         let near = players
             .iter()
-            .any(|place| (entity.origin - *place).length() < reach);
+            .any(|place| (middle - *place).length() < reach);
         let exempt = entity.flags & FLAG_ALWAYS_AWAKE != 0 || simulation.is_player(id);
         let now = simulation.time();
         drop(simulation);

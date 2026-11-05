@@ -5,7 +5,7 @@
 //! the map falls back on playing unlit.
 
 use engine_core::math::Vec3;
-use engine_format::{Block, Document, Value, from_binary, to_binary};
+use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
 use engine_map::{Face, FaceLight, Map, NavGrid, NavPlace, ProbeGrid};
 
 use crate::error::CompileError;
@@ -22,6 +22,13 @@ pub fn source_hash(text: &str) -> u64 {
         hash = (hash ^ u64::from(byte)).wrapping_mul(0x0100_0000_01b3);
     }
     hash
+}
+
+/// The hash of a map, in its canonical text, with what else it took to build:
+/// the same for a working map and the binary made from it.
+#[must_use]
+pub fn map_hash(document: &Document, used: &str) -> u64 {
+    source_hash(&format!("{}{used}", to_text(document)))
 }
 
 /// A number as text, so a 64 bit hash survives exactly.

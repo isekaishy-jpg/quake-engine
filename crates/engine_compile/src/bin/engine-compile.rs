@@ -1,6 +1,7 @@
 //! Compiles maps from the command line: `engine-compile <content> <map> ...`.
 //!
-//! Writes `maps/<map>.ebake` in the content directory. With `--occlusion`
+//! Writes `maps/<map>.ebake` and the binary `maps/<map>.ebin` in the content
+//! directory. With `--occlusion`
 //! first, the names are meshes, and it writes `meshes/<mesh>.eocc`.
 
 #![expect(clippy::print_stdout, reason = "this tool's output is its report")]
@@ -14,10 +15,10 @@ use std::time::Instant;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, MaterialLibrary, bake_light, compile, occluders_of, read_map, source_hash,
-    write_bake, write_occlusion,
+    BakeInput, MaterialLibrary, bake_light, compile, map_hash, occluders_of, read_map, write_bake,
+    write_occlusion,
 };
-use engine_format::from_text;
+use engine_format::{from_text, to_binary};
 use engine_map::{MipLevel, Texture};
 
 /// Writes the occlusion sidecar of the mesh called `name`.
@@ -41,7 +42,8 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     let path = format!("maps/{name}.emap");
     let bytes = filesystem.read(&path)?;
     let text = std::str::from_utf8(&bytes)?;
-    let mut working = read_map(&from_text(text)?)?;
+    let document = from_text(text)?;
+    let mut working = read_map(&document)?;
     let mut library = MaterialLibrary::new(filesystem);
     let used = library.prepare(&mut working)?;
     let mut failure = None;
@@ -65,8 +67,11 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     };
     bake_light(&mut map, &mut input)?;
     let out = content.join("maps").join(format!("{name}.ebake"));
-    let hash = source_hash(&format!("{text}{used}"));
+    let hash = map_hash(&document, &used);
     std::fs::write(&out, write_bake(&map, hash))?;
+    // What ships: the same document, in binary, which plays with no text.
+    let binary = content.join("maps").join(format!("{name}.ebin"));
+    std::fs::write(&binary, to_binary(&document))?;
     println!(
         "{name}: {} faces, {} light samples, in {:.1} s",
         map.faces.len(),

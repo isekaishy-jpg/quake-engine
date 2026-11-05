@@ -4,5 +4,5 @@ surface {
     base = textures/brick.png
     normal = textures/brick_normal.png
     height = textures/brick_height.png
-    parallax = 0.03
+    parallax = 0.025
 }

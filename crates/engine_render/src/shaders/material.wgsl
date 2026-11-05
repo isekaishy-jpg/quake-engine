@@ -139,11 +139,16 @@ fn parallax_uv(
     let step_uv = (view.xy / view.z) * depth / 16.0;
     var at = uv;
     var layer_depth = 0.0;
+    var above = 0.0;
     for (var index = 0; index < 16; index = index + 1) {
-        let height = read_slot(slot, at, dx, dy).r;
-        if layer_depth >= 1.0 - height {
-            break;
+        let below = 1.0 - read_slot(slot, at, dx, dy).r - layer_depth;
+        if below <= 0.0 {
+            // Between the last two steps the view crossed the surface, and this
+            // finds where, which takes the terraces out of it.
+            let share = above / max(above - below, 0.0001);
+            return at + step_uv * (1.0 - share);
         }
+        above = below;
         at = at - step_uv;
         layer_depth = layer_depth + 1.0 / 16.0;
     }

@@ -1269,3 +1269,22 @@ fn the_sky_covers_every_direction() {
         }
     }
 }
+
+/// A count of samples no device has rounds down, and still draws.
+#[test]
+fn an_odd_sample_count_rounds_down() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let plain = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
+    for samples in [3, 5, 7, 64] {
+        renderer.set_antialiasing(samples).expect("samples");
+        let capture = renderer
+            .capture(&view_from_above(), Drawables::default(), 32, 32)
+            .expect("capture");
+        assert_eq!(centre(&plain), centre(&capture), "with {samples}");
+    }
+}

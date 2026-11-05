@@ -3,10 +3,10 @@
 use std::sync::Arc;
 
 use engine_compile::{
-    BakeInput, CompileError, apply_bake, bake_light, compile, placeholder_texture, read_map,
-    source_hash, write_bake,
+    BakeInput, CompileError, apply_bake, bake_light, compile, map_hash, placeholder_texture,
+    read_map, source_hash, write_bake,
 };
-use engine_format::from_text;
+use engine_format::{from_binary, from_text, to_binary};
 use engine_map::{Map, MipLevel};
 
 /// A small lit map.
@@ -73,4 +73,22 @@ fn a_stale_bake_is_ignored() {
 fn something_else_is_an_error() {
     let mut map = plain(TEXT);
     assert!(apply_bake(&mut map, b"not a bake", 0).is_err());
+}
+
+/// A map reads the same from its binary as from its text, and hashes the same,
+/// so a bake fits either.
+#[test]
+fn a_binary_map_is_the_same_map() {
+    let document = from_text(TEXT).expect("parses");
+    let binary = from_binary(&to_binary(&document)).expect("reads");
+    assert_eq!(
+        read_map(&binary).expect("reads"),
+        read_map(&document).expect("reads")
+    );
+    assert_eq!(map_hash(&binary, "x"), map_hash(&document, "x"));
+    assert_ne!(
+        map_hash(&document, "x"),
+        map_hash(&document, "y"),
+        "what it took counts"
+    );
 }

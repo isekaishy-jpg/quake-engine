@@ -5,10 +5,9 @@ use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, bake_light, compile, read_map, source_hash,
-    write_bake,
+    BakeInput, CompileError, MaterialLibrary, bake_light, compile, map_hash, read_map, write_bake,
 };
-use engine_format::{Block, Value};
+use engine_format::{Block, Value, to_binary};
 use engine_map::{MipLevel, Texture};
 use serde_json::{Value as Json, json};
 
@@ -440,13 +439,11 @@ fn bake(session: &Session) -> Result<Json, String> {
         images: &mut images,
     };
     bake_light(&mut map, &mut input).map_err(|error| error.to_string())?;
-    let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     let out = path.with_extension("ebake");
-    std::fs::write(
-        &out,
-        write_bake(&map, source_hash(&format!("{text}{used}"))),
-    )
-    .map_err(|error| error.to_string())?;
+    std::fs::write(&out, write_bake(&map, map_hash(&session.document, &used)))
+        .map_err(|error| error.to_string())?;
+    std::fs::write(path.with_extension("ebin"), to_binary(&session.document))
+        .map_err(|error| error.to_string())?;
     Ok(json!({
         "path": out.display().to_string(),
         "samples": map.light.len(),

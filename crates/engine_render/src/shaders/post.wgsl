@@ -168,8 +168,13 @@ fn outline_strength(at: vec2<i32>, uv: vec2<f32>, depth: f32) -> f32 {
         let other_uv = (vec2<f32>(other_at) + vec2<f32>(0.5)) / size;
         let other_depth = load_depth(other_at);
         let there = length(world_at(other_uv, other_depth) - frame.eye.xyz);
-        // A gap in depth is a silhouette.
-        strongest = max(strongest, smoothstep(4.0, 24.0, (there - here)));
+        // A gap in depth is a silhouette, unless it's only a crack between two
+        // faces, with the same surface again just past it.
+        let past = load_depth(other_at + offset);
+        let crack = other_depth >= 1.0 && past < 1.0;
+        if !crack {
+            strongest = max(strongest, smoothstep(4.0, 24.0, (there - here)));
+        }
         let normal = pixel_normal(other_at, other_uv, other_depth, size);
         crease = max(crease, 1.0 - dot(centre_normal, normal));
     }

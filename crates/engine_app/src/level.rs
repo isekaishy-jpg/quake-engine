@@ -4,7 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{MaterialLibrary, apply_bake, compile, read_map_text, source_hash};
+use engine_compile::{MaterialLibrary, apply_bake, compile, document_of, map_hash, read_map};
 use engine_map::Texture;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
@@ -31,11 +31,15 @@ pub(crate) fn load_level(
     filesystem: &FileSystem,
     name: &str,
 ) -> Result<LoadedLevel, Box<dyn Error>> {
-    let Ok(bytes) = filesystem.read(&working_map_path(name)) else {
+    // Text while it's being worked on, and what compiling made once it isn't.
+    let found = filesystem
+        .read(&working_map_path(name))
+        .or_else(|_| filesystem.read(&format!("maps/{name}.ebin")));
+    let Ok(bytes) = found else {
         return fixture_quake::load_level(filesystem, name);
     };
-    let text = std::str::from_utf8(&bytes)?;
-    let mut working = read_map_text(text)?;
+    let document = document_of(&bytes)?;
+    let mut working = read_map(&document)?;
     let mut library = MaterialLibrary::new(filesystem);
     let used = library.prepare(&mut working)?;
     let mut failure = None;
@@ -50,7 +54,7 @@ pub(crate) fn load_level(
         return Err(error.into());
     }
     if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
-        apply_bake(&mut map, &baked, source_hash(&format!("{text}{used}")))?;
+        apply_bake(&mut map, &baked, map_hash(&document, &used))?;
     }
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;

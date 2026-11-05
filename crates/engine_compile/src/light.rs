@@ -4,6 +4,7 @@
 //! block one without the other. Each sample also records where its light
 //! came from, for specular and normal maps under baked light.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
@@ -93,6 +94,8 @@ struct Scene<'a> {
     glass: Vec<Glass>,
     /// Meshes, which block light by their triangles.
     meshes: Vec<MeshShadow>,
+    /// How far stamped faces lift their samples, by their first point.
+    lifts: HashMap<u32, Vec3>,
     /// The fixed lights.
     lights: &'a [BakeLight],
 }
@@ -805,12 +808,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
     let space = face_space(map, face)?;
     let normal = space.plane.normal;
     let (light, points, grid) = light_grid(map, face, spacing)?;
-    let lift = map.light_lifts.iter().find(|(at, _)| {
-        map.faces
-            .get(*at as usize)
-            .is_some_and(|known| known.first_point == face.first_point)
-    });
-    let shine_at = lift.map(|(_, lift)| wide(*lift));
+    let shine_at = scene.lifts.get(&face.first_point).map(|lift| wide(*lift));
     let lifted: Vec<Point> = points
         .iter()
         .map(|point| shine_at.map_or(*point, |lift| add_scaled(*point, lift, 1.0)))
@@ -1269,6 +1267,11 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         planes,
         glass,
         meshes: working.placed.iter().filter_map(MeshShadow::of).collect(),
+        lifts: map
+            .light_lifts
+            .iter()
+            .filter_map(|(face, lift)| Some((map.faces.get(*face as usize)?.first_point, *lift)))
+            .collect(),
         lights: &lights,
     };
 

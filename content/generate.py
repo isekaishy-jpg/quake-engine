@@ -312,7 +312,7 @@ IMAGES = {
 }
 
 MATERIALS_TEXT = {
-    'brick': 'base = textures/brick.png\n    normal = textures/brick_normal.png\n    height = textures/brick_height.png\n    parallax = 0.03',
+    'brick': 'base = textures/brick.png\n    normal = textures/brick_normal.png\n    height = textures/brick_height.png\n    parallax = 0.025',
     'stone': 'base = textures/stone.png\n    normal = textures/stone_normal.png\n    hex = true\n    detail = textures/detail.png',
     'metal': 'base = textures/metal.png\n    normal = textures/metal_normal.png\n    specular = textures/metal_specular.png\n    gloss = 48',
     'mossy_stone': 'base = textures/stone.png\n    normal = textures/stone_normal.png\n    height = textures/stone_height.png\n    layer { base = textures/grass.png mask = textures/blob_mask.png }',
