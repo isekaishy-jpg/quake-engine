@@ -10,16 +10,16 @@ use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{MaterialLibrary, apply_bake, compile, read_map, source_hash};
 use engine_core::math::Vec3;
+use engine_editor::camera::{Camera, FOV, Keys};
 use engine_format::from_text;
-use engine_map::{Map, Texture};
+use engine_map::{Map, Spline, Texture};
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{Drawables, Renderer, Target, TextureFilter, View};
+use engine_render::{Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, View};
 use engine_tools::{Session, prefab_names, run};
 use serde_json::{Value, json};
 
-use crate::camera::{Camera, FOV, Keys};
 use crate::panels::{ACCENT, apply_style};
 use crate::ui_bridge::{UiInput, UiTextures, ui_frame};
 
@@ -49,6 +49,61 @@ struct Thing {
     bounds: Option<(Vec3, Vec3)>,
     /// Its fields, as text.
     fields: Vec<(String, String)>,
+    /// What sort of block it is.
+    kind: String,
+    /// The points of its line, if it has one.
+    points: Vec<Vec3>,
+    /// Whether its line joins up.
+    closed: bool,
+}
+
+/// What a click in the view does, besides selecting.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum Tool {
+    /// Places a prefab.
+    Prefab(String),
+    /// Places a mesh.
+    Mesh(String),
+    /// Presses a material on a surface.
+    Decal(String),
+    /// Presses an image into a surface.
+    Stamp(String),
+    /// Paints a layer, a point at a time.
+    Paint(u8),
+    /// Draws a spline, a point at a time.
+    Spline,
+    /// Applies a material to what's clicked.
+    Material(String),
+}
+
+impl Tool {
+    /// What the view says it's doing.
+    fn describe(&self) -> String {
+        match self {
+            Self::Prefab(name) => format!("placing {name}: click to place"),
+            Self::Mesh(name) => format!("placing mesh {name}: click to place"),
+            Self::Decal(name) => format!("decal {name}: click a surface"),
+            Self::Stamp(name) => format!("stamp {name}: click a surface"),
+            Self::Paint(layer) => format!("painting layer {layer}: click along the stroke"),
+            Self::Spline => "spline: click along the line, then End line".to_owned(),
+            Self::Material(name) => format!("material {name}: click what to change"),
+        }
+    }
+}
+
+/// Which list the left panel shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Tab {
+    /// Prefabs and meshes.
+    Build,
+    /// Decals, stamps and paint.
+    Surfaces,
+    /// Sky, fog, water, lights and splines.
+    World,
+    /// Materials.
+    Materials,
+    /// The map's own script.
+    Script,
 }
 
 /// The editor.
@@ -83,8 +138,22 @@ pub(crate) struct Editor {
     things: Vec<Thing>,
     /// What's selected.
     selected: Option<u64>,
-    /// The prefab that a click places.
-    tool: Option<String>,
+    /// What a click does.
+    tool: Option<Tool>,
+    /// The stroke or spline being drawn.
+    drawing: Option<u64>,
+    /// What the left panel shows.
+    tab: Tab,
+    /// The meshes and materials on offer.
+    offered: (Vec<String>, Vec<String>),
+    /// How big the next decal or stamp is, and how deep a stamp goes.
+    press: (f64, f64),
+    /// The map's script, as it's being edited.
+    script: String,
+    /// The material being edited, and its text.
+    material: (String, String),
+    /// Where the view is in the window.
+    view_rect: egui::Rect,
     /// Prefabs on offer.
     prefabs: Vec<String>,
     /// Parameters for the next prefab, as JSON.
@@ -171,11 +240,24 @@ fn thing_from(json: &Value) -> Option<Thing> {
         .filter(|(key, _)| !matches!(key.as_str(), "id" | "kind" | "children"))
         .map(|(key, value)| (key.clone(), field_text(value)))
         .collect();
+    let points = numbers("points")
+        .map(|parts| {
+            parts
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|point| vec3(point))
+                .collect()
+        })
+        .unwrap_or_default();
     Some(Thing {
         id,
         label: format!("{id}  {label}"),
         bounds,
         fields,
+        kind: kind.to_owned(),
+        points,
+        closed: json.get("closed").and_then(Value::as_bool) == Some(true),
     })
 }
 
@@ -204,6 +286,23 @@ fn ray_box(start: Vec3, direction: Vec3, bounds: (Vec3, Vec3)) -> Option<f32> {
         }
     }
     Some(near)
+}
+
+/// Which way the side of `bounds` nearest `point` faces.
+fn box_normal(point: Vec3, bounds: (Vec3, Vec3)) -> [f64; 3] {
+    let (low, high) = bounds;
+    let sides = [
+        ((point.x - low.x).abs(), [-1.0, 0.0, 0.0]),
+        ((point.x - high.x).abs(), [1.0, 0.0, 0.0]),
+        ((point.y - low.y).abs(), [0.0, -1.0, 0.0]),
+        ((point.y - high.y).abs(), [0.0, 1.0, 0.0]),
+        ((point.z - low.z).abs(), [0.0, 0.0, -1.0]),
+        ((point.z - high.z).abs(), [0.0, 0.0, 1.0]),
+    ];
+    sides
+        .iter()
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .map_or([0.0, 0.0, 1.0], |side| side.1)
 }
 
 /// `value` on the snapping grid.
@@ -246,6 +345,13 @@ impl Editor {
             things: Vec::new(),
             selected: None,
             tool: None,
+            drawing: None,
+            tab: Tab::Build,
+            offered: (Vec::new(), Vec::new()),
+            press: (64.0, 8.0),
+            script: String::new(),
+            material: (String::new(), String::new()),
+            view_rect: egui::Rect::NOTHING,
             prefabs: prefab_names(content),
             params: "{}".to_owned(),
             log: Vec::new(),
@@ -257,6 +363,22 @@ impl Editor {
         };
         editor.refresh_things();
         editor.frame_start_position();
+        if let Ok(listed) = run(&mut editor.session, "list", &json!({})) {
+            let names = |key: &str| -> Vec<String> {
+                listed
+                    .get(key)
+                    .and_then(Value::as_array)
+                    .map(|names| {
+                        names
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .map(str::to_owned)
+                            .collect()
+                    })
+                    .unwrap_or_default()
+            };
+            editor.offered = (names("meshes"), names("materials"));
+        }
         Ok(editor)
     }
 
@@ -395,14 +517,25 @@ impl Editor {
                 emit(&json!({ "ok": true }));
             }
             "tool" => {
-                self.tool = args
+                let name = args.get("name").and_then(Value::as_str).map(str::to_owned);
+                let prefab = args
                     .get("prefab")
                     .and_then(Value::as_str)
                     .map(str::to_owned);
+                let layer = args.get("layer").and_then(Value::as_u64).unwrap_or(0);
+                self.set_tool(match args.get("kind").and_then(Value::as_str) {
+                    Some("mesh") => name.map(Tool::Mesh),
+                    Some("decal") => name.map(Tool::Decal),
+                    Some("stamp") => name.map(Tool::Stamp),
+                    Some("material") => name.map(Tool::Material),
+                    Some("paint") => Some(Tool::Paint(u8::try_from(layer).unwrap_or(0))),
+                    Some("spline") => Some(Tool::Spline),
+                    _ => prefab.or(name).map(Tool::Prefab),
+                });
                 if let Some(params) = args.get("params") {
                     self.params = params.to_string();
                 }
-                emit(&json!({ "tool": self.tool }));
+                emit(&json!({ "tool": self.tool.as_ref().map(Tool::describe) }));
             }
             "click" => {
                 #[expect(clippy::cast_possible_truncation, reason = "pixels fit f32")]
@@ -428,45 +561,129 @@ impl Editor {
         }
     }
 
-    /// A click in the 3D view: places the tool's prefab, or selects.
+    /// The view's size.
+    fn view_size(&self) -> (f32, f32) {
+        let size = self.view_rect.size();
+        if size.x > 1.0 && size.y > 1.0 {
+            (size.x, size.y)
+        } else {
+            #[expect(clippy::cast_precision_loss, reason = "window sizes are small")]
+            (self.size.0 as f32, self.size.1 as f32)
+        }
+    }
+
+    /// Chooses what a click does, ending any line being drawn.
+    fn set_tool(&mut self, tool: Option<Tool>) {
+        self.drawing = None;
+        self.tool = tool;
+    }
+
+    /// A click in the 3D view: uses the tool, or selects.
     fn click(&mut self, pixel: (f32, f32)) {
-        #[expect(clippy::cast_precision_loss, reason = "window sizes are small")]
-        let size = (self.size.0 as f32, self.size.1 as f32);
-        let direction = self.camera.ray(pixel, size);
+        let corner = self.view_rect.min;
+        let inside = if self.view_rect.is_positive() {
+            (pixel.0 - corner.x, pixel.1 - corner.y)
+        } else {
+            pixel
+        };
+        let direction = self.camera.ray(inside, self.view_size());
         let start = self.camera.origin;
         let hit = self
             .things
             .iter()
             .filter_map(|thing| {
-                let distance = ray_box(start, direction, thing.bounds?)?;
-                Some((distance, thing.id))
+                let bounds = thing.bounds?;
+                Some((ray_box(start, direction, bounds)?, thing.id, bounds))
             })
             .min_by(|a, b| a.0.total_cmp(&b.0));
-        if let Some(prefab) = self.tool.clone() {
-            let distance = hit.map_or(512.0, |(distance, _)| distance);
-            let at = start + direction * distance;
-            let params: Value = serde_json::from_str(&self.params).unwrap_or_else(|_| json!({}));
-            let args = json!({
-                "prefab": prefab,
-                "at": [snapped(at.x), snapped(at.y), snapped(at.z)],
-                "params": params,
-            });
-            let _result = self.operate("place_prefab", &args);
-        } else {
-            self.selected = hit.map(|(_, id)| id);
-        }
+        let Some(tool) = self.tool.clone() else {
+            self.selected = hit.map(|(_, id, _)| id);
+            return;
+        };
+        let distance = hit.map_or_else(
+            || {
+                // Nothing there: the ground, or a short way off.
+                if direction.z < -0.01 {
+                    -start.z / direction.z
+                } else {
+                    512.0
+                }
+            },
+            |(distance, ..)| distance,
+        );
+        let at = start + direction * distance;
+        let place = [snapped(at.x), snapped(at.y), snapped(at.z)];
+        let normal = hit.map_or([0.0, 0.0, 1.0], |(.., bounds)| box_normal(at, bounds));
+        let (size, depth) = self.press;
+        let _result = match tool {
+            Tool::Prefab(prefab) => {
+                let params: Value =
+                    serde_json::from_str(&self.params).unwrap_or_else(|_| json!({}));
+                let args = json!({ "prefab": prefab, "at": place, "params": params });
+                self.operate("place_prefab", &args)
+            }
+            Tool::Mesh(source) => {
+                self.operate("place_mesh", &json!({ "source": source, "origin": place }))
+            }
+            Tool::Decal(material) => self.operate(
+                "add_decal",
+                &json!({ "material": material, "origin": place, "normal": normal, "size": size }),
+            ),
+            Tool::Stamp(image) => self.operate(
+                "add_stamp",
+                &json!({
+                    "image": image,
+                    "origin": place,
+                    "normal": normal,
+                    "size": size,
+                    "depth": depth,
+                }),
+            ),
+            Tool::Paint(layer) => {
+                let args = json!({ "points": place, "layer": layer, "radius": size * 0.5 });
+                self.extend_line("paint", args, place)
+            }
+            Tool::Spline => {
+                let name = format!("spline_{}", self.things.len());
+                let args = json!({ "name": name, "points": place });
+                self.extend_line("add_spline", args, place)
+            }
+            Tool::Material(material) => match hit {
+                Some((_, id, _)) => {
+                    self.operate("set_material", &json!({ "id": id, "material": material }))
+                }
+                None => Ok(json!({})),
+            },
+        };
     }
 
-    /// Draws the grid and selection over the view.
+    /// Adds a point to the line being drawn, or starts one with `operation`.
+    fn extend_line(
+        &mut self,
+        operation: &str,
+        start: Value,
+        point: [f64; 3],
+    ) -> Result<Value, String> {
+        if let Some(id) = self.drawing {
+            return self.operate("append_point", &json!({ "id": id, "point": point }));
+        }
+        let answer = self.operate(operation, &start)?;
+        self.drawing = answer.get("id").and_then(Value::as_u64);
+        Ok(answer)
+    }
+
+    /// Draws the grid, lines and selection over the view.
     fn overlay(&self, painter: &egui::Painter) {
-        #[expect(clippy::cast_precision_loss, reason = "window sizes are small")]
-        let size = (self.size.0 as f32, self.size.1 as f32);
+        let size = self.view_size();
+        let corner = self.view_rect.min.to_vec2();
+        let spot = |point: Vec3| {
+            self.camera
+                .project(point, size)
+                .map(|(x, y)| Pos2::new(x, y) + corner)
+        };
         let line = |from: Vec3, to: Vec3, stroke: Stroke| {
-            if let (Some(a), Some(b)) = (
-                self.camera.project(from, size),
-                self.camera.project(to, size),
-            ) {
-                painter.line_segment([Pos2::new(a.0, a.1), Pos2::new(b.0, b.1)], stroke);
+            if let (Some(a), Some(b)) = (spot(from), spot(to)) {
+                painter.line_segment([a, b], stroke);
             }
         };
         let grid = Stroke::new(1.0, Color32::from_white_alpha(14));
@@ -487,6 +704,10 @@ impl Editor {
                 Vec3::new(centre_x + reach, centre_y + offset, 0.0),
                 grid,
             );
+        }
+        for thing in self.things.iter().filter(|thing| !thing.points.is_empty()) {
+            let chosen = Some(thing.id) == self.selected || Some(thing.id) == self.drawing;
+            self.draw_line(painter, thing, chosen, &spot);
         }
         let chosen = self
             .things
@@ -511,6 +732,54 @@ impl Editor {
                 line(corner(a.0, a.1, false), corner(b.0, b.1, false), stroke);
                 line(corner(a.0, a.1, true), corner(b.0, b.1, true), stroke);
                 line(corner(a.0, a.1, false), corner(a.0, a.1, true), stroke);
+            }
+        }
+    }
+
+    /// Draws a spline or stroke as a floating line, with bubbles at its points.
+    fn draw_line(
+        &self,
+        painter: &egui::Painter,
+        thing: &Thing,
+        chosen: bool,
+        spot: &dyn Fn(Vec3) -> Option<Pos2>,
+    ) {
+        let color = if chosen {
+            ACCENT
+        } else {
+            Color32::from_rgb(0x6f, 0xb7, 0xd6)
+        };
+        let shape = Spline {
+            name: String::new(),
+            points: thing.points.clone(),
+            closed: thing.closed,
+        };
+        let steps = thing.points.len() * 12;
+        let mut last = None;
+        for step in 0..=steps {
+            #[expect(clippy::cast_precision_loss, reason = "short lines")]
+            let share = step as f32 / steps.max(1) as f32;
+            let now = if thing.kind == "spline" {
+                shape.point_at(share).and_then(spot)
+            } else {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    clippy::cast_precision_loss,
+                    reason = "within a short line"
+                )]
+                let at = (share * (thing.points.len() - 1) as f32) as usize;
+                spot(thing.points[at])
+            };
+            if let (Some(from), Some(to)) = (last, now) {
+                painter.line_segment([from, to], Stroke::new(2.0, color));
+            }
+            last = now;
+        }
+        for point in &thing.points {
+            if let Some(at) = spot(*point) {
+                painter.circle_filled(at, 5.0, color);
+                painter.circle_stroke(at, 7.0, Stroke::new(1.0, color));
             }
         }
     }
@@ -551,26 +820,35 @@ impl Editor {
         });
     }
 
-    /// The left panel: prefabs and what's in the map.
+    /// The left panel: what can be added, and what's in the map.
     fn left_panel(&mut self, ui: &mut egui::Ui) {
-        ui.label(RichText::new("PREFABS").color(ACCENT));
-        egui::ScrollArea::vertical()
-            .id_salt("prefabs")
-            .max_height(280.0)
-            .show(ui, |ui| {
-                let select = ui.selectable_label(self.tool.is_none(), "select");
-                if select.clicked() {
-                    self.tool = None;
+        ui.horizontal_wrapped(|ui| {
+            for (tab, name) in [
+                (Tab::Build, "Build"),
+                (Tab::Surfaces, "Surfaces"),
+                (Tab::World, "World"),
+                (Tab::Materials, "Materials"),
+                (Tab::Script, "Script"),
+            ] {
+                if ui.selectable_label(self.tab == tab, name).clicked() {
+                    self.tab = tab;
                 }
-                for name in self.prefabs.clone() {
-                    let chosen = self.tool.as_deref() == Some(name.as_str());
-                    if ui.selectable_label(chosen, name.as_str()).clicked() {
-                        self.tool = Some(name);
-                    }
-                }
-            });
-        ui.label("parameters");
-        ui.text_edit_singleline(&mut self.params);
+            }
+        });
+        ui.separator();
+        if ui.selectable_label(self.tool.is_none(), "select").clicked() {
+            self.set_tool(None);
+        }
+        if self.drawing.is_some() && ui.button("End line").clicked() {
+            self.drawing = None;
+        }
+        match self.tab {
+            Tab::Build => self.build_tab(ui),
+            Tab::Surfaces => self.surfaces_tab(ui),
+            Tab::World => self.world_tab(ui),
+            Tab::Materials => self.materials_tab(ui),
+            Tab::Script => self.script_tab(ui),
+        }
         ui.separator();
         ui.label(RichText::new("MAP").color(ACCENT));
         egui::ScrollArea::vertical()
@@ -583,10 +861,152 @@ impl Editor {
                         .clicked()
                     {
                         self.selected = Some(id);
-                        self.tool = None;
+                        self.set_tool(None);
                     }
                 }
             });
+    }
+
+    /// A list of names, each choosing a tool.
+    fn tool_list(
+        &mut self,
+        ui: &mut egui::Ui,
+        id: &str,
+        names: &[String],
+        make: fn(String) -> Tool,
+    ) {
+        egui::ScrollArea::vertical()
+            .id_salt(id.to_owned())
+            .max_height(200.0)
+            .show(ui, |ui| {
+                for name in names {
+                    let tool = make(name.clone());
+                    let chosen = self.tool.as_ref() == Some(&tool);
+                    if ui.selectable_label(chosen, name.as_str()).clicked() {
+                        self.set_tool(Some(tool));
+                    }
+                }
+            });
+    }
+
+    /// Prefabs and meshes.
+    fn build_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("PREFABS").color(ACCENT));
+        let prefabs = self.prefabs.clone();
+        self.tool_list(ui, "prefabs", &prefabs, Tool::Prefab);
+        ui.label("parameters");
+        ui.text_edit_singleline(&mut self.params);
+        ui.label(RichText::new("MESHES").color(ACCENT));
+        let meshes = self.offered.0.clone();
+        self.tool_list(ui, "meshes", &meshes, Tool::Mesh);
+    }
+
+    /// Decals, stamps and paint.
+    fn surfaces_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label("size");
+        ui.add(egui::DragValue::new(&mut self.press.0).range(8.0..=1024.0));
+        ui.label("stamp depth");
+        ui.add(egui::DragValue::new(&mut self.press.1).range(1.0..=64.0));
+        ui.label(RichText::new("PAINT LAYER").color(ACCENT));
+        ui.horizontal(|ui| {
+            for layer in 0..3 {
+                let tool = Tool::Paint(layer);
+                let chosen = self.tool.as_ref() == Some(&tool);
+                if ui.selectable_label(chosen, layer.to_string()).clicked() {
+                    self.set_tool(Some(tool));
+                }
+            }
+        });
+        let materials = self.offered.1.clone();
+        ui.label(RichText::new("DECALS").color(ACCENT));
+        self.tool_list(ui, "decals", &materials, Tool::Decal);
+        ui.label(RichText::new("STAMPS").color(ACCENT));
+        self.tool_list(ui, "stamps", &materials, Tool::Stamp);
+    }
+
+    /// Sky, fog, water, lights and splines.
+    fn world_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("ADD").color(ACCENT));
+        ui.horizontal_wrapped(|ui| {
+            for kind in ["sky", "fog", "water"] {
+                if ui.button(kind).clicked() {
+                    let _added = self.operate("set_block", &json!({ "kind": kind }));
+                }
+            }
+            if ui.button("spline").clicked() {
+                self.set_tool(Some(Tool::Spline));
+            }
+        });
+        ui.horizontal_wrapped(|ui| {
+            let at = self.camera.origin;
+            let place = [snapped(at.x), snapped(at.y), snapped(at.z)];
+            for (name, kind) in [
+                ("fixed light", "light"),
+                ("live light", "live_light"),
+                ("flame", "flame"),
+            ] {
+                if ui.button(name).clicked() {
+                    let args = json!({ "type": kind, "origin": place });
+                    let _added = self.operate("add_entity", &args);
+                }
+            }
+        });
+    }
+
+    /// Materials: applying them, and editing their text.
+    fn materials_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("MATERIALS").color(ACCENT));
+        let names = self.offered.1.clone();
+        egui::ScrollArea::vertical()
+            .id_salt("materials")
+            .max_height(180.0)
+            .show(ui, |ui| {
+                for name in names {
+                    let tool = Tool::Material(name.clone());
+                    let chosen = self.tool.as_ref() == Some(&tool);
+                    if ui.selectable_label(chosen, name.as_str()).clicked() {
+                        let read = self.operate("read_material", &json!({ "name": name }));
+                        let text = read.ok().and_then(|answer| {
+                            answer
+                                .get("text")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned)
+                        });
+                        self.material = (name, text.unwrap_or_default());
+                        self.set_tool(Some(tool));
+                    }
+                }
+            });
+        ui.text_edit_multiline(&mut self.material.1);
+        if ui.button("Save material").clicked() {
+            let (name, text) = self.material.clone();
+            let _saved = self.operate("write_material", &json!({ "name": name, "text": text }));
+        }
+    }
+
+    /// The map's own script.
+    fn script_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("MAP SCRIPT").color(ACCENT));
+        ui.label("entity types are functions here");
+        if ui.button("Load").clicked()
+            && let Ok(answer) = self.operate("read_script", &json!({}))
+        {
+            self.script = answer
+                .get("text")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+        }
+        egui::ScrollArea::vertical()
+            .id_salt("script")
+            .max_height(320.0)
+            .show(ui, |ui| {
+                ui.add(egui::TextEdit::multiline(&mut self.script).code_editor());
+            });
+        if ui.button("Save script").clicked() {
+            let text = self.script.clone();
+            let _saved = self.operate("write_script", &json!({ "text": text }));
+        }
     }
 
     /// The right panel: the selected thing's fields.
@@ -676,13 +1096,14 @@ impl Editor {
             .frame(egui::Frame::NONE)
             .show(root, |ui| {
                 let rect = ui.max_rect();
+                self.view_rect = rect;
                 let response = ui.allocate_rect(rect, egui::Sense::click());
                 self.overlay(ui.painter());
                 if let Some(tool) = &self.tool {
                     ui.painter().text(
                         rect.left_top() + egui::vec2(10.0, 8.0),
                         Align2::LEFT_TOP,
-                        format!("placing {tool}: click to place"),
+                        tool.describe(),
                         FontId::monospace(13.0),
                         ACCENT,
                     );
@@ -815,7 +1236,41 @@ impl PlatformApp for Editor {
             styles: [1.0; 64],
             gamma: 1.0,
         };
-        if let Err(error) = renderer.draw(&view, Drawables::default()) {
+        let moving: Vec<LiveLight> = self.map.as_ref().map_or_else(Vec::new, |map| {
+            (0_u32..)
+                .zip(&map.live_lights)
+                .map(|(id, light)| LiveLight {
+                    id,
+                    origin: light.position(time),
+                    radius: light.radius,
+                    color: light.color,
+                    spot: light.spot,
+                    spot_cosine: light.spot_cosine,
+                    shadows: light.shadows,
+                })
+                .take(MAX_LIVE_LIGHTS)
+                .collect()
+        });
+        let drawables = Drawables {
+            live_lights: &moving,
+            ..Drawables::default()
+        };
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "the view is inside the window"
+        )]
+        let area = self.view_rect.is_positive().then(|| {
+            let rect = self.view_rect;
+            [
+                rect.min.x as u32,
+                rect.min.y as u32,
+                rect.width() as u32,
+                rect.height() as u32,
+            ]
+        });
+        renderer.set_view_area(area);
+        if let Err(error) = renderer.draw(&view, drawables) {
             self.log.push(format!("draw: {error}"));
         }
         if let Some(path) = self.capture.take()

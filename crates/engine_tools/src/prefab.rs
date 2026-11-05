@@ -10,7 +10,7 @@ use engine_format::{Block, Value};
 use engine_script::{ScriptValue, run_builder};
 use serde_json::Value as Json;
 
-use crate::json::numbers;
+use crate::json::move_block;
 
 /// What a prefab made.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -75,47 +75,8 @@ fn block_from_script(value: &ScriptValue, offset: [f64; 3]) -> Result<Block, Str
             }
         }
     }
-    moved(&mut block, offset);
+    move_block(&mut block, offset);
     Ok(block)
-}
-
-/// Moves what's in `block` by `offset`, leaving its children, which moved
-/// themselves.
-fn moved(block: &mut Block, offset: [f64; 3]) {
-    if block.kind == "face" {
-        let normal = block.get("normal").and_then(Value::numbers);
-        let distance = block.get("distance").and_then(Value::number);
-        if let (Some(normal), Some(distance)) = (normal, distance)
-            && normal.len() == 3
-        {
-            let length = normal.iter().map(|part| part * part).sum::<f64>().sqrt();
-            let along: f64 = normal.iter().zip(offset).map(|(a, b)| a * b).sum();
-            let moved_distance = distance + along / length.max(1e-9);
-            for (key, value) in &mut block.fields {
-                if key == "distance" {
-                    *value = Value::Number(moved_distance);
-                }
-            }
-        }
-        return;
-    }
-    for (key, value) in &mut block.fields {
-        let Some(mut parts) = value.numbers() else {
-            continue;
-        };
-        let wanted = match key.as_str() {
-            "cuboid" => 6,
-            "origin" => 3,
-            _ => continue,
-        };
-        if parts.len() != wanted {
-            continue;
-        }
-        for (index, part) in parts.iter_mut().enumerate() {
-            *part += offset[index % 3];
-        }
-        *value = numbers(&parts);
-    }
 }
 
 /// A script value from JSON.

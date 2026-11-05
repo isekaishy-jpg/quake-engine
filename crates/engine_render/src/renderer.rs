@@ -253,6 +253,12 @@ impl Renderer {
         self.backend.set_post(post);
     }
 
+    /// Sets the part of the window a scene shows in, as left, top, width and
+    /// height, or `None` for all of it. What's round it is the UI's.
+    pub fn set_view_area(&mut self, area: Option<[u32; 4]>) {
+        self.backend.set_view_area(area);
+    }
+
     /// How many lights' shadows the last frame redrew.
     #[must_use]
     pub fn shadow_redraws(&self) -> usize {

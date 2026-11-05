@@ -5,7 +5,6 @@
 //! agent can work on the map you're looking at.
 
 mod app;
-mod camera;
 mod panels;
 mod ui_bridge;
 

@@ -49,6 +49,18 @@ pub struct Level {
     /// The host's name and colours.
     #[serde(default)]
     pub host: SeatInfo,
+    /// The level's own scripts, by name, loaded after the game's.
+    #[serde(default)]
+    pub scripts: Vec<(String, String)>,
+}
+
+/// The game's scripts, then the level's own.
+fn all_sources<'a>(sources: &[(&'a str, &'a str)], level: &'a Level) -> Vec<(&'a str, &'a str)> {
+    let own = level
+        .scripts
+        .iter()
+        .map(|(name, text)| (name.as_str(), text.as_str()));
+    sources.iter().copied().chain(own).collect()
 }
 
 /// What's been said to the client that a new one would need to hear again.
@@ -181,7 +193,7 @@ impl Server {
         let map = Arc::clone(world.map());
         let simulation = Rc::new(RefCell::new(Simulation::new(Arc::clone(&map), origin)));
         simulation.borrow_mut().set_world(Rc::clone(&world));
-        let game = Game::new(&simulation, sources)?;
+        let game = Game::new(&simulation, &all_sources(sources, &level))?;
         game.start_level(&level.name, &level.settings, level.flags);
         let fair = FairSettings::from_settings(&level.settings);
         game.spawn_map(&map.entities);
@@ -230,7 +242,7 @@ impl Server {
         let simulation = Simulation::restored(Arc::clone(world.map()), saved.simulation);
         let simulation = Rc::new(RefCell::new(simulation));
         simulation.borrow_mut().set_world(Rc::clone(&world));
-        let game = Game::new(&simulation, sources)?;
+        let game = Game::new(&simulation, &all_sources(sources, &saved.level))?;
         game.start_level(&saved.level.name, &saved.level.settings, saved.level.flags);
         game.restore(&saved.scripts)?;
         let fair = FairSettings::from_settings(&saved.level.settings);

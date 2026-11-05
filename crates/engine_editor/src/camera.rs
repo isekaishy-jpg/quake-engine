@@ -3,7 +3,7 @@
 use engine_core::math::{Vec3, view_axes};
 
 /// The horizontal field of view, at 4:3, in degrees.
-pub(crate) const FOV: f32 = 90.0;
+pub const FOV: f32 = 90.0;
 
 /// Units a second the camera flies.
 const FLY_SPEED: f32 = 640.0;
@@ -13,37 +13,37 @@ const LOOK_SPEED: f32 = 0.15;
 
 /// The free camera.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub(crate) struct Camera {
+pub struct Camera {
     /// Where it is.
-    pub(crate) origin: Vec3,
+    pub origin: Vec3,
     /// Its yaw in degrees.
-    pub(crate) yaw: f32,
+    pub yaw: f32,
     /// Its pitch in degrees. Positive looks down.
-    pub(crate) pitch: f32,
+    pub pitch: f32,
 }
 
 /// Which movement keys are held.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct Keys {
+pub struct Keys {
     /// Forward.
-    pub(crate) forward: bool,
+    pub forward: bool,
     /// Back.
-    pub(crate) back: bool,
+    pub back: bool,
     /// Left.
-    pub(crate) left: bool,
+    pub left: bool,
     /// Right.
-    pub(crate) right: bool,
+    pub right: bool,
     /// Up.
-    pub(crate) up: bool,
+    pub up: bool,
     /// Down.
-    pub(crate) down: bool,
+    pub down: bool,
     /// Faster.
-    pub(crate) fast: bool,
+    pub fast: bool,
 }
 
 impl Camera {
     /// Turns by mouse counts.
-    pub(crate) fn look(&mut self, x: f64, y: f64) {
+    pub fn look(&mut self, x: f64, y: f64) {
         #[expect(
             clippy::cast_possible_truncation,
             reason = "a look needs no more than f32"
@@ -54,7 +54,7 @@ impl Camera {
     }
 
     /// Moves for `seconds` with `keys` held.
-    pub(crate) fn fly(&mut self, keys: Keys, seconds: f32) {
+    pub fn fly(&mut self, keys: Keys, seconds: f32) {
         let [forward, right, _] = view_axes(self.yaw, self.pitch);
         let axis = |plus: bool, minus: bool| f32::from(u8::from(plus)) - f32::from(u8::from(minus));
         let along = forward * axis(keys.forward, keys.back)
@@ -79,7 +79,8 @@ impl Camera {
     }
 
     /// The direction through a pixel.
-    pub(crate) fn ray(&self, pixel: (f32, f32), size: (f32, f32)) -> Vec3 {
+    #[must_use]
+    pub fn ray(&self, pixel: (f32, f32), size: (f32, f32)) -> Vec3 {
         let [forward, right, up] = view_axes(self.yaw, self.pitch);
         let (wide, high) = Self::half_view(size);
         let x = (pixel.0 / size.0 * 2.0 - 1.0) * wide;
@@ -88,7 +89,8 @@ impl Camera {
     }
 
     /// Where `point` shows on screen, if it's in front of the camera.
-    pub(crate) fn project(&self, point: Vec3, size: (f32, f32)) -> Option<(f32, f32)> {
+    #[must_use]
+    pub fn project(&self, point: Vec3, size: (f32, f32)) -> Option<(f32, f32)> {
         let [forward, right, up] = view_axes(self.yaw, self.pitch);
         let offset = point - self.origin;
         let depth = offset.dot(forward);

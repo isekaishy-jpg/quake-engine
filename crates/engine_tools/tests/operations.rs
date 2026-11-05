@@ -181,3 +181,246 @@ fn a_failed_operation_changes_nothing() {
     assert_eq!(ok(&mut session, "undo", json!({}))["changed"], true);
     fs::remove_dir_all(&root).expect("clean up");
 }
+
+/// The text of a saved map's block of `kind`.
+fn block_of(session: &Session, kind: &str) -> String {
+    let text = session.text();
+    let start = text
+        .find(&format!("{kind} "))
+        .unwrap_or_else(|| panic!("no {kind}: {text}"));
+    text[start..].to_owned()
+}
+
+/// Each feature's operation adds its block, and undo takes it away.
+#[test]
+fn features_have_operations_that_undo() {
+    let mut session = Session::new(&content("features"));
+    let before = session.text();
+    ok(
+        &mut session,
+        "place_mesh",
+        json!({ "source": "statue", "origin": [1, 2, 3], "scale": 2 }),
+    );
+    ok(
+        &mut session,
+        "add_decal",
+        json!({ "material": "mark", "origin": [0, 0, 0], "normal": [0, 0, 1], "size": 32 }),
+    );
+    ok(
+        &mut session,
+        "add_stamp",
+        json!({ "image": "letters", "origin": [0, 0, 0], "normal": [0, 1, 0], "depth": 8 }),
+    );
+    ok(
+        &mut session,
+        "paint",
+        json!({ "points": [0, 0, 0, 64, 0, 0], "layer": 1 }),
+    );
+    ok(
+        &mut session,
+        "add_spline",
+        json!({ "name": "patrol", "points": [0, 0, 0, 64, 0, 0] }),
+    );
+    for kind in ["mesh", "decal", "stamp", "paint", "spline"] {
+        assert!(session.text().contains(kind), "{kind}");
+    }
+    for _ in 0..5 {
+        ok(&mut session, "undo", json!({}));
+    }
+    assert_eq!(session.text(), before);
+}
+
+/// What each needs is asked for.
+#[test]
+fn features_say_what_they_need() {
+    let mut session = Session::new(&content("needs"));
+    let error = run(&mut session, "add_decal", &json!({ "origin": [0, 0, 0] }));
+    assert!(error.expect_err("no material").contains("material"));
+    let error = run(&mut session, "add_spline", &json!({ "points": [0, 0, 0] }));
+    assert!(error.expect_err("no name").contains("name"));
+}
+
+/// `set_block` makes a block a map has one of, and then changes that one.
+#[test]
+fn set_block_keeps_one_of_a_block() {
+    let mut session = Session::new(&content("once"));
+    ok(
+        &mut session,
+        "set_block",
+        json!({ "kind": "fog", "fields": { "density": 0.01 } }),
+    );
+    ok(
+        &mut session,
+        "set_block",
+        json!({ "kind": "fog", "fields": { "density": 0.02 } }),
+    );
+    let text = session.text();
+    assert_eq!(text.matches("fog ").count(), 1, "{text}");
+    assert!(text.contains("0.02"), "{text}");
+}
+
+/// A line grows a point at a time.
+#[test]
+fn a_line_grows() {
+    let mut session = Session::new(&content("line"));
+    let made = ok(
+        &mut session,
+        "add_spline",
+        json!({ "name": "a", "points": [0, 0, 0] }),
+    );
+    let id = made["id"].clone();
+    let grown = ok(
+        &mut session,
+        "append_point",
+        json!({ "id": id, "point": [8, 0, 0] }),
+    );
+    assert_eq!(grown["points"], 2);
+    let error = run(
+        &mut session,
+        "append_point",
+        &json!({ "id": id, "point": [8] }),
+    );
+    assert!(error.is_err());
+}
+
+/// Moving a line moves all of its points, and a stencil's light with it unless
+/// that's a sun's direction.
+#[test]
+fn moving_carries_lines_and_lights() {
+    let mut session = Session::new(&content("moves"));
+    let line = ok(
+        &mut session,
+        "add_spline",
+        json!({ "name": "a", "points": [0, 0, 0, 10, 0, 0] }),
+    );
+    ok(
+        &mut session,
+        "move",
+        json!({ "id": line["id"], "by": [1, 2, 3] }),
+    );
+    let text = block_of(&session, "spline");
+    assert!(text.contains("1 2 3") && text.contains("11 2 3"), "{text}");
+    let lamp = ok(
+        &mut session,
+        "add_entity",
+        json!({ "type": "ray_stencil", "origin": [0, 0, 0], "fields": { "light": [5, 5, 5] } }),
+    );
+    ok(
+        &mut session,
+        "move",
+        json!({ "id": lamp["id"], "by": [1, 0, 0] }),
+    );
+    assert!(session.text().contains("6 5 5"), "{}", session.text());
+    let sun = ok(
+        &mut session,
+        "add_entity",
+        json!({
+            "type": "ray_stencil",
+            "origin": [0, 0, 0],
+            "fields": { "light": [7, 7, 7], "sun": true },
+        }),
+    );
+    ok(
+        &mut session,
+        "move",
+        json!({ "id": sun["id"], "by": [1, 0, 0] }),
+    );
+    assert!(
+        session.text().contains("7 7 7"),
+        "a direction stays: {}",
+        session.text()
+    );
+}
+
+/// A material covers a whole brush, faces too.
+#[test]
+fn a_material_covers_a_brush() {
+    let mut session = Session::new(&content("cover"));
+    let brush = ok(
+        &mut session,
+        "add_brush",
+        json!({ "cuboid": [0, 0, 0, 8, 8, 8], "material": "old" }),
+    );
+    ok(
+        &mut session,
+        "set_material",
+        json!({ "id": brush["id"], "material": "new" }),
+    );
+    let text = session.text();
+    assert!(text.contains("new") && !text.contains("old"), "{text}");
+}
+
+/// Materials are read and written, and one that won't parse is refused.
+#[test]
+fn materials_edit_safely() {
+    let root = content("materials");
+    fs::create_dir_all(root.join("materials")).expect("directory");
+    fs::write(root.join("materials/stone.emat"), "format 1 material\n").expect("write");
+    let mut session = Session::new(&root);
+    let read = ok(&mut session, "read_material", json!({ "name": "stone" }));
+    assert!(read["text"].as_str().expect("text").contains("material"));
+    let bad = json!({ "name": "stone", "text": "not { a document" });
+    assert!(run(&mut session, "write_material", &bad).is_err());
+    let climb = json!({ "name": "../stone", "text": "format 1 material\n" });
+    assert!(run(&mut session, "write_material", &climb).is_err());
+    let good = json!({ "name": "stone", "text": "format 1 material\n\nsurface {\n}\n" });
+    ok(&mut session, "write_material", good);
+    let again = ok(&mut session, "read_material", json!({ "name": "stone" }));
+    assert!(again["text"].as_str().expect("text").contains("surface"));
+}
+
+/// A map's script sits beside it, and needs a saved map to sit beside.
+#[test]
+fn a_maps_script_sits_beside_it() {
+    let root = content("script");
+    let mut session = Session::new(&root);
+    assert!(run(&mut session, "read_script", &json!({})).is_err());
+    let path = root.join("mine.emap");
+    ok(
+        &mut session,
+        "save",
+        json!({ "path": path.display().to_string() }),
+    );
+    ok(
+        &mut session,
+        "write_script",
+        json!({ "text": "function thing(self) end" }),
+    );
+    assert!(root.join("mine.luau").exists());
+    let read = ok(&mut session, "read_script", json!({}));
+    assert_eq!(read["text"], "function thing(self) end");
+}
+
+/// A prefab's line lands where it's placed, like the rest of it.
+#[test]
+fn a_prefabs_lines_move_with_it() {
+    let root = content("prefab_line");
+    let prefab = r#"
+return {
+    build = function(params)
+        return { { block = "spline", name = "p", points = { 0, 0, 0, 16, 0, 0 } } }
+    end,
+}
+"#;
+    fs::write(root.join("prefabs").join("patrol.luau"), prefab).expect("write");
+    let mut session = Session::new(&root);
+    ok(
+        &mut session,
+        "place_prefab",
+        json!({ "prefab": "patrol", "at": [100, 0, 0] }),
+    );
+    let text = block_of(&session, "spline");
+    assert!(
+        text.contains("100 0 0") && text.contains("116 0 0"),
+        "{text}"
+    );
+}
+
+/// What the content offers can be listed.
+#[test]
+fn the_content_can_be_listed() {
+    let mut session = Session::new(&content("list"));
+    let listed = ok(&mut session, "list", json!({}));
+    assert_eq!(listed["prefabs"], json!(["stairs"]));
+    assert_eq!(listed["meshes"], json!([]));
+}

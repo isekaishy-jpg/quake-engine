@@ -355,6 +355,8 @@ pub(crate) struct Backend {
     scene_pass: RenderPass,
     /// How many samples a pixel scenes have.
     samples: u32,
+    /// The part of the window the scene shows in.
+    view_area: Option<[u32; 4]>,
     /// The moving light uniforms.
     live_uniforms: GpuBuffer,
     /// Shadow maps for moving lights.
@@ -656,6 +658,7 @@ impl Backend {
             capture_pass,
             scene_pass,
             samples: 1,
+            view_area: None,
             live_uniforms,
             shadows,
             shadow_sampler,
@@ -862,6 +865,22 @@ impl Backend {
         self.post = post;
     }
 
+    /// Sets the part of the window the scene shows in, or `None` for all of it.
+    pub(crate) fn set_view_area(&mut self, area: Option<[u32; 4]>) {
+        self.view_area = area;
+    }
+
+    /// Where in a window of `extent` the scene shows, as a corner and a size.
+    fn view_area(&self, extent: (u32, u32)) -> ((u32, u32), (u32, u32)) {
+        match self.view_area {
+            Some([x, y, width, height]) if width > 0 && height > 0 => {
+                let (x, y) = (x.min(extent.0 - 1), y.min(extent.1 - 1));
+                ((x, y), (width.min(extent.0 - x), height.min(extent.1 - y)))
+            }
+            _ => ((0, 0), extent),
+        }
+    }
+
     /// How many lights' shadows the last frame redrew.
     pub(crate) fn shadow_redraws(&self) -> usize {
         self.shadows.redraws()
@@ -938,7 +957,12 @@ impl Backend {
     }
 
     /// Records the final pass.
-    fn record_post(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>, size: (u32, u32)) {
+    fn record_post(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        corner: (u32, u32),
+        size: (u32, u32),
+    ) {
         let Some(target) = &self.scene_target else {
             return;
         };
@@ -946,8 +970,18 @@ impl Backend {
             clippy::cast_precision_loss,
             reason = "window sizes are far below 2^24"
         )]
-        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
-        rec.set_scissor(0, 0, size.0, size.1);
+        rec.set_viewport(
+            corner.0 as f32,
+            corner.1 as f32,
+            size.0 as f32,
+            size.1 as f32,
+        );
+        rec.set_scissor(
+            i32::try_from(corner.0).unwrap_or(0),
+            i32::try_from(corner.1).unwrap_or(0),
+            size.0,
+            size.1,
+        );
         rec.bind_graphics_pipeline(&self.post_pipeline);
         rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
         rec.draw(3, 1, 0, 0);
@@ -981,14 +1015,15 @@ impl Backend {
         else {
             return self.rebuild_window();
         };
+        let (corner, shown) = self.view_area(extent);
         #[expect(
             clippy::cast_precision_loss,
             reason = "window sizes are far below 2^24"
         )]
-        let aspect = extent.0 as f32 / extent.1 as f32;
+        let aspect = shown.0 as f32 / shown.1.max(1) as f32;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, extent)?;
-        self.ensure_scene_target(extent)?;
+        self.ensure_scene_target(shown)?;
         let Some(window) = &self.window else {
             return Ok(());
         };
@@ -996,7 +1031,7 @@ impl Backend {
         let mut commands = self.command_pool.allocate_primary()?;
         {
             let mut rec = commands.begin()?;
-            self.record_scene(&mut rec, scene, view, extent);
+            self.record_scene(&mut rec, scene, view, shown);
             rec.begin_render_pass_ext(
                 &self.present_pass,
                 &window.framebuffers[at],
@@ -1008,7 +1043,7 @@ impl Backend {
                     },
                 ],
             );
-            self.record_post(&mut rec, extent);
+            self.record_post(&mut rec, corner, shown);
             Self::record_canvas(&mut rec, self.canvas.as_ref(), extent);
             rec.end_render_pass();
             rec.end()?;
@@ -1095,7 +1130,7 @@ impl Backend {
                         },
                     ],
                 );
-                self.record_post(rec, (width, height));
+                self.record_post(rec, (0, 0), (width, height));
                 Self::record_canvas(rec, self.canvas.as_ref(), (width, height));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(

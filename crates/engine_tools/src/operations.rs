@@ -12,8 +12,9 @@ use engine_format::{Block, Value};
 use engine_map::{MipLevel, Texture};
 use serde_json::{Value as Json, json};
 
+use crate::features;
 use crate::game_run::GameRunner;
-use crate::json::{block_to_json, numbers, point_from_json, value_from_json};
+use crate::json::{block_to_json, move_block, numbers, point_from_json, value_from_json};
 use crate::prefab::{build_prefab, prefab_names};
 use crate::session::{ID_FIELD, Session, id_of};
 
@@ -79,6 +80,62 @@ pub const OPERATIONS: &[OperationInfo] = &[
     OperationInfo {
         name: "prefabs",
         help: "Lists the prefabs.",
+    },
+    OperationInfo {
+        name: "add_block",
+        help: "Adds any block. kind, fields.",
+    },
+    OperationInfo {
+        name: "set_block",
+        help: "Makes or changes a block a map has one of, such as sky, fog or water. kind, fields.",
+    },
+    OperationInfo {
+        name: "place_mesh",
+        help: "Places a mesh. source, optional origin, angles, scale.",
+    },
+    OperationInfo {
+        name: "add_decal",
+        help: "Presses an image on surfaces. material, origin, normal, optional size, angle, depth.",
+    },
+    OperationInfo {
+        name: "add_stamp",
+        help: "Carves or raises surfaces. image, origin, normal, optional size, depth, detail, inner.",
+    },
+    OperationInfo {
+        name: "paint",
+        help: "Adds a stroke of a layer. points, optional layer, radius, strength.",
+    },
+    OperationInfo {
+        name: "add_spline",
+        help: "Adds a line for movement. name, points, optional closed.",
+    },
+    OperationInfo {
+        name: "append_point",
+        help: "Adds a point to a stroke or spline. id, point.",
+    },
+    OperationInfo {
+        name: "set_material",
+        help: "Sets the material of a thing, on all of a brush's faces. id, material.",
+    },
+    OperationInfo {
+        name: "list",
+        help: "Lists the content's materials, meshes and prefabs.",
+    },
+    OperationInfo {
+        name: "read_script",
+        help: "Reads the map's own script.",
+    },
+    OperationInfo {
+        name: "write_script",
+        help: "Writes the map's own script. text.",
+    },
+    OperationInfo {
+        name: "read_material",
+        help: "Reads a material's text. name.",
+    },
+    OperationInfo {
+        name: "write_material",
+        help: "Writes a material's text, which must parse. name, text.",
     },
     OperationInfo {
         name: "validate",
@@ -151,6 +208,20 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "undo" => Ok(json!({ "changed": session.undo() })),
         "redo" => Ok(json!({ "changed": session.redo() })),
         "prefabs" => Ok(json!({ "prefabs": prefab_names(&session.content) })),
+        "add_block" => features::add_block(session, args),
+        "set_block" => features::set_block(session, args),
+        "place_mesh" => features::place_mesh(session, args),
+        "add_decal" => features::add_decal(session, args),
+        "add_stamp" => features::add_stamp(session, args),
+        "paint" => features::paint(session, args),
+        "add_spline" => features::add_spline(session, args),
+        "append_point" => features::append_point(session, args),
+        "set_material" => features::set_material(session, args),
+        "list" => Ok(features::list(session)),
+        "read_script" => features::read_script(session),
+        "write_script" => features::write_script(session, args),
+        "read_material" => features::read_material(session, args),
+        "write_material" => features::write_material(session, args),
         "validate" => validate(session),
         "compile" => bake(session),
         "shot" => GameRunner::from_environment(session)?.shot(args),
@@ -262,40 +333,7 @@ fn set_field(session: &mut Session, args: &Json) -> Result<Json, String> {
 
 /// Moves `block` and anything inside it.
 fn shift(block: &mut Block, by: [f64; 3]) {
-    if block.kind == "face" {
-        let normal = block.get("normal").and_then(Value::numbers);
-        let distance = block.get("distance").and_then(Value::number);
-        if let (Some(normal), Some(distance)) = (normal, distance)
-            && normal.len() == 3
-        {
-            let length = normal.iter().map(|part| part * part).sum::<f64>().sqrt();
-            let along: f64 = normal.iter().zip(by).map(|(a, b)| a * b).sum();
-            let moved_distance = distance + along / length.max(1e-9);
-            for (key, value) in &mut block.fields {
-                if key == "distance" {
-                    *value = Value::Number(moved_distance);
-                }
-            }
-        }
-        return;
-    }
-    for (key, value) in &mut block.fields {
-        let Some(mut parts) = value.numbers() else {
-            continue;
-        };
-        let wanted = match key.as_str() {
-            "cuboid" => 6,
-            "origin" => 3,
-            _ => continue,
-        };
-        if parts.len() != wanted {
-            continue;
-        }
-        for (index, part) in parts.iter_mut().enumerate() {
-            *part += by[index % 3];
-        }
-        *value = numbers(&parts);
-    }
+    move_block(block, by);
     for child in &mut block.children {
         shift(child, by);
     }

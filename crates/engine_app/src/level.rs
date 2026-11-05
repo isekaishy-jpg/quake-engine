@@ -13,6 +13,18 @@ fn working_map_path(name: &str) -> String {
     format!("maps/{name}.emap")
 }
 
+/// The level's own script, if it has one, beside its map.
+pub(crate) fn level_scripts(filesystem: &FileSystem, name: &str) -> Vec<(String, String)> {
+    let path = format!("maps/{name}.luau");
+    filesystem
+        .read(&path)
+        .ok()
+        .and_then(|bytes| String::from_utf8(bytes).ok())
+        .map(|text| (path, text))
+        .into_iter()
+        .collect()
+}
+
 /// Reads the level called `name`. A working map plays straight from its text,
 /// with nothing baked (proposal 0067).
 pub(crate) fn load_level(

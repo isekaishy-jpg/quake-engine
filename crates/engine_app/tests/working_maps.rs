@@ -160,3 +160,37 @@ fn a_map_with_no_sets_shows_everything() {
     let map = compile_text(TWO_ROOMS, &mut source).expect("compiles");
     assert!(Sight::from(&map.tree, Vec3::ZERO, Vec3::ZERO).is_none());
 }
+
+/// A level's own script runs after the game's, so a map can add entity types.
+#[test]
+fn a_levels_script_adds_entity_types() {
+    let text = format!("{MAP}\nentity made {{ type = my_own_thing origin = 0 0 64 }}\n");
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = Arc::new(compile_text(&text, &mut source).expect("compiles"));
+    let origin = spawn_point(&map).origin;
+    let world = Rc::new(CollisionWorld::new(map));
+    let (mut client, server_end) = loopback();
+    let script = "function my_own_thing(self) engine.print('hello from the map') end".to_owned();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        Level {
+            name: "test".to_owned(),
+            settings: vec![("skill".to_owned(), 1.0), ("registered".to_owned(), 1.0)],
+            scripts: vec![("test.luau".to_owned(), script)],
+            ..Level::default()
+        },
+    )
+    .expect("the scripts load");
+    server.tick();
+    let mut said = String::new();
+    while let Some(bytes) = client.receive() {
+        if let Some(ServerMessage::Print(line)) = ServerMessage::decode(&bytes) {
+            said.push_str(&line);
+        }
+    }
+    assert!(said.contains("hello from the map"), "{said}");
+}

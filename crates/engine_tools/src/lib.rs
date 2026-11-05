@@ -6,6 +6,7 @@
 //! May depend on `engine_assets`, `engine_compile`, `engine_format`,
 //! `engine_map`. See proposal 0008.
 
+mod features;
 mod game_run;
 mod json;
 mod operations;

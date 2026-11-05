@@ -587,7 +587,7 @@ fn stencil_rays(index: i32, eye: vec3<f32>, stop: vec3<f32>, jitter: f32) -> vec
 
 @fragment
 fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
-    let at = vec2<i32>(in.clip.xy);
+    let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
     let depth = load_depth(at);
     var color = load_color(at);
     if frame.post_params.x > 1.5 {

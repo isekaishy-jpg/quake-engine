@@ -276,6 +276,7 @@ impl World {
             flags: self.next_flags,
             settings: Self::level_settings(console),
             host: self.identity.clone(),
+            scripts: crate::level::level_scripts(&self.filesystem, name),
         };
         let seats = self
             .server

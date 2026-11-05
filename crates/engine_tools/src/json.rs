@@ -73,3 +73,56 @@ pub(crate) fn point_from_json(json: &Json) -> Option<[f64; 3]> {
 pub(crate) fn numbers(values: &[f64]) -> Value {
     Value::List(values.iter().map(|value| Value::Number(*value)).collect())
 }
+
+/// Fields that are places, so that they move with what holds them, and how many
+/// numbers go round: a box's two corners are six, and a line's points are three.
+const PLACES: [(&str, usize); 6] = [
+    ("cuboid", 6),
+    ("origin", 3),
+    ("corner", 3),
+    ("points", 3),
+    ("path", 3),
+    ("keyframes", 3),
+];
+
+/// Moves what's in `block` by `by`, leaving its children to be moved themselves.
+pub(crate) fn move_block(block: &mut Block, by: [f64; 3]) {
+    if block.kind == "face" {
+        let normal = block.get("normal").and_then(Value::numbers);
+        let distance = block.get("distance").and_then(Value::number);
+        if let (Some(normal), Some(distance)) = (normal, distance)
+            && normal.len() == 3
+        {
+            let length = normal.iter().map(|part| part * part).sum::<f64>().sqrt();
+            let along: f64 = normal.iter().zip(by).map(|(a, b)| a * b).sum();
+            let moved_distance = distance + along / length.max(1e-9);
+            for (key, value) in &mut block.fields {
+                if key == "distance" {
+                    *value = Value::Number(moved_distance);
+                }
+            }
+        }
+        return;
+    }
+    // A stencil's light is a place, unless it's a sun's direction.
+    let sun = block.get("sun").is_some_and(|value| {
+        value.flag() == Some(true) || value.number().is_some_and(|n| n != 0.0)
+    });
+    for (key, value) in &mut block.fields {
+        let group = PLACES
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, size)| *size);
+        let group = group.or_else(|| (key == "light" && !sun).then_some(3));
+        let (Some(group), Some(mut parts)) = (group, value.numbers()) else {
+            continue;
+        };
+        if parts.is_empty() || parts.len() % group != 0 {
+            continue;
+        }
+        for (index, part) in parts.iter_mut().enumerate() {
+            *part += by[index % 3];
+        }
+        *value = numbers(&parts);
+    }
+}
