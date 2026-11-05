@@ -3,13 +3,15 @@
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_compile::{compile_text, placeholder_texture};
+use engine_compile::{
+    BakeInput, CompileError, bake_light, compile, compile_text, placeholder_texture, read_map_text,
+};
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
-use engine_map::Map;
+use engine_map::{Map, MipLevel};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
-use engine_server::{Level, Server};
+use engine_server::{Level, Server, Sight};
 use fixture_quake::{SCRIPTS, spawn_point};
 
 /// A room with a start, and a door a trigger opens.
@@ -100,4 +102,61 @@ fn a_player_is_stopped_by_a_compiled_wall() {
         position.x < 288.0 - 15.0,
         "and stopped short of the wall: {position:?}"
     );
+}
+
+/// Two rooms with a wall between them.
+const TWO_ROOMS: &str = "format 1 map
+brush { material = floor cuboid = -1024 -256 -32 1024 256 0 }
+brush { material = roof cuboid = -1024 -256 256 1024 256 288 }
+brush { material = wall cuboid = -1056 -288 -32 -1024 288 288 }
+brush { material = wall cuboid = 1024 -288 -32 1056 288 288 }
+brush { material = wall cuboid = -1024 -288 -32 1024 -256 288 }
+brush { material = wall cuboid = -1024 256 -32 1024 288 288 }
+brush { material = wall cuboid = -32 -256 0 32 256 256 }
+";
+
+/// The two rooms, baked.
+fn two_rooms() -> Map {
+    let working = read_map_text(TWO_ROOMS).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let mut map = compile(&working, &mut source).expect("compiles");
+    let mut images = |path: &str| -> Result<Arc<Vec<MipLevel>>, CompileError> {
+        Err(CompileError::Bad(path.to_owned()))
+    };
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    map
+}
+
+/// What's behind a wall can't be seen, what's in the room can, and what's near
+/// always can, even through the wall.
+#[test]
+fn sight_stops_at_walls_but_not_up_close() {
+    let map = two_rooms();
+    let eye = Vec3::new(-800.0, 0.0, 64.0);
+    let sight = Sight::from(&map.tree, eye, eye).expect("the map has visible sets");
+    let size = Vec3::new(16.0, 16.0, 24.0);
+    let at = |x: f32| {
+        let middle = Vec3::new(x, 0.0, 64.0);
+        (middle - size, middle + size)
+    };
+    let (low, high) = at(-500.0);
+    assert!(sight.shows(low, high), "in the room");
+    let (low, high) = at(800.0);
+    assert!(!sight.shows(low, high), "behind the wall");
+    let near_wall = Vec3::new(-100.0, 0.0, 64.0);
+    let sight = Sight::from(&map.tree, near_wall, near_wall).expect("sets");
+    let (low, high) = at(120.0);
+    assert!(sight.shows(low, high), "close by, through the wall");
+}
+
+/// With no visible sets there's nothing to cull by.
+#[test]
+fn a_map_with_no_sets_shows_everything() {
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(TWO_ROOMS, &mut source).expect("compiles");
+    assert!(Sight::from(&map.tree, Vec3::ZERO, Vec3::ZERO).is_none());
 }

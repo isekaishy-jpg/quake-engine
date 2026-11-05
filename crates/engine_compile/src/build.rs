@@ -11,6 +11,7 @@ use engine_map::{
     OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
 };
 
+use crate::cells::{DEFAULT_CELL, cut_cells};
 use crate::error::CompileError;
 use crate::geometry::{
     Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
@@ -626,8 +627,26 @@ impl Builder<'_> {
     /// Finishes the tree's shared parts.
     fn finish(&mut self) {
         let count = u32::try_from(self.map.faces.len()).unwrap_or(0);
+        self.planes_to_map();
         let tree = &mut self.map.tree;
-        tree.planes = self
+        tree.leaves = LEAF_CONTENTS
+            .iter()
+            .map(|contents| Leaf {
+                contents: *contents,
+                ..Leaf::default()
+            })
+            .collect();
+        if let Some(leaf) = tree.leaves.get_mut(FACE_LEAF) {
+            leaf.face_count = count;
+        }
+        tree.leaf_faces = (0..count).collect();
+    }
+}
+
+impl Builder<'_> {
+    /// Gives the map the planes found so far.
+    fn planes_to_map(&mut self) {
+        self.map.tree.planes = self
             .planes
             .planes
             .iter()
@@ -640,17 +659,6 @@ impl Builder<'_> {
                 }
             })
             .collect();
-        tree.leaves = LEAF_CONTENTS
-            .iter()
-            .map(|contents| Leaf {
-                contents: *contents,
-                ..Leaf::default()
-            })
-            .collect();
-        if let Some(leaf) = tree.leaves.get_mut(FACE_LEAF) {
-            leaf.face_count = count;
-        }
-        tree.leaf_faces = (0..count).collect();
     }
 }
 
@@ -798,6 +806,16 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         builder.map.sky = Some(built);
     }
     builder.finish();
+    let size = working
+        .entities
+        .iter()
+        .find(|entity| entity.kind == "worldspawn")
+        .and_then(|world| world.fields.iter().find(|(key, _)| key == "cell_size"))
+        .and_then(|(_, value)| value.number())
+        .unwrap_or(DEFAULT_CELL)
+        .max(32.0);
+    cut_cells(&mut builder.map, &mut builder.planes, size);
+    builder.planes_to_map();
     let mut map = builder.map;
     for texture in &mut map.textures {
         if texture.mips.is_empty() {

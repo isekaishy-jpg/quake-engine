@@ -40,7 +40,7 @@ Status is one of todo, doing or done.
 | 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | done |
 | 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | done |
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | done |
-| 19 | Visibility | Our own compiler, and entity culling from the plan | todo |
+| 19 | Visibility | Our own compiler, and entity culling from the plan | done |
 | 20 | Tiles | Grid, manifest, streaming, coordinates, the unloaded tile rule, sleeping entities | todo |
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
@@ -65,3 +65,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 12 is done.
 - Stage 7 is done.
 - Stage 18 is done. The mega texture is one image with no streaming, for surfaces marked `mega`.
+- Stage 19 is done, with entity culling on real maps too.

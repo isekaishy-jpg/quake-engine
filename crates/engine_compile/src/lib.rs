@@ -5,6 +5,7 @@
 
 mod bake;
 mod build;
+mod cells;
 mod error;
 mod geometry;
 mod light;
@@ -16,6 +17,7 @@ mod stamp;
 mod stencil;
 mod texture;
 mod tree;
+mod visibility;
 
 pub use bake::{apply_bake, source_hash, write_bake};
 pub use build::{TextureSource, compile, compile_text, read_map_text};

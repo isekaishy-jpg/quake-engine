@@ -9,6 +9,7 @@
 
 mod fair;
 mod seat;
+mod sight;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
@@ -18,7 +19,7 @@ use std::sync::Arc;
 use engine_core::canvas::TALK_MARK;
 use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
-use engine_core::player::UserCommand;
+use engine_core::player::{UserCommand, VIEW_HEIGHT};
 use engine_core::sound::StaticSound;
 use engine_net::{
     ClientMessage, PlayerScore, PublicKey, ServerMessage, Snapshot, Transport, short_id,
@@ -31,6 +32,7 @@ use serde::{Deserialize, Serialize};
 pub use fair::{FairSettings, Zone};
 use seat::plain_text;
 pub use seat::{Seat, SeatInfo};
+pub use sight::Sight;
 
 /// Which level a game starts, and what the player brings to it.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -682,13 +684,32 @@ impl Server {
     ) -> Option<Snapshot> {
         let id = self.seats[index].player?;
         let simulation = self.simulation.borrow();
+        let player = *simulation.player_of(id)?;
+        let eye = player.origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT);
+        let map = self.world.map();
+        let sight = Sight::from(&map.tree, eye, player.origin);
+        let sees_box =
+            |low: Vec3, high: Vec3| sight.as_ref().is_none_or(|sight| sight.shows(low, high));
+        // Moving models stay, since prediction collides with them.
+        let entities = shown
+            .1
+            .iter()
+            .filter(|state| {
+                let found = simulation.entity(EntityId::from_bits(state.id));
+                let (low, high) = found.map_or((Vec3::ZERO, Vec3::ZERO), |e| (e.mins, e.maxs));
+                sees_box(state.origin + low, state.origin + high)
+            })
+            .copied()
+            .collect();
+        let mut boxes = simulation.solid_boxes(id);
+        boxes.retain(|(low, high)| sees_box(*low, *high));
         Some(Snapshot {
             tick: self.tick,
             acknowledged: simulation.last_command(id),
-            player: *simulation.player_of(id)?,
+            player,
             instances: shown.0.clone(),
-            entities: shown.1.clone(),
-            boxes: simulation.solid_boxes(id),
+            entities,
+            boxes,
             weapon_model: simulation.shown_weapon_model(id),
             weapon_frame: simulation.weapon_frame(id),
             player_entity: id.to_bits(),

@@ -432,3 +432,63 @@ entity lamp { type = light origin = 0 0 96 intensity = 400 }
     assert!(left > 0);
     assert!(left.abs_diff(right) <= 2, "{left} {right}");
 }
+
+/// Two rooms with a wall between, and `gap` as text for a brush to leave out.
+const TWO_ROOMS: &str = "format 1 map
+brush { material = floor cuboid = -1024 -256 -32 1024 256 0 }
+brush { material = roof cuboid = -1024 -256 256 1024 256 288 }
+brush { material = wall cuboid = -1056 -288 -32 -1024 288 288 }
+brush { material = wall cuboid = 1024 -288 -32 1056 288 288 }
+brush { material = wall cuboid = -1024 -288 -32 1024 -256 288 }
+brush { material = wall cuboid = -1024 256 -32 1024 288 288 }
+";
+
+/// Whether a point in `map` sees another.
+fn can_see(map: &Map, from: Vec3, to: Vec3) -> bool {
+    let mut seen = vec![false; map.tree.leaves.len()];
+    map.tree.mark_visible(map.tree.leaf_at(from), &mut seen);
+    seen[map.tree.leaf_at(to) as usize]
+}
+
+/// Sealed rooms can't see each other, and a doorway lets them.
+#[test]
+fn walls_stop_sight_and_doorways_let_it_through() {
+    let left = Vec3::new(-800.0, 0.0, 64.0);
+    let right = Vec3::new(800.0, 0.0, 64.0);
+    let sealed = format!("{TWO_ROOMS}brush {{ material = wall cuboid = -32 -256 0 32 256 256 }}\n");
+    let map = baked(&sealed, &[]);
+    assert!(map.tree.leaves.len() > 8, "cells have leaves");
+    assert!(!can_see(&map, left, right), "a wall");
+    assert!(
+        can_see(&map, left, left + Vec3::new(100.0, 0.0, 0.0)),
+        "its own room"
+    );
+    let doorway = format!(
+        "{TWO_ROOMS}brush {{ material = wall cuboid = -32 -256 0 32 -64 256 }}\n\
+         brush {{ material = wall cuboid = -32 64 0 32 256 256 }}\n"
+    );
+    let map = baked(&doorway, &[]);
+    assert!(can_see(&map, left, right), "through the doorway");
+}
+
+/// With no bake there are cells, and from each of them everything shows.
+#[test]
+fn a_map_with_no_bake_shows_everything() {
+    let document = from_text(TWO_ROOMS).expect("parses");
+    let working = read_map(&document).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile(&working, &mut source).expect("compiles");
+    assert!(map.tree.visibility.is_empty());
+    assert!(can_see(
+        &map,
+        Vec3::new(-800.0, 0.0, 64.0),
+        Vec3::new(800.0, 0.0, 64.0)
+    ));
+    let listed: std::collections::HashSet<u32> = map.tree.leaf_faces.iter().copied().collect();
+    let world = &map.models[0];
+    assert_eq!(
+        listed.len(),
+        world.face_count as usize,
+        "every face is in a leaf"
+    );
+}

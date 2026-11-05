@@ -18,6 +18,7 @@ use crate::mega::bake_mega;
 use crate::mesh::PlacedMesh;
 use crate::source::{EntitySource, PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
+use crate::visibility::bake_visibility;
 
 /// World units between light samples, unless a map says otherwise.
 const DEFAULT_SPACING: f64 = 16.0;
@@ -1056,7 +1057,7 @@ fn direction_bytes(direction: Point) -> [u8; 3] {
 }
 
 /// Runs `work` over `items` on every core, in order.
-fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
     let size = items.len().div_ceil(threads.max(1)).max(1);
     std::thread::scope(|scope| {
@@ -1320,6 +1321,8 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     map.light_directions = directions;
     map.light_edges = edges;
     map.paint = paint;
+    let sight = |a: Vec3, b: Vec3| !blocked(&scene, scene.root, wide(a), wide(b));
+    bake_visibility(map, &sight);
     let strokes = &working.paint;
     let mega = bake_mega(map, strokes, &|point, strokes| {
         paint_at(wide(point), strokes)

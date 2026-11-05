@@ -355,6 +355,7 @@ fn import_tree(bsp: &BspData, sky: &[bool]) -> Tree {
                 children: [clip_child(*node.front), clip_child(*node.back)],
             })
             .collect(),
+        leaf_boxes: Vec::new(),
         visible_leaf_count: bsp
             .models
             .first()

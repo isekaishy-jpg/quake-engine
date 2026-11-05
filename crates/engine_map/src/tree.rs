@@ -3,7 +3,7 @@
 use engine_core::math::Vec3;
 
 /// What fills a leaf.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub enum Contents {
     /// Open air.
     #[default]
@@ -102,6 +102,8 @@ pub struct Tree {
     pub leaf_faces: Vec<u32>,
     /// The clipping hulls' nodes.
     pub clip_nodes: Vec<ClipNode>,
+    /// Each leaf's box of space, for leaves that have one.
+    pub leaf_boxes: Vec<(Vec3, Vec3)>,
     /// How many leaves visibility covers, not counting leaf 0.
     pub visible_leaf_count: u32,
     /// Run-length encoded visible sets.

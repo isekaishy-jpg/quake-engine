@@ -11,7 +11,7 @@ use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 5;
+const BAKE_VERSION: u64 = 6;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -60,6 +60,12 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     );
     block.set("edges", Value::Bytes(map.light_edges.clone()));
     block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
+    block.set("visibility", Value::Bytes(map.tree.visibility.clone()));
+    let mut starts = Vec::with_capacity(map.tree.leaves.len() * 4);
+    for leaf in &map.tree.leaves {
+        starts.extend_from_slice(&leaf.visibility.unwrap_or(u32::MAX).to_le_bytes());
+    }
+    block.set("visible_from", Value::Bytes(starts));
     if let Some(mega) = &map.mega {
         let mut places = Vec::with_capacity(mega.faces.len() * 4);
         for number in &mega.faces {
@@ -219,6 +225,21 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     map.light = triples(samples);
     map.light_directions = triples(directions);
     map.light_edges = bytes_of(light, "edges").unwrap_or_default().to_vec();
+    if let (Some(data), Some(starts)) = (
+        bytes_of(light, "visibility"),
+        bytes_of(light, "visible_from"),
+    ) {
+        let (starts, _) = starts.as_chunks::<4>();
+        if starts.len() == map.tree.leaves.len() {
+            for (leaf, start) in map.tree.leaves.iter_mut().zip(starts) {
+                let start = u32::from_le_bytes(*start);
+                leaf.visibility = (start != u32::MAX).then_some(start);
+            }
+            map.tree.visibility = data.to_vec();
+            map.tree.visible_leaf_count =
+                u32::try_from(map.tree.leaves.len().saturating_sub(1)).unwrap_or(0);
+        }
+    }
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {
