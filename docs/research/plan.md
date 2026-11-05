@@ -80,3 +80,31 @@ What increment 5 does to sound is a port with fixes on top, not an audio design.
 | Sounds pass through walls | Occlusion, and reverb that suits the room |
 | One track for effects, with a cap on each ear and no limiter | A proper mix, with buses, ducking and a limiter or compressor on the output |
 | Fixed levels from 1996 | Settings the player can change, per bus |
+
+### Entity culling
+
+Every client is sent every entity, so a cheating client can see through walls, and traffic is higher than it has to be. `SV_WriteEntitiesToClient` in WinQuake and `SV_WritePacketEntities` in QuakeWorld send only what's in the client's fat PVS. To add to an increment, in this order:
+
+| Step | What it covers |
+|---|---|
+| Research | How `SV_FatPVS` and `SV_LinkEdict`'s leaf lists work, and what's worth changing. Measure today's traffic on a real map first |
+| Which leaves an entity is in | A box's leaves from the tree in `engine_map`, kept up to date as things move, rather than searched every tick |
+| What a client can see | The union of the visible sets of leaves near the view, using `Tree::visibility`. A map with no visibility data shows everything |
+| Filter each seat's snapshot | `Server::tick` builds what's shown once, and `snapshot` copies it to every seat. Each seat gets its own share, and the player always sees themself |
+| Prediction's boxes | `solid_boxes` gives away positions too, so it needs the same filter, without taking away anything the player can touch |
+| Movers | Decide if doors and lifts are culled at all. Prediction collides with `instances`, so one that's dropped mustn't leave the client walking through it |
+| Leaving and coming back | Check what `delta_from` and the client do when something leaves the set and returns: no false removals, no sliding in from an old position, and projectiles on shared paths still drawn |
+| Tests | Something behind a wall isn't sent, with a control in plain view. Nothing pops in at corners. Lag compensation and bots still work. Traffic is measured again, and netplay passes at 2% loss |
+
+### Aligning the Sol crates
+
+`solapp`, `solworker` and `solcache` kept the names they arrived with, so they don't line up with the `engine_*` crates. This is a rename and nothing else: no behaviour changes, and bringing them under the workspace lints or reviewing them stays a [separate question](open-questions.md). To add to an increment, in this order:
+
+| Step | What it covers |
+|---|---|
+| Choose the names | The human's decision. A starting point is `engine_host`, `engine_worker` and `engine_cache`, since `engine_app` and `engine_platform` are taken. Decide the crates and the public names together |
+| Rename the crates | Their folders, packages and `Cargo.toml` entries, and `solcache-solworker-example` |
+| Rename the API | Public names in each crate that should match the engine's style, with `engine_platform`, the only user of `solapp`, moving with them. The tests' `SOLAPP_*` and `SOLWORKER_*` variables go too |
+| Update the rules | `xtask/src/crate_graph/rules.rs`, `LINT_EXEMPT` and the test layout check's skip list, keeping the same boundaries |
+| Update the docs | Current docs and each crate's `pubdocs`. Accepted proposals and reviews are records, so they keep the old names, and the new proposal gives the mapping |
+| Check | `cargo xtask check`, real map and netplay tests, and a search that finds the old names only in the records |
