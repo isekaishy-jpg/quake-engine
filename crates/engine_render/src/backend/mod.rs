@@ -26,7 +26,7 @@ use vulkane::safe::{
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::QuadBatch;
 use crate::error::RenderError;
-use crate::renderer::{Capture, Drawables, Target, View};
+use crate::renderer::{Capture, Drawables, Target, TextureFilter, View};
 use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, WorldMesh};
@@ -58,6 +58,9 @@ const MIN_SWAPCHAIN_IMAGES: u32 = 2;
 
 /// How much sampling sharpens surfaces seen at an angle.
 const MATERIAL_ANISOTROPY: f32 = 8.0;
+
+/// The smallest mip level textures reach, as a BSP's four levels do.
+const TEXTURE_MAX_LOD: f32 = 3.0;
 
 /// The smallest mip level materials reach.
 const MATERIAL_MAX_LOD: f32 = 16.0;
@@ -141,6 +144,8 @@ struct GpuMap {
     indices: GpuBuffer,
     /// Each texture's descriptor set, by map texture index.
     texture_sets: Vec<Option<DescriptorSet>>,
+    /// Whether each texture's set is a material's.
+    material_sets: Vec<bool>,
     /// Every material's parameters, kept alive for the sets.
     _material_params: Option<GpuBuffer>,
     /// Kept alive for the sets.
@@ -296,6 +301,8 @@ pub(crate) struct Backend {
     texture_sampler: Sampler,
     /// The material sampler.
     material_sampler: Sampler,
+    /// What the samplers were last made for.
+    filter: Option<TextureFilter>,
     /// The layout of a material's set.
     material_layout: DescriptorSetLayout,
     /// The lightmap sampler.
@@ -488,7 +495,7 @@ impl Backend {
                 address_mode_w: SamplerAddressMode::REPEAT,
                 ..SamplerCreateInfo::default()
             },
-            3.0,
+            TEXTURE_MAX_LOD,
         )?;
         let material_sampler = Sampler::new_mipmapped(
             &device,
@@ -531,6 +538,7 @@ impl Backend {
             capture_pass,
             texture_sampler,
             material_sampler,
+            filter: None,
             material_layout,
             light_sampler,
             command_pool,
@@ -640,6 +648,75 @@ impl Backend {
             self.present_mode = mode;
             self.resized = true;
         }
+    }
+
+    /// Makes the samplers for `filter`, and points everything at them.
+    pub(crate) fn set_filter(&mut self, filter: TextureFilter) -> Result<(), RenderError> {
+        if self.filter == Some(filter) {
+            return Ok(());
+        }
+        self.wait_for_frame()?;
+        self.device.wait_idle()?;
+        let smooth = if filter.smooth {
+            SamplerFilter::LINEAR
+        } else {
+            SamplerFilter::NEAREST
+        };
+        let mipmap_mode = if filter.trilinear {
+            SamplerMipmapMode::LINEAR
+        } else {
+            SamplerMipmapMode::NEAREST
+        };
+        let anisotropy = (filter.anisotropy > 1.0 && filter.smooth).then_some(filter.anisotropy);
+        let material_anisotropy = (filter.anisotropy > 1.0).then_some(filter.anisotropy);
+        let info = SamplerCreateInfo {
+            mag_filter: smooth,
+            min_filter: smooth,
+            mipmap_mode,
+            address_mode_u: SamplerAddressMode::REPEAT,
+            address_mode_v: SamplerAddressMode::REPEAT,
+            address_mode_w: SamplerAddressMode::REPEAT,
+            anisotropy,
+            ..SamplerCreateInfo::default()
+        };
+        let texture_sampler = Sampler::new_mipmapped(&self.device, info, TEXTURE_MAX_LOD)?;
+        let material_sampler = Sampler::new_mipmapped(
+            &self.device,
+            SamplerCreateInfo {
+                mag_filter: SamplerFilter::LINEAR,
+                min_filter: SamplerFilter::LINEAR,
+                mipmap_mode: SamplerMipmapMode::LINEAR,
+                anisotropy: material_anisotropy,
+                ..info
+            },
+            MATERIAL_MAX_LOD,
+        )?;
+        if let Some(map) = &self.map {
+            for (set, is_material) in map.texture_sets.iter().zip(&map.material_sets) {
+                if let Some(set) = set {
+                    let sampler = if *is_material {
+                        &material_sampler
+                    } else {
+                        &texture_sampler
+                    };
+                    set.write_sampler(1, sampler);
+                }
+            }
+        }
+        for model in &self.models {
+            for set in &model.skin_sets {
+                set.write_sampler(1, &texture_sampler);
+            }
+        }
+        for sprite in &self.sprites {
+            for set in &sprite.sets {
+                set.write_sampler(1, &texture_sampler);
+            }
+        }
+        self.texture_sampler = texture_sampler;
+        self.material_sampler = material_sampler;
+        self.filter = Some(filter);
+        Ok(())
     }
 
     /// Notes the window's new size.

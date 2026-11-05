@@ -97,6 +97,17 @@ struct LoadedMap {
     visible: VisibleSet,
 }
 
+/// How surfaces are filtered.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct TextureFilter {
+    /// Whether texels blend, rather than showing as hard squares.
+    pub smooth: bool,
+    /// Whether mip levels blend into each other.
+    pub trilinear: bool,
+    /// How much surfaces at an angle are sharpened, or 1 for not at all.
+    pub anisotropy: f32,
+}
+
 /// The renderer.
 pub struct Renderer {
     /// The Vulkan side.
@@ -173,6 +184,17 @@ impl Renderer {
     pub fn add_picture(&mut self, image: &Image) -> Result<u32, RenderError> {
         self.backend
             .add_picture(image.width, image.height, &image.rgba)
+    }
+
+    /// Chooses how plain textures are filtered, and how sharply both they and
+    /// materials are sampled at an angle. Materials always blend (proposal
+    /// 0070).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the device refuses a new sampler.
+    pub fn set_filter(&mut self, filter: TextureFilter) -> Result<(), RenderError> {
+        self.backend.set_filter(filter)
     }
 
     /// Chooses whether frames wait for the display. Waiting paces them

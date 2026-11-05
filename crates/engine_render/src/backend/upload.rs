@@ -341,9 +341,11 @@ impl Backend {
             .transpose()?;
         let mut next_params = 0;
         let mut textures = Vec::with_capacity(map.textures.len());
+        let mut material_sets = Vec::with_capacity(map.textures.len());
         let mut texture_sets = Vec::with_capacity(map.textures.len());
         for texture in &map.textures {
             if texture.kind == TextureKind::Hidden {
+                material_sets.push(false);
                 texture_sets.push(None);
                 continue;
             }
@@ -389,6 +391,7 @@ impl Backend {
                     MATERIAL_PARAMS_BYTES as u64,
                 );
                 next_params += 1;
+                material_sets.push(true);
                 texture_sets.push(Some(set));
                 textures.push(image);
                 textures.extend(uploaded);
@@ -397,10 +400,12 @@ impl Backend {
             let set = pool.allocate(&self.texture_layout)?;
             set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
             set.write_sampler(1, &self.texture_sampler);
+            material_sets.push(false);
             texture_sets.push(Some(set));
             textures.push(image);
         }
         self.map = Some(GpuMap {
+            material_sets,
             vertices,
             indices,
             texture_sets,

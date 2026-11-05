@@ -30,7 +30,7 @@ use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{Renderer, Target};
+use engine_render::{Renderer, Target, TextureFilter};
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
@@ -500,6 +500,8 @@ impl Engine {
         console.register_cvar("fov", "90", saved);
         console.register_cvar("show_fps", "1", saved);
         console.register_cvar("vid_vsync", "0", saved);
+        console.register_cvar("r_filter", "0", saved);
+        console.register_cvar("r_anisotropy", "8", saved);
         console.register_cvar("volume", "0.7", saved);
         console.register_cvar("bgmvolume", "1", saved);
         console.register_cvar("ambient_level", "0.3", saved);
@@ -627,6 +629,18 @@ impl Engine {
             self.world.console_view.set_open(true);
         }
         self.world.look.set_scale(self.look_scale());
+        let filter_mode = self.cvar_number("r_filter");
+        let filter = TextureFilter {
+            smooth: filter_mode >= 1.0,
+            trilinear: filter_mode != 1.0,
+            #[expect(clippy::cast_possible_truncation, reason = "a small setting")]
+            anisotropy: self.cvar_number("r_anisotropy").clamp(1.0, 16.0) as f32,
+        };
+        if let Some(renderer) = &mut self.world.renderer
+            && let Err(error) = renderer.set_filter(filter)
+        {
+            self.console.print(format!("filter: {error}"));
+        }
         let vsync = self.cvar_number("vid_vsync") != 0.0;
         if let Some(renderer) = &mut self.world.renderer {
             renderer.set_vsync(vsync);
