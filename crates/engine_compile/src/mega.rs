@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    Face, Map, Material, MipLevel, PAINT_MASK, TexelAxis, Texture, TextureKind, mip_chain,
+    Face, Map, Material, MegaMaps, MipLevel, PAINT_MASK, SlotImage, TexelAxis, Texture,
+    TextureKind, mip_chain,
 };
 
 use crate::source::PaintStroke;
@@ -15,6 +16,16 @@ pub(crate) const MEGA_SIZE: u32 = 2048;
 
 /// Texels left round each surface, so filtering doesn't reach its neighbours.
 const PADDING: i32 = 2;
+
+/// The most specular or emissive strength the images can hold. A material's
+/// own strength goes into its texels, as faces of many materials share one.
+const MEGA_STRENGTH: f32 = 4.0;
+
+/// The most gloss the image can hold, for the same reason.
+const MEGA_GLOSS: f32 = 256.0;
+
+/// A normal that leaves a surface as it is.
+const FLAT_NORMAL: [u8; 4] = [128, 128, 255, 255];
 
 /// Where a face went in the image.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -73,6 +84,81 @@ fn texel(image: &MipLevel, s: f32, t: f32) -> [u8; 4] {
         out.copy_from_slice(found);
     }
     out
+}
+
+/// What a material's slot holds at a share of the base image.
+fn slot_at(material: &Material, slot: Option<u8>, u: f32, v: f32) -> Option<[u8; 4]> {
+    let number = usize::from(slot?).checked_sub(1)?;
+    let image = material.slots.get(number)?.first()?;
+    #[expect(clippy::cast_precision_loss, reason = "image sizes are small")]
+    let (width, height) = (image.width as f32, image.height as f32);
+    Some(texel(image, u * width, v * height))
+}
+
+/// `value` scaled by `share`, as a texel.
+fn scaled(value: u8, share: f32) -> u8 {
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to a byte"
+    )]
+    let out = (f32::from(value) * share).round().clamp(0.0, 255.0) as u8;
+    out
+}
+
+/// A surface's share of the base image at a point.
+fn share_of(texture: &Texture, axes: &[TexelAxis; 2], point: Vec3) -> Option<(f32, f32)> {
+    let base = texture.mips.first()?;
+    #[expect(clippy::cast_precision_loss, reason = "image sizes are small")]
+    let share = (
+        axes[0].project(point) / base.width as f32,
+        axes[1].project(point) / base.height as f32,
+    );
+    Some(share)
+}
+
+/// Writes what a surface's other maps hold at a point into the texel at `to`
+/// of each image there is.
+fn write_maps(maps: &mut MegaMaps, to: usize, material: &Material, u: f32, v: f32) {
+    let write = |image: &mut Option<Vec<u8>>, color: Option<[u8; 4]>| {
+        if let (Some(image), Some(color)) = (image, color) {
+            image[to..to + 4].copy_from_slice(&color);
+        }
+    };
+    let strength = material.specular_strength / MEGA_STRENGTH;
+    let gloss = material.gloss / MEGA_GLOSS;
+    let glow = material.emissive_strength / MEGA_STRENGTH;
+    let shine = |[r, g, b, a]: [u8; 4]| {
+        [
+            scaled(r, strength),
+            scaled(g, strength),
+            scaled(b, strength),
+            scaled(a, gloss),
+        ]
+    };
+    let lit = |[r, g, b, a]: [u8; 4]| [scaled(r, glow), scaled(g, glow), scaled(b, glow), a];
+    write(&mut maps.normal, slot_at(material, material.normal, u, v));
+    write(
+        &mut maps.specular,
+        slot_at(material, material.specular, u, v).map(shine),
+    );
+    write(
+        &mut maps.emissive,
+        slot_at(material, material.emissive, u, v).map(lit),
+    );
+}
+
+/// The images a mega texture of these materials needs, empty to start.
+fn empty_maps<'a>(materials: impl Iterator<Item = &'a Material> + Clone) -> MegaMaps {
+    let texels = MEGA_SIZE as usize * MEGA_SIZE as usize;
+    let image = |pick: fn(&Material) -> bool, color: [u8; 4]| {
+        materials.clone().any(pick).then(|| color.repeat(texels))
+    };
+    MegaMaps {
+        normal: image(|material| material.normal.is_some(), FLAT_NORMAL),
+        specular: image(|material| material.specular.is_some(), [0; 4]),
+        emissive: image(|material| material.emissive.is_some(), [0; 4]),
+    }
 }
 
 /// The colour of a surface at a point, with its layers mixed in.
@@ -148,13 +234,14 @@ fn texel_frame(map: &Map, face: &Face) -> Option<(Vec3, Vec3, Vec3)> {
 }
 
 /// Gathers the surfaces of materials marked `mega` into one image, with their
-/// layers and paint mixed in. Each keeps its light. Returns what moved, and the
-/// image, or `None` if nothing asks for one.
+/// layers and paint mixed in, and their other maps in images of their own. Each
+/// keeps its light. Returns what moved, and the images, or `None` if nothing
+/// asks for one.
 pub(crate) fn bake_mega(
     map: &mut Map,
     strokes: &[PaintStroke],
     paint_at: &dyn Fn(Vec3, &[PaintStroke]) -> [u8; 4],
-) -> Option<(Vec<MegaPlace>, Vec<u8>)> {
+) -> Option<(Vec<MegaPlace>, Vec<u8>, MegaMaps)> {
     let wanted = |face: &Face| {
         map.textures
             .get(face.texture as usize)
@@ -166,6 +253,12 @@ pub(crate) fn bake_mega(
     }
     let side = MEGA_SIZE as usize;
     let mut rgba = vec![0; side * side * 4];
+    let marked = map
+        .textures
+        .iter()
+        .filter_map(|texture| texture.material.as_deref())
+        .filter(|material| material.mega);
+    let mut maps = empty_maps(marked);
     let mut shelves = Shelves {
         x: 0,
         y: 0,
@@ -221,6 +314,9 @@ pub(crate) fn bake_mega(
                 #[expect(clippy::cast_sign_loss, reason = "inside the image")]
                 let to = ((at[1] + y) as usize * side + (at[0] + x) as usize) * 4;
                 rgba[to..to + 4].copy_from_slice(&color);
+                if let Some((u, v)) = share_of(texture, &face.axes, point) {
+                    write_maps(&mut maps, to, material, u, v);
+                }
             }
         }
         places.push(MegaPlace {
@@ -228,13 +324,45 @@ pub(crate) fn bake_mega(
             shift: [at[0] + PADDING - low[0], at[1] + PADDING - low[1]],
         });
     }
-    apply_mega(map, &places, rgba.clone());
-    Some((places, rgba))
+    apply_mega(map, &places, rgba.clone(), &maps);
+    Some((places, rgba, maps))
+}
+
+/// The material of a mega texture with `maps`.
+fn mega_material(maps: &MegaMaps) -> Material {
+    let mut material = Material::default();
+    let mut slot = |image: &Option<Vec<u8>>| {
+        let rgba = image.as_ref()?;
+        let mips = mip_chain(MEGA_SIZE, MEGA_SIZE, rgba.clone());
+        material_slots_push(&mut material.slots, mips)
+    };
+    let (normal, specular, emissive) = (
+        slot(&maps.normal),
+        slot(&maps.specular),
+        slot(&maps.emissive),
+    );
+    material.normal = normal;
+    material.specular = specular;
+    material.emissive = emissive;
+    if specular.is_some() {
+        material.specular_strength = MEGA_STRENGTH;
+        material.gloss = MEGA_GLOSS;
+    }
+    if emissive.is_some() {
+        material.emissive_strength = MEGA_STRENGTH;
+    }
+    material
+}
+
+/// Adds an image to `slots`, and returns its slot number.
+fn material_slots_push(slots: &mut Vec<SlotImage>, mips: Vec<MipLevel>) -> Option<u8> {
+    slots.push(Arc::new(mips));
+    u8::try_from(slots.len()).ok()
 }
 
 /// Points the faces in `places` at a mega texture of `rgba`. A face's light
 /// follows its texture coordinates, so it moves the same way.
-pub(crate) fn apply_mega(map: &mut Map, places: &[MegaPlace], rgba: Vec<u8>) {
+pub(crate) fn apply_mega(map: &mut Map, places: &[MegaPlace], rgba: Vec<u8>, maps: &MegaMaps) {
     let number = u32::try_from(map.textures.len()).unwrap_or(0);
     map.textures.push(Texture {
         name: "*mega".to_owned(),
@@ -242,7 +370,7 @@ pub(crate) fn apply_mega(map: &mut Map, places: &[MegaPlace], rgba: Vec<u8>) {
         mips: mip_chain(MEGA_SIZE, MEGA_SIZE, rgba),
         animation: None,
         alternate: None,
-        material: Some(Arc::new(Material::default())),
+        material: Some(Arc::new(mega_material(maps))),
     });
     for place in places {
         let Some(face) = map.faces.get_mut(place.face as usize) else {

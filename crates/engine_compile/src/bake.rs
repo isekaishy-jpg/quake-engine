@@ -6,13 +6,13 @@
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
-use engine_map::{Face, FaceLight, Map, NavGrid, NavPlace, ProbeGrid};
+use engine_map::{Face, FaceLight, Map, MegaMaps, NavGrid, NavPlace, ProbeGrid};
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 9;
+const BAKE_VERSION: u64 = 10;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -145,6 +145,16 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         }
         block.set("mega_faces", Value::Bytes(places));
         block.set("mega", Value::Bytes(mega.rgba.clone()));
+        let maps = [
+            ("mega_normal", &mega.maps.normal),
+            ("mega_specular", &mega.maps.specular),
+            ("mega_emissive", &mega.maps.emissive),
+        ];
+        for (name, image) in maps {
+            if let Some(image) = image {
+                block.set(name, Value::Bytes(image.clone()));
+            }
+        }
     }
     document.blocks.push(block);
     if let Some(probes) = &map.probes {
@@ -335,7 +345,13 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
                 shift: [*x, *y],
             })
             .collect();
-        apply_mega(map, &places, rgba.to_vec());
+        let image = |name| bytes_of(light, name).map(<[u8]>::to_vec);
+        let maps = MegaMaps {
+            normal: image("mega_normal"),
+            specular: image("mega_specular"),
+            emissive: image("mega_emissive"),
+        };
+        apply_mega(map, &places, rgba.to_vec(), &maps);
     }
     map.probes = document.blocks_of("probes").next().and_then(read_probes);
     map.lit = true;

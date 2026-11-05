@@ -142,6 +142,19 @@ pub struct MegaImage {
     pub faces: Vec<i32>,
     /// Its pixels, in RGBA bytes.
     pub rgba: Vec<u8>,
+    /// The images laid out the same way, for what its surfaces use.
+    pub maps: MegaMaps,
+}
+
+/// The other images of a mega texture, each only if a surface has one.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MegaMaps {
+    /// Normals, flat where a surface has none.
+    pub normal: Option<Vec<u8>>,
+    /// Specular colour, with gloss in alpha, already scaled by each material.
+    pub specular: Option<Vec<u8>>,
+    /// Emissive colour, already scaled by each material.
+    pub emissive: Option<Vec<u8>>,
 }
 
 /// A group of faces: the world, or a brush model.

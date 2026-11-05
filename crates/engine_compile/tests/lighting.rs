@@ -393,6 +393,74 @@ fn a_mega_surface_holds_its_paint() {
     );
 }
 
+/// A mega surface keeps its normal, specular and emissive maps, with each
+/// material's strengths in the texels, and they survive a bake.
+#[test]
+fn a_mega_surface_keeps_its_other_maps() {
+    let image = |color: [u8; 4]| {
+        Arc::new(vec![MipLevel {
+            width: 4,
+            height: 4,
+            rgba: color.repeat(16),
+        }])
+    };
+    let mut texture = mega_texture();
+    texture.material = Some(Arc::new(Material {
+        mega: true,
+        slots: vec![
+            image([10, 20, 250, 255]),
+            image([200, 100, 0, 255]),
+            image([0, 80, 160, 255]),
+        ],
+        normal: Some(1),
+        specular: Some(2),
+        emissive: Some(3),
+        specular_strength: 2.0,
+        gloss: 64.0,
+        emissive_strength: 1.0,
+        ..Material::default()
+    }));
+    let text = format!("{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 500 }}\n");
+    let map = baked(&text, &[texture]);
+    let mega = map
+        .textures
+        .iter()
+        .find(|t| t.name == "*mega")
+        .expect("the image");
+    let face = map
+        .faces
+        .iter()
+        .find(|face| map.textures[face.texture as usize].name == "*mega")
+        .expect("a face");
+    let material = mega.material.as_ref().expect("a material");
+    let corner = map.face_points(face)[0];
+    let inward = map.face_points(face)[2] - corner;
+    let point = corner + inward * 0.5;
+    let texel_of = |slot: Option<u8>| {
+        let image = &material.slots[usize::from(slot.expect("a slot")) - 1][0];
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "texel coordinates are small and positive"
+        )]
+        let (s, t) = (
+            face.axes[0].project(point) as usize,
+            face.axes[1].project(point) as usize,
+        );
+        let at = (t * image.width as usize + s) * 4;
+        [
+            image.rgba[at],
+            image.rgba[at + 1],
+            image.rgba[at + 2],
+            image.rgba[at + 3],
+        ]
+    };
+    assert_eq!(texel_of(material.normal), [10, 20, 250, 255]);
+    assert_eq!(texel_of(material.specular), [100, 50, 0, 64], "scaled");
+    assert_eq!(texel_of(material.emissive), [0, 20, 40, 255], "scaled");
+    assert!((material.specular_strength - 4.0).abs() < f32::EPSILON);
+}
+
 /// What's not marked keeps its own texture.
 #[test]
 fn other_surfaces_stay_out_of_the_mega_texture() {

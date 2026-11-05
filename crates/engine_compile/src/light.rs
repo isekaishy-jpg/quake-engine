@@ -1314,12 +1314,12 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let mega = bake_mega(map, strokes, &|point, strokes| {
         paint_at(wide(point), strokes)
     });
-    map.mega = mega.map(|(places, rgba)| {
+    map.mega = mega.map(|(places, rgba, maps)| {
         let faces = places
             .iter()
             .flat_map(|place| [place.face.cast_signed(), place.shift[0], place.shift[1]])
             .collect();
-        MegaImage { faces, rgba }
+        MegaImage { faces, rgba, maps }
     });
     map.probes = probes;
     map.lit = true;
