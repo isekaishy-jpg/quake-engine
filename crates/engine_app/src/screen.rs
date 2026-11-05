@@ -118,7 +118,8 @@ impl World {
                 self.console_view.draw_notify(&mut canvas, time, blink);
             }
         }
-        self.console_view.draw(&mut canvas, VERSION, blink);
+        self.console_view
+            .draw(&mut canvas, BACKGROUND_PICTURE, VERSION, blink);
         if self.menu.is_open() {
             // From `M_Draw`: the menus need something quiet behind them.
             let whole = [0.0, 0.0, canvas.width(), canvas.height()];

@@ -1,9 +1,8 @@
 //! The two records of the build sequence and the reservation step.
 
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
 use std::process::Command;
+use std::{fs, io};
 
 use super::{BuildLock, BuildNumber, BuildNumberError};
 

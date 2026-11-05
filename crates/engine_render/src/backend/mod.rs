@@ -9,6 +9,8 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite};
+use pipelines::make_pass;
+use upload::{depth_image, device_image, host_buffer};
 use vulkane::safe::{
     AccessFlags, ApiVersion, Buffer, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
     CommandPool, DescriptorPool, DescriptorSet, DescriptorSetLayout, DescriptorSetLayoutBinding,
@@ -27,10 +29,6 @@ use crate::renderer::{Capture, Drawables, Target, View};
 use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, WorldMesh};
-use pipelines::make_pass;
-use upload::depth_image;
-use upload::device_image;
-use upload::host_buffer;
 
 /// The colour format of every target. UNORM keeps the original's sums.
 const COLOR_FORMAT: Format = Format::B8G8R8A8_UNORM;

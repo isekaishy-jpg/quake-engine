@@ -4,7 +4,6 @@ use std::error::Error;
 use std::time::Duration;
 
 use engine_core::window::NativeWindow;
-
 use solapp::{
     SAApplication, SAContext, SADisplayRequest, SADisplayTransition, SADisplayTransitionState,
     SAError, SAEvent, SAEventFilter, SAFrame, SAFramePhase, SAHost, SAHostConfig, SAInputMode,

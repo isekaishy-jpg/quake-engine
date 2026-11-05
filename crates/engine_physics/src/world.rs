@@ -1,6 +1,5 @@
 //! Traces through the map. Only this file knows `box3d`.
 
-use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use std::sync::Arc;
 
 use box3d_rust::body::create_body;
@@ -13,7 +12,7 @@ use box3d_rust::world::{World, world_cast_ray_closest};
 use box3d_rust::{Pos, Vec3 as BoxVec3};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
-use engine_core::player::Liquid;
+use engine_core::player::{Liquid, PLAYER_MAXS, PLAYER_MINS};
 use engine_map::{ClipChild, Contents, Map, Model};
 
 use crate::hull::{HullRoot, enter_box, trace_hull};

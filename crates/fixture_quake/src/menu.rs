@@ -236,17 +236,6 @@ struct HostRules {
     level: usize,
 }
 
-/// The character a key types into a menu's field, on a US keyboard.
-fn typed(key: &str) -> Option<char> {
-    if key == "SEMICOLON" {
-        return Some(':');
-    }
-    let mut letters = key.chars();
-    let (first, rest) = (letters.next()?, letters.next());
-    let usable = first.is_ascii_alphanumeric() || first == '.' || first == '-';
-    (rest.is_none() && usable).then(|| first.to_ascii_lowercase())
-}
-
 /// The menus' state.
 #[derive(Clone, Debug, Default)]
 pub struct Menu {
@@ -296,11 +285,12 @@ pub struct Menu {
     setup_cursor: usize,
 }
 
-/// Takes `key` into `field`, for backspacing and typing.
-fn type_into(field: &mut String, key: &str) {
+/// Takes `key`, which types `text`, into `field`. A quote would end the
+/// console's word for it early.
+fn type_into(field: &mut String, key: &str, text: Option<char>) {
     if key == "BACKSPACE" {
         let _last = field.pop();
-    } else if let Some(character) = typed(key).filter(|_| field.len() < MAX_TYPED) {
+    } else if let Some(character) = text.filter(|c| *c != '"' && field.len() < MAX_TYPED) {
         field.push(character);
     }
 }
@@ -364,8 +354,8 @@ impl Menu {
         }
     }
 
-    /// Takes a key, by its name.
-    pub fn key(&mut self, key: &str, host: &mut dyn MenuHost) {
+    /// Takes a key, by its name, and what it types if anything.
+    pub fn key(&mut self, key: &str, text: Option<char>, host: &mut dyn MenuHost) {
         match self.screen {
             Screen::None => {}
             Screen::Main => self.main_key(key, host),
@@ -378,9 +368,9 @@ impl Menu {
             Screen::Quit => self.question_key(key, host, "quit"),
             Screen::NewGame => self.question_key(key, host, "newgame"),
             Screen::Multiplayer => self.multiplayer_key(key, host),
-            Screen::Join => self.join_key(key, host),
-            Screen::Host => self.host_key(key, host),
-            Screen::Setup => self.setup_key(key, host),
+            Screen::Join => self.join_key(key, text, host),
+            Screen::Host => self.host_key(key, text, host),
+            Screen::Setup => self.setup_key(key, text, host),
         }
     }
 
@@ -403,7 +393,7 @@ impl Menu {
     }
 
     /// Typing an address.
-    fn join_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+    fn join_key(&mut self, key: &str, text: Option<char>, host: &mut dyn MenuHost) {
         match key {
             "ESCAPE" => self.open(Screen::Multiplayer, host),
             "ENTER" if !self.address.is_empty() => {
@@ -428,7 +418,7 @@ impl Menu {
                     1 => &mut self.join_password,
                     _ => &mut self.join_code,
                 };
-                type_into(field, key);
+                type_into(field, key, text);
             }
         }
     }
@@ -467,7 +457,7 @@ impl Menu {
     }
 
     /// The host menu's keys.
-    fn host_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+    fn host_key(&mut self, key: &str, text: Option<char>, host: &mut dyn MenuHost) {
         match key {
             "ESCAPE" => self.open(Screen::Multiplayer, host),
             "DOWNARROW" | "UPARROW" => {
@@ -481,14 +471,14 @@ impl Menu {
             "ENTER" if self.host_cursor == HOST_BEGIN_ROW => self.begin_host(host),
             "ENTER" => self.change_rule(true),
             _ if self.host_cursor == HOST_PASSWORD_ROW => {
-                type_into(&mut self.host_password, key);
+                type_into(&mut self.host_password, key, text);
             }
             _ => {}
         }
     }
 
     /// The setup menu's keys.
-    fn setup_key(&mut self, key: &str, host: &mut dyn MenuHost) {
+    fn setup_key(&mut self, key: &str, text: Option<char>, host: &mut dyn MenuHost) {
         match key {
             "ESCAPE" | "ENTER" => {
                 host.run(&format!("name \"{}\"", self.name));
@@ -509,16 +499,8 @@ impl Menu {
                 let value = (host.setting(name) + change) % 14.0;
                 host.set_setting(name, value);
             }
-            "BACKSPACE" if self.setup_cursor == 0 => {
-                let _last = self.name.pop();
-            }
-            _ => {
-                if self.setup_cursor == 0
-                    && let Some(character) = typed(key).filter(|_| self.name.len() < MAX_TYPED)
-                {
-                    self.name.push(character);
-                }
-            }
+            _ if self.setup_cursor == 0 => type_into(&mut self.name, key, text),
+            _ => {}
         }
     }
 

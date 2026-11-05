@@ -3,6 +3,8 @@
 use engine_core::math::Vec3;
 use engine_map::{SpriteFacing, SpriteImage};
 
+use crate::matrix::rolled_axes;
+
 /// Bytes of the values a sprite's draw pushes.
 pub(crate) const SPRITE_PUSH_SIZE: u32 = 64;
 
@@ -79,22 +81,8 @@ impl ViewAxes {
     /// `AngleVectors`, where a positive pitch looks down.
     #[must_use]
     pub fn new(pitch: f32, yaw: f32, roll: f32) -> Self {
-        let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
-        let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
-        let (roll_sin, roll_cos) = roll.to_radians().sin_cos();
-        Self {
-            forward: Vec3::new(pitch_cos * yaw_cos, pitch_cos * yaw_sin, -pitch_sin),
-            right: Vec3::new(
-                -roll_sin * pitch_sin * yaw_cos + roll_cos * yaw_sin,
-                -roll_sin * pitch_sin * yaw_sin - roll_cos * yaw_cos,
-                -roll_sin * pitch_cos,
-            ),
-            up: Vec3::new(
-                roll_cos * pitch_sin * yaw_cos + roll_sin * yaw_sin,
-                roll_cos * pitch_sin * yaw_sin - roll_sin * yaw_cos,
-                roll_cos * pitch_cos,
-            ),
-        }
+        let [forward, right, up] = rolled_axes(yaw, pitch, roll);
+        Self { forward, right, up }
     }
 }
 

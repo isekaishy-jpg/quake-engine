@@ -2,14 +2,15 @@
 
 mod common;
 
+use std::cell::RefCell;
+use std::rc::Rc;
+use std::sync::Arc;
+
 use common::game;
 use engine_core::math::Vec3;
 use engine_map::Entity;
 use engine_script::Game;
 use engine_sim::{Callback, EntityId, Simulation};
-use std::cell::RefCell;
-use std::rc::Rc;
-use std::sync::Arc;
 
 /// A map entity from pairs.
 fn entity(fields: &[(&str, &str)]) -> Entity {

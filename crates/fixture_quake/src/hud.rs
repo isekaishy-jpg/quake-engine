@@ -428,10 +428,10 @@ impl Hud {
     /// `V_UpdatePalette` and `V_SetContentsColor`.
     pub fn update_view(&mut self, seconds: f32, contents: Contents) {
         self.contents_shift = match contents {
-            Contents::Empty | Contents::Solid | Contents::Sky => Shift::default(),
+            Contents::Empty | Contents::Solid => Shift::default(),
             Contents::Lava => LAVA_SHIFT,
             Contents::Slime => SLIME_SHIFT,
-            Contents::Water => WATER_SHIFT,
+            Contents::Water | Contents::Sky => WATER_SHIFT,
         };
         self.damage_shift.percent = (self.damage_shift.percent - seconds * 150.0).max(0.0);
         self.bonus_shift.percent = (self.bonus_shift.percent - seconds * 100.0).max(0.0);

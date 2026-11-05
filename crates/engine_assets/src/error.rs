@@ -1,7 +1,6 @@
 //! Asset errors.
 
-use std::fmt;
-use std::io;
+use std::{fmt, io};
 
 /// A failure to find or read a file.
 #[derive(Debug)]

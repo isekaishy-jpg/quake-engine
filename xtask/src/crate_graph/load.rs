@@ -1,10 +1,8 @@
 //! Builds the workspace model from `cargo metadata` and the manifests.
 
 use std::ffi::OsStr;
-use std::fmt;
-use std::fs;
-use std::io;
 use std::path::{Path, PathBuf};
+use std::{fmt, fs, io};
 
 use cargo_metadata::{DependencyKind, MetadataCommand, Package};
 

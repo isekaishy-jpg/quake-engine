@@ -1,6 +1,6 @@
 //! The camera matrix.
 
-use engine_core::math::Vec3;
+use engine_core::math::{Vec3, view_axes};
 
 /// The nearest distance drawn.
 const NEAR: f32 = 4.0;
@@ -11,15 +11,10 @@ const FAR: f32 = 65536.0;
 /// Screens are this wide for each unit of height when `fov` is exact.
 const REFERENCE_ASPECT: f32 = 4.0 / 3.0;
 
-/// The direction of a view, as the forward, right and up axes, from
-/// `AngleVectors`.
-fn view_axes(yaw: f32, pitch: f32, roll: f32) -> [Vec3; 3] {
-    let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
-    let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
+/// The direction of a view with roll, as the forward, right and up axes.
+pub(crate) fn rolled_axes(yaw: f32, pitch: f32, roll: f32) -> [Vec3; 3] {
+    let [forward, right, up] = view_axes(yaw, pitch);
     let (roll_sin, roll_cos) = roll.to_radians().sin_cos();
-    let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
-    let right = Vec3::new(yaw_sin, -yaw_cos, 0.0);
-    let up = Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos);
     [
         forward,
         right * roll_cos - up * roll_sin,
@@ -36,7 +31,7 @@ fn view_axes(yaw: f32, pitch: f32, roll: f32) -> [Vec3; 3] {
 /// and positive pitch looks down.
 #[must_use]
 pub fn view_projection(origin: Vec3, angles: [f32; 3], fov: f32, aspect: f32) -> [f32; 16] {
-    let [forward, right, up] = view_axes(angles[0], angles[1], angles[2]);
+    let [forward, right, up] = rolled_axes(angles[0], angles[1], angles[2]);
     let scale_y = REFERENCE_ASPECT / (fov.to_radians() * 0.5).tan();
     let scale_x = scale_y / aspect;
     let depth = FAR / (FAR - NEAR);

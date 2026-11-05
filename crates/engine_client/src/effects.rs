@@ -4,12 +4,11 @@
 //! Everything that knows the original's numbers and names is in here, so a
 //! game with other effects replaces this file and keeps [`Particles`].
 
-use engine_core::entity::EFFECT_MUZZLE_FLASH;
-use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use std::collections::HashMap;
 
-use engine_core::entity::Effect;
+use engine_core::entity::{EFFECT_MUZZLE_FLASH, Effect};
 use engine_core::math::{Vec3, view_axes};
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use engine_core::sound::SoundStart;
 
 use crate::particles::{Particles, Trail};

@@ -1,6 +1,5 @@
 //! Where settings and saved games live, and how they're written (proposal 0044).
 
-use engine_core::time::TICK_SECONDS;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -10,6 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_console::Console;
+use engine_core::time::TICK_SECONDS;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_server::{SavedGame, Server};

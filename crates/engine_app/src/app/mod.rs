@@ -6,7 +6,6 @@ mod shots;
 mod sound;
 mod view;
 
-use engine_core::player::USUAL_GRAVITY;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -14,8 +13,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use engine_assets::DirectoryArchive;
-use engine_assets::{AssetError, FileSystem};
+use engine_assets::{AssetError, DirectoryArchive, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Client, Effects, Look, LookScale, ShotClock,
@@ -24,7 +22,7 @@ use engine_client::{
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
 use engine_core::math::Vec3;
-use engine_core::player::UserCommand;
+use engine_core::player::{USUAL_GRAVITY, UserCommand};
 use engine_core::time::{FpsMeter, TICK_HERTZ, TICK_SECONDS, TickClock, TickRate};
 use engine_map::Map;
 use engine_net::{NetServer, Transport, loopback};
@@ -39,16 +37,15 @@ use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
     SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, load_level, mount_game, mount_music,
 };
+use sound::AudioLevels;
+use view::DEFAULT_FOV;
 
-use crate::commands;
 use crate::keys::Keys;
 use crate::models::ModelBank;
 use crate::options::Options;
-use crate::saves;
 use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
 use crate::sounds::SoundBank;
-use sound::AudioLevels;
-use view::DEFAULT_FOV;
+use crate::{commands, saves};
 
 /// The simulation rate (proposal 0010).
 const TICK_RATE: Option<TickRate> = TickRate::new(TICK_HERTZ);

@@ -8,8 +8,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use engine_core::math::Vec3;
-use engine_core::player::UserCommand;
-use engine_core::player::VIEW_HEIGHT;
+use engine_core::player::{UserCommand, VIEW_HEIGHT};
 use engine_net::Transport;
 use engine_physics::CollisionWorld;
 

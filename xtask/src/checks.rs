@@ -1,10 +1,9 @@
 //! The required checks from DESIGN.md, run in order.
 
 use std::ffi::OsString;
-use std::fmt;
-use std::io;
 use std::path::Path;
 use std::process::Command;
+use std::{fmt, io};
 
 /// The three required checks, in the order they run. Formatting runs first
 /// because it is the cheapest, and tests last because they are the slowest.

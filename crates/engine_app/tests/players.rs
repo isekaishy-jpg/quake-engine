@@ -457,6 +457,34 @@ fn a_client_cant_move_faster_by_sending_more() {
 }
 
 #[test]
+fn a_guest_can_run_what_the_game_lets_them_and_it_counts_on_the_scores() {
+    let (mut server, _host, mut guest) = two_players();
+    for line in ["god", "kill"] {
+        guest
+            .end
+            .send(ClientMessage::Console(line.to_owned()).encode());
+    }
+    server.tick();
+    server
+        .exec(
+            r#"
+            local guest = find_all("classname", "player")[2]
+            assert(bit32.band(guest.flags, FL_GODMODE) == 0, "not for guests")
+            assert(guest.frags < 0, "killing yourself is allowed, and costs")
+            "#,
+        )
+        .expect("it holds");
+    let mut scores = None;
+    while let Some(bytes) = guest.end.receive() {
+        if let Some(ServerMessage::Scores(list)) = ServerMessage::decode(&bytes) {
+            scores = Some(list);
+        }
+    }
+    let scores = scores.expect("the scores changed");
+    assert!(scores[1].frags < 0, "{scores:?}");
+}
+
+#[test]
 fn a_player_who_leaves_is_gone() {
     let (mut server, _host, guest) = two_players();
     assert_eq!(server.seat_count(), 2);

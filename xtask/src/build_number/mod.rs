@@ -19,9 +19,8 @@ mod sequence;
 pub use lock::BuildLock;
 pub use sequence::BuildSequence;
 
-use std::fmt;
-use std::io;
 use std::path::PathBuf;
+use std::{fmt, io};
 
 /// A package build number. It is displayed with at least six digits, which is
 /// a minimum width, not a limit on the sequence.

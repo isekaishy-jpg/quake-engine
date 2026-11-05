@@ -3,11 +3,10 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
-use std::fmt;
-use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
 use std::rc::Rc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{fmt, io};
 
 use renet::{
     ChannelConfig, ClientId, ConnectionConfig, RenetClient, RenetServer, SendType, ServerEvent,

@@ -289,7 +289,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
     mesh.model_ranges = vec![Vec::new(); map.models.len()];
     for (number, model) in map.models.iter().enumerate() {
         let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
-        for index in model.first_face..model.first_face + model.face_count {
+        for index in model.first_face..model.first_face.saturating_add(model.face_count) {
             let at = index as usize;
             let Some(face) = map.faces.get(at) else {
                 continue;

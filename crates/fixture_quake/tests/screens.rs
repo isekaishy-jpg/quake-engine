@@ -307,8 +307,30 @@ impl MenuHost for Host {
 /// Presses `keys` in turn.
 fn press(menu: &mut Menu, host: &mut Host, keys: &[&str]) {
     for key in keys {
-        menu.key(key, host);
+        let text = match *key {
+            "SEMICOLON" => Some(':'),
+            _ => key.chars().next().filter(|_| key.len() == 1),
+        };
+        let text = text.map(|character| character.to_ascii_lowercase());
+        menu.key(key, text, host);
     }
+}
+
+#[test]
+fn a_name_can_have_capitals_but_no_quotes() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Setup, &mut host);
+    press(&mut menu, &mut host, &["BACKSPACE"; 6]);
+    for text in ['R', '_', '"', '9'] {
+        menu.key("X", Some(text), &mut host);
+    }
+    press(&mut menu, &mut host, &["ENTER"]);
+    assert!(
+        host.commands.iter().any(|line| line == "name \"R_9\""),
+        "{:?}",
+        host.commands
+    );
 }
 
 #[test]

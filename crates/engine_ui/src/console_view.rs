@@ -28,9 +28,6 @@ const PROMPT: char = ']';
 /// How many lines Page Up scrolls.
 const PAGE_LINES: usize = 4;
 
-/// The console's background.
-const BACKGROUND: &str = "gfx/conback.lmp";
-
 /// The characters of a key, plain and with Shift held, as `keyshift` in
 /// `keys.c`. Keys here are named by their position on a US keyboard.
 fn typed(key: &str, shift: bool) -> Option<char> {
@@ -214,6 +211,12 @@ impl ConsoleView {
         self.shift = held;
     }
 
+    /// The character `key` types now, by whether Shift is held.
+    #[must_use]
+    pub fn typed(&self, key: &str) -> Option<char> {
+        typed(key, self.shift)
+    }
+
     /// What's being typed.
     #[must_use]
     pub fn input(&self) -> &str {
@@ -331,15 +334,16 @@ impl ConsoleView {
         }
     }
 
-    /// Draws it, from `Con_DrawConsole`, with `version` in its corner.
-    pub fn draw(&self, canvas: &mut Canvas<'_>, version: &str, blink: bool) {
+    /// Draws it over `background`, from `Con_DrawConsole`, with `version` in
+    /// its corner.
+    pub fn draw(&self, canvas: &mut Canvas<'_>, background: &str, version: &str, blink: bool) {
         if self.down <= 0.0 {
             return;
         }
         let (width, height) = (canvas.width(), canvas.height());
         let bottom = (height * self.down).floor();
         // Slide the picture down rather than squash it.
-        canvas.stretched(BACKGROUND, [0.0, bottom - height, width, bottom], 1.0);
+        canvas.stretched(background, [0.0, bottom - height, width, bottom], 1.0);
         #[expect(clippy::cast_precision_loss, reason = "a short version")]
         let left = width - (version.len() as f32 + 1.0) * CHARACTER_SIZE;
         canvas.bright_text(left, bottom - 2.0 * CHARACTER_SIZE, version.as_bytes());
