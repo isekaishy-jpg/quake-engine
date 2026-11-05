@@ -5,7 +5,8 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, BOUNCE_STYLE, Fog, Map, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
+    AliasModel, BOUNCE_STYLE, Fog, Map, Pool, ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite,
+    TextureKind,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -16,7 +17,7 @@ use vulkane::safe::{
 
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
-    GpuPicture, GpuSprite, POST_BYTES, SKY_BYTES, Scene,
+    GpuPicture, GpuSprite, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
@@ -27,6 +28,7 @@ use crate::material::{
 use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
+use crate::world::uses_material;
 use crate::world::{Vertex, WorldMesh};
 
 /// A buffer the CPU can write.
@@ -46,11 +48,6 @@ pub(super) fn host_buffer(
         MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
     )?;
     Ok(GpuBuffer { buffer, memory })
-}
-
-/// Whether `texture` is drawn through the material pipeline.
-fn batch_uses_material(texture: &Texture) -> bool {
-    matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
 }
 
 /// An image in device memory.
@@ -164,6 +161,12 @@ pub(super) struct FrameExtras<'a> {
     masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
+    /// Bodies of liquid.
+    pools: &'a [Pool],
+    /// Where the view is, to choose among them.
+    eye: Vec3,
+    /// The baked light in the air.
+    probes: Option<&'a ProbeGrid>,
 }
 
 /// The stencil and capsule part of the frame uniforms.
@@ -173,6 +176,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         lights,
         masks,
         capsules,
+        ..
     } = *extra;
     let mut out = vec![0.0; EXTRA_FLOATS];
     let count = if post.rays == 0 {
@@ -243,6 +247,45 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     #[expect(clippy::cast_precision_loss, reason = "sixteen at most")]
     let capsule_count = shown as f32;
     out[base + 128] = capsule_count;
+    let base = base + 132;
+    let mut pools: Vec<&Pool> = extra.pools.iter().collect();
+    let distance = |pool: &Pool| (((pool.low + pool.high) * 0.5) - extra.eye).length();
+    pools.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
+    pools.truncate(MAX_POOLS);
+    for (index, pool) in pools.iter().enumerate() {
+        let at = base + index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            pool.low.x,
+            pool.low.y,
+            pool.low.z,
+            pool.look.absorption,
+        ]);
+        let at = base + MAX_POOLS * 4 + index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            pool.high.x,
+            pool.high.y,
+            pool.high.z,
+            pool.look.caustics,
+        ]);
+        let at = base + MAX_POOLS * 8 + index * 4;
+        out[at..at + 3].copy_from_slice(&pool.look.color);
+    }
+    let base = base + MAX_POOLS * 12;
+    #[expect(clippy::cast_precision_loss, reason = "eight at most")]
+    let pool_count = pools.len() as f32;
+    out[base] = pool_count;
+    if let Some(probes) = extra.probes {
+        out[base + 4..base + 8].copy_from_slice(&[
+            probes.origin.x,
+            probes.origin.y,
+            probes.origin.z,
+            probes.spacing,
+        ]);
+        #[expect(clippy::cast_precision_loss, reason = "grid sizes are small")]
+        let size = probes.size.map(|axis| axis as f32);
+        out[base + 8..base + 11].copy_from_slice(&size);
+        out[base + 11] = f32::from(u8::from(post.fog_grid));
+    }
     out
 }
 
@@ -531,7 +574,7 @@ impl Backend {
                 .collect();
             let image = self.upload_image(&levels, Format::R8G8B8A8_UNORM)?;
             if let (Some(material), Some(params)) = (&texture.material, &mut material_params)
-                && batch_uses_material(texture)
+                && uses_material(texture)
             {
                 let set = pool.allocate(&self.material_layout)?;
                 set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -747,6 +790,9 @@ impl Backend {
             lights: scene.map_or(&[][..], |scene| scene.drawables.stencil_lights),
             masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
+            pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
+            eye: view.origin,
+            probes: scene.and_then(|scene| scene.map.probes.as_ref()),
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);

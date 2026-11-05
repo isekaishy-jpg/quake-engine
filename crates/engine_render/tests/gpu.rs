@@ -9,8 +9,9 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, Map, MipLevel, RayStencil, Sprite,
-    SpriteFacing, SpriteFrame, SpriteImage,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, Map, Material, MipLevel,
+    Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
+    TextureKind,
 };
 use engine_render::{
     CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
@@ -698,4 +699,111 @@ fn a_capsule_shades_what_is_behind_it() {
         )
         .expect("capture");
     assert_eq!(centre(&clear), centre(&lit), "light from below passes");
+}
+
+/// A liquid with a blended material draws through the material pipeline, which
+/// needs its material uploaded: without that a device is lost.
+#[test]
+fn a_blended_liquid_draws() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.textures[0].kind = TextureKind::Liquid;
+    built.textures[0].material = Some(Arc::new(Material {
+        alpha: AlphaMode::Blend,
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert_eq!(capture.width, 64);
+}
+
+/// The middle of a picture of `built` from above, with `post`.
+fn post_centre(built: Map, post: PostSettings) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(post);
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A pool around the view that tints as `look` says.
+fn pool_map(look: PoolLook) -> Map {
+    let mut built = map(1);
+    built.pools.push(Pool {
+        low: Vec3::new(-64.0, -64.0, -8.0),
+        high: Vec3::new(192.0, 192.0, 128.0),
+        look,
+    });
+    built
+}
+
+/// Depth takes things towards a pool's colour, more the further they are.
+#[test]
+fn depth_tints_towards_a_pools_colour() {
+    let look = PoolLook {
+        color: [0.0, 0.0, 1.0],
+        absorption: 0.02,
+        caustics: 0.0,
+    };
+    let thick = PoolLook {
+        absorption: 0.2,
+        ..look
+    };
+    let plain = post_centre(map(1), PostSettings::default());
+    let tinted = post_centre(pool_map(look), PostSettings::default());
+    let deep = post_centre(pool_map(thick), PostSettings::default());
+    let (Some(plain), Some(tinted), Some(deep)) = (plain, tinted, deep) else {
+        return;
+    };
+    assert!(tinted[0] < plain[0], "{plain:?} {tinted:?}");
+    assert!(tinted[2] > plain[2], "{plain:?} {tinted:?}");
+    assert!(deep[0] < tinted[0], "{tinted:?} {deep:?}");
+    assert!(deep[2] > 240, "all the way to its colour: {deep:?}");
+}
+
+/// A map with thick fog, and probes all of `level`.
+fn fog_map(level: u8) -> Map {
+    let mut built = map(1);
+    built.fog = Some(Fog {
+        color: [1.0, 1.0, 1.0],
+        density: 0.1,
+        height: 0.0,
+        falloff: 0.0001,
+    });
+    built.probes = Some(ProbeGrid {
+        origin: Vec3::new(-64.0, -64.0, -64.0),
+        spacing: 128.0,
+        size: [3, 3, 3],
+        colors: vec![[[level; 3]; 6]; 27],
+        directions: vec![[128, 128, 255]; 27],
+    });
+    built
+}
+
+/// Fog shows the light in the probes, when it's asked to.
+#[test]
+fn the_fog_grid_shows_baked_light() {
+    let grid = PostSettings {
+        fog_grid: true,
+        ..PostSettings::default()
+    };
+    let bright = post_centre(fog_map(120), grid);
+    let dark = post_centre(fog_map(0), grid);
+    let plain = post_centre(fog_map(0), PostSettings::default());
+    let (Some(bright), Some(dark), Some(plain)) = (bright, dark, plain) else {
+        return;
+    };
+    assert!(bright[1] > 150, "lit fog: {bright:?}");
+    assert!(dark[1] < 30, "unlit fog: {dark:?}");
+    assert!(
+        plain[1] > 200,
+        "fog with no grid has its own colour: {plain:?}"
+    );
 }

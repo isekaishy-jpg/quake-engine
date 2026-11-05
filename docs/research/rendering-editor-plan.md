@@ -34,8 +34,8 @@ Status is one of todo, doing or done.
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
 | 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | doing |
 | 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
-| 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | todo |
-| 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | todo |
+| 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | doing |
+| 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | done |
 | 15 | Small lights | Torch shader, flipbooks, particles | todo |
 | 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | doing |
 | 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | doing |
@@ -56,3 +56,5 @@ Newest last. A line is added when a stage's state changes.
 - Stage 7 still owes painted masks and flattening on compile.
 - Stage 16 still owes outlines. Stage 17 still owes decals, hotspots, flow maps, reflections and rounded edges.
 - Stage 22 has the core, command line, MCP and editor. Stage 23 has the feature tour.
+- The final pass is in, with edge smoothing, post-process outlines and height fog.
+- Stage 14 is done: stencil rays with boxes, light in water and the fog grid. Stage 13 has capsules and owes sidecars and per-part detail.

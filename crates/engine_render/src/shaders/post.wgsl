@@ -9,6 +9,7 @@
 @group(0) @binding(5) var stencil1: texture_2d<f32>;
 @group(0) @binding(6) var stencil2: texture_2d<f32>;
 @group(0) @binding(7) var stencil3: texture_2d<f32>;
+@group(0) @binding(8) var probe_slices: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -128,14 +129,83 @@ fn pixel_normal(at: vec2<i32>, uv: vec2<f32>, depth: f32, size: vec2<f32>) -> ve
     return normalize(cross(right - here, down - here));
 }
 
+// The baked light at a point in the air.
+fn probe_light(point: vec3<f32>) -> vec3<f32> {
+    let size = frame.probe_size.xyz;
+    let local = clamp(
+        (point - frame.probe_origin.xyz) / frame.probe_origin.w,
+        vec3<f32>(0.0),
+        size - vec3<f32>(1.0),
+    );
+    let low = floor(local.z);
+    let high = min(low + 1.0, size.z - 1.0);
+    let across = (local.x + 0.5) / size.x;
+    let rows = size.y * size.z;
+    let first = vec2<f32>(across, (low * size.y + local.y + 0.5) / rows);
+    let second = vec2<f32>(across, (high * size.y + local.y + 0.5) / rows);
+    let below = textureSampleLevel(probe_slices, scene_sampler, first, 0.0).rgb;
+    let above = textureSampleLevel(probe_slices, scene_sampler, second, 0.0).rgb;
+    return mix(below, above, local.z - low);
+}
+
+// Fog lit by the bake, marched along the view. It's brightest by lights.
+fn grid_fogged(color: vec3<f32>, ray: vec3<f32>, jitter: f32) -> vec3<f32> {
+    let density = frame.fog_color.w;
+    let falloff = max(frame.fog_params.y, 0.0001);
+    let steps = 16;
+    let length_of = length(ray);
+    let step_length = length_of / f32(steps);
+    var left = 1.0;
+    var gathered = vec3<f32>(0.0);
+    for (var step = 0; step < steps; step = step + 1) {
+        let point = frame.eye.xyz + ray * ((f32(step) + jitter) / f32(steps));
+        let thickness = density * exp(-(point.z - frame.fog_params.x) * falloff);
+        let through = exp(-thickness * step_length);
+        gathered = gathered + left * (1.0 - through) * probe_light(point) * 2.0 * frame.fog_color.rgb;
+        left = left * through;
+    }
+    return color * left + gathered;
+}
+
+// Where a ray crosses a box, as shares of it, from its start at most.
+fn box_span(ray: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> vec2<f32> {
+    let eye = frame.eye.xyz;
+    let safe = select(ray, vec3<f32>(0.0001), abs(ray) < vec3<f32>(0.0001));
+    let first = (low - eye) / safe;
+    let second = (high - eye) / safe;
+    let near = min(first, second);
+    let away = max(first, second);
+    return vec2<f32>(
+        max(max(near.x, near.y), max(near.z, 0.0)),
+        min(min(away.x, away.y), min(away.z, 1.0)),
+    );
+}
+
+// How much of a ray is in the air: fog stops where it enters a pool.
+fn share_in_air(ray: vec3<f32>) -> f32 {
+    var share = 1.0;
+    let count = i32(frame.pool_params.x);
+    for (var index = 0; index < count; index = index + 1) {
+        let span = box_span(ray, frame.pool_low[index].xyz, frame.pool_high[index].xyz);
+        if span.y > span.x {
+            share = min(share, span.x);
+        }
+    }
+    return share;
+}
+
 // Fog that thickens with distance and lies low.
-fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
+fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32> {
     let density = frame.fog_color.w;
     if density <= 0.0 {
         return color;
     }
     let far = world_at(uv, min(depth, 0.99999));
-    let ray = far - frame.eye.xyz;
+    let whole = far - frame.eye.xyz;
+    let ray = whole * share_in_air(whole);
+    if frame.probe_size.w > 0.5 {
+        return grid_fogged(color, ray, jitter);
+    }
     let distance_to = length(ray);
     let falloff = max(frame.fog_params.y, 0.0001);
     let start = frame.eye.z - frame.fog_params.x;
@@ -147,6 +217,70 @@ fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
     }
     let total = density * distance_to * amount;
     return mix(color, frame.fog_color.rgb, 1.0 - exp(-max(total, 0.0)));
+}
+
+// Moving bright lines, as light makes through a rippling surface.
+fn caustic(place: vec2<f32>) -> f32 {
+    let time = frame.params.x;
+    var at = place / 40.0;
+    for (var turn = 0; turn < 3; turn = turn + 1) {
+        at = at + vec2<f32>(
+            sin(at.y * 1.3 + time * 0.7) * 0.6,
+            cos(at.x * 1.1 - time * 0.6) * 0.6,
+        );
+    }
+    let lines = abs(sin(at.x) + sin(at.y));
+    return pow(1.0 - clamp(lines * 0.5, 0.0, 1.0), 6.0);
+}
+
+// Where a pool's surface lets through the light that reaches `point`.
+fn surface_above(point: vec3<f32>, top: f32) -> vec2<f32> {
+    var sun = vec3<f32>(0.0, 0.0, 1.0);
+    if frame.sky_sun.z > 0.05 {
+        sun = normalize(frame.sky_sun.xyz);
+    }
+    return point.xy + sun.xy * (top - point.z) / sun.z;
+}
+
+// Light in the pools a view passes through: depth tints it, what's in a pool
+// shows caustics, and a view through one sees them as shafts.
+fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32> {
+    var color = start;
+    let eye = frame.eye.xyz;
+    let far = world_at(uv, min(depth, 0.9999));
+    let ray = far - eye;
+    let count = i32(frame.pool_params.x);
+    for (var index = 0; index < count; index = index + 1) {
+        let low = frame.pool_low[index];
+        let high = frame.pool_high[index];
+        let span = box_span(ray, low.xyz, high.xyz);
+        let enter = span.x;
+        let leave = span.y;
+        if leave <= enter {
+            continue;
+        }
+        let path = (leave - enter) * length(ray);
+        let inside = all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0));
+        if inside && depth < 1.0 && high.w > 0.0 {
+            let below = high.z - far.z;
+            let pattern = caustic(surface_above(far, high.z));
+            let reach = exp(-below / 320.0);
+            color = color * (1.0 + pattern * high.w * 3.0 * reach);
+        }
+        color = mix(color, frame.pool_color[index].rgb, 1.0 - exp(-path * low.w));
+        if high.w > 0.0 {
+            var shafts = 0.0;
+            for (var step = 0; step < 8; step = step + 1) {
+                let share = mix(enter, leave, (f32(step) + jitter) / 8.0);
+                let point = eye + ray * share;
+                let below = high.z - point.z;
+                shafts = shafts + caustic(surface_above(point, high.z)) * exp(-below / 200.0);
+            }
+            let amount = shafts / 8.0 * min(path / 256.0, 1.0) * high.w;
+            color = color + frame.pool_color[index].rgb * amount * 2.5;
+        }
+    }
+    return color;
 }
 
 // One stencil's picture, blurred, so rays stay chunky.
@@ -292,12 +426,13 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     }
     let edge = outline_strength(at, in.uv, depth);
     color = mix(color, frame.outline.rgb, edge);
-    color = fogged(color, in.uv, depth);
+    // Interleaved gradient noise: an even dither, not grain.
+    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    color = in_pools(color, in.uv, depth, noise);
+    color = fogged(color, in.uv, depth, noise);
     let count = i32(frame.stencil_params.x);
     if count > 0 {
         let stop = world_at(in.uv, min(depth, 0.9999));
-        // Interleaved gradient noise: an even dither, not grain.
-        let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
         for (var index = 0; index < count; index = index + 1) {
             color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
         }

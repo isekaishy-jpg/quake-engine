@@ -6,8 +6,8 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Map, Model, Node, NodeChild, Plane,
-    TexelAxis, Texture, TextureKind, Tree,
+    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Map, Model, Node, NodeChild, Plane, Pool,
+    PoolLook, TexelAxis, Texture, TextureKind, Tree,
 };
 
 use crate::error::CompileError;
@@ -395,6 +395,40 @@ fn field_text(value: &Value) -> String {
     }
 }
 
+/// The bodies of liquid among a map's brushes.
+#[expect(clippy::cast_possible_truncation, reason = "pools store f32")]
+fn pools_of(working: &WorkingMap) -> Vec<Pool> {
+    let mut pools = Vec::new();
+    for brush in &working.brushes {
+        let Some(mut look) = PoolLook::of(brush.contents) else {
+            continue;
+        };
+        if let Some(water) = &working.water {
+            look.color = water.color.unwrap_or(look.color);
+            look.absorption = water.absorption.unwrap_or(look.absorption);
+            look.caustics = water.caustics.unwrap_or(look.caustics);
+        }
+        let corners = solid_corners(&brush.planes());
+        let Some(first) = corners.first() else {
+            continue;
+        };
+        let (mut low, mut high) = (*first, *first);
+        for corner in &corners {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(corner[axis]);
+                high[axis] = high[axis].max(corner[axis]);
+            }
+        }
+        let point = |at: Point| Vec3::new(at[0] as f32, at[1] as f32, at[2] as f32);
+        pools.push(Pool {
+            low: point(low),
+            high: point(high),
+            look,
+        });
+    }
+    pools
+}
+
 /// Compiles a working map.
 ///
 /// # Errors
@@ -438,6 +472,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     builder.map.entities = entities;
+    builder.map.pools = pools_of(working);
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;
         builder.map.stencils.push(stencil);

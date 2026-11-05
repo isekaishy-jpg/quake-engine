@@ -1,0 +1,48 @@
+format 1 map
+
+# A deep pool under an open roof, for light in water, and low fog lit by the
+# bake around it.
+entity world {
+    type = worldspawn
+    sun_intensity = 110
+    sun_size = 16
+    ambient = 8
+    light_spacing = 16
+}
+sky {
+    zenith = 0.16 0.34 0.62
+    horizon = 0.8 0.78 0.72
+    sun_direction = 0.35 0.2 0.9
+    clouds { coverage = 0.35 }
+}
+fog {
+    color = 0.8 0.85 0.95
+    density = 0.0016
+    height = 0
+    falloff = 0.012
+}
+
+# The floor, around the pool.
+brush { material = stone cuboid = -768 -768 -32 -256 768 0 }
+brush { material = stone cuboid = 256 -768 -32 768 768 0 }
+brush { material = stone cuboid = -256 -768 -32 256 -256 0 }
+brush { material = stone cuboid = -256 256 -32 256 768 0 }
+
+# The pool's sides and bed, and its water.
+brush { material = brick cuboid = -288 -288 -288 -256 288 -32 }
+brush { material = brick cuboid = 256 -288 -288 288 288 -32 }
+brush { material = brick cuboid = -256 -288 -288 256 -256 -32 }
+brush { material = brick cuboid = -256 256 -288 256 288 -32 }
+brush { material = stone cuboid = -288 -288 -320 288 288 -288 }
+brush { contents = water material = water cuboid = -256 -256 -288 256 256 -12 }
+
+# Walls, with the roof open to the sky.
+brush { material = brick cuboid = -800 -800 -32 -768 800 512 }
+brush { material = brick cuboid = 768 -800 -32 800 800 512 }
+brush { material = brick cuboid = -768 -800 -32 768 -768 512 }
+brush { material = brick cuboid = -768 768 -32 768 800 512 }
+brush { contents = sky material = sky cuboid = -800 -800 512 800 800 544 }
+
+entity start { type = info_player_start origin = -500 0 24 angle = 0 }
+entity red_lamp { type = light origin = -600 -600 96 intensity = 500 color = 1 0.3 0.15 size = 8 }
+entity blue_lamp { type = light origin = 600 600 96 intensity = 500 color = 0.2 0.4 1 size = 8 }

@@ -177,7 +177,7 @@ def glass_marks(x, y):
 
 def water_base(x, y):
     n = fractal(NOISE, x, y)
-    return (clamp(20 + n * 40), clamp(70 + n * 60), clamp(110 + n * 80), 255)
+    return (clamp(20 + n * 40), clamp(70 + n * 60), clamp(110 + n * 80), 96)
 
 
 def sphere_matcap(x, y):
@@ -262,7 +262,8 @@ MATERIALS_TEXT = {
     'glass_rays': 'base = textures/glass_rays.png',
     'hidden': 'base = textures/grate.png\n    kind = hidden',
     'slime': 'base = textures/water.png\n    kind = liquid',
-    'water': 'base = textures/water.png\n    kind = liquid',
+    'sky': 'base = textures/water.png\n    kind = sky',
+    'water': 'base = textures/water.png\n    kind = liquid\n    alpha = blend\n    shading = unlit\n    scroll = 0.05 0.03',
     'lava': 'base = textures/lava.png\n    kind = liquid',
 }
 

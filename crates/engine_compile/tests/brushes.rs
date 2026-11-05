@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use engine_compile::{compile_text, placeholder_texture};
 use engine_core::math::Vec3;
-use engine_map::{Contents, Map, NodeChild};
+use engine_map::{Contents, Map, NodeChild, PoolLook};
 use engine_physics::CollisionWorld;
 
 /// A closed room from -256 to 256 with 32 unit walls, and a pillar.
@@ -173,4 +173,32 @@ fn bad_maps_say_what_is_wrong() {
     for text in cases {
         assert!(compile_text(text, &mut source).is_err(), "{text}");
     }
+}
+
+/// Liquid brushes are pools, and solid ones aren't.
+#[test]
+fn liquid_brushes_become_pools() {
+    let map = room();
+    assert_eq!(map.pools.len(), 1);
+    let pool = map.pools[0];
+    assert_eq!(pool.low, Vec3::new(96.0, 96.0, -256.0));
+    assert_eq!(pool.high, Vec3::new(224.0, 224.0, -128.0));
+    assert_eq!(Some(pool.look), PoolLook::of(Contents::Water));
+}
+
+/// A map can change how its liquids look.
+#[test]
+fn a_water_block_changes_the_look() {
+    let text = format!(
+        "{ROOM}
+water {{ caustics = 0.25 absorption = 0.5 }}
+"
+    );
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(&text, &mut source).expect("compiles");
+    let usual = PoolLook::of(Contents::Water).expect("a liquid");
+    let look = map.pools[0].look;
+    assert!((look.caustics - 0.25).abs() < 0.001);
+    assert!((look.absorption - 0.5).abs() < 0.001);
+    assert_eq!(look.color, usual.color, "what's unset stays usual");
 }

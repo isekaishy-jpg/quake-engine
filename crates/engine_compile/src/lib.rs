@@ -20,5 +20,5 @@ pub use error::CompileError;
 pub use geometry::{Plane3, Point};
 pub use light::{BakeInput, ImageReader, bake_light};
 pub use material::MaterialLibrary;
-pub use source::{Brush, BrushFace, EntitySource, SkySource, WorkingMap, read_map};
+pub use source::{Brush, BrushFace, EntitySource, SkySource, WaterSource, WorkingMap, read_map};
 pub use texture::placeholder_texture;

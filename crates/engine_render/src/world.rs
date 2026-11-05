@@ -121,14 +121,21 @@ struct LightPlace {
     width: u32,
 }
 
+/// Whether `texture` is drawn through the material pipelines. Upload and
+/// batching must agree on this, or a draw has no material bound.
+pub(crate) fn uses_material(texture: &Texture) -> bool {
+    texture.material.as_ref().is_some_and(|material| {
+        matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
+            || (texture.kind == TextureKind::Liquid && material.alpha == AlphaMode::Blend)
+    })
+}
+
 /// The batch kind of a texture, or `None` for hidden ones.
 fn batch_kind(texture: &Texture) -> Option<BatchKind> {
     if texture.kind == TextureKind::Hidden {
         return None;
     }
-    if let Some(material) = &texture.material
-        && matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
-    {
+    if let Some(material) = texture.material.as_ref().filter(|_| uses_material(texture)) {
         return Some(if material.alpha == AlphaMode::Blend {
             BatchKind::Blended
         } else {

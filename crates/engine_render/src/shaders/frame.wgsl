@@ -49,4 +49,15 @@ struct Frame {
     capsule_light: array<vec4<f32>, 16>,
     // x how many capsules.
     capsule_params: vec4<f32>,
+    // Per pool: its low corner with w its absorption, its high corner with w
+    // its caustics, and its colour.
+    pool_low: array<vec4<f32>, 8>,
+    pool_high: array<vec4<f32>, 8>,
+    pool_color: array<vec4<f32>, 8>,
+    // x how many pools.
+    pool_params: vec4<f32>,
+    // The probes: their corner with w their spacing, and how many there are
+    // along each axis, with w 1 if fog reads them.
+    probe_origin: vec4<f32>,
+    probe_size: vec4<f32>,
 }

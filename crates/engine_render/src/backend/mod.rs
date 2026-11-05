@@ -56,7 +56,10 @@ const FRAME_SIZE: usize =
 const EXTRA_BYTES: usize = EXTRA_FLOATS * 4;
 
 /// Floats of stencil and capsule values in the frame uniforms.
-const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4;
+const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 12 + 4 + 8;
+
+/// How many pools can show in a frame.
+const MAX_POOLS: usize = 8;
 
 /// Bytes of final pass values in the frame uniforms.
 const POST_BYTES: usize = 128;
@@ -347,6 +350,8 @@ pub(crate) struct Backend {
     blank_stencil: Option<GpuImage>,
     /// The stencils' pictures.
     stencil_images: Vec<GpuImage>,
+    /// The probes, as slices stacked down an image.
+    probe_image: Option<GpuImage>,
     /// The texture sampler.
     texture_sampler: Sampler,
     /// The material sampler.
@@ -524,6 +529,7 @@ impl Backend {
                 image_binding(5, DescriptorType::SAMPLED_IMAGE),
                 image_binding(6, DescriptorType::SAMPLED_IMAGE),
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
+                image_binding(8, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -617,6 +623,7 @@ impl Backend {
             post: PostSettings::default(),
             blank_stencil: None,
             stencil_images: Vec::new(),
+            probe_image: None,
             texture_sampler,
             material_sampler,
             filter: None,

@@ -3,4 +3,7 @@ format 1 material
 surface {
     base = textures/water.png
     kind = liquid
+    alpha = blend
+    shading = unlit
+    scroll = 0.05 0.03
 }

@@ -8,7 +8,7 @@ use vulkane::safe::{
     ImageLayout, ImageUsage, PipelineLayout, RenderPass, RenderPassCreateInfo, ShaderModule,
 };
 
-use engine_map::Map;
+use engine_map::{Map, ProbeGrid};
 
 use super::upload::device_image;
 use super::{Backend, COLOR_FORMAT, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER};
@@ -53,6 +53,21 @@ pub(super) fn make_scene_pass(device: &Device) -> Result<RenderPass, RenderError
     )?)
 }
 
+/// The probes as an image: each level of them is a slice, stacked downwards,
+/// and each probe the average of its sides.
+fn probe_slices(probes: &ProbeGrid) -> (u32, u32, Vec<u8>) {
+    let [width, depth, slices] = probes.size;
+    let mut rgba = Vec::with_capacity(probes.colors.len() * 4);
+    for sides in &probes.colors {
+        for channel in 0..3 {
+            let total: u32 = sides.iter().map(|side| u32::from(side[channel])).sum();
+            rgba.push(u8::try_from(total / 6).unwrap_or(u8::MAX));
+        }
+        rgba.push(u8::MAX);
+    }
+    (width, depth * slices, rgba)
+}
+
 impl Backend {
     /// The final pass's pipeline.
     pub(super) fn make_post_pipeline(
@@ -88,6 +103,10 @@ impl Backend {
                 set.write_sampled_image(slot + 4, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
             }
         }
+        let probes = self.probe_image.as_ref().or(self.blank_stencil.as_ref());
+        if let Some(image) = probes {
+            set.write_sampled_image(8, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
         Ok(())
     }
 
@@ -103,6 +122,13 @@ impl Backend {
             images.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
         }
         self.stencil_images = images;
+        self.probe_image = match &map.probes {
+            Some(probes) if !probes.colors.is_empty() => {
+                let (width, height, rgba) = probe_slices(probes);
+                Some(self.upload_image(&[(width, height, &rgba)], Format::R8G8B8A8_UNORM)?)
+            }
+            _ => None,
+        };
         if let Some(target) = self.scene_target.take() {
             self.write_stencils(&target.set)?;
             self.scene_target = Some(target);
@@ -158,7 +184,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 6,
+                    descriptor_count: 7,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,

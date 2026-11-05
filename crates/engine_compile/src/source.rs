@@ -61,6 +61,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// What's changed about how liquids look.
+    pub water: Option<WaterSource>,
     /// Fog, if it has any.
     pub fog: Option<Fog>,
 }
@@ -78,6 +80,17 @@ pub struct SkySource {
 fn point_of(value: &Value) -> Option<Point> {
     let numbers = value.numbers()?;
     (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// A map's own look for its liquids.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterSource {
+    /// The colour depth takes things towards.
+    pub color: Option<[f32; 3]>,
+    /// How fast depth tints, per unit.
+    pub absorption: Option<f32>,
+    /// How strong caustics and shafts are.
+    pub caustics: Option<f32>,
 }
 
 /// What `name` is as contents.
@@ -253,6 +266,20 @@ fn read_sky(block: &Block) -> SkySource {
 }
 
 /// Reads a `fog` block.
+#[expect(clippy::cast_possible_truncation, reason = "the look stores f32")]
+fn read_water(block: &Block) -> WaterSource {
+    let number = |key: &str| block.get(key).and_then(Value::number).map(|v| v as f32);
+    WaterSource {
+        color: block
+            .get("color")
+            .is_some()
+            .then(|| color_of(block, "color", [0.0; 3])),
+        absorption: number("absorption"),
+        caustics: number("caustics"),
+    }
+}
+
+/// Fog, from its block.
 fn read_fog(block: &Block) -> Fog {
     #[expect(clippy::cast_possible_truncation, reason = "fog stores f32")]
     let number = |key: &str, default: f32| {
@@ -289,5 +316,6 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        water: document.blocks_of("water").next().map(read_water),
     })
 }
