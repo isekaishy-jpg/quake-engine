@@ -4,6 +4,8 @@
 //! Everything that knows the original's numbers and names is in here, so a
 //! game with other effects replaces this file and keeps [`Particles`].
 
+use engine_core::entity::EFFECT_MUZZLE_FLASH;
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use std::collections::HashMap;
 
 use engine_core::entity::Effect;
@@ -26,9 +28,6 @@ const BEAM_SECONDS: f32 = 0.2;
 
 /// How far apart a beam's pieces are.
 const BEAM_PIECE_LENGTH: f32 = 30.0;
-
-/// The entity effect bit for a muzzle flash.
-pub(crate) const EFFECT_MUZZLE_FLASH: u8 = 2;
 
 /// The entity effect bit for a bright light.
 const EFFECT_BRIGHT_LIGHT: u8 = 4;
@@ -126,12 +125,6 @@ const REWOUND_COLOR: u8 = 72;
 
 /// The colour of the box on the shooter's screen, which is green.
 const SEEN_COLOR: u8 = 56;
-
-/// The low corner of a player's box.
-pub(crate) const SEEN_BOX_LOW: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
-
-/// The high corner of a player's box.
-pub(crate) const SEEN_BOX_HIGH: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
 /// Everything the client shows that the server doesn't track.
 #[derive(Clone, Debug, Default)]
@@ -309,7 +302,7 @@ impl Effects {
     /// Shows the box of a player at `origin`, as this client has them on
     /// screen, to compare with the one the server judged a shot against.
     pub fn show_seen_box(&mut self, origin: Vec3) {
-        let (low, high) = (origin + SEEN_BOX_LOW, origin + SEEN_BOX_HIGH);
+        let (low, high) = (origin + PLAYER_MINS, origin + PLAYER_MAXS);
         self.particles.outline(low, high, SEEN_COLOR);
     }
 

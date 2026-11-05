@@ -1,5 +1,7 @@
 //! Entities, players and pusher physics.
 
+use engine_core::entity::EFFECT_MUZZLE_FLASH;
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -23,15 +25,6 @@ const MAX_COMMAND_SECONDS: f32 = 0.1;
 /// shot from long after they've reached cover.
 const MAX_REWIND: f64 = 0.25;
 
-/// How fast the view recovers from a knock, in degrees a second.
-const PUNCH_RECOVERY: f32 = 10.0;
-
-/// The smallest corner of the player's box, from `PutClientInServer`.
-const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
-
-/// The largest corner of the player's box.
-const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
-
 /// How far `SV_LinkEdict` grows every box, so triggers and the player each
 /// reach this much further.
 const LINK_MARGIN: f32 = 1.0;
@@ -41,9 +34,6 @@ const ITEM_MARGIN: f32 = 15.0;
 
 /// `FL_ITEM`.
 const FLAG_ITEM: u32 = 256;
-
-/// `EF_MUZZLEFLASH`, which lasts for one snapshot.
-const EFFECT_MUZZLE_FLASH: u8 = 2;
 
 /// How an entity blocks others.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

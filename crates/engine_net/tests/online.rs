@@ -356,7 +356,6 @@ fn someone_guessing_passwords_is_slowed_right_down() {
     let port = server.port();
     let started = Instant::now();
     let mut answered = 0;
-    let target = format!("127.0.0.1:{port}");
     let mut proxy_seen = Vec::new();
     for _ in 0..40 {
         let mut lossy = LossyProxy::new(SocketAddr::from(([127, 0, 0, 1], port)), u32::MAX);
@@ -372,12 +371,10 @@ fn someone_guessing_passwords_is_slowed_right_down() {
         lossy.pump();
         answered += lossy.seen.len();
     }
-    assert!(
-        started.elapsed() < Duration::from_secs(1),
-        "{target} took too long"
-    );
     assert_eq!(proxy_seen.len(), 40, "they all asked");
-    assert!(answered <= 1, "one guess a second, not {answered}");
+    // However long that took here, it's one a second from one address.
+    let seconds = usize::try_from(started.elapsed().as_secs()).expect("small");
+    assert!(answered <= 1 + seconds, "{answered} in {seconds} seconds");
 }
 
 /// How a join with `join` went against a game run by `host`: the identity of

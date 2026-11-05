@@ -1,7 +1,9 @@
 //! How far behind the server others are drawn (proposal 0048).
 
+use engine_core::time::TICK_SECONDS;
+
 /// How far behind the newest snapshot to draw, in seconds: two ticks.
-const DELAY: f64 = 2.0 / 72.0;
+const DELAY: f64 = 2.0 * TICK_SECONDS;
 
 /// How much the clock can run fast or slow to stay on course.
 const MAX_STRETCH: f64 = 0.1;

@@ -32,6 +32,8 @@ const STAT_DEATHMATCH: usize = 16;
 /// How many stats there are.
 const STAT_COUNT: usize = 17;
 
+/// `IT_QUAD`.
+const IT_QUAD: u32 = crate::weapon_rules::IT_QUAD.unsigned_abs();
 /// `IT_SHOTGUN`, the first of seven weapons.
 const IT_SHOTGUN: u32 = 1;
 /// `IT_SHELLS`.
@@ -54,9 +56,6 @@ const IT_INVISIBILITY: u32 = 1 << 19;
 const IT_INVULNERABILITY: u32 = 1 << 20;
 /// `IT_SUIT`.
 const IT_SUIT: u32 = 1 << 21;
-/// `IT_QUAD`.
-const IT_QUAD: u32 = 1 << 22;
-
 /// The bit of the first item on the bar.
 const FIRST_ITEM_BIT: u32 = 17;
 /// The bit of the first sigil.

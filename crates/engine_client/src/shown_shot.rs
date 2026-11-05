@@ -4,15 +4,14 @@
 //! frames and flash are the same shot arriving late, so they're left out.
 
 use engine_core::entity::ShotFeel;
-
-/// How fast the view comes back, in degrees a second, from `DropPunchAngle`.
-const RECOVERY: f32 = 10.0;
+use engine_core::player::PUNCH_RECOVERY;
+use engine_core::time::TICK_SECONDS;
 
 /// How long each frame of a weapon lasts, in seconds.
 const FRAME_SECONDS: f32 = 0.1;
 
 /// How far late a shot can be and still follow on from the last, in seconds.
-const CARRY_SECONDS: f64 = 2.0 / 72.0;
+const CARRY_SECONDS: f64 = 2.0 * TICK_SECONDS;
 
 /// When a weapon can next fire, as far as a client can tell.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -95,7 +94,7 @@ impl ShownShot {
     /// shot going on.
     pub(crate) fn advance(&mut self, seconds: f32, busy: bool) {
         self.previous_recoil = self.recoil;
-        self.recoil = (self.recoil - RECOVERY * seconds).max(0.0);
+        self.recoil = (self.recoil - PUNCH_RECOVERY * seconds).max(0.0);
         self.age += seconds;
         self.patience -= seconds;
         if !self.active {

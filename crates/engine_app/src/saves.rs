@@ -1,5 +1,6 @@
 //! Where settings and saved games live, and how they're written (proposal 0044).
 
+use engine_core::time::TICK_SECONDS;
 use std::error::Error;
 use std::fmt::Write as _;
 use std::fs::{self, File};
@@ -15,7 +16,7 @@ use engine_server::{SavedGame, Server};
 use fixture_quake::{Palette, SCRIPTS, import_map};
 use serde::{Deserialize, Serialize};
 
-use crate::app::{CONFIG_NAME, TICK_SECONDS, World, player_client};
+use crate::app::{CONFIG_NAME, World, player_client};
 use crate::options::Options;
 
 /// The folder under the user's data for this engine.

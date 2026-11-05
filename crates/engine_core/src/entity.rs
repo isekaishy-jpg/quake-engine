@@ -2,6 +2,9 @@
 
 use crate::math::Vec3;
 
+/// The entity effect bit for a muzzle flash, from `EF_MUZZLEFLASH`.
+pub const EFFECT_MUZZLE_FLASH: u8 = 2;
+
 /// A brush model in the world.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ModelInstance {

@@ -4,10 +4,13 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
-use engine_core::entity::{BlastRule, Effect, EntityState, ModelInstance, ShotFeel};
+use engine_core::entity::{
+    BlastRule, EFFECT_MUZZLE_FLASH, Effect, EntityState, ModelInstance, ShotFeel,
+};
 use engine_core::math::Vec3;
-use engine_core::player::{PlayerState, UserCommand};
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
+use engine_core::time::TICK_SECONDS;
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
     ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport,
@@ -15,7 +18,6 @@ use engine_net::{
 };
 use engine_physics::CollisionWorld;
 
-use crate::effects::{EFFECT_MUZZLE_FLASH, SEEN_BOX_HIGH, SEEN_BOX_LOW};
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 use crate::projectiles::{Blast, Flights, Launch, Timeline};
 use crate::shown_shot::ShownShot;
@@ -80,9 +82,6 @@ const COMMANDS_PER_MOVE: usize = 3;
 /// The share of the gap to the present that own shots are eased by, which
 /// halves it, as the record proposes.
 const DEFAULT_CORRECTION: f64 = 0.5;
-
-/// A tick, in seconds, for working out where the server is.
-const TICK_SECONDS: f64 = 1.0 / 72.0;
 
 /// How long past a round trip a guess waits for the server, in seconds.
 const GUESS_PATIENCE: f64 = 0.15;
@@ -643,7 +642,7 @@ impl Client {
         };
         // What flies into us goes off first, and never gets to where it's going.
         let origin = self.predicted.origin;
-        let (low, high) = (origin + SEEN_BOX_LOW, origin + SEEN_BOX_HIGH);
+        let (low, high) = (origin + PLAYER_MINS, origin + PLAYER_MAXS);
         let hits = self
             .flights
             .take_hits(self.next_sequence, (low, high), &self.boxes);

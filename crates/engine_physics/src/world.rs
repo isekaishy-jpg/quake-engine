@@ -1,5 +1,6 @@
 //! Traces through the map. Only this file knows `box3d`.
 
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use std::sync::Arc;
 
 use box3d_rust::body::create_body;
@@ -35,12 +36,6 @@ const SEARCH_STEPS: u32 = 24;
 /// How far around a model's bounds a trace still checks it, which covers the
 /// growth of the hull.
 const MODEL_BOUNDS_MARGIN: f32 = 64.0;
-
-/// The smallest corner of a player's box.
-const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
-
-/// The largest corner of a player's box.
-const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
 /// The result of a trace.
 #[derive(Clone, Copy, Debug, PartialEq)]

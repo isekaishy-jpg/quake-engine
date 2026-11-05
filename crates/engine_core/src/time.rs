@@ -191,3 +191,9 @@ impl FpsMeter {
         *self = Self::new();
     }
 }
+
+/// How many ticks a second the game runs at (proposal 0010).
+pub const TICK_HERTZ: u32 = 72;
+
+/// The length of a tick.
+pub const TICK_SECONDS: f64 = 1.0 / TICK_HERTZ as f64;

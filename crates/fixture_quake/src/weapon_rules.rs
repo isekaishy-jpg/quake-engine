@@ -29,7 +29,7 @@ const IT_LIGHTNING: i32 = 64;
 const IT_AXE: i32 = 4096;
 
 /// `IT_QUAD`.
-const IT_QUAD: i32 = 1 << 22;
+pub(crate) const IT_QUAD: i32 = 1 << 22;
 
 /// `STAT_ITEMS`, among what `ClientData` sends.
 const STAT_ITEMS: usize = 15;

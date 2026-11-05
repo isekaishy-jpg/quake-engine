@@ -1,13 +1,11 @@
 //! Particles: the sparks, smoke and blood of `r_part.c` (proposal 0036).
 
 use engine_core::math::Vec3;
+use engine_core::player::USUAL_GRAVITY;
 
 /// The most particles alive at once. The original's 2048 run out after two
 /// rockets.
 const MAX_PARTICLES: usize = 16_384;
-
-/// How fast things fall, as `sv_gravity`.
-const USUAL_GRAVITY: f32 = 800.0;
 
 /// The colours of the first half of an explosion, brightest first.
 const RAMP_EXPLODE: [u8; 8] = [0x6f, 0x6d, 0x6b, 0x69, 0x67, 0x65, 0x63, 0x61];

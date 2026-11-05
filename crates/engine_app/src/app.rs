@@ -1,5 +1,6 @@
 //! The running engine: the main loop's two halves.
 
+use engine_core::player::USUAL_GRAVITY;
 use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -21,7 +22,7 @@ use engine_core::canvas::{Quad, TALK_MARK};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
-use engine_core::time::{FpsMeter, TickClock, TickRate};
+use engine_core::time::{FpsMeter, TICK_HERTZ, TICK_SECONDS, TickClock, TickRate};
 use engine_map::{Contents, Map};
 use engine_net::{Conditioned, Conditions, NetServer, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
@@ -48,10 +49,7 @@ use crate::screen::{MENU_SETTINGS, MenuActions, MenuSettings, PictureBank};
 use crate::sounds::SoundBank;
 
 /// The simulation rate (proposal 0010).
-const TICK_RATE: Option<TickRate> = TickRate::new(72);
-
-/// The length of a tick.
-pub(crate) const TICK_SECONDS: f64 = 1.0 / 72.0;
+const TICK_RATE: Option<TickRate> = TickRate::new(TICK_HERTZ);
 
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
@@ -1220,7 +1218,7 @@ impl Engine {
             saved: false,
             server: true,
         };
-        console.register_cvar("sv_gravity", "800", unsaved_rule);
+        console.register_cvar("sv_gravity", &USUAL_GRAVITY.to_string(), unsaved_rule);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -1282,8 +1280,8 @@ impl Engine {
                 identity: SeatInfo::default(),
                 shot_clock: ShotClock::default(),
                 rules_seen: None,
-                gravity_shown: 800.0,
-                gravity_seen: 800.0,
+                gravity_shown: USUAL_GRAVITY,
+                gravity_seen: USUAL_GRAVITY,
                 showing_boxes: false,
                 bots: Vec::new(),
                 bots_made: 0,

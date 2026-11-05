@@ -1,7 +1,7 @@
 //! A port of `PlayerMove` from `pmove.c`, with WinQuake's values.
 
 use engine_core::math::Vec3;
-use engine_core::player::{Liquid, PlayerState, UserCommand};
+use engine_core::player::{Liquid, PlayerState, USUAL_GRAVITY, UserCommand};
 use engine_physics::{Collision, PointContents, Trace};
 
 /// The highest step a player walks up.
@@ -72,7 +72,7 @@ impl Default for MoveVars {
     /// The values from `sv_phys.c` and `sv_user.c`.
     fn default() -> Self {
         Self {
-            gravity: 800.0,
+            gravity: USUAL_GRAVITY,
             stop_speed: 100.0,
             max_speed: 320.0,
             accelerate: 10.0,

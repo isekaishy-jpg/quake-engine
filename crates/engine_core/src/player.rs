@@ -18,6 +18,19 @@ pub enum Liquid {
     Lava,
 }
 
+/// The low corner of a player's box, from `VEC_HULL_MIN`.
+pub const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
+
+/// The high corner of a player's box, from `VEC_HULL_MAX`.
+pub const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
+
+/// How fast the view comes back from a kick, in degrees a second, from
+/// `DropPunchAngle`.
+pub const PUNCH_RECOVERY: f32 = 10.0;
+
+/// `sv_gravity` on almost every level.
+pub const USUAL_GRAVITY: f32 = 800.0;
+
 /// Everything that decides how a player moves next (proposal 0023).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct PlayerState {

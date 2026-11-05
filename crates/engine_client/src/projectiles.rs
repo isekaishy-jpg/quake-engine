@@ -7,13 +7,15 @@
 
 use engine_core::entity::{ModelInstance, Projectile};
 use engine_core::math::Vec3;
+use engine_core::time::TICK_SECONDS;
 use engine_physics::CollisionWorld;
+
+/// A tick, which is what the server moves things by.
+#[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+const STEP: f32 = TICK_SECONDS as f32;
 
 /// How long a path is worked out for, in seconds.
 const MAX_FLIGHT: f32 = 6.0;
-
-/// A tick, which is what the server moves things by.
-const STEP: f32 = 1.0 / 72.0;
 
 /// How much of a hit's speed a bounce turns round, from `SV_Physics_Toss`.
 const BOUNCE: f32 = 1.5;

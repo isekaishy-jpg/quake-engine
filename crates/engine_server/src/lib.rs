@@ -10,6 +10,7 @@
 mod fair;
 mod seat;
 
+use engine_core::time::TICK_SECONDS;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -157,7 +158,7 @@ fn plain_text(text: &str, limit: usize) -> String {
 
 /// How much later than a shooter's ping a view can be, in seconds: the
 /// interpolation buffer, with a tick to spare.
-const VIEW_SLACK: f64 = 3.0 / 72.0;
+const VIEW_SLACK: f64 = 3.0 * TICK_SECONDS;
 
 impl Server {
     /// A game of `map` with its player at `origin`, running `sources`, with
