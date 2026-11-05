@@ -140,6 +140,8 @@ pub struct PostSettings {
     pub outline_hull: bool,
     /// How wide fake rounded edges are, in pixels, or 0 for none.
     pub rounded_edges: f32,
+    /// How far details reach before they've faded out.
+    pub detail_distance: f32,
     /// Whether moving lights cast shadows.
     pub live_shadows: bool,
     /// Whether fog reads the light in the probes.

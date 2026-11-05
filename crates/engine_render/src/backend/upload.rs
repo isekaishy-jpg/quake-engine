@@ -280,6 +280,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     #[expect(clippy::cast_precision_loss, reason = "eight at most")]
     let pool_count = pools.len() as f32;
     out[base] = pool_count;
+    out[base + 1] = post.detail_distance;
     if let Some(probes) = extra.probes {
         out[base + 4..base + 8].copy_from_slice(&[
             probes.origin.x,

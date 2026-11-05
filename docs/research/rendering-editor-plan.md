@@ -15,6 +15,7 @@ The note left these open. Each was chosen by recommendation so work could go on,
 | Tile grid | Flat, with one file per tile under a manifest | Simplest, and stacking can come with a version bump |
 | Placed thing IDs | A hidden 64-bit ID on each record | Stable through saves, and authors never see it |
 | Editor UI | `egui`, painted through `vulkane` | One window with the viewport, and the human's Scopework uses it |
+| Tile streaming | All of a map's tiles load with it, and the ring round players governs what's awake | Everything fits in memory today, and it makes the unloaded tile rule true by construction |
 
 ## Stages
 
@@ -41,7 +42,7 @@ Status is one of todo, doing or done.
 | 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | done |
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | done |
 | 19 | Visibility | Our own compiler, and entity culling from the plan | done |
-| 20 | Tiles | Grid, manifest, streaming, coordinates, the unloaded tile rule, sleeping entities | todo |
+| 20 | Tiles | Grid, manifest, coordinates, the unloaded tile rule, sleeping entities, detail fade | done |
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
 | 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
@@ -66,3 +67,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 7 is done.
 - Stage 18 is done. The mega texture is one image with no streaming, for surfaces marked `mega`.
 - Stage 19 is done, with entity culling on real maps too.
+- Stage 20 is done, with all tiles loading with their map. Whether to stream geometry is in proposal 0089 for the human to review.

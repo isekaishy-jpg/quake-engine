@@ -340,7 +340,7 @@ fn validate(session: &Session) -> Result<Json, String> {
     let filesystem = content_files(session);
     let mut library = MaterialLibrary::new(&filesystem);
     library
-        .place_meshes(&mut working)
+        .prepare(&mut working)
         .map_err(|error| error.to_string())?;
     let mut failure = None;
     let mut missing = Vec::new();
@@ -379,8 +379,8 @@ fn bake(session: &Session) -> Result<Json, String> {
     let mut working = read_map(&session.document).map_err(|error| error.to_string())?;
     let filesystem = content_files(session);
     let mut library = MaterialLibrary::new(&filesystem);
-    library
-        .place_meshes(&mut working)
+    let used = library
+        .prepare(&mut working)
         .map_err(|error| error.to_string())?;
     let mut failure = None;
     let mut textures = |material: &str| {
@@ -404,8 +404,11 @@ fn bake(session: &Session) -> Result<Json, String> {
     bake_light(&mut map, &mut input).map_err(|error| error.to_string())?;
     let text = std::fs::read_to_string(path).map_err(|error| error.to_string())?;
     let out = path.with_extension("ebake");
-    std::fs::write(&out, write_bake(&map, source_hash(&text)))
-        .map_err(|error| error.to_string())?;
+    std::fs::write(
+        &out,
+        write_bake(&map, source_hash(&format!("{text}{used}"))),
+    )
+    .map_err(|error| error.to_string())?;
     Ok(json!({
         "path": out.display().to_string(),
         "samples": map.light.len(),

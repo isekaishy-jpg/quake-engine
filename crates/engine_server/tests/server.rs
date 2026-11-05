@@ -8,6 +8,7 @@ use std::sync::Arc;
 use common::room;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
+use engine_map::{Entity, Map};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
@@ -119,4 +120,113 @@ fn console_commands_change_the_player() {
     let state = snapshot(&mut client);
     assert!(state.player.noclip);
     assert_eq!(state.player.origin, Vec3::new(10.0, 20.0, 30.0));
+}
+
+/// Things that say when they think and wake, one of them never sleeping.
+const SLEEPERS: &str = r#"
+function ticker(self)
+    self.nextthink = 0.1
+    self.think = function(me)
+        engine.print("tick")
+        me.nextthink = engine.time() + 0.1
+    end
+    self.wake = function(me)
+        engine.print("woke " .. tostring(engine.slept > 0))
+    end
+end
+
+function worker(self)
+    self.flags = 32768
+    self.nextthink = 0.1
+    self.think = function(me)
+        engine.print("work")
+        me.nextthink = engine.time() + 0.1
+    end
+end
+"#;
+
+/// What's said over `ticks` of a player running forward, from `first`.
+fn said(
+    server: &mut Server,
+    client: &mut Loopback,
+    first: u32,
+    ticks: u32,
+    run: bool,
+) -> Vec<String> {
+    let mut lines = Vec::new();
+    for sequence in first..first + ticks {
+        if run {
+            client.send(forward(sequence).encode());
+        }
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            if let Some(ServerMessage::Print(line)) = ServerMessage::decode(&bytes) {
+                lines.push(line);
+            }
+        }
+    }
+    lines
+}
+
+/// A map with an entity of `kind` a short way along the floor from the start.
+fn map_with(kinds: &[(&str, &str)]) -> Arc<Map> {
+    let mut map = (*room()).clone();
+    map.wake_reach = 100.0;
+    for (kind, origin) in kinds {
+        map.entities.push(Entity {
+            fields: vec![
+                ("classname".to_owned(), (*kind).to_owned()),
+                ("origin".to_owned(), (*origin).to_owned()),
+            ],
+        });
+    }
+    Arc::new(map)
+}
+
+/// What's out of reach sleeps, and wakes knowing it slept when a player comes.
+/// One told never to sleep carries on all along.
+#[test]
+fn entities_sleep_out_of_reach_and_wake_when_it_comes_back() {
+    let map = map_with(&[("ticker", "180 0 -240"), ("worker", "-180 0 -240")]);
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let (mut client, server_end) = loopback();
+    let origin = Vec3::new(0.0, 0.0, -255.0);
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        origin,
+        &[("sleepers", SLEEPERS)],
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("server");
+    let still = said(&mut server, &mut client, 1, 72, false);
+    assert!(!still.iter().any(|line| line.contains("tick")), "{still:?}");
+    assert!(still.iter().any(|line| line.contains("work")), "{still:?}");
+    let moved = said(&mut server, &mut client, 1, 72, true);
+    assert!(
+        moved.iter().any(|line| line.contains("woke true")),
+        "{moved:?}"
+    );
+    assert!(moved.iter().any(|line| line.contains("tick")), "{moved:?}");
+}
+
+/// A map that isn't tiled has nothing asleep.
+#[test]
+fn nothing_sleeps_with_no_reach_set() {
+    let mut map = (*map_with(&[("ticker", "900 0 -240")])).clone();
+    map.wake_reach = 0.0;
+    let world = Rc::new(CollisionWorld::new(Arc::new(map)));
+    let (mut client, server_end) = loopback();
+    let mut server = Server::new(
+        Box::new(server_end),
+        world,
+        Vec3::new(0.0, 0.0, -255.0),
+        &[("sleepers", SLEEPERS)],
+        1.0 / 72.0,
+        Level::default(),
+    )
+    .expect("server");
+    let still = said(&mut server, &mut client, 1, 72, false);
+    assert!(still.iter().any(|line| line.contains("tick")), "{still:?}");
 }

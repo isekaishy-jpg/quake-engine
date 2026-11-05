@@ -25,7 +25,7 @@ pub(crate) fn load_level(
     let text = std::str::from_utf8(&bytes)?;
     let mut working = read_map_text(text)?;
     let mut library = MaterialLibrary::new(filesystem);
-    library.place_meshes(&mut working)?;
+    let used = library.prepare(&mut working)?;
     let mut failure = None;
     let mut textures = |material: &str| {
         library.load(material).unwrap_or_else(|error| {
@@ -38,7 +38,7 @@ pub(crate) fn load_level(
         return Err(error.into());
     }
     if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
-        apply_bake(&mut map, &baked, source_hash(text))?;
+        apply_bake(&mut map, &baked, source_hash(&format!("{text}{used}")))?;
     }
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;

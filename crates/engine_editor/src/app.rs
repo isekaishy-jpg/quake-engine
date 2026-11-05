@@ -327,10 +327,13 @@ impl Editor {
         let mut filesystem = FileSystem::new();
         filesystem.mount(Box::new(DirectoryArchive::new(&self.content)));
         let mut library = MaterialLibrary::new(&filesystem);
-        if let Err(error) = library.place_meshes(&mut working) {
-            self.log.push(format!("compile: {error}"));
-            return;
-        }
+        let used = match library.prepare(&mut working) {
+            Ok(used) => used,
+            Err(error) => {
+                self.log.push(format!("compile: {error}"));
+                return;
+            }
+        };
         let mut textures = |material: &str| {
             library
                 .load(material)
@@ -347,7 +350,8 @@ impl Editor {
             && let Ok(bytes) = std::fs::read(path.with_extension("ebake"))
             && let Ok(saved) = std::fs::read_to_string(&path)
         {
-            let _applied = apply_bake(&mut map, &bytes, source_hash(&saved));
+            let hash = source_hash(&format!("{saved}{used}"));
+            let _applied = apply_bake(&mut map, &bytes, hash);
         }
         let map = Arc::new(map);
         if let Err(error) = renderer.load_map(Arc::clone(&map)) {

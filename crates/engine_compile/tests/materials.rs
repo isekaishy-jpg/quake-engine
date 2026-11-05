@@ -4,7 +4,8 @@ use std::fs;
 use std::path::PathBuf;
 
 use engine_assets::{DirectoryArchive, FileSystem};
-use engine_compile::MaterialLibrary;
+use engine_compile::{MaterialLibrary, compile, placeholder_texture, read_map_text};
+use engine_core::math::Vec3;
 use engine_map::{AlphaMode, PAINT_MASK, Shading, TextureKind};
 
 /// A one pixel PNG.
@@ -120,5 +121,67 @@ fn flattening_mixes_layers_into_the_base() {
         base[0].abs_diff(127) < 3 && base[2].abs_diff(128) < 3,
         "{base:?}"
     );
+    let _gone = fs::remove_dir_all(root);
+}
+
+/// A tile's things land in place on the grid, and what it holds is in the text
+/// a bake's hash covers.
+#[test]
+fn tiles_merge_into_place() {
+    let (filesystem, root) = container("tiles", &[]);
+    fs::create_dir_all(root.join("maps")).expect("directory");
+    let tile = "format 1 tile\n\
+        brush { material = floor cuboid = 0 0 -32 512 512 0 }\n\
+        entity lamp { type = light origin = 100 200 64 }\n\
+        mesh { source = none origin = 0 0 0 }\n";
+    fs::write(root.join("maps/part.etile"), tile).expect("write");
+    let mut text = String::from("format 1 map\ntile_grid { size = 1024 }\n");
+    text.push_str("tile { x = 2 y = -1 file = part }\n");
+    let mut working = read_map_text(&text).expect("reads");
+    working.tiles[0].file = "part".to_owned();
+    let mut library = MaterialLibrary::new(&filesystem);
+    let missing = library.prepare(&mut working);
+    assert!(missing.is_err(), "the mesh isn't there");
+    let tile = tile.replace("mesh { source = none origin = 0 0 0 }\n", "");
+    fs::write(root.join("maps/part.etile"), &tile).expect("write");
+    let mut working = read_map_text(&text).expect("reads");
+    let used = library.prepare(&mut working).expect("merges");
+    assert!(used.contains("lamp"), "{used}");
+    let lamp = working
+        .entities
+        .iter()
+        .find(|e| e.kind == "light")
+        .expect("the lamp");
+    let origin = lamp
+        .fields
+        .iter()
+        .find(|(key, _)| key == "origin")
+        .and_then(|(_, value)| value.numbers())
+        .expect("a place");
+    assert_eq!(origin, vec![2148.0, -824.0, 64.0]);
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile(&working, &mut source).expect("compiles");
+    assert!((map.tile_size - 1024.0).abs() < 0.001);
+    assert!(
+        (map.wake_reach - 1536.0).abs() < 0.001,
+        "a tile and a half by default"
+    );
+    let world = &map.models[0];
+    assert!((world.mins.x - 2048.0).abs() < 0.01, "{:?}", world.mins);
+    let (tile, local) = map.tile_of(Vec3::new(2148.0, -824.0, 64.0));
+    assert_eq!(tile, [2, -1]);
+    assert_eq!(local, Vec3::new(100.0, 200.0, 64.0));
+    let _gone = fs::remove_dir_all(root);
+}
+
+/// A tile too far out is refused, since positions are `f32`.
+#[test]
+fn a_tile_too_far_out_is_refused() {
+    let (filesystem, root) = container("far", &[]);
+    let text = "format 1 map\ntile_grid { size = 4096 }\ntile { x = 40 y = 0 file = part }\n";
+    let mut working = read_map_text(text).expect("reads");
+    let mut library = MaterialLibrary::new(&filesystem);
+    let error = library.prepare(&mut working).expect_err("too far");
+    assert!(error.to_string().contains("past"), "{error}");
     let _gone = fs::remove_dir_all(root);
 }

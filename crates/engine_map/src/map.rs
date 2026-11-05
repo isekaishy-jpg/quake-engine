@@ -204,6 +204,10 @@ pub struct Map {
     pub light_edges: Vec<u8>,
     /// Baked lights that move between keyframes.
     pub light_tracks: Vec<LightTrack>,
+    /// How wide a tile is, or 0 for a map with no tiles.
+    pub tile_size: f32,
+    /// How far from every player an entity sleeps, or 0 if none ever do.
+    pub wake_reach: f32,
     /// The mega texture as baked, if there is one, to keep beside the map.
     pub mega: Option<MegaImage>,
     /// Faces lit from elsewhere, with how far to lift their light samples, as
@@ -248,6 +252,27 @@ impl Model {
 }
 
 impl Map {
+    /// The tile `point` is in, and where it is in that tile. With no tiles it's
+    /// all tile 0.
+    #[must_use]
+    pub fn tile_of(&self, point: Vec3) -> ([i32; 2], Vec3) {
+        if self.tile_size <= 0.0 {
+            return ([0, 0], point);
+        }
+        let (x, y) = (
+            (point.x / self.tile_size).floor(),
+            (point.y / self.tile_size).floor(),
+        );
+        #[expect(clippy::cast_possible_truncation, reason = "grid places are small")]
+        let tile = [x as i32, y as i32];
+        let local = Vec3::new(
+            point.x - x * self.tile_size,
+            point.y - y * self.tile_size,
+            point.z,
+        );
+        (tile, local)
+    }
+
     /// The first entity of `class`, if any.
     #[must_use]
     pub fn entity_of_class(&self, class: &str) -> Option<&Entity> {

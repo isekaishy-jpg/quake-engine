@@ -305,6 +305,20 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     if material.flags.y != 0 {
         alpha = base.a;
     }
+    // A detail fades away with distance: by alpha if it can, or by a dither.
+    if (features & 4) != 0 {
+        let reach = frame.pool_params.y;
+        let fade = 1.0 - smoothstep(reach * 0.75, reach, length(frame.eye.xyz - in.world));
+        if material.flags.y == 2 {
+            alpha = alpha * fade;
+        } else {
+            let at = in.clip.xy;
+            let noise = fract(52.9829189 * fract(dot(at, vec2<f32>(0.06711056, 0.00583715))));
+            if fade < noise {
+                discard;
+            }
+        }
+    }
     return vec4<f32>(raised(color), alpha);
 }
 

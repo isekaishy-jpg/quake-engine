@@ -29,7 +29,9 @@ pub fn material_params(material: &Material) -> [u8; MATERIAL_PARAMS_BYTES] {
         AlphaMode::Mask => 1,
         AlphaMode::Blend => 2,
     };
-    let features = i32::from(material.triplanar) | (i32::from(material.hex_tiling) << 1);
+    let features = i32::from(material.triplanar)
+        | (i32::from(material.hex_tiling) << 1)
+        | (i32::from(material.detail_fade) << 2);
     let layer_count = i32::try_from(material.layers.len()).unwrap_or(0);
     let mut words = [0_i32; 24];
     words[..4].copy_from_slice(&[shading, alpha, features, layer_count]);

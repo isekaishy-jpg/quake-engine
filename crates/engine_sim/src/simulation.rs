@@ -33,6 +33,9 @@ const ITEM_MARGIN: f32 = 15.0;
 /// `FL_ITEM`.
 pub const FLAG_ITEM: u32 = 256;
 
+/// An entity with this flag never sleeps, for long-running jobs.
+pub const FLAG_ALWAYS_AWAKE: u32 = 1 << 15;
+
 /// How an entity blocks others.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Solid {
@@ -155,6 +158,8 @@ pub enum Callback {
     },
     /// `id` crossed the surface of a liquid.
     Splash(EntityId),
+    /// `id` woke, after sleeping this many seconds.
+    Wake(EntityId, f64),
 }
 
 /// One player, by whatever connects them (proposal 0045).

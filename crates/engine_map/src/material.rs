@@ -80,6 +80,8 @@ pub struct Material {
     pub detail: Option<u8>,
     /// Its blended layers.
     pub layers: Vec<MaterialLayer>,
+    /// Whether it fades out with distance, as a detail.
+    pub detail_fade: bool,
     /// Whether its surfaces go in the map's mega texture when baked.
     pub mega: bool,
     /// Whether to project textures from the world, ignoring face mapping.

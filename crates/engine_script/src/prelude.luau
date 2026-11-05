@@ -597,12 +597,21 @@ end
 -- Sets a keyframed light that has no period, by how far round its keyframes it
 -- is, from 0 to 1. An entity's `keyframe_style` is its first style.
 function engine.light_track(first, count, phase)
-    local place = (phase % 1) * count
-    for index = 0, count - 1 do
-        local away = math.abs(index - place)
-        local strength = math.max(0, 1 - math.min(away, count - away))
-        -- 'm' is normal brightness, and 'a' is none.
-        local letter = string.char(97 + math.floor(strength * 12 + 0.5))
-        engine.lightstyle(first + index, letter)
-    end
+	local place = (phase % 1) * count
+	for index = 0, count - 1 do
+		local away = math.abs(index - place)
+		local strength = math.max(0, 1 - math.min(away, count - away))
+		-- 'm' is normal brightness, and 'a' is none.
+		local letter = string.char(97 + math.floor(strength * 12 + 0.5))
+		engine.lightstyle(first + index, letter)
+	end
+end
+
+-- A repeatable number from 0 to 1 for an entity at a step of its behaviour, so
+-- what's regular doesn't look reset after sleeping.
+function engine.seeded(id, step)
+	local value = (id * 2654435761 + step * 40503) % 4294967296
+	value = (value * 1664525 + 1013904223) % 4294967296
+	value = (value * 1664525 + 1013904223) % 4294967296
+	return value / 4294967296
 end

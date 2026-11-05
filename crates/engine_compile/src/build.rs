@@ -785,6 +785,18 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
     }
     builder.map.entities = entities;
     builder.map.light_tracks = tracks;
+    #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
+    let size = working.tile_size as f32;
+    builder.map.tile_size = size;
+    let reach = working
+        .entities
+        .iter()
+        .find(|entity| entity.kind == "worldspawn")
+        .and_then(|world| world.fields.iter().find(|(key, _)| key == "wake_reach"))
+        .and_then(|(_, value)| value.number());
+    #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
+    let reach = reach.map(|reach| reach as f32);
+    builder.map.wake_reach = reach.unwrap_or(size * 1.5);
     builder.map.live_lights = working
         .entities
         .iter()

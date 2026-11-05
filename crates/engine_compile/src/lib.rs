@@ -16,6 +16,7 @@ mod source;
 mod stamp;
 mod stencil;
 mod texture;
+mod tiles;
 mod tree;
 mod visibility;
 
@@ -31,6 +32,6 @@ pub use mesh::{
 };
 pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,
-    StampSource, WaterSource, WorkingMap, read_map,
+    StampSource, TileSource, WaterSource, WorkingMap, read_map,
 };
 pub use texture::placeholder_texture;

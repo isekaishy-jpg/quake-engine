@@ -12,8 +12,9 @@ use engine_map::{
 
 use crate::error::CompileError;
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
-use crate::source::WorkingMap;
+use crate::source::{WorkingMap, read_map};
 use crate::texture::placeholder_texture;
+use crate::tiles::{check_tiles, merge_tile};
 
 /// Decodes a PNG into RGBA bytes.
 fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
@@ -246,13 +247,47 @@ impl<'a> MaterialLibrary<'a> {
         Ok(image)
     }
 
-    /// Places the meshes of `working`.
+    /// Gets `working` ready to compile: merges its tiles into place, and places
+    /// its meshes. Returns the text of everything that took, which a bake's hash
+    /// has to cover along with the map's own.
     ///
     /// # Errors
     ///
-    /// Returns an error if one can't be read.
-    pub fn place_meshes(&mut self, working: &mut WorkingMap) -> Result<(), CompileError> {
-        resolve_meshes(working, &mut |name| self.mesh(name))
+    /// Returns an error if something can't be read.
+    pub fn prepare(&mut self, working: &mut WorkingMap) -> Result<String, CompileError> {
+        check_tiles(working)?;
+        let mut read = String::new();
+        for tile in working.tiles.clone() {
+            let path = format!("maps/{}.etile", tile.file);
+            let bytes = self
+                .filesystem
+                .read(&path)
+                .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
+            let text = std::str::from_utf8(&bytes)
+                .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
+            let part = read_map(&from_text(text)?)?;
+            let size = working.tile_size;
+            let offset = [f64::from(tile.x) * size, f64::from(tile.y) * size, 0.0];
+            merge_tile(working, part, offset);
+            read.push_str(text);
+        }
+        let mut names: Vec<String> = working.meshes.iter().map(|m| m.source.clone()).collect();
+        names.extend(
+            working
+                .entities
+                .iter()
+                .filter_map(|e| e.mesh.as_ref().map(|m| m.source.clone())),
+        );
+        names.sort();
+        names.dedup();
+        for name in names {
+            let path = format!("meshes/{name}.emesh");
+            if let Ok(bytes) = self.filesystem.read(&path) {
+                read.push_str(&String::from_utf8_lossy(&bytes));
+            }
+        }
+        resolve_meshes(working, &mut |name| self.mesh(name))?;
+        Ok(read)
     }
 
     /// The mesh called `name`, with its sidecar's volume if it has one.
@@ -328,6 +363,7 @@ impl<'a> MaterialLibrary<'a> {
             flow_speed: number(block, "flow_speed", 0.5),
             reflect: number(block, "reflect", 0.0),
             mega: block.get("mega").and_then(Value::flag) == Some(true),
+            detail_fade: block.get("fade").and_then(Value::flag) == Some(true),
             hotspots: hotspots_of(block),
             scroll: numbers(block, "scroll", [0.0; 2]),
             flipbook: numbers(block, "flipbook", [0.0; 3]),

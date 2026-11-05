@@ -43,7 +43,7 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     let text = std::str::from_utf8(&bytes)?;
     let mut working = read_map(&from_text(text)?)?;
     let mut library = MaterialLibrary::new(filesystem);
-    library.place_meshes(&mut working)?;
+    let used = library.prepare(&mut working)?;
     let mut failure = None;
     let mut textures = |material: &str| {
         library.load(material).unwrap_or_else(|error| {
@@ -65,7 +65,8 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     };
     bake_light(&mut map, &mut input)?;
     let out = content.join("maps").join(format!("{name}.ebake"));
-    std::fs::write(&out, write_bake(&map, source_hash(text)))?;
+    let hash = source_hash(&format!("{text}{used}"));
+    std::fs::write(&out, write_bake(&map, hash))?;
     println!(
         "{name}: {} faces, {} light samples, in {:.1} s",
         map.faces.len(),

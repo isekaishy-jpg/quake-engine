@@ -13,6 +13,7 @@ mod sight;
 
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::collections::HashMap;
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -26,7 +27,7 @@ use engine_net::{
 };
 use engine_physics::CollisionWorld;
 use engine_script::{Game, GameRules, SavedScripts, ScriptError};
-use engine_sim::{EntityId, SavedSimulation, Simulation};
+use engine_sim::{Callback, EntityId, FLAG_ALWAYS_AWAKE, SavedSimulation, Simulation};
 use serde::{Deserialize, Serialize};
 
 pub use fair::{FairSettings, Zone};
@@ -89,6 +90,8 @@ impl SavedGame {
 
 /// A running game.
 pub struct Server {
+    /// When each sleeping entity went to sleep.
+    sleeping: HashMap<EntityId, f64>,
     /// Everyone connected. The first is the host, who never leaves.
     seats: Vec<Seat>,
     /// The map's collision.
@@ -189,6 +192,7 @@ impl Server {
         let mut seat = Seat::new(transport, who);
         seat.player = Some(host);
         let mut server = Self {
+            sleeping: HashMap::new(),
             seats: vec![seat],
             world,
             simulation,
@@ -236,6 +240,7 @@ impl Server {
         let mut seat = Seat::new(transport, saved.level.host.clone());
         seat.player = Some(host);
         let mut server = Self {
+            sleeping: HashMap::new(),
             seats: vec![seat],
             world,
             simulation,
@@ -575,6 +580,44 @@ impl Server {
         }
     }
 
+    /// Where the players are, for who sleeps.
+    fn player_places(&self) -> Vec<Vec3> {
+        let simulation = self.simulation.borrow();
+        self.seats
+            .iter()
+            .filter_map(|seat| seat.player)
+            .filter_map(|id| simulation.player_of(id).map(|player| player.origin))
+            .collect()
+    }
+
+    /// Whether `id` runs this tick. On a tiled map, what's beyond `wake_reach` of
+    /// every player sleeps, and when one comes back into reach it wakes, told how
+    /// long it slept. Nothing sleeps with no players, or on a map with no tiles.
+    fn keep_awake(&mut self, id: EntityId, players: &[Vec3]) -> bool {
+        let reach = self.world.map().wake_reach;
+        if reach <= 0.0 || players.is_empty() {
+            return true;
+        }
+        let simulation = self.simulation.borrow();
+        let Some(entity) = simulation.entity(id) else {
+            return true;
+        };
+        let near = players
+            .iter()
+            .any(|place| (entity.origin - *place).length() < reach);
+        let exempt = entity.flags & FLAG_ALWAYS_AWAKE != 0 || simulation.is_player(id);
+        let now = simulation.time();
+        drop(simulation);
+        if near || exempt {
+            if let Some(since) = self.sleeping.remove(&id) {
+                self.game.run(Callback::Wake(id, now - since));
+            }
+            return true;
+        }
+        self.sleeping.entry(id).or_insert(now);
+        false
+    }
+
     /// Runs what clients asked for, moves the world, and tells clients the
     /// result.
     pub fn tick(&mut self) {
@@ -583,7 +626,11 @@ impl Server {
         self.drop_lost();
         self.update_fairness();
         let ids = self.simulation.borrow().ids();
+        let players = self.player_places();
         for id in ids {
+            if !self.keep_awake(id, &players) {
+                continue;
+            }
             let think = self
                 .simulation
                 .borrow_mut()

@@ -1045,6 +1045,14 @@ impl Game {
             Callback::Touch { id, other } => ("touch", id, other),
             Callback::Splash(id) => ("splash", id, None),
             Callback::Land(id) => ("land", id, None),
+            Callback::Wake(id, seconds) => {
+                let globals = self.lua.globals();
+                let engine: mlua::Result<Table> = globals.get("engine");
+                if let Ok(engine) = engine {
+                    self.report(engine.set("slept", seconds));
+                }
+                ("wake", id, None)
+            }
         };
         self.simulation.borrow_mut().set_event_time(event_time);
         self.report(

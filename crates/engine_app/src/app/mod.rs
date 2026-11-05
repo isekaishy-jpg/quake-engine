@@ -517,6 +517,7 @@ impl Engine {
         console.register_cvar("r_outline_width", "1", saved);
         console.register_cvar("r_outline_fade", "1500", saved);
         console.register_cvar("r_rays", "3", saved);
+        console.register_cvar("r_detail_distance", "3000", saved);
         console.register_cvar("r_live_lights", "32", saved);
         console.register_cvar("r_live_shadows", "1", saved);
         console.register_cvar("r_msaa", "1", saved);
@@ -679,6 +680,7 @@ impl Engine {
             outline_color: [0.0; 3],
             rays: self.cvar_number("r_rays").clamp(0.0, 3.0) as u8,
             live_shadows: self.cvar_number("r_live_shadows") != 0.0,
+            detail_distance: self.cvar_number("r_detail_distance") as f32,
             rounded_edges: self.cvar_number("r_edges").clamp(0.0, 8.0) as f32,
             outline_hull: self.cvar_number("r_outline_hull") != 0.0,
             fog_grid: self.cvar_number("r_fog_grid") != 0.0,

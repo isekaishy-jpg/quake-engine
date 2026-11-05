@@ -79,6 +79,10 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// How wide a tile is, or 0 for a map with no tiles.
+    pub tile_size: f64,
+    /// The parts of the map in files of their own.
+    pub tiles: Vec<TileSource>,
     /// Images that turn parts of faces into relief or carving.
     pub stamps: Vec<StampSource>,
     /// Strokes of paint.
@@ -108,6 +112,17 @@ pub struct SkySource {
 fn point_of(value: &Value) -> Option<Point> {
     let numbers = value.numbers()?;
     (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// A part of a map in a file of its own.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TileSource {
+    /// Its place on the grid, across.
+    pub x: i32,
+    /// Its place on the grid, along.
+    pub y: i32,
+    /// Its file, under `maps/`, with no extension.
+    pub file: String,
 }
 
 /// An image pressed into surfaces, as a box against them. Its brightness is
@@ -302,6 +317,22 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
         brushes,
         mesh,
         placed: None,
+    })
+}
+
+/// A tile, from its block.
+#[expect(clippy::cast_possible_truncation, reason = "grid places are small")]
+fn read_tile(block: &Block) -> Result<TileSource, CompileError> {
+    let place = |key: &str| block.get(key).and_then(Value::number).map(|n| n as i32);
+    let missing = || CompileError::Bad("a tile needs an x, a y and a file".to_owned());
+    Ok(TileSource {
+        x: place("x").ok_or_else(missing)?,
+        y: place("y").ok_or_else(missing)?,
+        file: block
+            .get("file")
+            .and_then(Value::text)
+            .ok_or_else(missing)?
+            .to_owned(),
     })
 }
 
@@ -503,7 +534,7 @@ fn read_fog(block: &Block) -> Fog {
 ///
 /// Returns an error if it isn't a map or a block makes no sense.
 pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
-    if document.kind != "map" {
+    if document.kind != "map" && document.kind != "tile" {
         return Err(CompileError::NotAMap(document.kind.clone()));
     }
     Ok(WorkingMap {
@@ -517,6 +548,16 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        tile_size: document
+            .blocks_of("tile_grid")
+            .next()
+            .and_then(|block| block.get("size"))
+            .and_then(Value::number)
+            .unwrap_or(0.0),
+        tiles: document
+            .blocks_of("tile")
+            .map(read_tile)
+            .collect::<Result<Vec<_>, _>>()?,
         stamps: document
             .blocks_of("stamp")
             .map(read_stamp)
