@@ -6,6 +6,7 @@
 mod build;
 mod error;
 mod geometry;
+mod material;
 mod source;
 mod texture;
 mod tree;
@@ -13,5 +14,6 @@ mod tree;
 pub use build::{TextureSource, compile, compile_text};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
+pub use material::MaterialLibrary;
 pub use source::{Brush, BrushFace, EntitySource, WorkingMap, read_map};
 pub use texture::placeholder_texture;

@@ -11,6 +11,7 @@ use super::{
 use crate::alias::{POSE_CORNER_BYTES, push_bytes};
 use crate::renderer::View;
 use crate::sprite::{MAX_PARTICLE_DRAWS, ViewAxes, sprite_axes, sprite_push_bytes};
+use crate::world::BatchKind;
 
 /// What recording a frame needs.
 pub(super) struct Recorder<'a> {
@@ -110,19 +111,21 @@ impl Recorder<'_> {
         view: &View,
         size: (u32, u32),
     ) {
-        self.record_world(rec, scene, view.time, size);
+        self.record_world(rec, scene, view.time, size, false);
         self.record_models(rec, scene);
+        self.record_world(rec, scene, view.time, size, true);
         self.record_sprites(rec, scene, view);
         self.record_particles(rec, scene);
     }
 
-    /// Records the world and brush models.
+    /// Records the world and brush models: what's see-through, or the rest.
     pub(super) fn record_world(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: &Scene<'_>,
         time: f32,
         size: (u32, u32),
+        see_through: bool,
     ) {
         let map = self.map;
         let layout = &self.layouts.world;
@@ -149,6 +152,9 @@ impl Recorder<'_> {
             let Some(batch) = scene.mesh.batches.get(batch as usize) else {
                 return;
             };
+            if (batch.kind == BatchKind::Blended) != see_through {
+                return;
+            }
             let texture = animated_texture(scene.map, batch.texture, step, frame);
             let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
                 return;
@@ -157,7 +163,12 @@ impl Recorder<'_> {
                 rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
                 bound = Some(batch.kind);
             }
-            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, set]);
+            let set_layout = if matches!(batch.kind, BatchKind::Material | BatchKind::Blended) {
+                &self.layouts.material
+            } else {
+                layout
+            };
+            rec.bind_graphics_descriptor_sets(set_layout, 0, &[&map.frame_set, set]);
             rec.draw_indexed(count, 1, first, 0, 0);
         };
         rec.push_constants(

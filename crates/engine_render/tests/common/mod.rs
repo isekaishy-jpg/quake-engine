@@ -19,6 +19,7 @@ pub(crate) fn map(models: u32) -> Map {
             }],
             animation: None,
             alternate: None,
+            material: None,
         }],
         light: vec![[200, 100, 50]; 81],
         lit: true,

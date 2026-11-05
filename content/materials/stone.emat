@@ -1,0 +1,8 @@
+format 1 material
+
+surface {
+    base = textures/stone.png
+    normal = textures/stone_normal.png
+    hex = true
+    detail = textures/detail.png
+}

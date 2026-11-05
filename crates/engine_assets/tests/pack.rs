@@ -1,7 +1,7 @@
 //! Packed containers.
 
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use engine_assets::{Archive, AssetError, DirectoryArchive, FileSystem, PackArchive, write_pack};
 
@@ -16,7 +16,7 @@ fn folder(name: &str) -> PathBuf {
 }
 
 /// `root` written as a pack beside it.
-fn packed(root: &PathBuf) -> PathBuf {
+fn packed(root: &Path) -> PathBuf {
     let path = root.with_extension("epak");
     let mut bytes = Vec::new();
     write_pack(&DirectoryArchive::new(root), &mut bytes).expect("packs");

@@ -1,0 +1,7 @@
+format 1 material
+
+surface {
+    base = textures/stone.png
+    shading = cel
+    ramp = textures/cel_ramp.png
+}

@@ -19,6 +19,7 @@ fn map(names: &[&str], ambient: [u8; 4]) -> Arc<Map> {
             mips: Vec::new(),
             animation: None,
             alternate: None,
+            material: None,
         });
         map.points.extend([
             Vec3::new(x, 0.0, 0.0),

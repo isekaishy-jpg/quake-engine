@@ -11,6 +11,7 @@ mod atlas;
 mod backend;
 mod canvas;
 mod error;
+mod material;
 mod matrix;
 mod renderer;
 mod sprite;
@@ -21,6 +22,7 @@ pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::Atlas;
 pub use canvas::{QuadBatch, canvas_vertices};
 pub use error::RenderError;
+pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
 pub use matrix::view_projection;
 pub use renderer::{Capture, Drawables, Renderer, Statistics, Target, View};
 pub use sprite::{

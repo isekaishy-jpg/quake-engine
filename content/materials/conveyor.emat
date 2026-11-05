@@ -1,0 +1,6 @@
+format 1 material
+
+surface {
+    base = textures/metal.png
+    scroll = 0 0.5
+}

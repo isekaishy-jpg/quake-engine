@@ -50,6 +50,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
     CrateRule {
         name: "engine_compile",
         may_depend_on: &[
+            "engine_assets",
             "engine_core",
             "engine_format",
             "engine_map",

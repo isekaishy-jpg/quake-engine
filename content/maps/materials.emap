@@ -1,0 +1,19 @@
+format 1 map
+
+# A gallery of materials, for looking at each feature.
+brush { material = stone cuboid = -640 -640 -32 640 640 0 }
+brush { material = metal cuboid = -640 -640 320 640 640 352 }
+brush { material = brick cuboid = -640 -640 0 -608 640 320 }
+brush { material = brick cuboid = 608 -640 0 640 640 320 }
+brush { material = mossy_stone cuboid = -608 -640 0 608 -608 320 }
+brush { material = stone cuboid = -608 608 0 608 640 320 }
+brush { material = metal cuboid = -448 -128 0 -320 0 192 }
+brush { material = cel_stone cuboid = -256 -128 0 -128 0 192 }
+brush { material = shiny cuboid = -64 -128 0 64 0 192 }
+brush { material = triplanar_rock cuboid = 128 -128 0 256 0 192 }
+brush { material = light_panel cuboid = 320 -128 0 448 0 192 }
+brush { material = grate cuboid = -448 256 0 -320 272 192 }
+brush { material = stained_glass cuboid = -128 256 0 0 272 192 }
+brush { material = conveyor cuboid = 128 192 0 256 512 8 }
+brush { contents = water material = water cuboid = 320 192 -32 560 480 -4 }
+entity start { type = info_player_start origin = 0 -400 24 angle = 90 }

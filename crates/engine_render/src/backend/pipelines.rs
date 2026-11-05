@@ -250,12 +250,25 @@ impl Backend {
                 .depth_test(true, true)
                 .build(device)
         };
+        let material = |blended: bool| {
+            GraphicsPipelineBuilder::new(&layouts.material, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+                .stage(GraphicsShaderStage::Fragment, &shader, "fs_material")
+                .vertex_input(&bindings, &attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(true, !blended)
+                .alpha_blending(blended)
+                .build(device)
+        };
         let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass)?;
         Ok(Pipelines {
             solid: pipeline("fs_solid")?,
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,
             sky: pipeline("fs_sky")?,
+            material: material(false)?,
+            blended: material(true)?,
             alias: Self::make_alias_pipeline(device, &layouts.alias, pass)?,
             sprite,
             particle,

@@ -1,7 +1,7 @@
 //! Turning a [`Map`] into data for the GPU. No GPU is involved here.
 
 use engine_core::math::Vec3;
-use engine_map::{Face, FaceLight, Map, TextureKind};
+use engine_map::{AlphaMode, Face, FaceLight, Map, Texture, TextureKind};
 
 use crate::atlas::Atlas;
 
@@ -59,6 +59,10 @@ pub enum BatchKind {
     Liquid,
     /// Sky.
     Sky,
+    /// A material, opaque or masked.
+    Material,
+    /// A see-through material, drawn after everything else.
+    Blended,
 }
 
 /// The faces of one texture, for one kind of drawing.
@@ -115,8 +119,20 @@ struct LightPlace {
 }
 
 /// The batch kind of a texture, or `None` for hidden ones.
-fn batch_kind(kind: TextureKind) -> Option<BatchKind> {
-    match kind {
+fn batch_kind(texture: &Texture) -> Option<BatchKind> {
+    if texture.kind == TextureKind::Hidden {
+        return None;
+    }
+    if let Some(material) = &texture.material
+        && matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
+    {
+        return Some(if material.alpha == AlphaMode::Blend {
+            BatchKind::Blended
+        } else {
+            BatchKind::Material
+        });
+    }
+    match texture.kind {
         TextureKind::Solid => Some(BatchKind::Solid),
         TextureKind::Cutout => Some(BatchKind::Cutout),
         TextureKind::Liquid => Some(BatchKind::Liquid),
@@ -276,7 +292,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
     };
     let mut batch_of_texture = vec![None; map.textures.len()];
     for (index, texture) in map.textures.iter().enumerate() {
-        if let Some(kind) = batch_kind(texture.kind) {
+        if let Some(kind) = batch_kind(texture) {
             batch_of_texture[index] = Some(u32::try_from(mesh.batches.len()).ok()?);
             mesh.batches.push(Batch {
                 texture: u32::try_from(index).ok()?,

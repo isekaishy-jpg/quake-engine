@@ -14,12 +14,13 @@ use upload::{depth_image, device_image, host_buffer};
 use vulkane::safe::{
     AccessFlags, ApiVersion, Buffer, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
     CommandPool, DescriptorPool, DescriptorSet, DescriptorSetLayout, DescriptorSetLayoutBinding,
-    DescriptorType, Device, DeviceCreateInfo, DeviceExtensions, DeviceMemory, Fence, Format,
-    Framebuffer, GraphicsPipeline, Image, Image2dCreateInfo, ImageLayout, ImageUsage, ImageView,
-    Instance, InstanceCreateInfo, InstanceExtensions, PhysicalDevice, PipelineLayout,
-    PipelineStage, PresentMode, PushConstantRange, Queue, QueueCreateInfo, QueueFlags, RenderPass,
-    Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerFilter, SamplerMipmapMode, Semaphore,
-    ShaderStageFlags, SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, WaitSemaphore,
+    DescriptorType, Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, DeviceMemory,
+    Fence, Format, Framebuffer, GraphicsPipeline, Image, Image2dCreateInfo, ImageLayout,
+    ImageUsage, ImageView, Instance, InstanceCreateInfo, InstanceExtensions, PhysicalDevice,
+    PipelineLayout, PipelineStage, PresentMode, PushConstantRange, Queue, QueueCreateInfo,
+    QueueFlags, RenderPass, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerFilter,
+    SamplerMipmapMode, Semaphore, ShaderStageFlags, SignalSemaphore, Surface, Swapchain,
+    SwapchainCreateInfo, WaitSemaphore,
 };
 
 use crate::alias::ALIAS_PUSH_SIZE;
@@ -55,8 +56,17 @@ const ANIMATION_RATE: f32 = 5.0;
 /// The most windows' worth of swapchain images expected.
 const MIN_SWAPCHAIN_IMAGES: u32 = 2;
 
+/// How much sampling sharpens surfaces seen at an angle.
+const MATERIAL_ANISOTROPY: f32 = 8.0;
+
+/// The smallest mip level materials reach.
+const MATERIAL_MAX_LOD: f32 = 16.0;
+
 /// The world shader.
-const WORLD_SHADER: &str = include_str!("../shaders/world.wgsl");
+const WORLD_SHADER: &str = concat!(
+    include_str!("../shaders/world.wgsl"),
+    include_str!("../shaders/material.wgsl"),
+);
 
 /// The overlay shader.
 const ALIAS_SHADER: &str = include_str!("../shaders/alias.wgsl");
@@ -131,6 +141,8 @@ struct GpuMap {
     indices: GpuBuffer,
     /// Each texture's descriptor set, by map texture index.
     texture_sets: Vec<Option<DescriptorSet>>,
+    /// Every material's parameters, kept alive for the sets.
+    _material_params: Option<GpuBuffer>,
     /// Kept alive for the sets.
     _textures: Vec<GpuImage>,
     /// Kept alive for the sets.
@@ -201,6 +213,8 @@ struct GpuSprite {
 struct Layouts {
     /// The world's.
     world: PipelineLayout,
+    /// Materials'.
+    material: PipelineLayout,
     /// Models'.
     alias: PipelineLayout,
     /// Sprites'.
@@ -219,6 +233,10 @@ struct Pipelines {
     liquid: GraphicsPipeline,
     /// Sky.
     sky: GraphicsPipeline,
+    /// Opaque and masked materials.
+    material: GraphicsPipeline,
+    /// See-through materials.
+    blended: GraphicsPipeline,
     /// Alias models.
     alias: GraphicsPipeline,
     /// Sprites.
@@ -235,6 +253,8 @@ impl Pipelines {
             BatchKind::Cutout => &self.cutout,
             BatchKind::Liquid => &self.liquid,
             BatchKind::Sky => &self.sky,
+            BatchKind::Material => &self.material,
+            BatchKind::Blended => &self.blended,
         }
     }
 }
@@ -274,6 +294,10 @@ pub(crate) struct Backend {
     capture_pass: RenderPass,
     /// The texture sampler.
     texture_sampler: Sampler,
+    /// The material sampler.
+    material_sampler: Sampler,
+    /// The layout of a material's set.
+    material_layout: DescriptorSetLayout,
     /// The lightmap sampler.
     light_sampler: Sampler,
     /// The buffer being recorded or in flight.
@@ -364,9 +388,11 @@ impl Backend {
         let (physical, queue_family) = pick_device(&instance, surface.as_deref())?;
         let device_name = physical.properties().device_name().to_owned();
         let device_extensions = DeviceExtensions::new().khr_swapchain();
+        let features = DeviceFeatures::new().with_sampler_anisotropy();
         let device = physical.create_device(DeviceCreateInfo {
             queue_create_infos: &[QueueCreateInfo::single(queue_family)],
             enabled_extensions: surface.as_ref().map(|_| &device_extensions),
+            enabled_features: Some(&features),
             ..DeviceCreateInfo::default()
         })?;
         let queue = device.get_queue(queue_family, 0);
@@ -409,6 +435,21 @@ impl Backend {
                 image_binding(1, DescriptorType::SAMPLER),
             ],
         )?;
+        let material_layout = DescriptorSetLayout::new(
+            &device,
+            &[
+                image_binding(0, DescriptorType::SAMPLED_IMAGE),
+                image_binding(1, DescriptorType::SAMPLER),
+                image_binding(2, DescriptorType::SAMPLED_IMAGE),
+                image_binding(3, DescriptorType::SAMPLED_IMAGE),
+                image_binding(4, DescriptorType::SAMPLED_IMAGE),
+                image_binding(5, DescriptorType::SAMPLED_IMAGE),
+                image_binding(6, DescriptorType::SAMPLED_IMAGE),
+                image_binding(7, DescriptorType::SAMPLED_IMAGE),
+                image_binding(8, DescriptorType::SAMPLED_IMAGE),
+                image_binding(9, DescriptorType::UNIFORM_BUFFER),
+            ],
+        )?;
         let textured_layout = |size| {
             PipelineLayout::with_push_constants(
                 &device,
@@ -422,6 +463,15 @@ impl Backend {
         };
         let layouts = Layouts {
             world: textured_layout(MODEL_OFFSET_SIZE)?,
+            material: PipelineLayout::with_push_constants(
+                &device,
+                &[&frame_layout, &material_layout],
+                &[PushConstantRange {
+                    stage_flags: ShaderStageFlags::VERTEX,
+                    offset: 0,
+                    size: MODEL_OFFSET_SIZE,
+                }],
+            )?,
             alias: textured_layout(ALIAS_PUSH_SIZE)?,
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
@@ -439,6 +489,17 @@ impl Backend {
                 ..SamplerCreateInfo::default()
             },
             3.0,
+        )?;
+        let material_sampler = Sampler::new_mipmapped(
+            &device,
+            SamplerCreateInfo {
+                address_mode_u: SamplerAddressMode::REPEAT,
+                address_mode_v: SamplerAddressMode::REPEAT,
+                address_mode_w: SamplerAddressMode::REPEAT,
+                anisotropy: Some(MATERIAL_ANISOTROPY),
+                ..SamplerCreateInfo::default()
+            },
+            MATERIAL_MAX_LOD,
         )?;
         let light_sampler = Sampler::new(&device, SamplerCreateInfo::default())?;
         let uniforms = host_buffer(&device, &physical, FRAME_SIZE, BufferUsage::UNIFORM_BUFFER)?;
@@ -469,6 +530,8 @@ impl Backend {
             present_pass,
             capture_pass,
             texture_sampler,
+            material_sampler,
+            material_layout,
             light_sampler,
             command_pool,
             commands: None,

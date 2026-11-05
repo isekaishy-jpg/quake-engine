@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_map::{AliasModel, Map, Sprite, TextureKind};
+use engine_map::{AliasModel, Map, Sprite, Texture, TextureKind};
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType, Device, DeviceMemory,
@@ -18,6 +18,9 @@ use super::{
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::canvas_vertices;
 use crate::error::RenderError;
+use crate::material::{
+    MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
+};
 use crate::matrix::view_projection;
 use crate::renderer::View;
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
@@ -40,6 +43,11 @@ pub(super) fn host_buffer(
         MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
     )?;
     Ok(GpuBuffer { buffer, memory })
+}
+
+/// Whether `texture` is drawn through the material pipeline.
+fn batch_uses_material(texture: &Texture) -> bool {
+    matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
 }
 
 /// An image in device memory.
@@ -284,17 +292,19 @@ impl Backend {
         }
 
         let sets = u32::try_from(map.textures.len() + 1).unwrap_or(u32::MAX);
+        let material_count = map.textures.iter().filter(|t| t.material.is_some()).count();
+        let images = sets.saturating_mul(8);
         let pool = DescriptorPool::new(
             &self.device,
             sets,
             &[
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: 1,
+                    descriptor_count: sets,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: sets,
+                    descriptor_count: images,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -317,6 +327,19 @@ impl Backend {
         frame_set.write_sampled_image(1, &atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         frame_set.write_sampler(2, &self.light_sampler);
 
+        let blank =
+            self.upload_image(&[(1, 1, &[128, 128, 255, 255][..])], Format::R8G8B8A8_UNORM)?;
+        let mut material_params = (material_count > 0)
+            .then(|| {
+                host_buffer(
+                    &self.device,
+                    &self.physical,
+                    material_count * MATERIAL_PARAMS_STRIDE,
+                    BufferUsage::UNIFORM_BUFFER,
+                )
+            })
+            .transpose()?;
+        let mut next_params = 0;
         let mut textures = Vec::with_capacity(map.textures.len());
         let mut texture_sets = Vec::with_capacity(map.textures.len());
         for texture in &map.textures {
@@ -330,6 +353,47 @@ impl Backend {
                 .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                 .collect();
             let image = self.upload_image(&levels, Format::R8G8B8A8_UNORM)?;
+            if let (Some(material), Some(params)) = (&texture.material, &mut material_params)
+                && batch_uses_material(texture)
+            {
+                let set = pool.allocate(&self.material_layout)?;
+                set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                set.write_sampler(1, &self.material_sampler);
+                let mut uploaded = Vec::with_capacity(material.slots.len());
+                for slot in &material.slots {
+                    let levels: Vec<(u32, u32, &[u8])> = slot
+                        .iter()
+                        .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
+                        .collect();
+                    uploaded.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
+                }
+                for binding in 0..7_u32 {
+                    let view = uploaded
+                        .get(binding as usize)
+                        .map_or(&blank.view, |image| &image.view);
+                    set.write_sampled_image(
+                        binding + 2,
+                        view,
+                        ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                    );
+                }
+                let offset = next_params * MATERIAL_PARAMS_STRIDE;
+                let bytes = material_params_of(material);
+                params.memory.map()?.as_slice_mut()[offset..offset + bytes.len()]
+                    .copy_from_slice(&bytes);
+                set.write_buffer(
+                    9,
+                    DescriptorType::UNIFORM_BUFFER,
+                    &params.buffer,
+                    offset as u64,
+                    MATERIAL_PARAMS_BYTES as u64,
+                );
+                next_params += 1;
+                texture_sets.push(Some(set));
+                textures.push(image);
+                textures.extend(uploaded);
+                continue;
+            }
             let set = pool.allocate(&self.texture_layout)?;
             set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
             set.write_sampler(1, &self.texture_sampler);
@@ -340,7 +404,12 @@ impl Backend {
             vertices,
             indices,
             texture_sets,
-            _textures: textures,
+            _material_params: material_params,
+            _textures: {
+                let mut all = textures;
+                all.push(blank);
+                all
+            },
             _pool: pool,
             frame_set,
             _atlas: atlas,

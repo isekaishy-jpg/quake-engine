@@ -51,5 +51,6 @@ pub fn placeholder_texture(name: &str) -> Texture {
         mips,
         animation: None,
         alternate: None,
+        material: None,
     }
 }

@@ -1,0 +1,8 @@
+format 1 material
+
+surface {
+    base = textures/flame.png
+    alpha = blend
+    shading = unlit
+    flipbook = 2 2 10
+}

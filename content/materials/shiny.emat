@@ -1,0 +1,7 @@
+format 1 material
+
+surface {
+    base = textures/metal.png
+    shading = matcap
+    matcap = textures/matcap.png
+}

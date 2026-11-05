@@ -4,7 +4,8 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{compile_text, placeholder_texture};
+use engine_compile::{MaterialLibrary, compile_text};
+use engine_map::Texture;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
 /// A level's text, in the engine's own format.
@@ -22,8 +23,19 @@ pub(crate) fn load_level(
         return fixture_quake::load_level(filesystem, name);
     };
     let text = std::str::from_utf8(&bytes)?;
-    let mut textures = |material: &str| placeholder_texture(material);
-    let map = Arc::new(compile_text(text, &mut textures)?);
+    let mut library = MaterialLibrary::new(filesystem);
+    let mut failure = None;
+    let mut textures = |material: &str| {
+        library.load(material).unwrap_or_else(|error| {
+            failure = Some(error);
+            Texture::default()
+        })
+    };
+    let map = compile_text(text, &mut textures)?;
+    if let Some(error) = failure {
+        return Err(error.into());
+    }
+    let map = Arc::new(map);
     let palette = load_palette(filesystem)?;
     let start = spawn_point(&map);
     Ok(LoadedLevel {

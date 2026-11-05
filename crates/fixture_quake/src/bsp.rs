@@ -69,6 +69,7 @@ fn missing_texture(name: &str) -> Texture {
         }],
         animation: None,
         alternate: None,
+        material: None,
     }
 }
 
@@ -106,6 +107,7 @@ fn import_texture(source: &BspMipTexture, palette: &Palette) -> Texture {
         mips,
         animation: None,
         alternate: None,
+        material: None,
     }
 }
 

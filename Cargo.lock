@@ -690,10 +690,12 @@ dependencies = [
 name = "engine_compile"
 version = "0.0.0-alpha"
 dependencies = [
+ "engine_assets",
  "engine_core",
  "engine_format",
  "engine_map",
  "engine_physics",
+ "png",
 ]
 
 [[package]]

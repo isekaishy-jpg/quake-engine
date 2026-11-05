@@ -1,0 +1,8 @@
+format 1 material
+
+surface {
+    base = textures/glass.png
+    alpha = blend
+    tint = textures/glass.png
+    shading = unlit
+}

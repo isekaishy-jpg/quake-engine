@@ -1,0 +1,268 @@
+//! Reading materials: `.emat` documents and the images they name.
+
+use std::collections::HashMap;
+use std::sync::Arc;
+
+use engine_assets::FileSystem;
+use engine_format::{Block, Document, Value, from_text};
+use engine_map::{
+    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, Shading, SlotImage,
+    Texture, TextureKind, mip_chain,
+};
+
+use crate::error::CompileError;
+use crate::texture::placeholder_texture;
+
+/// Decodes a PNG into RGBA bytes.
+fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
+    let bad = |error: &dyn std::fmt::Display| CompileError::Bad(format!("bad PNG: {error}"));
+    let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
+    decoder.set_transformations(png::Transformations::normalize_to_color8());
+    let mut reader = decoder.read_info().map_err(|error| bad(&error))?;
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| CompileError::Bad("a PNG is too big".to_owned()))?;
+    let mut pixels = vec![0; size];
+    let info = reader
+        .next_frame(&mut pixels)
+        .map_err(|error| bad(&error))?;
+    pixels.truncate(info.buffer_size());
+    let rgba = match info.color_type {
+        png::ColorType::Rgba => pixels,
+        png::ColorType::Rgb => pixels
+            .chunks_exact(3)
+            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .collect(),
+        png::ColorType::GrayscaleAlpha => pixels
+            .chunks_exact(2)
+            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .collect(),
+        png::ColorType::Grayscale => pixels.iter().flat_map(|p| [*p, *p, *p, 255]).collect(),
+        png::ColorType::Indexed => {
+            return Err(CompileError::Bad(
+                "an indexed PNG wasn't expanded".to_owned(),
+            ));
+        }
+    };
+    Ok((info.width, info.height, rgba))
+}
+
+/// A field's number, or `default`.
+fn number(block: &Block, key: &str, default: f32) -> f32 {
+    #[expect(clippy::cast_possible_truncation, reason = "materials store f32")]
+    block
+        .get(key)
+        .and_then(Value::number)
+        .map_or(default, |value| value as f32)
+}
+
+/// A field's numbers, or `default`.
+fn numbers<const N: usize>(block: &Block, key: &str, default: [f32; N]) -> [f32; N] {
+    let mut out = default;
+    if let Some(values) = block.get(key).and_then(Value::numbers)
+        && values.len() == N
+    {
+        for (slot, value) in out.iter_mut().zip(values) {
+            #[expect(clippy::cast_possible_truncation, reason = "materials store f32")]
+            let value = value as f32;
+            *slot = value;
+        }
+    }
+    out
+}
+
+/// Loads materials by name, keeping each image once.
+pub struct MaterialLibrary<'a> {
+    /// Where files come from.
+    filesystem: &'a FileSystem,
+    /// Images already decoded, by path.
+    images: HashMap<String, SlotImage>,
+}
+
+impl std::fmt::Debug for MaterialLibrary<'_> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("MaterialLibrary")
+            .field("images", &self.images.len())
+            .finish_non_exhaustive()
+    }
+}
+
+/// Fills a material's slots as images are named.
+struct SlotFiller<'a, 'b> {
+    /// Where images come from.
+    library: &'a mut MaterialLibrary<'b>,
+    /// The material's name, for errors.
+    name: &'a str,
+    /// The images so far, after the base.
+    slots: Vec<SlotImage>,
+}
+
+impl SlotFiller<'_, '_> {
+    /// Takes a slot for `path`, reusing one already holding it.
+    fn add(&mut self, path: &str) -> Result<u8, CompileError> {
+        let image = self.library.image(path)?;
+        let found = self
+            .slots
+            .iter()
+            .position(|known| Arc::ptr_eq(known, &image));
+        let index = if let Some(found) = found {
+            found
+        } else {
+            self.slots.push(image);
+            self.slots.len() - 1
+        };
+        if index + 2 > MATERIAL_SLOTS {
+            return Err(CompileError::Bad(format!(
+                "{} uses more than {MATERIAL_SLOTS} images",
+                self.name
+            )));
+        }
+        Ok(u8::try_from(index + 1).unwrap_or(u8::MAX))
+    }
+
+    /// The slot of the image `key` names, if it names one.
+    fn field(&mut self, block: &Block, key: &str) -> Result<Option<u8>, CompileError> {
+        block
+            .get(key)
+            .and_then(Value::text)
+            .map(|path| self.add(path))
+            .transpose()
+    }
+}
+
+impl<'a> MaterialLibrary<'a> {
+    /// A library reading from `filesystem`.
+    #[must_use]
+    pub fn new(filesystem: &'a FileSystem) -> Self {
+        Self {
+            filesystem,
+            images: HashMap::new(),
+        }
+    }
+
+    /// The image at `path`, with all its mips.
+    fn image(&mut self, path: &str) -> Result<SlotImage, CompileError> {
+        if let Some(image) = self.images.get(path) {
+            return Ok(Arc::clone(image));
+        }
+        let bytes = self
+            .filesystem
+            .read(path)
+            .map_err(|error| CompileError::Bad(error.to_string()))?;
+        let (width, height, rgba) = decode_png(&bytes)?;
+        let image = Arc::new(mip_chain(width, height, rgba));
+        self.images.insert(path.to_owned(), Arc::clone(&image));
+        Ok(image)
+    }
+
+    /// Reads a material document into a texture.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it makes no sense or an image can't be read.
+    pub fn read(&mut self, name: &str, document: &Document) -> Result<Texture, CompileError> {
+        if document.kind != "material" {
+            return Err(CompileError::Bad(format!("{name} isn't a material")));
+        }
+        let block = document
+            .blocks_of("surface")
+            .next()
+            .ok_or_else(|| CompileError::Bad(format!("{name} has no surface")))?;
+        let base = block
+            .get("base")
+            .and_then(Value::text)
+            .ok_or_else(|| CompileError::Bad(format!("{name} has no base")))?;
+        let mips: Vec<MipLevel> = self.image(base)?.as_ref().clone();
+        let mut filler = SlotFiller {
+            library: self,
+            name,
+            slots: Vec::new(),
+        };
+        let mut material = Material {
+            specular_strength: number(block, "specular_strength", 1.0),
+            gloss: number(block, "gloss", 32.0),
+            parallax: number(block, "parallax", 0.0),
+            detail_scale: number(block, "detail_scale", 8.0),
+            emissive_strength: number(block, "emissive_strength", 1.0),
+            cutoff: number(block, "cutoff", 0.5),
+            scroll: numbers(block, "scroll", [0.0; 2]),
+            flipbook: numbers(block, "flipbook", [0.0; 3]),
+            triplanar: block
+                .get("triplanar")
+                .and_then(Value::flag)
+                .unwrap_or(false),
+            hex_tiling: block.get("hex").and_then(Value::flag).unwrap_or(false),
+            shading: match block.get("shading").and_then(Value::text) {
+                None | Some("lit") => Shading::Lit,
+                Some("cel") => Shading::Cel,
+                Some("matcap") => Shading::Matcap,
+                Some("unlit") => Shading::Unlit,
+                Some(other) => {
+                    return Err(CompileError::Bad(format!("{name}: shading {other}")));
+                }
+            },
+            alpha: match block.get("alpha").and_then(Value::text) {
+                None | Some("opaque") => AlphaMode::Opaque,
+                Some("mask") => AlphaMode::Mask,
+                Some("blend") => AlphaMode::Blend,
+                Some(other) => return Err(CompileError::Bad(format!("{name}: alpha {other}"))),
+            },
+            ..Material::default()
+        };
+        material.normal = filler.field(block, "normal")?;
+        material.specular = filler.field(block, "specular")?;
+        material.emissive = filler.field(block, "emissive")?;
+        material.height = filler.field(block, "height")?;
+        material.tint = filler.field(block, "tint")?;
+        material.matcap = filler.field(block, "matcap")?;
+        material.ramp = filler.field(block, "ramp")?;
+        material.detail = filler.field(block, "detail")?;
+        for layer in block.children_of("layer") {
+            if material.layers.len() == MAX_LAYERS {
+                return Err(CompileError::Bad(format!(
+                    "{name} has more than {MAX_LAYERS} layers"
+                )));
+            }
+            let (Some(base), Some(mask)) =
+                (filler.field(layer, "base")?, filler.field(layer, "mask")?)
+            else {
+                return Err(CompileError::Bad(format!(
+                    "{name}: a layer needs a base and a mask"
+                )));
+            };
+            material.layers.push(MaterialLayer { base, mask });
+        }
+        material.slots = filler.slots;
+        let kind = match block.get("kind").and_then(Value::text) {
+            None | Some("solid") => TextureKind::Solid,
+            Some("cutout") => TextureKind::Cutout,
+            Some("liquid") => TextureKind::Liquid,
+            Some("sky") => TextureKind::Sky,
+            Some("hidden") => TextureKind::Hidden,
+            Some(other) => return Err(CompileError::Bad(format!("{name}: kind {other}"))),
+        };
+        Ok(Texture {
+            name: name.to_owned(),
+            kind,
+            mips,
+            animation: None,
+            alternate: None,
+            material: Some(Arc::new(material)),
+        })
+    }
+
+    /// The texture of `name`, from `materials/<name>.emat`. A missing material
+    /// shows a placeholder, so a map still plays and the gap is plain to see.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a material exists but is broken.
+    pub fn load(&mut self, name: &str) -> Result<Texture, CompileError> {
+        let Ok(bytes) = self.filesystem.read(&format!("materials/{name}.emat")) else {
+            return Ok(placeholder_texture(name));
+        };
+        let text = std::str::from_utf8(&bytes)
+            .map_err(|_| CompileError::Bad(format!("{name} isn't text")))?;
+        self.read(name, &from_text(text)?)
+    }
+}

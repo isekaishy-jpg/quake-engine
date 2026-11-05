@@ -1,14 +1,19 @@
 //! Geometry, textures, lighting and entities.
 
+use std::sync::Arc;
+
 use engine_core::math::Vec3;
+
+use crate::material::Material;
 
 use crate::tree::{ClipChild, NodeChild, Tree};
 
 /// How a texture is drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
 pub enum TextureKind {
     /// An ordinary lit surface. Alpha is how much light affects a pixel, so
     /// zero is fullbright.
+    #[default]
     Solid,
     /// A lit surface with holes, where alpha zero is a hole.
     Cutout,
@@ -42,7 +47,7 @@ pub struct Animation {
 }
 
 /// A texture.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Texture {
     /// Its name, for display.
     pub name: String,
@@ -55,6 +60,8 @@ pub struct Texture {
     /// The texture to show instead on a brush entity with a frame set, as a
     /// used button does.
     pub alternate: Option<u32>,
+    /// What else it's made of. Without one, it draws by its kind alone.
+    pub material: Option<Arc<Material>>,
 }
 
 /// One texture axis: a texel coordinate is `dot(point, axis) + offset`.

@@ -1,0 +1,6 @@
+format 1 material
+
+surface {
+    base = textures/lava.png
+    kind = liquid
+}
