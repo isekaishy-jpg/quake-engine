@@ -645,6 +645,7 @@ dependencies = [
  "engine_assets",
  "engine_audio",
  "engine_client",
+ "engine_compile",
  "engine_console",
  "engine_core",
  "engine_map",
@@ -683,6 +684,16 @@ dependencies = [
  "engine_net",
  "engine_physics",
  "engine_test_maps",
+]
+
+[[package]]
+name = "engine_compile"
+version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+ "engine_format",
+ "engine_map",
+ "engine_physics",
 ]
 
 [[package]]

@@ -1,0 +1,19 @@
+[package]
+name = "engine_compile"
+description = "Turns the engine's map documents into what the engine runs. Knows no game."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[dependencies]
+engine_core.workspace = true
+engine_format.workspace = true
+engine_map.workspace = true
+
+[dev-dependencies]
+engine_physics.workspace = true
+
+[lints]
+workspace = true

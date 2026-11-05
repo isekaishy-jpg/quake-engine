@@ -74,6 +74,25 @@ fn hand_written_text_reads_as_expected() {
 }
 
 #[test]
+fn fields_can_share_a_line() {
+    let document = from_text(
+        "format 1 map
+brush { material = floor cuboid = 0 0 0 1 1 1 }
+",
+    );
+    let document = document.expect("parses");
+    let brush = document.blocks_of("brush").next().expect("a brush");
+    assert_eq!(brush.get("material").and_then(Value::text), Some("floor"));
+    assert_eq!(
+        brush
+            .get("cuboid")
+            .and_then(Value::numbers)
+            .map(|n| n.len()),
+        Some(6)
+    );
+}
+
+#[test]
 fn names_can_repeat() {
     let text = "format 1 map\nentity door { }\nentity door { }\n";
     let document = from_text(text).expect("parses");

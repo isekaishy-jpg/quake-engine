@@ -35,7 +35,7 @@ use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
-    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, load_level, mount_game, mount_music,
+    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, mount_game, mount_music,
 };
 use sound::AudioLevels;
 use view::DEFAULT_FOV;
@@ -260,7 +260,7 @@ impl World {
             map,
             palette,
             start,
-        } = load_level(&self.filesystem, name)?;
+        } = crate::level::load_level(&self.filesystem, name)?;
         let level = Level {
             name: name.to_owned(),
             parms: self.next_parms.take(),
@@ -477,6 +477,9 @@ impl Engine {
         }
         let user_directory = saves::user_directory(&options);
         let _created = std::fs::create_dir_all(&user_directory);
+        for directory in &options.content_directories {
+            filesystem.mount(Box::new(DirectoryArchive::new(directory)));
+        }
         filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
         let has_config = user_directory.join(CONFIG_NAME).is_file();
         let keys = Keys::load(&user_directory);

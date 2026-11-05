@@ -13,7 +13,7 @@ use engine_core::time::TICK_SECONDS;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_server::{SavedGame, Server};
-use fixture_quake::{BASE_GAME, LoadedLevel, SCRIPTS, load_level};
+use fixture_quake::{BASE_GAME, LoadedLevel, SCRIPTS};
 use serde::{Deserialize, Serialize};
 
 use crate::app::{CONFIG_NAME, World, player_client};
@@ -113,7 +113,7 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     }
     let saved: SavedGame = serde_json::from_str(body)?;
     let level = saved.level_name().to_owned();
-    let LoadedLevel { map, palette, .. } = load_level(&world.filesystem, &level)?;
+    let LoadedLevel { map, palette, .. } = crate::level::load_level(&world.filesystem, &level)?;
     let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (client_end, server_end) = loopback();
     let server = Server::resume(

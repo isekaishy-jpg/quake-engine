@@ -48,6 +48,15 @@ pub const CRATE_RULES: &[CrateRule] = &[
         may_depend_on: &["engine_core"],
     },
     CrateRule {
+        name: "engine_compile",
+        may_depend_on: &[
+            "engine_core",
+            "engine_format",
+            "engine_map",
+            "engine_physics",
+        ],
+    },
+    CrateRule {
         name: "engine_test_maps",
         may_depend_on: &["engine_core", "engine_map"],
     },
@@ -124,6 +133,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_assets",
             "engine_audio",
             "engine_client",
+            "engine_compile",
             "engine_console",
             "engine_core",
             "engine_map",

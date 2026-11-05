@@ -10,7 +10,7 @@ use engine_core::math::Vec3;
 use engine_net::{Conditioned, Conditions, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Seat, SeatInfo};
-use fixture_quake::{LoadedLevel, load_level};
+use fixture_quake::LoadedLevel;
 
 use super::{CONNECT_SECONDS, World, player_client};
 
@@ -100,7 +100,7 @@ impl World {
             map,
             palette,
             start,
-        } = load_level(&self.filesystem, name)?;
+        } = crate::level::load_level(&self.filesystem, name)?;
         let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
         let mut client = player_client(transport, collision, start.origin);
         client.send_info(&self.identity.name, self.identity.colors);

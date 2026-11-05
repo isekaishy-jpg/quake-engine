@@ -22,6 +22,8 @@ impl std::error::Error for OptionsError {}
 pub(crate) struct Options {
     /// The directory holding `id1`.
     pub(crate) base_directory: PathBuf,
+    /// Directories of content to search before the game's own files.
+    pub(crate) content_directories: Vec<PathBuf>,
     /// The game directory, always `id1` first.
     pub(crate) game_directories: Vec<String>,
     /// Console commands from `+` arguments, run by `stuffcmds`.
@@ -40,6 +42,7 @@ impl Options {
     ) -> Result<Self, OptionsError> {
         let mut base_directory = None;
         let mut game_directories = vec![BASE_GAME.to_owned()];
+        let mut content_directories = Vec::new();
         let mut startup_commands = String::new();
         let mut windowed = false;
         let mut no_sound = false;
@@ -51,6 +54,12 @@ impl Options {
                         .next()
                         .ok_or_else(|| OptionsError("-basedir needs a path".to_owned()))?;
                     base_directory = Some(PathBuf::from(path));
+                }
+                "-content" => {
+                    let path = arguments
+                        .next()
+                        .ok_or_else(|| OptionsError("-content needs a path".to_owned()))?;
+                    content_directories.push(PathBuf::from(path));
                 }
                 "-window" => windowed = true,
                 "-nosound" => no_sound = true,
@@ -77,12 +86,13 @@ impl Options {
         }
         let base_directory = base_directory.ok_or_else(|| {
             OptionsError(
-                "usage: quake-engine -basedir <Quake directory> [-window] [-nosound] [+command ...]"
+                "usage: quake-engine -basedir <Quake directory> [-content <directory>] [-window] [-nosound] [+command ...]"
                     .to_owned(),
             )
         })?;
         Ok(Self {
             base_directory,
+            content_directories,
             game_directories,
             startup_commands,
             windowed,

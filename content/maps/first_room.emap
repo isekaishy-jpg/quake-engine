@@ -1,0 +1,11 @@
+format 1 map
+
+# The first map in the engine's own format.
+brush { material = floor cuboid = -320 -320 -32 320 320 0 }
+brush { material = ceiling cuboid = -320 -320 256 320 320 288 }
+brush { material = wall_a cuboid = -320 -320 0 -288 320 256 }
+brush { material = wall_a cuboid = 288 -320 0 320 320 256 }
+brush { material = wall_b cuboid = -288 -320 0 288 -288 256 }
+brush { material = wall_b cuboid = -288 288 0 288 320 256 }
+brush { material = pillar cuboid = 64 64 0 128 128 256 }
+entity start { type = info_player_start origin = -128 0 24 }

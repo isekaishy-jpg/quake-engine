@@ -15,6 +15,7 @@ path = "src/main.rs"
 engine_assets.workspace = true
 engine_audio.workspace = true
 engine_client.workspace = true
+engine_compile.workspace = true
 engine_map.workspace = true
 engine_movement.workspace = true
 engine_net.workspace = true

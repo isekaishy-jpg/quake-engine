@@ -210,11 +210,17 @@ impl Parser {
         }
     }
 
+    /// Whether a new field starts here, as it can on the same line.
+    fn at_field(&self) -> bool {
+        matches!(self.peek(), Some(Token::Word(_)))
+            && matches!(self.tokens.get(self.at + 1), Some((Token::Equals, _)))
+    }
+
     /// Reads a field's value: one value, or several making a list.
     fn value(&mut self) -> Result<Value, FormatError> {
         let first = self.scalar(0)?;
         let mut rest = Vec::new();
-        while !matches!(self.peek(), Some(Token::Line | Token::Close) | None) {
+        while !matches!(self.peek(), Some(Token::Line | Token::Close) | None) && !self.at_field() {
             rest.push(self.scalar(0)?);
         }
         if rest.is_empty() {
