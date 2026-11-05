@@ -195,6 +195,8 @@ struct GpuMap {
     _atlas: GpuImage,
     /// Kept alive for the set.
     _direction_atlas: GpuImage,
+    /// Kept alive for the frame set.
+    _paint_atlas: GpuImage,
 }
 
 /// A flat picture on the GPU.
@@ -515,6 +517,7 @@ impl Backend {
                 image_binding(4, DescriptorType::UNIFORM_BUFFER),
                 image_binding(5, DescriptorType::SAMPLED_IMAGE),
                 image_binding(6, DescriptorType::SAMPLER),
+                image_binding(7, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let texture_layout = DescriptorSetLayout::new(

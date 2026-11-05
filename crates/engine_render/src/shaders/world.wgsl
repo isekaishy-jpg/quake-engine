@@ -5,6 +5,7 @@
 @group(0) @binding(2) var lightmap_sampler: sampler;
 @group(0) @binding(3) var light_direction: texture_2d<f32>;
 @group(0) @binding(5) var shadow_atlas: texture_depth_2d;
+@group(0) @binding(7) var paint_atlas: texture_2d<f32>;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;

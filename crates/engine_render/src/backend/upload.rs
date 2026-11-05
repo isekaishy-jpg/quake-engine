@@ -510,9 +510,10 @@ impl Backend {
             &self.device,
             sets,
             &[
+                // The frame set takes a few of each on top of one a set.
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::UNIFORM_BUFFER,
-                    descriptor_count: sets,
+                    descriptor_count: sets.saturating_add(2),
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
@@ -520,7 +521,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
-                    descriptor_count: sets,
+                    descriptor_count: sets.saturating_add(2),
                 },
             ],
         )?;
@@ -533,6 +534,14 @@ impl Backend {
                 mesh.atlas_size,
                 mesh.atlas_size,
                 mesh.direction_atlas.as_slice(),
+            )],
+            Format::R8G8B8A8_UNORM,
+        )?;
+        let paint_atlas = self.upload_image(
+            &[(
+                mesh.atlas_size,
+                mesh.atlas_size,
+                mesh.paint_atlas.as_slice(),
             )],
             Format::R8G8B8A8_UNORM,
         )?;
@@ -591,6 +600,7 @@ impl Backend {
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
         frame_set.write_sampler(6, &self.shadow_sampler);
+        frame_set.write_sampled_image(7, &paint_atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         frame_set.write_sampled_image(
             3,
             &direction_atlas.view,
@@ -715,6 +725,7 @@ impl Backend {
             frame_set,
             _atlas: atlas,
             _direction_atlas: direction_atlas,
+            _paint_atlas: paint_atlas,
         });
         Ok(())
     }

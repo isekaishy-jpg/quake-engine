@@ -10,7 +10,7 @@ use engine_map::{Face, FaceLight, Map, ProbeGrid};
 use crate::error::CompileError;
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 2;
+const BAKE_VERSION: u64 = 3;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -58,6 +58,7 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         Value::Bytes(map.light_directions.as_flattened().to_vec()),
     );
     block.set("edges", Value::Bytes(map.light_edges.clone()));
+    block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
     document.blocks.push(block);
     if let Some(probes) = &map.probes {
         let mut block = Block::new("probes");
@@ -209,6 +210,8 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     map.light = triples(samples);
     map.light_directions = triples(directions);
     map.light_edges = bytes_of(light, "edges").unwrap_or_default().to_vec();
+    let paint = bytes_of(light, "paint").unwrap_or_default();
+    map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {
         face.light = light;
     }

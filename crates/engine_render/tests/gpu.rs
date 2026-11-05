@@ -9,9 +9,9 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, Map, Material, MipLevel,
-    Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sky, Sprite, SpriteFacing, SpriteFrame,
-    SpriteImage, TextureKind,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, Map, Material, MaterialLayer,
+    MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sky, Sprite,
+    SpriteFacing, SpriteFrame, SpriteImage, TextureKind,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
@@ -1196,4 +1196,39 @@ fn shadow_redraws_stay_within_budget() {
     };
     let counts = [frame(), frame(), frame(), frame()];
     assert_eq!(counts, [2, 2, 2, 0], "two a frame until they're all done");
+}
+
+/// A layer masked by paint shows where the map's paint says, and not elsewhere.
+#[test]
+fn a_painted_layer_follows_the_paint() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let material = Material {
+        shading: Shading::Unlit,
+        slots: vec![Arc::new(image_of(2, |_, _| [0, 255, 0, 255]))],
+        layers: vec![MaterialLayer {
+            base: 1,
+            mask: PAINT_MASK,
+        }],
+        ..Material::default()
+    };
+    let painted = |weight: u8| {
+        let mut built = map(1);
+        built.textures[0].mips = image_of(8, |_, _| [255, 0, 0, 255]);
+        built.textures[0].material = Some(Arc::new(material.clone()));
+        built.paint = vec![[weight, 0, 0, 0]; built.light.len()];
+        built
+    };
+    let at = |renderer: &mut Renderer, built: Map| {
+        renderer.load_map(Arc::new(built)).expect("load");
+        let capture = renderer
+            .capture(&view_from_above(), Drawables::default(), 64, 64)
+            .expect("capture");
+        centre(&capture)
+    };
+    let bare = at(&mut renderer, painted(0));
+    let full = at(&mut renderer, painted(255));
+    assert!(bare[0] > 200 && bare[1] < 50, "{bare:?}");
+    assert!(full[1] > 200 && full[0] < 50, "{full:?}");
 }

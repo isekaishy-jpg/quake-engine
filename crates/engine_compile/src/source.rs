@@ -79,6 +79,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Strokes of paint.
+    pub paint: Vec<PaintStroke>,
     /// Images laid over the world's surfaces.
     pub decals: Vec<DecalSource>,
     /// Meshes in the world.
@@ -104,6 +106,19 @@ pub struct SkySource {
 fn point_of(value: &Value) -> Option<Point> {
     let numbers = value.numbers()?;
     (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// A stroke of a material layer across surfaces.
+#[derive(Clone, Debug, PartialEq)]
+pub struct PaintStroke {
+    /// Which layer, from 0 to 3.
+    pub layer: usize,
+    /// How far either side of its line it reaches.
+    pub radius: f64,
+    /// How strong it is at its middle, from 0 to 1.
+    pub strength: f64,
+    /// The points it passes through.
+    pub points: Vec<Point>,
 }
 
 /// An image laid over surfaces, as a box pressed against them.
@@ -266,6 +281,28 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     })
 }
 
+/// A stroke of paint, from its block.
+fn read_paint(block: &Block) -> PaintStroke {
+    let number =
+        |key: &str, default: f64| block.get(key).and_then(Value::number).unwrap_or(default);
+    let numbers = block
+        .get("points")
+        .and_then(Value::numbers)
+        .unwrap_or_default();
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to the layers"
+    )]
+    let layer = number("layer", 0.0).clamp(0.0, 3.0) as usize;
+    PaintStroke {
+        layer,
+        radius: number("radius", 32.0),
+        strength: number("strength", 1.0),
+        points: numbers.as_chunks::<3>().0.to_vec(),
+    }
+}
+
 /// A decal, from its block.
 fn read_decal(block: &Block) -> Result<DecalSource, CompileError> {
     let missing = |what: &str| CompileError::Bad(format!("a decal needs {what}"));
@@ -421,6 +458,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        paint: document.blocks_of("paint").map(read_paint).collect(),
         decals: document
             .blocks_of("decal")
             .map(read_decal)

@@ -26,6 +26,10 @@ brush { material = cel_stone cuboid = 96 -96 0 160 -32 256 }
 brush { material = panel_sheet cuboid = -256 352 96 256 384 160 }
 brush { material = panel_sheet cuboid = -448 352 64 -320 384 192 }
 
+# A wall with a stroke of moss painted across it.
+brush { material = painted_stone cuboid = 448 -256 0 512 128 256 }
+paint { layer = 0 radius = 56 points = 448 -256 40  448 -120 150  448 0 90  448 128 200 }
+
 # The flow map, on a slab.
 brush { material = swirl cuboid = 256 128 0 448 320 16 }
 

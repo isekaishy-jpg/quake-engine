@@ -28,7 +28,7 @@ Status is one of todo, doing or done.
 | 4 | Materials | One image type, materials, shading models, 8 slots, the Quake importer's mapping | done |
 | 5 | Sampling | Filter modes, anisotropy, generated mips | done |
 | 6 | Surface maps | Specular, normal, emissive, height, parallax, tint, detail | done |
-| 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | doing |
+| 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | done |
 | 8 | Alpha | Modes, sorting, coverage masks | done |
 | 9 | Anti-aliasing | MSAA and an edge search as settings | done |
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
@@ -63,3 +63,4 @@ Newest last. A line is added when a stage's state changes.
 - Stages 8, 9 and 16 are done. `r_aa 2` is an edge search in place of SMAA's tables, chosen after a side by side.
 - Stage 11 is done, with crisp shadows and light tracks.
 - Stage 12 is done.
+- Stage 7 is done.

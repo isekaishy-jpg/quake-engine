@@ -224,8 +224,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     for (var index = 0; index < material.flags.w; index = index + 1) {
         let layer = material.layers[index];
         let color = read_slot(layer.x, uv, dx, dy);
-        let mask = read_slot(layer.y, uv, dx, dy).r;
-        let share = smoothstep(below - 0.1, below + 0.1, mask * 1.2 - 0.1 + color.a * 0.0);
+        var mask = read_slot(layer.y, uv, dx, dy).r;
+        // Mask 15 is paint, which belongs to the surface, not the material.
+        if layer.y == 15 {
+            mask = textureSampleLevel(paint_atlas, lightmap_sampler, in.light_uv, 0.0)[index];
+        }
+        let share = smoothstep(below - 0.1, below + 0.1, mask * 1.2 - 0.1);
         base = vec4<f32>(mix(base.rgb, color.rgb, share), base.a);
     }
 

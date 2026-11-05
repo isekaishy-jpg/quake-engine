@@ -114,6 +114,8 @@ pub struct WorldMesh {
     /// Where each atlas pixel's light comes from, in RGBA bytes, laid out the
     /// same way.
     pub direction_atlas: Vec<u8>,
+    /// How much of each material layer is painted, laid out the same way.
+    pub paint_atlas: Vec<u8>,
 }
 
 /// Where a face's light sits in the atlas.
@@ -181,6 +183,8 @@ struct BuiltAtlas {
     bytes: Vec<u8>,
     /// The pixels of the light's directions.
     directions: Vec<u8>,
+    /// The pixels of the paint.
+    paint: Vec<u8>,
     /// Each face's place, if it has one.
     places: Vec<Option<LightPlace>>,
     /// A pixel at full brightness, for faces in unlit maps.
@@ -200,6 +204,7 @@ fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
     let side = packed.size as usize;
     let mut bytes = vec![0; side * side * ATLAS_PIXEL];
     let mut directions = vec![128; side * side * ATLAS_PIXEL];
+    let mut paint = vec![0; side * side * ATLAS_PIXEL];
     let mut positions = packed.positions.iter().copied();
     let mut places = Vec::with_capacity(lights.len());
     for light in &lights {
@@ -209,6 +214,7 @@ fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
         };
         let position = positions.next()?;
         copy_light(map, light, position, side, &mut bytes, &mut directions);
+        copy_paint(map, light, position, side, &mut paint);
         places.push(Some(LightPlace {
             position,
             width: light.width,
@@ -221,9 +227,25 @@ fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
         size: packed.size,
         bytes,
         directions,
+        paint,
         places,
         neutral,
     })
+}
+
+/// Copies a face's paint into its atlas, in the first style's place.
+fn copy_paint(map: &Map, light: &FaceLight, position: [u32; 2], side: usize, paint: &mut [u8]) {
+    let (width, height) = (light.width as usize, light.height as usize);
+    let [left, top] = position.map(|value| value as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let sample = map.paint.get(light.first_sample as usize + y * width + x);
+            if let Some(sample) = sample {
+                let at = ((top + y) * side + left + x) * ATLAS_PIXEL;
+                paint[at..at + 4].copy_from_slice(sample);
+            }
+        }
+    }
 }
 
 /// Copies a face's samples into the atlas, one style after another.
@@ -323,6 +345,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
         size: atlas_size,
         bytes: atlas,
         directions: direction_atlas,
+        paint: paint_atlas,
         places,
         neutral,
     } = build_atlas(map)?;
@@ -330,6 +353,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
         atlas_size,
         atlas,
         direction_atlas,
+        paint_atlas,
         ..WorldMesh::default()
     };
     let mut batch_of_texture = vec![None; map.textures.len()];

@@ -294,6 +294,7 @@ MATERIALS_TEXT = {
     'torch_flame': 'base = textures/flame.png\n    alpha = blend\n    shading = unlit\n    flipbook = 2 2 10',
     'glass_marks': 'base = textures/glass_marks.png',
     'lettering': 'base = textures/lettering.png\n    alpha = blend',
+    'painted_stone': 'base = textures/stone.png\n    height = textures/stone_height.png\n    layer { base = textures/grass.png mask = paint }',
     'polished': 'base = textures/metal.png\n    reflect = 0.7',
     'swirl': 'base = textures/lava.png\n    flow = textures/flow_swirl.png\n    flow_strength = 0.2\n    shading = unlit',
     'panel_sheet': 'base = textures/panel_sheet.png\n    hotspots = 0 0 1 0.25  0 0.25 0.5 1  0.5 0.25 1 1',

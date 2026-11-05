@@ -15,7 +15,7 @@ use engine_map::{
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::mesh::PlacedMesh;
-use crate::source::{EntitySource, WorkingMap};
+use crate::source::{EntitySource, PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
 
 /// World units between light samples, unless a map says otherwise.
@@ -639,6 +639,40 @@ fn onto_face(corners: &[Point], normal: Point, place: Point) -> Point {
     out
 }
 
+/// How far `point` is from a line through `points`.
+fn distance_to_line(point: Point, points: &[Point]) -> f64 {
+    let mut nearest = f64::MAX;
+    if let [only] = points {
+        let offset = add_scaled(point, *only, -1.0);
+        return dot(offset, offset).sqrt();
+    }
+    for pair in points.windows(2) {
+        let edge = add_scaled(pair[1], pair[0], -1.0);
+        let along = dot(add_scaled(point, pair[0], -1.0), edge) / dot(edge, edge).max(1e-9);
+        let closest = add_scaled(pair[0], edge, along.clamp(0.0, 1.0));
+        let offset = add_scaled(point, closest, -1.0);
+        nearest = nearest.min(dot(offset, offset).sqrt());
+    }
+    nearest
+}
+
+/// How much of each layer `strokes` leave at `point`.
+fn paint_at(point: Point, strokes: &[PaintStroke]) -> [u8; 4] {
+    let mut weights = [0.0_f64; 4];
+    for stroke in strokes {
+        let share = 1.0 - distance_to_line(point, &stroke.points) / stroke.radius.max(1.0);
+        let smooth = share.clamp(0.0, 1.0).powi(2) * (3.0 - 2.0 * share.clamp(0.0, 1.0));
+        let weight = &mut weights[stroke.layer];
+        *weight = weight.max(smooth * stroke.strength);
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to a byte"
+    )]
+    weights.map(|weight| (weight.clamp(0.0, 1.0) * 255.0) as u8)
+}
+
 /// How much surface a face has.
 fn face_area(map: &Map, face: &Face) -> f64 {
     let first = face.first_point as usize;
@@ -1239,6 +1273,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let mut samples = Vec::new();
     let mut directions = Vec::new();
     let mut edges = Vec::new();
+    let mut paint = Vec::new();
     let mut lit_faces = Vec::with_capacity(faces.len());
     for (bake, bounce) in bakes.into_iter().zip(bounced) {
         let (Some(mut bake), Some(bounce)) = (bake, bounce) else {
@@ -1256,6 +1291,14 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
                 Some(found) => edges.extend_from_slice(found),
                 None => edges.resize(edges.len() + layer.len(), u8::MAX),
             }
+            // Paint is read with the first layer's place.
+            if !working.paint.is_empty() {
+                if index == 0 {
+                    paint.extend(bake.points.iter().map(|p| paint_at(*p, &working.paint)));
+                } else {
+                    paint.resize(paint.len() + layer.len(), [0; 4]);
+                }
+            }
         }
         lit_faces.push(Some(light));
     }
@@ -1265,6 +1308,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     map.light = samples;
     map.light_directions = directions;
     map.light_edges = edges;
+    map.paint = paint;
     map.probes = probes;
     map.lit = true;
     Ok(())

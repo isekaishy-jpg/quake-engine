@@ -1,0 +1,7 @@
+format 1 material
+
+surface {
+    base = textures/stone.png
+    height = textures/stone_height.png
+    layer { base = textures/grass.png mask = paint }
+}

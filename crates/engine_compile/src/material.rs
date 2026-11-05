@@ -6,8 +6,8 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
-    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, Shading, SlotImage,
-    Texture, TextureKind, mip_chain,
+    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, PAINT_MASK, Shading,
+    SlotImage, Texture, TextureKind, mip_chain,
 };
 
 use crate::error::CompileError;
@@ -75,6 +75,66 @@ fn numbers<const N: usize>(block: &Block, key: &str, default: [f32; N]) -> [f32;
         }
     }
     out
+}
+
+/// Mixes a material's image-masked layers into its base, so they cost nothing
+/// when drawn, and frees their images. Painted layers stay, since they differ
+/// from one surface to the next.
+fn flatten_layers(material: &mut Material, mips: Vec<MipLevel>) -> Vec<MipLevel> {
+    let Some(base) = mips.first() else {
+        return mips;
+    };
+    let (width, height) = (base.width as usize, base.height as usize);
+    let mut rgba = base.rgba.clone();
+    let slot_image =
+        |slots: &[SlotImage], slot: u8| slots.get(usize::from(slot).wrapping_sub(1)).cloned();
+    let at_size = |image: &MipLevel, x: usize, y: usize| {
+        let (u, v) = (
+            x * image.width as usize / width,
+            y * image.height as usize / height,
+        );
+        (v * image.width as usize + u) * 4
+    };
+    let mut kept = Vec::new();
+    for layer in std::mem::take(&mut material.layers) {
+        let images = (
+            slot_image(&material.slots, layer.base),
+            slot_image(&material.slots, layer.mask),
+        );
+        let (Some(color), Some(mask)) = images else {
+            kept.push(layer);
+            continue;
+        };
+        let (Some(color), Some(mask)) = (color.first(), mask.first()) else {
+            continue;
+        };
+        for y in 0..height {
+            for x in 0..width {
+                let at = (y * width + x) * 4;
+                let share = u32::from(mask.rgba[at_size(mask, x, y)]);
+                let from = at_size(color, x, y);
+                for part in 0..3 {
+                    let (old, new) = (
+                        u32::from(rgba[at + part]),
+                        u32::from(color.rgba[from + part]),
+                    );
+                    let mixed = (old * (255 - share) + new * share) / 255;
+                    rgba[at + part] = u8::try_from(mixed).unwrap_or(u8::MAX);
+                }
+            }
+        }
+        for slot in [layer.base, layer.mask] {
+            if let Some(image) = material.slots.get_mut(usize::from(slot).wrapping_sub(1)) {
+                *image = Arc::new(vec![MipLevel {
+                    width: 1,
+                    height: 1,
+                    rgba: vec![0; 4],
+                }]);
+            }
+        }
+    }
+    material.layers = kept;
+    mip_chain(base.width, base.height, rgba)
 }
 
 /// A material's hotspot areas.
@@ -307,9 +367,12 @@ impl<'a> MaterialLibrary<'a> {
                     "{name} has more than {MAX_LAYERS} layers"
                 )));
             }
-            let (Some(base), Some(mask)) =
-                (filler.field(layer, "base")?, filler.field(layer, "mask")?)
-            else {
+            let mask = if layer.get("mask").and_then(Value::text) == Some("paint") {
+                Some(PAINT_MASK)
+            } else {
+                filler.field(layer, "mask")?
+            };
+            let (Some(base), Some(mask)) = (filler.field(layer, "base")?, mask) else {
                 return Err(CompileError::Bad(format!(
                     "{name}: a layer needs a base and a mask"
                 )));
@@ -317,6 +380,12 @@ impl<'a> MaterialLibrary<'a> {
             material.layers.push(MaterialLayer { base, mask });
         }
         material.slots = filler.slots;
+        let flatten = block.get("flatten").and_then(Value::flag) == Some(true);
+        let mips = if flatten {
+            flatten_layers(&mut material, mips)
+        } else {
+            mips
+        };
         let kind = match block.get("kind").and_then(Value::text) {
             None | Some("solid") => TextureKind::Solid,
             Some("cutout") => TextureKind::Cutout,

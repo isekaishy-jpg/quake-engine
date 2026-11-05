@@ -46,6 +46,9 @@ pub struct MaterialLayer {
     pub mask: u8,
 }
 
+/// The mask of a layer that reads the map's paint, not an image.
+pub const PAINT_MASK: u8 = 15;
+
 /// One image: its mips, largest first.
 pub type SlotImage = Arc<Vec<MipLevel>>;
 

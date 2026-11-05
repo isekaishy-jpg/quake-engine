@@ -25,7 +25,8 @@ pub use map::{
     Animation, Entity, Face, FaceLight, Map, MipLevel, Model, TexelAxis, Texture, TextureKind,
 };
 pub use material::{
-    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, Shading, SlotImage, mip_chain,
+    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, PAINT_MASK, Shading, SlotImage,
+    mip_chain,
 };
 pub use pool::{ModelOccluder, OccluderSphere, Pool, PoolLook};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};

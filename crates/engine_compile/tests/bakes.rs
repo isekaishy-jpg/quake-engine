@@ -13,6 +13,7 @@ use engine_map::{Map, MipLevel};
 const TEXT: &str = "format 1 map
 brush { material = floor cuboid = -128 -128 -32 128 128 0 }
 entity lamp { type = light origin = 0 0 100 intensity = 300 }
+paint { layer = 0 radius = 32 points = 0 0 0 }
 ";
 
 /// `text` compiled, with no light.
@@ -49,6 +50,7 @@ fn a_bake_restores_what_was_baked() {
     assert_eq!(map.light, baked.light);
     assert_eq!(map.light_directions, baked.light_directions);
     assert_eq!(map.light_edges, baked.light_edges);
+    assert_eq!(map.paint, baked.paint);
     assert_eq!(map.probes, baked.probes);
     for (face, baked) in map.faces.iter().zip(&baked.faces) {
         assert_eq!(face.light, baked.light);

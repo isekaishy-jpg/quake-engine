@@ -280,3 +280,28 @@ fn keyframes_make_a_track() {
     let field = swing.fields.iter().find(|(k, _)| k == "keyframe_style");
     assert_eq!(field.map(|(_, v)| v.as_str()), Some("48"));
 }
+
+/// A stroke leaves its layer's weight along its line and nowhere else, fading
+/// to its edge.
+#[test]
+fn paint_follows_its_stroke() {
+    let text = format!(
+        "{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 300 }}\n\
+         paint {{ layer = 1 radius = 64 points = -256 0 -256 256 0 -256 }}\n"
+    );
+    let map = baked(&text, &[]);
+    assert_eq!(map.paint.len(), map.light.len());
+    let floor = face_of(&map, "floor");
+    let light = floor.light.expect("lit");
+    let (width, height) = (light.width as usize, light.height as usize);
+    let first = light.first_sample as usize;
+    let weights = &map.paint[first..first + width * height];
+    let strongest = weights.iter().map(|w| w[1]).max().expect("some");
+    assert!(strongest > 240, "{strongest}");
+    assert!(weights.iter().any(|w| w[1] == 0), "not everywhere");
+    assert!(weights.iter().any(|w| w[1] > 10 && w[1] < 240), "it fades");
+    assert!(
+        weights.iter().all(|w| w[0] == 0 && w[2] == 0),
+        "only its layer"
+    );
+}

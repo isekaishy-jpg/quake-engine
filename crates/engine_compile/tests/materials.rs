@@ -5,16 +5,21 @@ use std::path::PathBuf;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::MaterialLibrary;
-use engine_map::{AlphaMode, Shading, TextureKind};
+use engine_map::{AlphaMode, PAINT_MASK, Shading, TextureKind};
 
 /// A one pixel PNG.
 fn pixel() -> Vec<u8> {
+    colored(&[1, 2, 3, 255])
+}
+
+/// A one pixel PNG of `color`.
+fn colored(color: &[u8; 4]) -> Vec<u8> {
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, 1, 1);
     encoder.set_color(png::ColorType::Rgba);
     encoder.set_depth(png::BitDepth::Eight);
     let mut writer = encoder.write_header().expect("a header");
-    writer.write_image_data(&[1, 2, 3, 255]).expect("a pixel");
+    writer.write_image_data(color).expect("a pixel");
     writer.finish().expect("finished");
     bytes
 }
@@ -88,4 +93,32 @@ fn a_missing_material_is_a_placeholder_and_a_broken_one_an_error() {
         assert!(library.load(name).is_err(), "{name}");
     }
     fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// Flattening mixes a masked layer into the base, so nothing's left to blend,
+/// and leaves a painted layer as it is.
+#[test]
+fn flattening_mixes_layers_into_the_base() {
+    let text = "format 1 material\nsurface {\n    base = textures/red.png\n    flatten = true\n\
+        layer { base = textures/blue.png mask = textures/half.png }\n\
+        layer { base = textures/blue.png mask = paint }\n}\n";
+    let (filesystem, root) = container("flatten", &[("mixed", text)]);
+    fs::write(root.join("textures/red.png"), colored(&[255, 0, 0, 255])).expect("write");
+    fs::write(root.join("textures/blue.png"), colored(&[0, 0, 255, 255])).expect("write");
+    fs::write(
+        root.join("textures/half.png"),
+        colored(&[128, 128, 128, 255]),
+    )
+    .expect("write");
+    let mut library = MaterialLibrary::new(&filesystem);
+    let texture = library.load("mixed").expect("loads");
+    let material = texture.material.expect("a material");
+    assert_eq!(material.layers.len(), 1, "only the painted layer is left");
+    assert_eq!(material.layers[0].mask, PAINT_MASK);
+    let base = &texture.mips[0].rgba;
+    assert!(
+        base[0].abs_diff(127) < 3 && base[2].abs_diff(128) < 3,
+        "{base:?}"
+    );
+    let _gone = fs::remove_dir_all(root);
 }
