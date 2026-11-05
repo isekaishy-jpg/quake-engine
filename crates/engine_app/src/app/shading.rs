@@ -5,7 +5,7 @@ use engine_client::Client;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{Map, OccluderSphere, RayStencil, STENCIL_GRID};
-use engine_render::{CapsuleDraw, LightDraw};
+use engine_render::{CapsuleDraw, LightDraw, LiveLight, MAX_LIVE_LIGHTS};
 
 /// A stencil's occlusion grid.
 pub(super) type StencilMask = [f32; STENCIL_GRID * STENCIL_GRID];
@@ -34,6 +34,38 @@ const PART_DETAIL_REACH: f32 = 512.0;
 
 /// How dark a character's shade is at its strongest.
 const CAPSULE_STRENGTH: f32 = 0.7;
+
+/// The moving lights near `eye` at `time`, nearest first.
+pub(super) fn live_lights(map: &Map, eye: Vec3, time: f32, most: usize) -> Vec<LiveLight> {
+    let mut lights: Vec<LiveLight> = (0_u32..)
+        .zip(&map.live_lights)
+        .map(|(id, source)| LiveLight {
+            id,
+            origin: source.position(time),
+            radius: source.radius,
+            color: source.color,
+            spot: source.spot,
+            spot_cosine: source.spot_cosine,
+            shadows: source.shadows,
+        })
+        .collect();
+    lights.sort_by(|a, b| {
+        let reach = |light: &LiveLight| (light.origin - eye).length() - light.radius;
+        reach(a).total_cmp(&reach(b))
+    });
+    lights.truncate(most.min(MAX_LIVE_LIGHTS));
+    lights
+}
+
+/// A moving light, as what lights models sees it.
+pub(super) fn model_light(light: &LiveLight) -> LightDraw {
+    let [red, green, blue] = light.color;
+    LightDraw {
+        origin: light.origin,
+        radius: light.radius * (red + green + blue) / 3.0,
+        min_light: 0.0,
+    }
+}
 
 /// How many flames light a frame, nearest first.
 const MAX_FLAMES: usize = 8;

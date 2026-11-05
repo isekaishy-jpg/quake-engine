@@ -4,6 +4,8 @@
 @group(0) @binding(1) var lightmap: texture_2d<f32>;
 @group(0) @binding(2) var lightmap_sampler: sampler;
 @group(0) @binding(3) var light_direction: texture_2d<f32>;
+@group(0) @binding(5) var shadow_atlas: texture_depth_2d;
+@group(0) @binding(6) var shadow_sampler: sampler_comparison;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 
@@ -76,6 +78,111 @@ fn dynamic_light(world: vec3<f32>) -> f32 {
     return total / 255.0;
 }
 
+struct LiveLight {
+    // Where it is, and how far it reaches.
+    place: vec4<f32>,
+    // Its colour, and its first shadow tile, or -1.
+    color: vec4<f32>,
+    // Which way a spot points, and the cosine of its half angle.
+    spot: vec4<f32>,
+}
+
+struct LiveFrame {
+    // The view's width and height, how many lights, and slices per doubling.
+    params: vec4<f32>,
+    // Which way the view looks, and where slices start.
+    forward: vec4<f32>,
+    lights: array<LiveLight, 64>,
+    shadows: array<mat4x4<f32>, 60>,
+    // Two clusters to an entry, each a 64 bit mask.
+    clusters: array<vec4<u32>, 1152>,
+}
+
+@group(0) @binding(4) var<uniform> live: LiveFrame;
+
+// How much of a light reaches `point`, by its shadow tile.
+fn live_shadow(first_tile: f32, from_light: vec3<f32>, point: vec3<f32>) -> f32 {
+    let size = abs(from_light);
+    var face = 4;
+    if size.x >= size.y && size.x >= size.z {
+        face = 0;
+        if from_light.x < 0.0 {
+            face = 1;
+        }
+    } else if size.y >= size.z {
+        face = 2;
+        if from_light.y < 0.0 {
+            face = 3;
+        }
+    } else if from_light.z < 0.0 {
+        face = 5;
+    }
+    let tile = i32(first_tile) + face;
+    let clip = live.shadows[tile] * vec4<f32>(point, 1.0);
+    let ndc = clip.xyz / clip.w;
+    let inner = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.004), vec2<f32>(0.996));
+    let cell = vec2<f32>(f32(tile % 8), f32(tile / 8));
+    let uv = (cell + inner) / 8.0;
+    let step_size = 1.0 / 2048.0;
+    var total = 0.0;
+    for (var y = -1; y <= 1; y = y + 2) {
+        for (var x = -1; x <= 1; x = x + 2) {
+            let offset = vec2<f32>(f32(x), f32(y)) * step_size * 0.75;
+            total = total + textureSampleCompareLevel(shadow_atlas, shadow_sampler, uv + offset, ndc.z);
+        }
+    }
+    return total * 0.25;
+}
+
+// Moving lights on a surface. A pixel's cluster says which to look at.
+fn live_light(world: vec3<f32>, screen: vec2<f32>) -> vec3<f32> {
+    let count = live.params.z;
+    if count < 0.5 {
+        return vec3<f32>(0.0);
+    }
+    let normal = normalize(cross(dpdx(world), dpdy(world)));
+    let depth = dot(world - frame.eye.xyz, live.forward.xyz);
+    let slice = u32(clamp(log2(max(depth, live.forward.w) / live.forward.w) * live.params.w, 0.0, 15.0));
+    let column = u32(clamp(screen.x / live.params.x * 16.0, 0.0, 15.0));
+    let row = u32(clamp(screen.y / live.params.y * 9.0, 0.0, 8.0));
+    let at = (slice * 9u + row) * 16u + column;
+    let pair = live.clusters[at / 2u];
+    var masks = pair.xy;
+    if at % 2u == 1u {
+        masks = pair.zw;
+    }
+    var total = vec3<f32>(0.0);
+    for (var half_mask = 0u; half_mask < 2u; half_mask = half_mask + 1u) {
+        var bits = masks[half_mask];
+        while bits != 0u {
+            let bit = firstTrailingBit(bits);
+            bits = bits & (bits - 1u);
+            let light = live.lights[half_mask * 32u + bit];
+            let offset = light.place.xyz - world;
+            let distance_to = length(offset);
+            let reach = light.place.w;
+            if distance_to >= reach {
+                continue;
+            }
+            let toward = offset / max(distance_to, 0.001);
+            // Depth derivatives can point either way, and light only lands on
+            // the side that faces it.
+            let facing = abs(dot(normal, toward));
+            let fall = 1.0 - (distance_to * distance_to) / (reach * reach);
+            var strength = facing * fall * fall;
+            if dot(light.spot.xyz, light.spot.xyz) > 0.5 {
+                let along = dot(-toward, light.spot.xyz);
+                strength = strength * smoothstep(light.spot.w, light.spot.w + 0.05, along);
+            }
+            if strength > 0.001 && light.color.w >= 0.0 {
+                strength = strength * live_shadow(light.color.w, -offset, world);
+            }
+            total = total + light.color.rgb * strength;
+        }
+    }
+    return total;
+}
+
 // How much light characters leave on a point. Each is a soft ball, shading
 // what's behind it from the direction its light comes from.
 fn capsule_shade(world: vec3<f32>) -> f32 {
@@ -103,7 +210,8 @@ fn light(in: VertexOut) -> vec3<f32> {
     let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
         + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
     let shaded = baked * capsule_shade(in.world);
-    return min(2.0 * (shaded + vec3<f32>(dynamic_light(in.world))), vec3<f32>(2.0));
+    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, in.clip.xy);
+    return min(2.0 * (shaded + moving), vec3<f32>(2.0));
 }
 
 // The brightness setting, as `BuildGammaTable` does for the palette.

@@ -11,6 +11,7 @@ mod atlas;
 mod backend;
 mod canvas;
 mod error;
+mod live;
 mod material;
 mod matrix;
 mod renderer;
@@ -22,6 +23,10 @@ pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::Atlas;
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
 pub use error::RenderError;
+pub use live::{
+    CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, MAX_LIVE_LIGHTS, MAX_SHADOW_LIGHTS,
+    cluster_masks, cube_face, slice_of,
+};
 pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
 pub use matrix::view_projection;
 pub use renderer::{

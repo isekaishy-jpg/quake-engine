@@ -8,6 +8,7 @@
 mod alias;
 mod emitter;
 mod light;
+mod live;
 mod map;
 mod material;
 mod pool;
@@ -19,6 +20,7 @@ mod tree;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
 pub use emitter::Emitter;
+pub use live::{LiveLightSource, along_path};
 pub use map::{
     Animation, Entity, Face, FaceLight, Map, MipLevel, Model, TexelAxis, Texture, TextureKind,
 };

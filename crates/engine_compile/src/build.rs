@@ -18,7 +18,7 @@ use crate::geometry::{
 use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, DecalSource, WorkingMap, read_map};
-use crate::stencil::{build_flames, build_stencil};
+use crate::stencil::{build_flames, build_live_light, build_stencil};
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
 /// Supplies textures for materials.
@@ -720,6 +720,12 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
     }
     builder.map.entities = entities;
     builder.map.light_tracks = tracks;
+    builder.map.live_lights = working
+        .entities
+        .iter()
+        .filter(|entity| entity.kind == "live_light")
+        .filter_map(build_live_light)
+        .collect();
     builder.map.pools = pools_of(working);
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;

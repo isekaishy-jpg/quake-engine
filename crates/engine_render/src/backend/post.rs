@@ -161,6 +161,13 @@ impl Backend {
         Ok(())
     }
 
+    /// How big the scene is, or a guess before there is one.
+    pub(super) fn scene_size(&self) -> (u32, u32) {
+        self.scene_target
+            .as_ref()
+            .map_or(self.wanted_size, |target| target.size)
+    }
+
     /// Sets how many samples a pixel scenes have, and rebuilds what depends
     /// on it.
     pub(super) fn set_samples(&mut self, samples: u32) -> Result<(), RenderError> {

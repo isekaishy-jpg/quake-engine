@@ -33,7 +33,7 @@ Status is one of todo, doing or done.
 | 9 | Anti-aliasing | MSAA and an edge search as settings | done |
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
 | 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | done |
-| 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
+| 12 | Live lights | Clustered lists, shadow maps with caching, budgets | done |
 | 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | done |
 | 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | done |
 | 15 | Small lights | Torch shader, flipbooks, particles | done |
@@ -62,3 +62,4 @@ Newest last. A line is added when a stage's state changes.
 - Meshes were missing from the stages, so stage 25 added them. Stages 13, 15, 17 and 25 are done.
 - Stages 8, 9 and 16 are done. `r_aa 2` is an edge search in place of SMAA's tables, chosen after a side by side.
 - Stage 11 is done, with crisp shadows and light tracks.
+- Stage 12 is done.

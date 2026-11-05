@@ -3,30 +3,33 @@
 mod pipelines;
 mod post;
 mod record;
+mod shadow;
 mod upload;
 
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
+use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite};
 use pipelines::make_pass;
 use upload::{depth_image, device_image, host_buffer};
 use vulkane::safe::{
     AccessFlags, ApiVersion, Buffer, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
-    CommandPool, DescriptorPool, DescriptorSet, DescriptorSetLayout, DescriptorSetLayoutBinding,
-    DescriptorType, Device, DeviceCreateInfo, DeviceExtensions, DeviceFeatures, DeviceMemory,
-    Fence, Format, Framebuffer, GraphicsPipeline, Image, Image2dCreateInfo, ImageLayout,
-    ImageUsage, ImageView, Instance, InstanceCreateInfo, InstanceExtensions, PhysicalDevice,
-    PipelineLayout, PipelineStage, PresentMode, PushConstantRange, Queue, QueueCreateInfo,
-    QueueFlags, RenderPass, Sampler, SamplerAddressMode, SamplerCreateInfo, SamplerFilter,
-    SamplerMipmapMode, Semaphore, ShaderStageFlags, SignalSemaphore, Surface, Swapchain,
-    SwapchainCreateInfo, WaitSemaphore,
+    CommandPool, CompareOp, DescriptorPool, DescriptorSet, DescriptorSetLayout,
+    DescriptorSetLayoutBinding, DescriptorType, Device, DeviceCreateInfo, DeviceExtensions,
+    DeviceFeatures, DeviceMemory, Fence, Format, Framebuffer, GraphicsPipeline, Image,
+    Image2dCreateInfo, ImageLayout, ImageUsage, ImageView, Instance, InstanceCreateInfo,
+    InstanceExtensions, PhysicalDevice, PipelineLayout, PipelineStage, PresentMode,
+    PushConstantRange, Queue, QueueCreateInfo, QueueFlags, RenderPass, Sampler, SamplerAddressMode,
+    SamplerCreateInfo, SamplerFilter, SamplerMipmapMode, Semaphore, ShaderStageFlags,
+    SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, WaitSemaphore,
 };
 
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::RenderError;
+use crate::live::LIVE_BYTES;
 use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
 use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
 use crate::visible::VisibleSet;
@@ -184,6 +187,10 @@ struct GpuMap {
     _pool: DescriptorPool,
     /// The lightmap set.
     frame_set: DescriptorSet,
+    /// Every opaque face, for shadow maps.
+    shadow_indices: GpuBuffer,
+    /// How many of those are the world's.
+    shadow_world_count: u32,
     /// Kept alive for the set.
     _atlas: GpuImage,
     /// Kept alive for the set.
@@ -346,6 +353,12 @@ pub(crate) struct Backend {
     scene_pass: RenderPass,
     /// How many samples a pixel scenes have.
     samples: u32,
+    /// The moving light uniforms.
+    live_uniforms: GpuBuffer,
+    /// Shadow maps for moving lights.
+    shadows: shadow::Shadows,
+    /// Compares against shadow maps.
+    shadow_sampler: Sampler,
     /// Where the scene is drawn.
     scene_target: Option<post::SceneTarget>,
     /// The layout of the final pass's set.
@@ -499,6 +512,9 @@ impl Backend {
                 image_binding(1, DescriptorType::SAMPLED_IMAGE),
                 image_binding(2, DescriptorType::SAMPLER),
                 image_binding(3, DescriptorType::SAMPLED_IMAGE),
+                image_binding(4, DescriptorType::UNIFORM_BUFFER),
+                image_binding(5, DescriptorType::SAMPLED_IMAGE),
+                image_binding(6, DescriptorType::SAMPLER),
             ],
         )?;
         let texture_layout = DescriptorSetLayout::new(
@@ -598,6 +614,16 @@ impl Backend {
         let light_sampler =
             Sampler::new_mipmapped(&device, SamplerCreateInfo::default(), MATERIAL_MAX_LOD)?;
         let uniforms = host_buffer(&device, &physical, FRAME_SIZE, BufferUsage::UNIFORM_BUFFER)?;
+        let live_uniforms =
+            host_buffer(&device, &physical, LIVE_BYTES, BufferUsage::UNIFORM_BUFFER)?;
+        let shadows = shadow::Shadows::new(&device, &physical)?;
+        let shadow_sampler = Sampler::new(
+            &device,
+            SamplerCreateInfo {
+                compare_op: Some(CompareOp::LESS_OR_EQUAL),
+                ..SamplerCreateInfo::default()
+            },
+        )?;
         let particles = host_buffer(
             &device,
             &physical,
@@ -627,6 +653,9 @@ impl Backend {
             capture_pass,
             scene_pass,
             samples: 1,
+            live_uniforms,
+            shadows,
+            shadow_sampler,
             scene_target: None,
             post_pipeline,
             post_set_layout,
@@ -830,6 +859,11 @@ impl Backend {
         self.post = post;
     }
 
+    /// How many lights' shadows the last frame redrew.
+    pub(crate) fn shadow_redraws(&self) -> usize {
+        self.shadows.redraws()
+    }
+
     /// Sets how many samples a pixel scenes have, as far as the device goes.
     pub(crate) fn set_antialiasing(&mut self, samples: u32) -> Result<(), RenderError> {
         self.set_samples(samples)
@@ -846,6 +880,15 @@ impl Backend {
         let Some(target) = &self.scene_target else {
             return;
         };
+        let ranges = scene.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
+        self.shadows.record(rec, self.map.as_ref(), &ranges);
+        // The scene reads what shadows wrote.
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::FRAGMENT_SHADER,
+            AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ,
+        );
         rec.begin_render_pass_ext(
             &self.scene_pass,
             &target.framebuffer,
@@ -868,6 +911,27 @@ impl Backend {
             AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             AccessFlags::SHADER_READ,
         );
+    }
+
+    /// What a shadow map draws: the world's opaque faces, then moving models',
+    /// as first indices, counts and offsets.
+    fn shadow_ranges(&self, scene: &Scene<'_>) -> Vec<(u32, u32, Vec3)> {
+        let Some(map) = &self.map else {
+            return Vec::new();
+        };
+        let mut ranges = vec![(0, map.shadow_world_count, Vec3::ZERO)];
+        for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
+            let found = scene.mesh.model_ranges.get(instance.model as usize);
+            for range in found.into_iter().flatten() {
+                let blended = scene.mesh.batches.get(range.batch as usize);
+                if blended.is_some_and(|batch| batch.kind == BatchKind::Blended) {
+                    continue;
+                }
+                let first = map.shadow_world_count + range.first;
+                ranges.push((first, range.count, instance.origin));
+            }
+        }
+        ranges
     }
 
     /// Records the final pass.

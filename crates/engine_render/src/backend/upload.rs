@@ -17,18 +17,19 @@ use vulkane::safe::{
 
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
-    GpuPicture, GpuSprite, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
+    GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
+use crate::live::live_bytes;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
 };
 use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
-use crate::world::uses_material;
+use crate::world::{BatchKind, uses_material};
 use crate::world::{Vertex, WorldMesh};
 
 /// A buffer the CPU can write.
@@ -535,6 +536,38 @@ impl Backend {
             )],
             Format::R8G8B8A8_UNORM,
         )?;
+        // Every opaque face of the world, then every moving model, for shadows.
+        let opaque_batch = |batch: &Option<u32>| {
+            batch.is_some_and(|batch| {
+                let kind = mesh.batches[batch as usize].kind;
+                !matches!(
+                    kind,
+                    BatchKind::Sky | BatchKind::Blended | BatchKind::Liquid
+                )
+            })
+        };
+        let shadow_world: Vec<u32> = mesh
+            .face_batches
+            .iter()
+            .zip(&mesh.face_indices)
+            .filter(|(batch, _)| opaque_batch(batch))
+            .flat_map(|(_, indices)| indices.iter().copied())
+            .collect();
+        let shadow_world_count = u32::try_from(shadow_world.len()).unwrap_or(0);
+        let mut shadow_indices = host_buffer(
+            &self.device,
+            &self.physical,
+            ((shadow_world.len() + mesh.model_indices.len()).max(1)) * 4,
+            BufferUsage::INDEX_BUFFER,
+        )?;
+        {
+            let mut mapped = shadow_indices.memory.map()?;
+            let all = shadow_world.iter().chain(&mesh.model_indices);
+            for (index, chunk) in all.zip(mapped.as_slice_mut().as_chunks_mut::<4>().0) {
+                *chunk = index.to_le_bytes();
+            }
+        }
+        self.shadows.forget();
         let frame_set = pool.allocate(&self.frame_layout)?;
         frame_set.write_buffer(
             0,
@@ -545,6 +578,19 @@ impl Backend {
         );
         frame_set.write_sampled_image(1, &atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         frame_set.write_sampler(2, &self.light_sampler);
+        frame_set.write_buffer(
+            4,
+            DescriptorType::UNIFORM_BUFFER,
+            &self.live_uniforms.buffer,
+            0,
+            LIVE_BYTES as u64,
+        );
+        frame_set.write_sampled_image(
+            5,
+            &self.shadows.atlas.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        frame_set.write_sampler(6, &self.shadow_sampler);
         frame_set.write_sampled_image(
             3,
             &direction_atlas.view,
@@ -656,6 +702,8 @@ impl Backend {
             material_sets,
             vertices,
             indices,
+            shadow_indices,
+            shadow_world_count,
             texture_sets,
             _material_params: material_params,
             _textures: {
@@ -803,6 +851,17 @@ impl Backend {
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
+        let live = scene.map_or(&[][..], |scene| scene.drawables.live_lights);
+        let slots = match scene.filter(|_| self.post.live_shadows) {
+            Some(scene) => {
+                self.shadows
+                    .plan(live, scene.drawables.instances, scene.map, view.origin)
+            }
+            None => vec![None; live.len()],
+        };
+        let size = self.scene_size();
+        let bytes = live_bytes(view, aspect, size, live, &slots);
+        self.live_uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene
             && !scene.drawables.particles.is_empty()
         {

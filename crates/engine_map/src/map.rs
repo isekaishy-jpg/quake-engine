@@ -5,6 +5,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 
 use crate::emitter::Emitter;
+use crate::live::LiveLightSource;
 use crate::material::Material;
 use crate::pool::{ModelOccluder, Pool};
 use crate::probes::{LightTrack, ProbeGrid};
@@ -194,6 +195,8 @@ pub struct Map {
     pub light_edges: Vec<u8>,
     /// Baked lights that move between keyframes.
     pub light_tracks: Vec<LightTrack>,
+    /// Lights worked out each frame.
+    pub live_lights: Vec<LiveLightSource>,
     /// Small fixed fires.
     pub emitters: Vec<Emitter>,
     /// The shade moving models cast.

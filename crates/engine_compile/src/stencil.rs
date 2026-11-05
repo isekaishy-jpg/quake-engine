@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::Value;
-use engine_map::{Emitter, RayStencil, stencil_boxes};
+use engine_map::{Emitter, LiveLightSource, RayStencil, stencil_boxes};
 
 use crate::build::TextureSource;
 use crate::error::CompileError;
@@ -110,6 +110,29 @@ pub(crate) fn build_flames<'a>(
         });
     }
     (faces, emitters)
+}
+
+/// The light of a `live_light` entity, if it says where it is.
+pub(crate) fn build_live_light(entity: &EntitySource) -> Option<LiveLightSource> {
+    let origin = points_of(entity, "origin").first().copied()?;
+    let color = points_of(entity, "color").first().copied();
+    let color = color.map_or([1.0; 3], |c| [c.x, c.y, c.z]);
+    let spot = points_of(entity, "spot_direction").first().copied();
+    let spot = spot.map_or(Vec3::ZERO, Vec3::normalized);
+    let degrees = number_of(entity, "spot_angle", 45.0);
+    let shadows = field(entity, "shadows").is_some_and(|value| {
+        value.flag().unwrap_or(false) || value.number().is_some_and(|number| number != 0.0)
+    });
+    Some(LiveLightSource {
+        origin,
+        radius: number_of(entity, "radius", 300.0),
+        color,
+        spot,
+        spot_cosine: degrees.to_radians().cos(),
+        shadows,
+        path: points_of(entity, "path"),
+        period: number_of(entity, "period", 0.0),
+    })
 }
 
 /// Builds a `ray_stencil` entity.

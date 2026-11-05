@@ -1,0 +1,43 @@
+format 1 map
+
+# Moving lights at night: a lamp going round the statues with real shadows, a
+# spot sweeping the wall, and a few small lights with none.
+entity world {
+    type = worldspawn
+    ambient = 10
+    light_spacing = 32
+}
+brush { material = stone cuboid = -512 -512 -32 512 512 0 }
+brush { material = metal cuboid = -512 -512 320 512 512 352 }
+brush { material = brick cuboid = -544 -544 -32 -512 544 352 }
+brush { material = brick cuboid = 512 -544 -32 544 544 352 }
+brush { material = brick cuboid = -512 -544 -32 512 -512 352 }
+brush { material = brick cuboid = -512 512 -32 512 544 352 }
+
+mesh { source = statue origin = 0 0 0 }
+mesh { source = statue origin = -220 160 0 angles = 0 45 0 scale = 1.4 }
+mesh { source = statue origin = 200 -180 0 scale = 0.7 1.6 1 }
+
+entity start { type = info_player_start origin = -380 -300 24 angle = 40 }
+
+entity lamp_round {
+    type = live_light
+    origin = 200 0 80
+    color = 1 0.75 0.45
+    radius = 520
+    shadows = true
+    path = [200 0 80  0 200 80  -200 0 80  0 -200 80]
+    period = 8
+}
+entity wall_spot {
+    type = live_light
+    origin = 0 -400 240
+    color = 0.3 0.5 1
+    radius = 900
+    spot_direction = 0.2 1 -0.4
+    spot_angle = 18
+    shadows = true
+}
+entity ember_1 { type = live_light origin = -400 400 24 color = 0.8 0.15 0.05 radius = 160 }
+entity ember_2 { type = live_light origin = 400 400 24 color = 0.1 0.7 0.3 radius = 160 }
+entity ember_3 { type = live_light origin = 400 -400 24 color = 0.7 0.1 0.6 radius = 160 }

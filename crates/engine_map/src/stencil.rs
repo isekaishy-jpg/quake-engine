@@ -3,6 +3,7 @@
 
 use engine_core::math::Vec3;
 
+use crate::live::along_path;
 use crate::material::SlotImage;
 
 /// Cells along each side of a stencil's occlusion grid.
@@ -41,21 +42,7 @@ impl RayStencil {
     /// Where the light is at `time`.
     #[must_use]
     pub fn light_at(&self, time: f32) -> Vec3 {
-        if self.path.len() < 2 || self.period <= 0.0 {
-            return self.light;
-        }
-        #[expect(clippy::cast_precision_loss, reason = "paths are short")]
-        let legs = self.path.len() as f32;
-        let along = (time / self.period).rem_euclid(1.0) * legs;
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "within the path"
-        )]
-        let leg = along as usize % self.path.len();
-        let from = self.path[leg];
-        let to = self.path[(leg + 1) % self.path.len()];
-        from + (to - from) * along.fract()
+        along_path(&self.path, self.period, time, self.light)
     }
 
     /// The middle of `area` on the surface.

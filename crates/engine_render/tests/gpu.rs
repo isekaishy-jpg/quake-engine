@@ -14,8 +14,8 @@ use engine_map::{
     SpriteImage, TextureKind,
 };
 use engine_render::{
-    BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
-    PostSettings, Renderer, SpriteDraw, Target, View, build_world,
+    BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
+    ParticleDraw, PostSettings, Renderer, SpriteDraw, Target, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -1014,4 +1014,186 @@ fn edge_search_only_touches_edges() {
         .expect("capture");
     assert_eq!(centre(&plain), centre(&soft), "flat pixels stay");
     assert_ne!(plain.rgba, soft.rgba, "edges change");
+}
+
+/// A light over the surface, in blue, which it has room to show.
+fn blue_light(origin: Vec3, shadows: bool) -> LiveLight {
+    LiveLight {
+        origin,
+        radius: 300.0,
+        color: [0.0, 0.0, 0.5],
+        shadows,
+        ..LiveLight::default()
+    }
+}
+
+/// The pixel at `x` and `y` of a capture.
+fn pixel(capture: &Capture, x: u32, y: u32) -> [u8; 4] {
+    let at = ((y * capture.width + x) * 4) as usize;
+    [
+        capture.rgba[at],
+        capture.rgba[at + 1],
+        capture.rgba[at + 2],
+        capture.rgba[at + 3],
+    ]
+}
+
+/// A moving light adds its colour where it reaches, and nothing further off.
+#[test]
+fn a_live_light_brightens_what_it_reaches() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let at = |renderer: &mut Renderer, lights: &[LiveLight]| {
+        let drawables = Drawables {
+            live_lights: lights,
+            ..Drawables::default()
+        };
+        let view = view_from_above();
+        centre(&renderer.capture(&view, drawables, 64, 64).expect("capture"))
+    };
+    let plain = at(&mut renderer, &[]);
+    let near = at(
+        &mut renderer,
+        &[blue_light(Vec3::new(64.0, 64.0, 40.0), false)],
+    );
+    let far = at(
+        &mut renderer,
+        &[blue_light(Vec3::new(2000.0, 64.0, 40.0), false)],
+    );
+    assert!(near[2] > plain[2] + 30, "{plain:?} {near:?}");
+    assert_eq!(near[1], plain[1], "no green in a blue light");
+    assert_eq!(far, plain, "out of reach");
+}
+
+/// A spot only lights what's in its cone.
+#[test]
+fn a_live_spot_keeps_to_its_cone() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let spot = LiveLight {
+        spot: Vec3::new(0.0, 0.0, -1.0),
+        spot_cosine: 0.97,
+        ..blue_light(Vec3::new(64.0, 64.0, 60.0), false)
+    };
+    let lights = [spot];
+    let drawables = Drawables {
+        live_lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    let plain = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert!(pixel(&capture, 32, 32)[2] > pixel(&plain, 32, 32)[2]);
+    assert_eq!(
+        pixel(&capture, 4, 32),
+        pixel(&plain, 4, 32),
+        "outside its cone"
+    );
+}
+
+/// A model between a light and a surface shades it, when the light has shadows.
+#[test]
+fn a_live_shadow_falls_behind_what_blocks_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(2))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let blocker = [ModelInstance {
+        model: 1,
+        origin: Vec3::new(64.0, 0.0, 30.0),
+        visible: true,
+        ..ModelInstance::default()
+    }];
+    let at = |renderer: &mut Renderer, shadows: bool| {
+        let lights = [blue_light(Vec3::new(128.0, 64.0, 60.0), shadows)];
+        let drawables = Drawables {
+            instances: &blocker,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        let capture = renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture");
+        pixel(&capture, 16, 32)
+    };
+    let open = at(&mut renderer, false);
+    let shaded = at(&mut renderer, true);
+    assert!(shaded[2] + 20 < open[2], "{open:?} {shaded:?}");
+}
+
+/// A shadow is kept while nothing moves, and redrawn when something does.
+#[test]
+fn a_shadow_is_drawn_only_when_it_changes() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(2))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let lights = [blue_light(Vec3::new(64.0, 64.0, 60.0), true)];
+    let frame = |renderer: &mut Renderer, height: f32| {
+        let blocker = [ModelInstance {
+            model: 1,
+            origin: Vec3::new(0.0, 0.0, height),
+            visible: true,
+            ..ModelInstance::default()
+        }];
+        let drawables = Drawables {
+            instances: &blocker,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 16, 16)
+            .expect("capture");
+        renderer.shadow_redraws()
+    };
+    assert_eq!(frame(&mut renderer, 30.0), 1, "the first frame draws it");
+    assert_eq!(frame(&mut renderer, 30.0), 0, "nothing moved");
+    assert_eq!(frame(&mut renderer, 31.0), 1, "the model moved");
+    assert_eq!(frame(&mut renderer, 31.0), 0, "and stopped");
+}
+
+/// However many lights change, a frame only redraws its budget of shadows.
+#[test]
+fn shadow_redraws_stay_within_budget() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let lights: Vec<LiveLight> = (0_u16..6)
+        .map(|index| LiveLight {
+            id: u32::from(index),
+            ..blue_light(Vec3::new(f32::from(index) * 20.0, 64.0, 60.0), true)
+        })
+        .collect();
+    let mut frame = || {
+        let drawables = Drawables {
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 16, 16)
+            .expect("capture");
+        renderer.shadow_redraws()
+    };
+    let counts = [frame(), frame(), frame(), frame()];
+    assert_eq!(counts, [2, 2, 2, 0], "two a frame until they're all done");
 }

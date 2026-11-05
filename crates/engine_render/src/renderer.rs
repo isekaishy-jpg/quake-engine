@@ -12,6 +12,7 @@ use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
 use crate::canvas::UiFrame;
 use crate::error::RenderError;
+use crate::live::LiveLight;
 use crate::sprite::{LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
 use crate::world::{WorldMesh, build_world};
@@ -64,6 +65,8 @@ pub struct Drawables<'a> {
     pub lights: &'a [LightDraw],
     /// What's drawn flat over all of that, in order.
     pub quads: &'a [Quad],
+    /// Lights worked out this frame.
+    pub live_lights: &'a [LiveLight],
     /// Where each stencil's light is now.
     pub stencil_lights: &'a [Vec3],
     /// How open each stencil's cells are.
@@ -137,6 +140,8 @@ pub struct PostSettings {
     pub outline_hull: bool,
     /// How wide fake rounded edges are, in pixels, or 0 for none.
     pub rounded_edges: f32,
+    /// Whether moving lights cast shadows.
+    pub live_shadows: bool,
     /// Whether fog reads the light in the probes.
     pub fog_grid: bool,
 }
@@ -244,6 +249,12 @@ impl Renderer {
     /// Sets what the final pass does.
     pub fn set_post(&mut self, post: PostSettings) {
         self.backend.set_post(post);
+    }
+
+    /// How many lights' shadows the last frame redrew.
+    #[must_use]
+    pub fn shadow_redraws(&self) -> usize {
+        self.backend.shadow_redraws()
     }
 
     /// Sets how many samples a pixel scenes have: 1, 2, 4 or 8, as far as the

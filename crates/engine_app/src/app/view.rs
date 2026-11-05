@@ -11,12 +11,13 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
 use engine_map::Contents;
 use engine_render::{
-    CapsuleDraw, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, SpriteDraw, View,
+    CapsuleDraw, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor, ParticleDraw,
+    SpriteDraw, View,
 };
 use fixture_quake::Intermission;
 
 use super::World;
-use super::shading::{StencilMask, capsule_draws};
+use super::shading::{StencilMask, capsule_draws, live_lights, model_light};
 use crate::models::{DrawLists, Lighting};
 
 /// A frame's picture.
@@ -41,6 +42,8 @@ pub(crate) struct Picture {
     stencil_masks: Vec<StencilMask>,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
+    /// Lights worked out this frame.
+    live_lights: Vec<LiveLight>,
 }
 
 /// How far the eye sits above a dead player's middle.
@@ -62,6 +65,7 @@ impl Picture {
             stencil_lights: &self.stencil_lights,
             stencil_masks: &self.stencil_masks,
             capsules: &self.capsules,
+            live_lights: &self.live_lights,
         }
     }
 }
@@ -198,6 +202,7 @@ impl World {
         let mut sway = (0.0, 0.0, 0.0);
         let mut roll = 0.0;
         let mut capsules = Vec::new();
+        let mut moving = Vec::new();
         let time = self.map_time as f32;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
@@ -258,6 +263,9 @@ impl World {
                 model_flags: 0,
             };
             lights = self.update_effects(time + leftover, &drawn, player);
+            moving = self.map.as_ref().map_or_else(Vec::new, |map| {
+                live_lights(map, origin, time, self.live_light_budget)
+            });
             if let Some(map) = &self.map {
                 let (flames, sparks) = self.flames.update(map, origin, time, frame_seconds);
                 lights.extend(flames);
@@ -266,10 +274,13 @@ impl World {
                 }
             }
             if let Some(map) = self.map.clone() {
+                // Models take moving lights like any other dynamic light.
+                let mut lighting_up = lights.clone();
+                lighting_up.extend(moving.iter().map(model_light));
                 let lighting = Lighting {
                     map: &map,
                     styles: &styles,
-                    lights: &lights,
+                    lights: &lighting_up,
                     time,
                 };
                 for entity in &drawn {
@@ -340,6 +351,7 @@ impl World {
             stencil_lights: self.gates.lights().to_vec(),
             stencil_masks: self.gates.masks().to_vec(),
             capsules,
+            live_lights: moving,
         }
     }
 }
