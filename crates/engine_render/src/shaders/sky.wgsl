@@ -11,11 +11,11 @@ fn cube_corner(index: u32) -> vec3<f32> {
     let face = index / 6u;
     let corner = index % 6u;
     var uv = vec2<f32>(-1.0, -1.0);
-    if corner == 1u || corner == 4u {
+    if corner == 1u {
         uv = vec2<f32>(1.0, -1.0);
     } else if corner == 2u || corner == 3u {
         uv = vec2<f32>(1.0, 1.0);
-    } else if corner == 5u {
+    } else if corner == 4u {
         uv = vec2<f32>(-1.0, 1.0);
     }
     let axis = face / 2u;

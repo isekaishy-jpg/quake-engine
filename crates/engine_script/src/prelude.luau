@@ -607,10 +607,13 @@ function engine.light_track(first, count, phase)
 	end
 end
 
+-- A place from a map's text field.
+engine.parse_vector = parse_vector
+
 -- A repeatable number from 0 to 1 for an entity at a step of its behaviour, so
 -- what's regular doesn't look reset after sleeping.
-function engine.seeded(id, step)
-	local value = (id * 2654435761 + step * 40503) % 4294967296
+function engine.seeded(entity, step)
+	local value = (rawget(entity, "_id") * 2654435761 + step * 40503) % 4294967296
 	value = (value * 1664525 + 1013904223) % 4294967296
 	value = (value * 1664525 + 1013904223) % 4294967296
 	return value / 4294967296
@@ -628,5 +631,5 @@ function engine.walk_to(entity, goal, distance)
 	local from = entity.origin
 	local yaw = math.deg(math.atan2(next_point.y - from.y, next_point.x - from.x))
 	entity.ideal_yaw = yaw
-	return engine.walkmove(entity.id, yaw, distance), path ~= nil
+	return engine.walkmove(rawget(entity, "_id"), yaw, distance), path ~= nil
 end

@@ -612,3 +612,14 @@ fn a_bake_keeps_the_nav_grid() {
     assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
     assert_eq!(map.nav, baked_map.nav);
 }
+
+/// Probes in the open hold a map's ambient light, so things aren't black where
+/// only that reaches.
+#[test]
+fn probes_hold_ambient_light() {
+    let text = format!("{ROOM}\nentity world {{ type = worldspawn ambient = 40 }}\n");
+    let map = baked(&text, &[]);
+    let probes = map.probes.as_ref().expect("probes");
+    let sample = probes.sample(Vec3::new(0.0, 0.0, 0.0)).expect("a sample");
+    assert!(sample.brightness > 30.0, "{}", sample.brightness);
+}

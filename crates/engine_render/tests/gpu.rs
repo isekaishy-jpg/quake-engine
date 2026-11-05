@@ -1232,3 +1232,40 @@ fn a_painted_layer_follows_the_paint() {
     assert!(bare[0] > 200 && bare[1] < 50, "{bare:?}");
     assert!(full[1] > 200 && full[0] < 50, "{full:?}");
 }
+
+/// The sky covers every way a view can look, with nothing of the clear colour
+/// showing through.
+#[test]
+fn the_sky_covers_every_direction() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 1.0],
+        horizon: [0.0, 1.0, 0.0],
+        ground: [1.0, 0.0, 0.0],
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    for yaw in (0..360).step_by(30) {
+        for pitch in [-80.0, -45.0, -10.0, 0.0, 30.0, 70.0] {
+            #[expect(clippy::cast_precision_loss, reason = "small angles")]
+            let view = View {
+                origin: Vec3::new(5000.0, -4000.0, 900.0),
+                yaw: yaw as f32,
+                pitch,
+                ..view_from_above()
+            };
+            let capture = renderer
+                .capture(&view, Drawables::default(), 48, 48)
+                .expect("capture");
+            let (pixels, _) = capture.rgba.as_chunks::<4>();
+            let clear = pixels
+                .iter()
+                .filter(|p| p[0] < 8 && p[1] < 8 && p[2] < 12)
+                .count();
+            assert_eq!(clear, 0, "at yaw {yaw}, pitch {pitch}");
+        }
+    }
+}

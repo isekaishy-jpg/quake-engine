@@ -1074,11 +1074,13 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
 }
 
 /// Bakes `probes` over the world's bounds, for moving things.
+#[expect(clippy::cast_possible_truncation, reason = "the tree takes f32")]
 fn bake_probes(
     scene: &Scene<'_>,
     map: &Map,
     sources: &[BounceSource],
     gain: f64,
+    ambient: f64,
 ) -> Option<ProbeGrid> {
     let model = map.models.first()?;
     let (low, high) = (wide(model.mins), wide(model.maxs));
@@ -1112,6 +1114,11 @@ fn bake_probes(
     let baked = in_parallel(&positions, |point| {
         let mut colors = [[0_u8; 3]; 6];
         let mut direction = [0.0; 3];
+        // A probe in solid stays dark, which is how sampling knows to skip it.
+        let place = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+        let leaf = map.tree.leaf(map.tree.leaf_at(place));
+        let open = leaf.is_some_and(|leaf| leaf.contents != engine_map::Contents::Solid);
+        let base = if open { ambient } else { 0.0 };
         for (side, normal) in SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
             for source in scene.lights {
@@ -1122,7 +1129,7 @@ fn bake_probes(
                     light[part] += color[part];
                 }
             }
-            colors[side] = to_bytes(light);
+            colors[side] = to_bytes(light.map(|part| part + base));
         }
         (colors, direction_bytes(direction))
     });
@@ -1281,7 +1288,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
                 .collect()
         })
     });
-    let probes = bake_probes(&scene, shared, &sources, bounce_gain);
+    let probes = bake_probes(&scene, shared, &sources, bounce_gain, ambient);
 
     let mut samples = Vec::new();
     let mut directions = Vec::new();

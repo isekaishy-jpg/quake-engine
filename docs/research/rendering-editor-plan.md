@@ -45,7 +45,7 @@ Status is one of todo, doing or done.
 | 20 | Tiles | Grid, manifest, coordinates, the unloaded tile rule, sleeping entities, detail fade | done |
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | done |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | done |
-| 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
+| 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | done |
 | 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | done |
 | 24 | Reviews | Circular quality and bug passes until none are left | todo |
 
@@ -70,3 +70,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 20 is done, with all tiles loading with their map. Whether to stream geometry is in proposal 0089 for the human to review.
 - Stage 21 is done, with a walkable grid read from the player's hull in place of a polygon navmesh.
 - Stage 22 is done.
+- Stage 23 is done: `showcase`, `tile_world`, and maps for each area, all rebuildable.

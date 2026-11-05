@@ -1,0 +1,12 @@
+format 1 tile
+
+brush { material = stone cuboid = 0 0 -32 2048 2048 0 }
+brush { material = brick cuboid = 0 0 -32 32 2048 320 }
+brush { material = brick cuboid = 0 0 -32 2048 32 320 }
+mesh { source = statue origin = 700 900 0 angles = 0 0 0 scale = 2 }
+mesh { source = barrel origin = 1300 500 0 }
+entity lamp_0_0 { type = light origin = 1024 1024 280 intensity = 620 }
+entity flame_0_0 { type = flame origin = 400 1600 0 size = 40 }
+decal { material = lettering origin = 1024 1600 0 normal = 0 0 1 size = 256 angle = 0 }
+spline guard_0_0 { closed = true points = 300 300 24  900 300 24  900 700 24  300 700 24 }
+entity guard_0_0 { type = patrol_walker origin = 300 300 24 route = guard_0_0 }

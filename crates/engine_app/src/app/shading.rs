@@ -29,6 +29,9 @@ const CAPSULE_RADIUS: f32 = 22.0;
 /// How many characters shade the light, nearest first.
 const MAX_CAPSULES: usize = 16;
 
+/// Which way light comes from when nothing says otherwise.
+const OVERHEAD: Vec3 = Vec3::new(0.0, 0.0, 1.0);
+
 /// How near a model shows its parts' shade, rather than the whole of it.
 const PART_DETAIL_REACH: f32 = 512.0;
 
@@ -257,11 +260,18 @@ pub(super) fn capsule_draws(
         .into_iter()
         .map(|(origin, radius)| {
             let sample = map.probes.as_ref().and_then(|probes| probes.sample(origin));
-            let (toward_light, strength) =
-                sample.map_or((Vec3::new(0.0, 0.0, 1.0), 0.5), |sample| {
-                    let brightness = (sample.brightness / 96.0).min(1.0);
-                    (sample.direction.normalized(), CAPSULE_STRENGTH * brightness)
-                });
+            let (toward_light, strength) = sample.map_or((OVERHEAD, 0.5), |sample| {
+                let brightness = (sample.brightness / 96.0).min(1.0);
+                // With no light strong enough to have a direction, it falls on
+                // a body from all round, and a soft shade under it grounds it.
+                let leans = sample.direction.length() > 0.3;
+                let toward = if leans {
+                    sample.direction.normalized()
+                } else {
+                    OVERHEAD
+                };
+                (toward, CAPSULE_STRENGTH * (0.4 + 0.6 * brightness))
+            });
             CapsuleDraw {
                 origin,
                 radius,

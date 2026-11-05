@@ -240,6 +240,8 @@ fn scripts_find_paths_and_follow_splines() {
         engine.print("path " .. #path .. " " .. path[#path].x)
                 engine.print("spline " .. engine.spline_point("line", 1).x)
         engine.print("no spline " .. tostring(engine.spline_point("none", 1) == nil))
+        engine.print("seeded " .. tostring(engine.seeded(self, 2) == engine.seeded(self, 2)))
+        engine.print("walking " .. tostring(select(2, engine.walk_to(self, vector.create(32, 0, 0), 4))))
     end
     "#;
     let mut map = (*map_with(&[("asker", "0 0 -240")])).clone();
@@ -276,4 +278,6 @@ fn scripts_find_paths_and_follow_splines() {
     assert!(lines.contains("path 2 32"), "{lines}");
     assert!(lines.contains("spline 40"), "{lines}");
     assert!(lines.contains("no spline true"), "{lines}");
+    assert!(lines.contains("seeded true"), "{lines}");
+    assert!(lines.contains("walking true"), "{lines}");
 }

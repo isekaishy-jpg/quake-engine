@@ -1,0 +1,1005 @@
+[
+{
+"op": "add_entity",
+"args": {
+"type": "worldspawn",
+"fields": {
+"sun_intensity": 120,
+"sun_size": 12,
+"sun_crisp": true,
+"ambient": 34,
+"light_spacing": 16,
+"bounce": 1,
+"cell_size": 512
+}
+}
+},
+{
+"op": "set_block",
+"args": {
+"kind": "sky",
+"fields": {
+"zenith": [
+0.16,
+0.34,
+0.62
+],
+"horizon": [
+0.85,
+0.8,
+0.72
+],
+"sun_direction": [
+-0.75,
+0.1,
+0.65
+]
+}
+}
+},
+{
+"op": "set_block",
+"args": {
+"kind": "fog",
+"fields": {
+"color": [
+0.8,
+0.85,
+0.95
+],
+"density": 0.0004,
+"height": 0,
+"falloff": 0.01
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "room",
+"at": [
+0,
+0,
+0
+],
+"params": {
+"size": [
+1024,
+768,
+384
+],
+"wall": "brick",
+"floor": "stone",
+"ceiling": "metal"
+}
+}
+},
+{
+"op": "add_entity",
+"args": {
+"type": "info_player_start",
+"origin": [
+160,
+384,
+24
+],
+"fields": {
+"angle": 0
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stairs",
+"at": [
+320,
+64,
+0
+],
+"params": {
+"steps": 6,
+"width": 128,
+"material": "mossy_stone"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "ramp",
+"at": [
+640,
+64,
+0
+],
+"params": {
+"length": 224,
+"height": 96,
+"width": 128,
+"material": "stone"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "railing",
+"at": [
+320,
+192,
+96
+],
+"params": {
+"length": 192
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pillar",
+"at": [
+320,
+576,
+0
+],
+"params": {
+"size": 64,
+"height": 384,
+"material": "metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pillar",
+"at": [
+576,
+576,
+0
+],
+"params": {
+"size": 64,
+"height": 384,
+"material": "cel_stone"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pillar",
+"at": [
+832,
+576,
+0
+],
+"params": {
+"size": 64,
+"height": 384,
+"material": "shiny"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "crate",
+"at": [
+128,
+640,
+0
+],
+"params": {
+"size": 48
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "crate",
+"at": [
+176,
+640,
+0
+],
+"params": {
+"size": 48,
+"material": "brick"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "crate",
+"at": [
+152,
+640,
+48
+],
+"params": {
+"size": 48,
+"material": "mossy_stone"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "item",
+"at": [
+256,
+320,
+0
+],
+"params": {
+"kind": "item_health"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "item",
+"at": [
+256,
+448,
+0
+],
+"params": {
+"kind": "item_armor1"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "item",
+"at": [
+320,
+384,
+0
+],
+"params": {
+"kind": "weapon_supershotgun"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+8,
+192,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+8,
+576,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lamp",
+"at": [
+512,
+384,
+384
+],
+"params": {
+"intensity": 420
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tell_tale",
+"at": [
+480,
+384,
+0
+],
+"params": {
+"message": "the showcase says hello"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "doorway",
+"at": [
+1024,
+384,
+0
+],
+"params": {
+"width": 768,
+"height": 384,
+"opening": 128,
+"opening_height": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "door",
+"at": [
+1032,
+384,
+0
+],
+"params": {
+"name": "first_door",
+"width": 128,
+"height": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "room",
+"at": [
+1056,
+0,
+0
+],
+"params": {
+"size": [
+1024,
+768,
+384
+],
+"wall": "brick",
+"floor": "stone",
+"ceiling": "metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "mirror_floor",
+"at": [
+1184,
+128,
+0
+],
+"params": {
+"size": 512
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pillar",
+"at": [
+1376,
+320,
+4
+],
+"params": {
+"size": 64,
+"height": 380,
+"material": "stone"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "trim_panels",
+"at": [
+1312,
+744,
+32
+],
+"params": {
+"length": 480,
+"height": 64
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "poster",
+"at": [
+1176,
+750,
+180
+],
+"params": {
+"material": "lettering",
+"normal": [
+0,
+-1,
+0
+],
+"size": 128
+}
+}
+},
+{
+"op": "add_brush",
+"args": {
+"cuboid": [
+1756,
+16,
+0,
+2056,
+48,
+288
+],
+"material": "stone"
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "brick_relief",
+"at": [
+1836,
+48,
+170
+],
+"params": {
+"normal": [
+0,
+1,
+0
+],
+"size": [
+128,
+192
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "carved_sign",
+"at": [
+1976,
+48,
+150
+],
+"params": {
+"normal": [
+0,
+1,
+0
+],
+"size": 120,
+"depth": 12
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "moss_stroke",
+"at": [
+1776,
+320,
+0
+],
+"params": {
+"size": 224
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lava_slab",
+"at": [
+1776,
+560,
+0
+],
+"params": {
+"size": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lamp",
+"at": [
+1568,
+384,
+384
+],
+"params": {
+"intensity": 460
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "doorway",
+"at": [
+2080,
+384,
+0
+],
+"params": {
+"width": 768,
+"height": 384,
+"opening": 128,
+"opening_height": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "room",
+"at": [
+2112,
+0,
+0
+],
+"params": {
+"size": [
+1024,
+768,
+448
+],
+"wall": "brick",
+"floor": "stone",
+"ceiling": "metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stained_window",
+"at": [
+3104,
+384,
+0
+],
+"params": {
+"width": 480,
+"height": 320,
+"opening": 224,
+"sill": 48,
+"top": 272,
+"sun": [
+0.75,
+0.1,
+0.65
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "statue",
+"at": [
+2412,
+260,
+0
+],
+"params": {
+"scale": 1.4,
+"angle": 30
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "statue",
+"at": [
+2412,
+520,
+0
+],
+"params": {
+"scale": 1.1,
+"angle": 120
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "statue",
+"at": [
+2732,
+384,
+0
+],
+"params": {
+"mesh": "barrel",
+"scale": 2
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rolling_barrel",
+"at": [
+2892,
+200,
+0
+],
+"params": {
+"name": "rolling",
+"travel": 128
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+2262,
+150,
+0
+],
+"params": {
+"size": 36
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+2262,
+620,
+0
+],
+"params": {
+"size": 36
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "sweeping_light",
+"at": [
+2572,
+384,
+0
+],
+"params": {
+"reach": 200,
+"height": 120
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "swinging_lamp",
+"at": [
+2892,
+620,
+240
+],
+"params": {
+"length": 112
+}
+}
+},
+{
+"op": "add_entity",
+"args": {
+"type": "live_light",
+"origin": [
+2152,
+700,
+300
+],
+"fields": {
+"color": [
+0.3,
+0.5,
+1
+],
+"radius": 700,
+"spot_direction": [
+0.7,
+-0.7,
+-0.3
+],
+"spot_angle": 16,
+"shadows": true
+}
+}
+},
+{
+"op": "add_entity",
+"args": {
+"type": "ray_stencil",
+"name": "grille",
+"fields": {
+"image": "glass_rays",
+"marks": "glass_marks",
+"corner": [
+2624,
+80,
+280
+],
+"across": [
+160,
+0,
+0
+],
+"down": [
+0,
+0,
+-200
+],
+"light": [
+2704,
+16,
+180
+],
+"strength": 0.6,
+"reach": 600
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "doorway",
+"at": [
+3136,
+384,
+0
+],
+"params": {
+"width": 768,
+"height": 448,
+"opening": 128,
+"opening_height": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "room",
+"at": [
+3168,
+0,
+0
+],
+"params": {
+"size": [
+1024,
+768,
+384
+],
+"wall": "brick",
+"floor": "stone",
+"ceiling": "metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pool",
+"at": [
+3488,
+192,
+0
+],
+"params": {
+"size": 384,
+"depth": 224,
+"liquid": "water"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pool",
+"at": [
+3928,
+520,
+0
+],
+"params": {
+"size": 160,
+"depth": 64,
+"liquid": "slime"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "patrol",
+"at": [
+3264,
+96,
+0
+],
+"params": {
+"name": "guard_route",
+"size": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "seeker",
+"at": [
+3264,
+640,
+0
+],
+"params": {
+"goal": [
+4068,
+120,
+24
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "monster",
+"at": [
+4048,
+384,
+0
+],
+"params": {
+"kind": "monster_army",
+"angle": 180
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "monster",
+"at": [
+4048,
+256,
+0
+],
+"params": {
+"kind": "monster_dog",
+"angle": 180
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lift",
+"at": [
+4048,
+64,
+0
+],
+"params": {
+"size": 112,
+"height": 192,
+"name": "lift_1"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "portal",
+"at": [
+3264,
+400,
+0
+],
+"params": {
+"name": "back_home",
+"to": [
+160,
+384,
+40
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lamp",
+"at": [
+3680,
+384,
+384
+],
+"params": {
+"intensity": 420,
+"color": [
+0.8,
+0.9,
+1
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lamp",
+"at": [
+3368,
+180,
+384
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.7,
+0.5
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "monster",
+"at": [
+3688,
+120,
+0
+],
+"params": {
+"kind": "monster_ogre",
+"angle": 90
+}
+}
+}
+]
