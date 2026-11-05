@@ -12,7 +12,7 @@ use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 8;
+const BAKE_VERSION: u64 = 9;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -129,6 +129,9 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     block.set("visibility", Value::Bytes(map.tree.visibility.clone()));
     if let Some(nav) = &map.nav {
         block.set("nav", Value::Bytes(write_nav(nav)));
+    }
+    if let Some(nav) = &map.nav_large {
+        block.set("nav_large", Value::Bytes(write_nav(nav)));
     }
     let mut starts = Vec::with_capacity(map.tree.leaves.len() * 4);
     for leaf in &map.tree.leaves {
@@ -310,6 +313,7 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
         }
     }
     map.nav = bytes_of(light, "nav").and_then(read_nav);
+    map.nav_large = bytes_of(light, "nav_large").and_then(read_nav);
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {

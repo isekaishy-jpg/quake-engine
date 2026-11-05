@@ -27,7 +27,7 @@ const AROUND: [(i32, i32); 8] = [
     (-1, -1),
 ];
 
-/// What's needed to ask about the player's hull.
+/// What's needed to ask about a clipping hull.
 struct Hull<'a> {
     /// The map.
     map: &'a Map,
@@ -103,13 +103,14 @@ fn harmful(map: &Map, point: Vec3) -> bool {
     matches!(contents, Some(Contents::Lava | Contents::Slime))
 }
 
-/// The walkable grid of `map`'s world.
+/// The walkable grid of `map`'s world, for what fits clipping hull `size`:
+/// 0 for a player, 1 for a large monster.
 #[must_use]
-pub(crate) fn build_nav(map: &Map) -> NavGrid {
+pub(crate) fn build_nav(map: &Map, size: usize) -> NavGrid {
     let Some(world) = map.models.first() else {
         return NavGrid::default();
     };
-    let root = world.hulls[0];
+    let root = world.hulls[size];
     let hull = Hull { map, root };
     let (low, high) = (world.mins, world.maxs);
     #[expect(

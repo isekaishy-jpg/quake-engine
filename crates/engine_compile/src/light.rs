@@ -1308,7 +1308,8 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     map.paint = paint;
     let sight = |a: Vec3, b: Vec3| !blocked(&scene, scene.root, wide(a), wide(b));
     bake_visibility(map, &sight);
-    map.nav = Some(build_nav(map));
+    map.nav = Some(build_nav(map, 0));
+    map.nav_large = Some(build_nav(map, 1));
     let strokes = &working.paint;
     let mega = bake_mega(map, strokes, &|point, strokes| {
         paint_at(wide(point), strokes)

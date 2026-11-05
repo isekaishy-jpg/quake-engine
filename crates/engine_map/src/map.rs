@@ -208,6 +208,8 @@ pub struct Map {
     pub light_tracks: Vec<LightTrack>,
     /// Where things can walk, if it's been baked.
     pub nav: Option<NavGrid>,
+    /// Where large monsters can walk, from the larger clipping hull.
+    pub nav_large: Option<NavGrid>,
     /// Lines for movement set out by hand.
     pub splines: Vec<Spline>,
     /// How wide a tile is, or 0 for a map with no tiles.
@@ -258,6 +260,16 @@ impl Model {
 }
 
 impl Map {
+    /// Where something `width` across can walk: the grid of the hull that
+    /// holds it, as collision chooses one.
+    #[must_use]
+    pub fn nav_for(&self, width: f32) -> Option<&NavGrid> {
+        match Model::hull_for(width) {
+            Some((1, _)) => self.nav_large.as_ref(),
+            _ => self.nav.as_ref(),
+        }
+    }
+
     /// The tile `point` is in, and where it is in that tile. With no tiles it's
     /// all tile 0.
     #[must_use]

@@ -10,16 +10,16 @@ Status: accepted, 2026-11-05, increment 11.
 
 ## Design
 
-- Baking walks a 16 unit grid over the world, finds each floor in each column from the player's hull, and links neighbours a step apart. Diagonals need both sides open, so a path can't cut a wall's corner. Lava and slime aren't places to stand. It goes in the bake.
+- Baking walks a 16 unit grid over the world, finds each floor in each column from a clipping hull, and links neighbours a step apart. There's a grid for each hull, as [Unreal bakes one for each agent size](https://forums.unrealengine.com/t/how-do-i-set-up-navmeshes-for-characters-of-different-sizes/280867/2), and `Map::nav_for` picks by width as collision picks a hull. Diagonals need both sides open, so a path can't cut a wall's corner. Lava and slime aren't places to stand. It goes in the bake.
 - `NavGrid::find_path` finds the nearest places, runs A*, and cuts corners where a straight line stays on linked places. Doors aren't in the hull, so paths go through them, as a doorway needs.
-- `engine.find_path` gives scripts the points, and `engine.walk_to` steps an entity towards the next one, for a monster or NPC to call in its think.
+- `engine.find_path` gives scripts the points, for a width that defaults to a player's, and `engine.walk_to` uses the entity's own and steps an entity towards the next one, for a monster or NPC to call in its think.
 - A map's `spline` block names a line of points, which can be `closed`. `Spline::point_at` is Catmull-Rom, so it passes through its points. `engine.spline_point` gives scripts a point on one.
 
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** one agent size, the player's. A large monster fits the hull of a player, not its own.
-- **Acceptance criteria:** a path goes through a doorway and round a wall and never through one, a sealed room has no path, an open room's path is straight, stairs are climbed, a stacked floor keeps its own places, lava is avoided, and a spline passes through its points and wraps when closed.
+- **Tradeoffs:** two sizes, because there are two hulls, and a bake holds a grid for each. A tunnel has to be a little wider than what walks it, as places sit on a 16 unit grid and need room round them.
+- **Acceptance criteria:** a path goes through a doorway and round a wall and never through one, a sealed room has no path, an open room's path is straight, stairs are climbed, a stacked floor keeps its own places, lava is avoided, a doorway too narrow for a large monster has no way for one, and a spline passes through its points and wraps when closed.
 - **Future extension:** jumps down, water and lifts, which the human set for later.
 
 ## Review

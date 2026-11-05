@@ -621,9 +621,11 @@ end
 
 -- Walks an entity up to `distance` towards `goal`, along the way the map's nav
 -- says, for a monster or NPC to call from its think. Returns whether there's a
--- way to go. With no nav it goes straight, as a map with no bake has none.
+-- way to go. It finds a way that fits the entity's own width. With no nav it
+-- goes straight, as a map with no bake has none.
 function engine.walk_to(entity, goal, distance)
-	local path = engine.find_path(entity.origin, goal)
+	local width = entity.maxs.x - entity.mins.x
+	local path = engine.find_path(entity.origin, goal, width)
 	local next_point = goal
 	if path then
 		next_point = path[2] or path[1]

@@ -33,6 +33,10 @@ const PRELUDE: &str = include_str!("prelude.luau");
 /// The longest one call into a script may run.
 const CALL_LIMIT: Duration = Duration::from_secs(1);
 
+/// How wide something is taken to be when a script doesn't say, which is a
+/// player's width.
+const PLAYER_WIDTH: f32 = 32.0;
+
 /// How scripts write what blocks what, by the names they know it as.
 const SOLID_NUMBERS: [(Solid, f64, &str); 5] = [
     (Solid::Not, 0.0, "SOLID_NOT"),
@@ -728,21 +732,23 @@ impl Game {
         let sim = Rc::clone(simulation);
         engine.set(
             "find_path",
-            lua.create_function(move |lua, (from, to): (Vector, Vector)| {
-                let simulation = sim.borrow();
-                let nav = simulation.map().nav.as_ref();
-                let path = nav.and_then(|nav| nav.find_path(to_vec3(from), to_vec3(to)));
-                match path {
-                    Some(points) => {
-                        let list = lua.create_table()?;
-                        for (index, point) in points.into_iter().enumerate() {
-                            list.set(index + 1, from_vec3(point))?;
+            lua.create_function(
+                move |lua, (from, to, width): (Vector, Vector, Option<f32>)| {
+                    let simulation = sim.borrow();
+                    let nav = simulation.map().nav_for(width.unwrap_or(PLAYER_WIDTH));
+                    let path = nav.and_then(|nav| nav.find_path(to_vec3(from), to_vec3(to)));
+                    match path {
+                        Some(points) => {
+                            let list = lua.create_table()?;
+                            for (index, point) in points.into_iter().enumerate() {
+                                list.set(index + 1, from_vec3(point))?;
+                            }
+                            Ok(Some(list))
                         }
-                        Ok(Some(list))
+                        None => Ok(None),
                     }
-                    None => Ok(None),
-                }
-            })?,
+                },
+            )?,
         )?;
         let sim = Rc::clone(simulation);
         engine.set(

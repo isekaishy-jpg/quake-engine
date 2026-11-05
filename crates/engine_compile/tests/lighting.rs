@@ -538,6 +538,28 @@ fn a_path_goes_through_a_doorway() {
     assert!(walks_clear(&map, &path), "{path:?}");
 }
 
+/// A doorway a player fits and a large monster doesn't has a way for one and
+/// not the other, and a wider one has a way for both.
+#[test]
+fn paths_fit_what_walks_them() {
+    let gap = |half: u32| {
+        format!(
+            "brush {{ material = wall cuboid = -32 -256 0 32 -{half} 256 }}\n\
+             brush {{ material = wall cuboid = -32 {half} 0 32 256 256 }}\n"
+        )
+    };
+    let (from, to) = (Vec3::new(-800.0, 0.0, 24.0), Vec3::new(800.0, 0.0, 24.0));
+    let narrow = walled(&gap(24));
+    let wide = walled(&gap(64));
+    let way = |map: &Map, width: f32| {
+        let nav = map.nav_for(width).expect("baked");
+        nav.find_path(from, to).is_some()
+    };
+    assert!(way(&narrow, 32.0), "a player fits");
+    assert!(!way(&narrow, 64.0), "a large monster doesn't");
+    assert!(way(&wide, 64.0), "until it's wider");
+}
+
 /// A sealed room has no way out.
 #[test]
 fn a_sealed_room_has_no_path() {
@@ -612,6 +634,7 @@ fn a_bake_keeps_the_nav_grid() {
     let mut map = compile(&working, &mut source).expect("compiles");
     assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
     assert_eq!(map.nav, baked_map.nav);
+    assert_eq!(map.nav_large, baked_map.nav_large);
 }
 
 /// Probes in the open hold a map's ambient light, so things aren't black where
