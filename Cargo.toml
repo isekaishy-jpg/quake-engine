@@ -2,6 +2,7 @@
 resolver = "3"
 members = [
     "crates/engine_app",
+    "crates/engine_format",
     "crates/engine_assets",
     "crates/engine_audio",
     "crates/engine_client",
@@ -50,6 +51,7 @@ engine_assets = { path = "crates/engine_assets" }
 engine_audio = { path = "crates/engine_audio" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
+engine_format = { path = "crates/engine_format" }
 engine_map = { path = "crates/engine_map" }
 engine_test_maps = { path = "crates/engine_test_maps" }
 engine_movement = { path = "crates/engine_movement" }

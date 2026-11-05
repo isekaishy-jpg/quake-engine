@@ -28,6 +28,10 @@ pub const CRATE_RULES: &[CrateRule] = &[
         may_depend_on: &[],
     },
     CrateRule {
+        name: "engine_format",
+        may_depend_on: &[],
+    },
+    CrateRule {
         name: "engine_console",
         may_depend_on: &["engine_core"],
     },
