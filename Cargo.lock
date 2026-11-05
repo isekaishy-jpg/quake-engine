@@ -682,6 +682,7 @@ dependencies = [
  "engine_movement",
  "engine_net",
  "engine_physics",
+ "engine_test_maps",
 ]
 
 [[package]]
@@ -732,6 +733,7 @@ dependencies = [
  "box3d-rust",
  "engine_core",
  "engine_map",
+ "engine_test_maps",
 ]
 
 [[package]]
@@ -772,6 +774,7 @@ dependencies = [
  "engine_physics",
  "engine_script",
  "engine_sim",
+ "engine_test_maps",
  "serde",
 ]
 
@@ -783,7 +786,16 @@ dependencies = [
  "engine_map",
  "engine_movement",
  "engine_physics",
+ "engine_test_maps",
  "serde",
+]
+
+[[package]]
+name = "engine_test_maps"
+version = "0.0.0-alpha"
+dependencies = [
+ "engine_core",
+ "engine_map",
 ]
 
 [[package]]

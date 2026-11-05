@@ -14,5 +14,8 @@ engine_map.workspace = true
 engine_movement.workspace = true
 engine_physics.workspace = true
 
+[dev-dependencies]
+engine_test_maps.workspace = true
+
 [lints]
 workspace = true

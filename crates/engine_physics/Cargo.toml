@@ -12,5 +12,8 @@ box3d-rust.workspace = true
 engine_core.workspace = true
 engine_map.workspace = true
 
+[dev-dependencies]
+engine_test_maps.workspace = true
+
 [lints]
 workspace = true

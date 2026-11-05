@@ -30,6 +30,7 @@ The rules are data in `xtask/src/crate_graph/rules.rs`:
 | `engine_render` | `core`, `map` |
 | `engine_audio` | `core` |
 | `engine_ui` | `core`, `console`, `render` |
+| `engine_test_maps` | `core`, `map`. Test code only |
 | `fixture_quake` | `core`, `assets`, `map` |
 | `engine_app` | Every engine crate and the fixture |
 | `xtask` | Nothing |

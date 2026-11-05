@@ -44,8 +44,12 @@ pub const CRATE_RULES: &[CrateRule] = &[
         may_depend_on: &["engine_core"],
     },
     CrateRule {
-        name: "engine_physics",
+        name: "engine_test_maps",
         may_depend_on: &["engine_core", "engine_map"],
+    },
+    CrateRule {
+        name: "engine_physics",
+        may_depend_on: &["engine_core", "engine_map", "engine_test_maps"],
     },
     CrateRule {
         name: "engine_movement",
@@ -58,6 +62,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_map",
             "engine_physics",
             "engine_movement",
+            "engine_test_maps",
         ],
     },
     CrateRule {
@@ -78,6 +83,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_sim",
             "engine_script",
             "engine_net",
+            "engine_test_maps",
         ],
     },
     CrateRule {
@@ -89,6 +95,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_physics",
             "engine_movement",
             "engine_net",
+            "engine_test_maps",
         ],
     },
     CrateRule {

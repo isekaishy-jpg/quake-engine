@@ -20,7 +20,6 @@ use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::sound::StaticSound;
-use engine_core::time::TICK_SECONDS;
 use engine_net::{
     ClientMessage, PlayerScore, PublicKey, ServerMessage, Snapshot, Transport, short_id,
 };
@@ -158,10 +157,6 @@ const FAIR_RAMP: f64 = 2.0;
 
 /// The most of one thing said that's passed on.
 const MAX_SAY: usize = 128;
-
-/// How much later than a shooter's ping a view can be, in seconds: the
-/// interpolation buffer, with a tick to spare.
-const VIEW_SLACK: f64 = 3.0 * TICK_SECONDS;
 
 impl Server {
     /// A game of `map` with its player at `origin`, running `sources`, with
@@ -468,46 +463,8 @@ impl Server {
         let rules = self.fair;
         self.simulation.borrow_mut().set_showing_rewind(rules.show);
         for seat in &mut self.seats {
-            let ping = seat.ping();
-            let (compensated, over) = if rules.enable {
-                zone.compensated(ping, seat.over_ceiling, &rules)
-            } else {
-                (ping, false)
-            };
-            let added = if rules.enable {
-                zone.added_delay(ping)
-            } else {
-                0.0
-            };
-            if over != seat.over_ceiling {
-                seat.over_ceiling = over;
-                let text = if over {
-                    "Your ping is over this server's limit: lead your shots"
-                } else {
-                    "Your ping is back within this server's limit"
-                };
-                seat.send(&ServerMessage::Print(text.to_owned()));
-            }
-            if !seat.settled && seat.has_ping() {
-                seat.settled = true;
-                seat.added = added;
-                seat.compensated = compensated;
-            }
-            seat.added += (added - seat.added).clamp(-step, step);
-            // Losing help all at once is the point of the ceiling.
-            seat.compensated = if over {
-                0.0
-            } else {
-                seat.compensated + (compensated - seat.compensated).clamp(-step, step)
-            };
+            let limit = seat.follow_zone(&zone, &rules, step);
             if let Some(player) = seat.player {
-                let limit = if !rules.unlag || over {
-                    0.0
-                } else if rules.enable {
-                    seat.compensated / 1000.0 + VIEW_SLACK
-                } else {
-                    1.0
-                };
                 self.simulation.borrow_mut().set_rewind_limit(player, limit);
             }
         }

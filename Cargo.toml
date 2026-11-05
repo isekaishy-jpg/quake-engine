@@ -16,6 +16,7 @@ members = [
     "crates/engine_script",
     "crates/engine_server",
     "crates/engine_sim",
+    "crates/engine_test_maps",
     "crates/engine_ui",
     "crates/fixture_quake",
     "crates/solapp",
@@ -50,6 +51,7 @@ engine_audio = { path = "crates/engine_audio" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
 engine_map = { path = "crates/engine_map" }
+engine_test_maps = { path = "crates/engine_test_maps" }
 engine_movement = { path = "crates/engine_movement" }
 engine_net = { path = "crates/engine_net" }
 engine_physics = { path = "crates/engine_physics" }

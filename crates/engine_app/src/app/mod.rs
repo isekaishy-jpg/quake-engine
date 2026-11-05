@@ -1,7 +1,12 @@
 //! The running engine: the main loop's two halves.
 
+mod keys;
+mod net;
+mod shots;
+mod sound;
+mod view;
+
 use engine_core::player::USUAL_GRAVITY;
-use std::collections::HashMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -13,41 +18,37 @@ use engine_assets::DirectoryArchive;
 use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Bot, BotSkill, Buttons, Client, DrawnEntity, EffectSource, Effects,
-    Look, LookScale, ScreenEvent, ShotClock, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key,
-    dead_roll, view_bob, view_idle, view_roll,
+    AmbientSounds, Bindings, Bot, Buttons, Client, Effects, Look, LookScale, ShotClock,
+    StepSmoother, ViewKick,
 };
 use engine_console::{Console, CvarFlags};
-use engine_core::canvas::{Quad, TALK_MARK};
-use engine_core::entity::ModelInstance;
-use engine_core::math::{Vec3, view_axes};
+use engine_core::canvas::TALK_MARK;
+use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TICK_HERTZ, TICK_SECONDS, TickClock, TickRate};
-use engine_map::{Contents, Map};
-use engine_net::{Conditioned, Conditions, NetServer, ServerMessage, Transport, loopback};
+use engine_map::Map;
+use engine_net::{NetServer, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{
-    Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw, Target,
-    View,
-};
-use engine_server::{FairSettings, Level, Seat, SeatInfo, Server};
+use engine_render::{Renderer, Target};
+use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
-    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, WeaponRule, load_level, mount_game,
-    mount_music, music_file, shot_launch, weapon_rule,
+    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, load_level, mount_game, mount_music,
 };
 
 use crate::commands;
 use crate::keys::Keys;
-use crate::models::{DrawLists, Lighting, ModelBank};
+use crate::models::ModelBank;
 use crate::options::Options;
 use crate::saves;
-use crate::screen::{MENU_SETTINGS, MenuActions, MenuSettings, PictureBank};
+use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
 use crate::sounds::SoundBank;
+use sound::AudioLevels;
+use view::DEFAULT_FOV;
 
 /// The simulation rate (proposal 0010).
 const TICK_RATE: Option<TickRate> = TickRate::new(TICK_HERTZ);
@@ -65,59 +66,8 @@ const PLAQUE_FRAMES: u8 = 2;
 pub(crate) const MOVE_BINDINGS: &str = "bind w +forward; bind s +back; bind a +moveleft; bind d +moveright; \
                              bind space +jump; bind c +movedown; bind shift +speed";
 
-/// The sound levels the console sets.
-#[derive(Clone, Copy, Debug, PartialEq)]
-struct AudioLevels {
-    /// `volume`.
-    volume: f32,
-    /// `bgmvolume`.
-    music: f32,
-    /// `ambient_level`.
-    ambient: f32,
-    /// `ambient_water`.
-    water: f32,
-}
-
-/// How far the eye sits above a dead player's middle.
-const DEAD_VIEW_HEIGHT: f32 = -8.0;
-
-/// How wide the view is with no `fov` set, in degrees.
-const DEFAULT_FOV: f32 = 90.0;
-
 /// How long a connection may take to open, in seconds.
 const CONNECT_SECONDS: f64 = 10.0;
-
-/// A frame's picture.
-pub(crate) struct Picture {
-    /// The view.
-    pub(crate) view: View,
-    /// Where brush models are.
-    instances: Vec<ModelInstance>,
-    /// The other models.
-    entities: Vec<EntityDraw>,
-    /// The sprites.
-    sprites: Vec<SpriteDraw>,
-    /// The particles.
-    particles: Vec<ParticleDraw>,
-    /// The dynamic lights.
-    lights: Vec<LightDraw>,
-    /// What's drawn over all of that.
-    pub(crate) quads: Vec<Quad>,
-}
-
-impl Picture {
-    /// What's in it, as the renderer wants it.
-    pub(crate) fn drawables(&self) -> Drawables<'_> {
-        Drawables {
-            instances: &self.instances,
-            entities: &self.entities,
-            sprites: &self.sprites,
-            particles: &self.particles,
-            lights: &self.lights,
-            quads: &self.quads,
-        }
-    }
-}
 
 /// A client for the player, with what it can know of the game's rules.
 pub(crate) fn player_client(
@@ -287,54 +237,6 @@ impl World {
         self.collision = Some(collision);
     }
 
-    /// Adds a bot on a connection of `ping` milliseconds. Returns its name.
-    pub(crate) fn add_bot(&mut self, ping: u64) -> Option<String> {
-        let world = Rc::clone(self.collision.as_ref()?);
-        let server = self.server.as_mut()?;
-        self.bots_made += 1;
-        let number = self.bots_made;
-        let conditions = Conditions {
-            send_delay: Duration::from_millis(ping / 2),
-            ..Conditions::default()
-        };
-        let (bot_end, server_end) = loopback();
-        let seed = u64::from(number) * 7919;
-        let name = format!("bot{number}");
-        let colors = u8::try_from(number % 14).unwrap_or(0);
-        let server_end = Conditioned::new(Box::new(server_end), conditions, seed);
-        server.add_seat(Seat::new(
-            Box::new(server_end),
-            SeatInfo {
-                name: name.clone(),
-                colors: colors << 4 | (13 - colors),
-            },
-        ));
-        let bot_end = Conditioned::new(Box::new(bot_end), conditions, seed + 1);
-        let mut client = Client::new(Box::new(bot_end), world, Vec3::ZERO);
-        client.send_ready();
-        self.bots
-            .push(Bot::new(client, BotSkill::default(), number));
-        Some(name)
-    }
-
-    /// Plays a tick of every bot, following the server to a new level.
-    fn run_bots(&mut self, seconds: f32) {
-        let Some(world) = self.collision.clone() else {
-            return;
-        };
-        for bot in std::mem::take(&mut self.bots) {
-            let mut bot = bot;
-            bot.tick(seconds, &world);
-            if bot.client_mut().take_level().is_some() {
-                let (transport, skill, seed) = bot.into_parts();
-                let mut client = Client::new(transport, Rc::clone(&world), Vec3::ZERO);
-                client.send_ready();
-                bot = Bot::new(client, skill, seed);
-            }
-            self.bots.push(bot);
-        }
-    }
-
     /// Whether the game moves on, as `_Host_Frame` decides.
     pub(crate) fn is_running(&self) -> bool {
         self.level_pending.is_none()
@@ -394,128 +296,6 @@ impl World {
         self.step = StepSmoother::default();
         self.look.set_view(f64::from(start.yaw), 0.0);
         self.after_load(&map, palette)
-    }
-
-    /// Starts connecting to a server, leaving any game going.
-    pub(crate) fn begin_connection(&mut self, transport: Box<dyn Transport>) {
-        self.leave_game();
-        self.connecting = Some(transport);
-        self.connect_time = 0.0;
-    }
-
-    /// Leaves whatever game is going.
-    pub(crate) fn leave_game(&mut self) {
-        if let Some(net_server) = &mut self.net_server {
-            net_server.close();
-            net_server.flush();
-        }
-        self.net_server = None;
-        self.bots.clear();
-        self.console_view.cancel_chat();
-        self.collision = None;
-        self.connecting = None;
-        self.client = None;
-        self.server = None;
-        self.map = None;
-        self.level = Level::default();
-        self.level_pending = None;
-        self.audio.stop_sounds();
-        self.effects = Effects::default();
-    }
-
-    /// Loads the map a server named, and tells it so.
-    fn join_level(
-        &mut self,
-        name: &str,
-        transport: Box<dyn Transport>,
-    ) -> Result<(), Box<dyn std::error::Error>> {
-        let LoadedLevel {
-            map,
-            palette,
-            start,
-        } = load_level(&self.filesystem, name)?;
-        let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
-        let mut client = player_client(transport, collision, start.origin);
-        client.send_info(&self.identity.name, self.identity.colors);
-        client.send_ready();
-        client.flush_network();
-        self.client = Some(client);
-        self.step = StepSmoother::default();
-        self.after_load(&map, palette)
-    }
-
-    /// Hears from the network, and lets anyone who's arrived in.
-    fn update_network(&mut self, seconds: f64, console: &mut Console<Self>) {
-        let elapsed = Duration::from_secs_f64(seconds);
-        if let Some(net_server) = &mut self.net_server {
-            net_server.update(elapsed);
-            while let Some(transport) = net_server.take_arrival() {
-                if let Some(server) = &mut self.server {
-                    server.add_seat(Seat::new(transport, SeatInfo::default()));
-                }
-            }
-            if net_server.take_identity_changed() {
-                self.keys.host = net_server.identity();
-                self.keys.save_host();
-            }
-        }
-        if let Some(client) = &mut self.client {
-            client.update_network(elapsed);
-        }
-        self.update_connecting(seconds, elapsed, console);
-        let lost = self.server.is_none()
-            && self
-                .client
-                .as_ref()
-                .is_some_and(|client| !client.is_connected());
-        if lost {
-            console.print("the server has gone");
-            self.leave_game();
-        }
-    }
-
-    /// Waits for a connection to name its level.
-    fn update_connecting(&mut self, seconds: f64, elapsed: Duration, console: &mut Console<Self>) {
-        let Some(mut transport) = self.connecting.take() else {
-            return;
-        };
-        transport.update(elapsed);
-        transport.flush();
-        self.connect_time += seconds;
-        let level =
-            std::iter::from_fn(|| transport.receive()).find_map(
-                |bytes| match ServerMessage::decode(&bytes) {
-                    Some(ServerMessage::Level(name)) => Some(name),
-                    _ => None,
-                },
-            );
-        if let Some(level) = level {
-            if let (Some(address), Some(key)) = (self.joining.take(), transport.peer_identity()) {
-                self.keys.remember_host(address, key);
-            }
-            if let Err(error) = self.join_level(&level, transport) {
-                console.print(format!("couldn't load {level}: {error}"));
-                self.leave_game();
-            }
-        } else if !transport.is_connected() || self.connect_time > CONNECT_SECONDS {
-            let reason = transport.refusal();
-            let reason = reason.as_deref().unwrap_or("no answer");
-            console.print(format!("couldn't connect: {reason}"));
-        } else {
-            self.connecting = Some(transport);
-        }
-    }
-
-    /// Follows the server to a new level.
-    fn follow_level(&mut self, console: &mut Console<Self>) {
-        let wanted = self.client.as_mut().and_then(Client::take_level);
-        if let (Some(name), None) = (wanted, &self.server)
-            && let Some(client) = self.client.take()
-            && let Err(error) = self.join_level(&name, client.into_transport())
-        {
-            console.print(format!("couldn't load {name}: {error}"));
-            self.leave_game();
-        }
     }
 
     /// The settings a level starts with.
@@ -581,88 +361,6 @@ impl World {
         }
     }
 
-    /// The rule of a shot that can go now, moving the time of the next one on.
-    /// The second part says whether this carries on from the last shot.
-    fn next_shot(&mut self) -> Option<(WeaponRule, bool)> {
-        let rule = self.weapon_ready()?;
-        if self.server.is_some() {
-            return None;
-        }
-        let carrying_on = self.shot_clock.take(self.map_time, rule.refire)?;
-        Some((rule, carrying_on))
-    }
-
-    /// The rule of the weapon in hand, if the player could fire it.
-    fn weapon_ready(&self) -> Option<WeaponRule> {
-        let ammo = self.hud.ammo();
-        let rule = weapon_rule(self.hud.active_weapon(), ammo)?;
-        // A click from the dead is a wish to come back, not a shot.
-        let idle = self.hud.is_dead() || self.hud.intermission() != Intermission::None;
-        (ammo >= rule.ammo && !idle).then_some(rule)
-    }
-
-    /// Shows a shot of the player's before the server answers. Nothing here
-    /// decides a result (proposals 0052 and 0057).
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "f32 keeps angles to a few thousandths of a degree"
-    )]
-    fn guess_shot(&mut self, rule: &WeaponRule, carrying_on: bool, seed: u16) {
-        let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
-        let axes = view_axes(yaw, pitch);
-        let sounds = !(rule.sound_once && carrying_on);
-        if let Some(client) = &mut self.client {
-            if let Some(shot) = &rule.shot {
-                let origin = client.predicted().origin;
-                let (start, velocity) = shot_launch(shot, origin, axes, pitch, seed);
-                let kind = (shot.bounces, shot.blasts, shot.fuse);
-                client.guess_launch(shot.model, start, velocity, kind);
-            }
-            client.show_shot(rule.feel);
-            if sounds {
-                client.expect_own_sound(rule.sound);
-            }
-        }
-        if sounds {
-            self.play_local(rule.sound);
-        }
-    }
-
-    /// Keeps a held weapon going. What goes round on its own needs no more
-    /// shots sent, and the rest go out as a click's would, with their seeds.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "f32 keeps angles to a few thousandths of a degree"
-    )]
-    fn hold_fire(&mut self) {
-        let Some((rule, carrying_on)) = self.next_shot() else {
-            return;
-        };
-        let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
-        let seed = match &mut self.client {
-            Some(client) if !rule.feel.repeats => client.send_fire(yaw, pitch, 0),
-            _ => 0,
-        };
-        self.guess_shot(&rule, carrying_on, seed);
-        if self.showing_boxes {
-            self.show_seen_boxes();
-        }
-    }
-
-    /// Shows the other players' boxes as they are on this screen.
-    fn show_seen_boxes(&mut self) {
-        let Some(client) = &mut self.client else {
-            return;
-        };
-        let players: Vec<u64> = client.scores().iter().map(|score| score.entity).collect();
-        let drawn = client.draw_entities_buffered(0.0);
-        for entity in drawn {
-            if players.contains(&entity.state.id) {
-                self.effects.show_seen_box(entity.state.origin);
-            }
-        }
-    }
-
     /// Runs one tick of the game.
     fn run_tick(&mut self, seconds: f32) {
         self.turn_view(seconds);
@@ -715,130 +413,6 @@ impl World {
         }
     }
 
-    /// Turns the view by the keys held.
-    fn turn_view(&mut self, seconds: f32) {
-        let (yaw, pitch) = self.buttons.turn(seconds);
-        let held = self
-            .client
-            .as_ref()
-            .is_some_and(|client| client.predicted().frozen);
-        if !held && (yaw != 0.0 || pitch != 0.0) {
-            let (yaw, pitch) = (
-                self.look.yaw() + f64::from(yaw),
-                self.look.pitch() + f64::from(pitch),
-            );
-            self.look.set_view(yaw, pitch);
-        }
-    }
-
-    /// Shows what the game asked to.
-    fn show_events(&mut self, events: Vec<ScreenEvent>) {
-        for event in events {
-            match event {
-                ScreenEvent::CenterPrint(text) => self.hud.center_print(text),
-                ScreenEvent::Command(text) => self.commands.push(text),
-                ScreenEvent::Damage { armor, blood, from } => self.hurt(armor, blood, from),
-                ScreenEvent::Intermission(kind) => {
-                    self.hud.set_intermission(Intermission::from_number(kind));
-                }
-                ScreenEvent::LevelTitle(text) => {
-                    self.console_view.print(&text, f64::NEG_INFINITY);
-                    self.hud.set_level_title(text);
-                }
-            }
-        }
-    }
-
-    /// Shows the player being hurt, from `V_ParseDamage`.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "f32 keeps angles to a few thousandths of a degree"
-    )]
-    fn hurt(&mut self, armor: u8, blood: u8, from: Vec3) {
-        self.hud.damage(armor, blood);
-        let Some(client) = &self.client else {
-            return;
-        };
-        let count = (f32::from(blood) * 0.5 + f32::from(armor) * 0.5).max(10.0);
-        let direction = (from - client.predicted().origin).normalized();
-        let [forward, right, _up] = view_axes(self.look.yaw() as f32, self.look.pitch() as f32);
-        self.kick
-            .hit(count, direction.dot(right), direction.dot(forward));
-    }
-
-    /// Passes on the sounds and music the client has heard about.
-    fn play_sounds(&mut self) {
-        let Some(client) = &mut self.client else {
-            return;
-        };
-        for (number, name) in client.take_model_names() {
-            self.models.name_number(
-                u32::from(number),
-                &name,
-                &self.filesystem,
-                self.renderer.as_mut(),
-            );
-        }
-        for effect in client.take_effects() {
-            self.effects.start(&effect);
-        }
-        let mut sounds = client.take_sounds();
-        sounds.extend(self.effects.take_sounds());
-        let static_sounds = client.take_static_sounds();
-        let music = client.take_music();
-        for sound in sounds {
-            let clip = self
-                .sounds
-                .clip(&sound.name, &self.filesystem, &mut self.audio);
-            if let Some(clip) = clip {
-                self.audio.start(&sound, clip);
-            }
-        }
-        for sound in static_sounds {
-            let clip = self
-                .sounds
-                .clip(&sound.name, &self.filesystem, &mut self.audio);
-            if let Some(clip) = clip {
-                self.audio.add_static(&sound, clip);
-            }
-        }
-        if let Some(track) = music {
-            self.play_track(track);
-        }
-    }
-
-    /// Plays music track `track`, unless it's already playing. With no file
-    /// for it there's no music, as with no disc in the drive.
-    pub(crate) fn play_track(&mut self, track: u8) {
-        if self.music_track == Some(track) {
-            return;
-        }
-        self.music_track = Some(track);
-        let bytes = self.filesystem.read(&music_file(track));
-        let playing = bytes.is_ok_and(|bytes| self.audio.play_music(bytes).is_ok());
-        if !playing {
-            self.audio.stop_music();
-        }
-    }
-
-    /// Moves sound on by `seconds`, at these volumes.
-    fn update_audio(&mut self, seconds: f64, levels: AudioLevels, muted: bool) {
-        if self.audio_settings != Some((levels, muted)) {
-            self.audio_settings = Some((levels, muted));
-            self.audio.set_volume(levels.volume);
-            self.audio.set_music_volume(levels.music);
-            self.audio.set_ambient_level(levels.ambient);
-            self.audio.set_water_share(levels.water);
-            self.audio.set_muted(muted);
-        }
-        let origin = self.listener.origin;
-        let levels = self
-            .ambience
-            .as_mut()
-            .map_or([0, 0], |ambience| ambience.levels(origin));
-        self.audio.update(self.listener, seconds, levels);
-    }
-
     /// Text from the server, and a level to change to.
     fn take_server_news(&mut self) -> (Vec<String>, Option<String>) {
         let prints = self.client.as_mut().map(Client::take_prints);
@@ -851,210 +425,6 @@ impl World {
             self.commands.extend(server.take_commands());
         }
         (prints.unwrap_or_default(), level)
-    }
-
-    /// What's at the eye, for the colour of the view.
-    fn contents_at(&self, eye: Vec3) -> Contents {
-        self.map.as_ref().map_or(Contents::Empty, |map| {
-            map.tree
-                .leaf(map.tree.leaf_at(eye))
-                .map_or(Contents::Empty, |leaf| leaf.contents)
-        })
-    }
-
-    /// Follows what's on the client for effects, and returns the lights
-    /// shining now.
-    fn update_effects(
-        &mut self,
-        time: f32,
-        drawn: &[DrawnEntity],
-        player: EffectSource,
-    ) -> Vec<LightDraw> {
-        if let Some(client) = &self.client {
-            self.effects.set_gravity(client.gravity());
-        }
-        self.effects.update(time);
-        let mut sources: Vec<EffectSource> = drawn
-            .iter()
-            .map(|entity| EffectSource {
-                id: entity.state.id,
-                origin: entity.state.origin,
-                angles: entity.state.angles,
-                effects: entity.state.effects,
-                model_flags: self.models.flags(entity.state.model),
-            })
-            .collect();
-        sources.push(player);
-        self.effects.follow(&sources);
-        self.effects
-            .lights()
-            .map(|light| LightDraw {
-                origin: light.origin,
-                radius: light.radius,
-                min_light: light.min_light,
-            })
-            .collect()
-    }
-
-    /// The particles to draw, in their colours.
-    fn particle_draws(&self) -> Vec<ParticleDraw> {
-        let Some(palette) = &self.palette else {
-            return Vec::new();
-        };
-        self.effects
-            .particles()
-            .live()
-            .iter()
-            .map(|particle| {
-                let [red, green, blue] = palette.color(particle.color);
-                ParticleDraw {
-                    origin: particle.origin,
-                    color: ParticleColor { red, green, blue },
-                }
-            })
-            .collect()
-    }
-
-    /// The picture, `leftover` seconds past the last tick. `frame_seconds` is
-    /// the time since the last view, for smoothing.
-    #[expect(
-        clippy::cast_possible_truncation,
-        reason = "angles and map time need no more than f32 for drawing"
-    )]
-    pub(crate) fn view(&mut self, leftover: f32, fraction: f32, frame_seconds: f32) -> Picture {
-        let command = self.command();
-        let mut origin = Vec3::ZERO;
-        let mut instances = Vec::new();
-        let mut lists = DrawLists::default();
-        let mut lights = Vec::new();
-        let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
-        let mut punch = Vec3::ZERO;
-        let online = self.is_online();
-        let mut sway = (0.0, 0.0, 0.0);
-        let mut roll = 0.0;
-        let time = self.map_time as f32;
-        if let Some(client) = &mut self.client {
-            let state = client.render_state(&command, leftover);
-            let body = state.origin + client.ground_lag(&state, fraction);
-            let step = self.step.update(body.z, state.on_ground, frame_seconds);
-            let speed = Vec3::new(state.velocity.x, state.velocity.y, 0.0).length();
-            let bob = view_bob(time, speed);
-            let frozen = state.frozen;
-            let eye = if frozen {
-                0.0
-            } else if state.dead {
-                DEAD_VIEW_HEIGHT
-            } else {
-                VIEW_HEIGHT
-            };
-            origin = body + Vec3::new(0.0, 0.0, eye + step + bob);
-            let (sin, cos) = self.look.yaw().to_radians().sin_cos();
-            self.listener = Listener {
-                origin,
-                right: Vec3::new(sin as f32, -cos as f32, 0.0),
-            };
-            instances = client.draw_instances(fraction);
-            styles = client.light_styles(self.map_time);
-            punch = client.punch(fraction);
-            let (kick_pitch, kick_roll) = self.kick.update(frame_seconds);
-            let right = self.listener.right;
-            roll = view_roll(state.velocity.dot(right)) + kick_roll;
-            punch.x += kick_pitch;
-            if state.dead {
-                roll = dead_roll();
-            }
-            if frozen {
-                roll = 0.0;
-                sway = view_idle(time);
-            }
-            let drawn = if online {
-                client.draw_entities_buffered(f64::from(frame_seconds))
-            } else {
-                client.draw_entities(fraction)
-            };
-            let wearing: HashMap<u64, u8> = client
-                .scores()
-                .iter()
-                .map(|score| (score.entity, score.colors))
-                .collect();
-            let (model, frame) = client.weapon();
-            let player = EffectSource {
-                id: client.player_entity(),
-                origin: body,
-                angles: Vec3::new(self.look.pitch() as f32, self.look.yaw() as f32, 0.0),
-                effects: client.take_player_effects(),
-                model_flags: 0,
-            };
-            lights = self.update_effects(time + leftover, &drawn, player);
-            if let Some(map) = self.map.clone() {
-                let lighting = Lighting {
-                    map: &map,
-                    styles: &styles,
-                    lights: &lights,
-                    time,
-                };
-                for entity in &drawn {
-                    let colors = wearing.get(&entity.state.id).copied();
-                    if let Some(colors) = colors {
-                        self.models.prepare_colors(
-                            entity.state.model,
-                            colors,
-                            &self.filesystem,
-                            self.renderer.as_mut(),
-                        );
-                    }
-                    self.models.draw(entity, colors, &lighting, &mut lists);
-                }
-                for piece in self.effects.beam_pieces(player.id, body) {
-                    self.models.draw_beam(
-                        &piece,
-                        &self.filesystem,
-                        self.renderer.as_mut(),
-                        &mut lists,
-                    );
-                }
-                let yaw = self.look.yaw() as f32;
-                let pitch = self.look.pitch() as f32;
-                let [forward, ..] = view_axes(yaw, pitch);
-                // From `V_CalcRefdef`, with the status bar's 2 units.
-                let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
-                let angles = Vec3::new(-pitch, yaw, 0.0);
-                if !frozen {
-                    lists.entities.extend(self.models.draw_weapon(
-                        u32::from(model),
-                        frame,
-                        (placed, angles),
-                        &lighting,
-                    ));
-                }
-            }
-        }
-        let contents = self.contents_at(origin);
-        let fade = if self.is_running() {
-            frame_seconds
-        } else {
-            0.0
-        };
-        self.hud.update_view(fade, contents);
-        let view = View {
-            origin,
-            yaw: self.look.yaw() as f32 + punch.y + sway.1,
-            pitch: self.look.pitch() as f32 + punch.x + sway.0,
-            roll: roll + sway.2,
-            fov: self.fov,
-            time: self.map_time as f32,
-            styles,
-            gamma: self.gamma,
-        };
-        Picture {
-            view,
-            instances,
-            entities: lists.entities,
-            sprites: lists.sprites,
-            particles: self.particle_draws(),
-            lights,
-            quads: Vec::new(),
-        }
     }
 }
 
@@ -1348,83 +718,6 @@ impl Engine {
         }
     }
 
-    /// Takes a key, which goes to what's on top, as `Key_Event`.
-    fn key(&mut self, name: &str, pressed: bool, repeat: bool) {
-        let key = canonical_key(name);
-        if key == "SHIFT" {
-            self.world.console_view.set_shift(pressed);
-        }
-        if !pressed {
-            // Key ups always go to the game, so nothing stays held.
-            if let Some(command) = self.world.bindings.release(&key) {
-                self.console.add(&command);
-            }
-            return;
-        }
-        if self.world.menu.is_open() {
-            let mut menu = std::mem::take(&mut self.world.menu);
-            menu.key(
-                &key,
-                &mut MenuActions {
-                    console: &mut self.console,
-                    world: &mut self.world,
-                },
-            );
-            self.world.menu = menu;
-        } else if self.world.console_view.is_open() {
-            self.console_key(&key);
-        } else if self.world.console_view.is_chatting() {
-            if let Some(line) = self.world.console_view.chat_key(&key) {
-                self.console.add(&line);
-            }
-        } else if key == "ESCAPE" {
-            if !repeat {
-                self.console.add("togglemenu");
-            }
-        } else if !repeat && let Some(command) = self.world.bindings.get(&key) {
-            let command = command.to_owned();
-            if command == "+attack" {
-                self.fire_now();
-            }
-            self.console.add(&command);
-        }
-    }
-
-    /// Sends a shot now, without waiting for the console or the next tick.
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "f32 keeps angles well, and a share of 256 fits a byte"
-    )]
-    fn fire_now(&mut self) {
-        if !self.world.is_running() || !self.world.is_playing_screen() {
-            return;
-        }
-        let offset = (self.clock.fraction() * 256.0) as u8;
-        let (yaw, pitch) = (self.world.look.yaw() as f32, self.world.look.pitch() as f32);
-        if let Some(client) = &mut self.world.client {
-            let seed = client.send_fire(yaw, pitch, offset);
-            if let Some((rule, carrying_on)) = self.world.next_shot() {
-                self.world.guess_shot(&rule, carrying_on, seed);
-            }
-        }
-        if self.world.showing_boxes {
-            self.world.show_seen_boxes();
-        }
-    }
-
-    /// Runs the half tick, once in each tick, when it's due.
-    fn run_half_tick(&mut self) {
-        if !self.half_tick_done && self.clock.fraction() >= 0.5 {
-            self.half_tick_done = true;
-            if self.world.is_running()
-                && let Some(server) = &mut self.world.server
-            {
-                server.half_tick();
-            }
-        }
-    }
-
     /// Keeps the game's rules with the console's, as `StartFrame` and
     /// `cvar_set` do. A level's own gravity shows in `sv_gravity`, and the
     /// console can then change it.
@@ -1453,57 +746,6 @@ impl Engine {
             self.world.gravity_shown = gravity;
             self.console.add(&format!("sv_gravity {gravity}"));
         }
-    }
-
-    /// Takes a key while the console is open.
-    fn console_key(&mut self, key: &str) {
-        match key {
-            "ESCAPE" => self.console.add("togglemenu"),
-            "`" | "~" => self.console.add("toggleconsole"),
-            "TAB" => self.complete(),
-            "MWHEELUP" => {
-                let _nothing = self.world.console_view.key("PGUP");
-            }
-            "MWHEELDOWN" => {
-                let _nothing = self.world.console_view.key("PGDN");
-            }
-            _ => {
-                if let Some(line) = self.world.console_view.key(key) {
-                    self.console.add(&line);
-                }
-            }
-        }
-    }
-
-    /// Completes what's being typed, as far as every match agrees.
-    fn complete(&mut self) {
-        let typed = self.world.console_view.input().trim_start().to_owned();
-        if typed.is_empty() || typed.contains(' ') {
-            return;
-        }
-        let matches = self.console.completions(&typed);
-        let Some(first) = matches.first() else {
-            return;
-        };
-        let shared = matches.iter().fold(first.len(), |shared, name| {
-            first
-                .bytes()
-                .zip(name.bytes())
-                .take(shared)
-                .take_while(|(a, b)| a == b)
-                .count()
-        });
-        let mut completed = first[..shared].to_owned();
-        if let [_one] = matches.as_slice() {
-            completed.push(' ');
-        } else {
-            for name in &matches {
-                self.world
-                    .console_view
-                    .print(&format!("  {name}"), f64::NEG_INFINITY);
-            }
-        }
-        self.world.console_view.set_input(&completed);
     }
 
     /// The look scale from the cvars.
