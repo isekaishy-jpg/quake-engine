@@ -243,7 +243,7 @@ end
 
 -- The spread of a grenade from a shot's seed, the same as the client works it
 -- out, or at random with none.
-local function spread(self, salt)
+function grenade_spread(self, salt)
 	local seed = self.fire_seed
 	if seed == nil then
 		return crandom()
@@ -357,8 +357,8 @@ function W_FireGrenade(self)
 	if self.v_angle.x ~= 0 then
 		missile.velocity = v_forward * 600
 			+ v_up * 200
-			+ v_right * (spread(self, 0) * 10)
-			+ v_up * (spread(self, 1) * 10)
+			+ v_right * (grenade_spread(self, 0) * 10)
+			+ v_up * (grenade_spread(self, 1) * 10)
 	else
 		local velocity = aim(self, 10000) * 600
 		missile.velocity = vector.create(velocity.x, velocity.y, 200)

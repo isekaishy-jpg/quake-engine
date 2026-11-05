@@ -8,5 +8,5 @@
 mod game;
 mod save;
 
-pub use game::{Game, Outbox, ScriptError};
+pub use game::{Game, GameRules, Outbox, ScriptError};
 pub use save::{SavedEntity, SavedScripts, SavedValue};

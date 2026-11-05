@@ -25,7 +25,7 @@ use engine_net::{
     ClientMessage, PlayerScore, PublicKey, ServerMessage, Snapshot, Transport, short_id,
 };
 use engine_physics::CollisionWorld;
-use engine_script::{Game, SavedScripts, ScriptError};
+use engine_script::{Game, GameRules, SavedScripts, ScriptError};
 use engine_sim::{EntityId, SavedSimulation, Simulation};
 use serde::{Deserialize, Serialize};
 
@@ -96,6 +96,8 @@ pub struct Server {
     simulation: Rc<RefCell<Simulation>>,
     /// The game's logic.
     game: Game,
+    /// What the game says about itself.
+    rules: GameRules,
     /// Ticks run.
     tick: u32,
     /// The length of a tick.
@@ -193,6 +195,7 @@ impl Server {
             seats: vec![seat],
             world,
             simulation,
+            rules: game.rules(),
             game,
             tick: 0,
             seconds,
@@ -239,6 +242,7 @@ impl Server {
             seats: vec![seat],
             world,
             simulation,
+            rules: game.rules(),
             game,
             tick: 0,
             seconds,
@@ -688,7 +692,7 @@ impl Server {
     }
 
     /// Tells everyone the scores, if they've changed. `stats` gives each
-    /// player's frags as its second number.
+    /// player's numbers, among which the game says where frags are.
     fn send_scores(&mut self, stats: &[Vec<i32>]) {
         let scores: Vec<PlayerScore> = self
             .seats
@@ -698,7 +702,11 @@ impl Server {
             .map(|(seat, stats)| PlayerScore {
                 entity: seat.player.map_or(0, EntityId::to_bits),
                 name: seat.info.name.clone(),
-                frags: stats.get(1).copied().unwrap_or(0),
+                frags: self
+                    .rules
+                    .frags_stat
+                    .and_then(|stat| stats.get(stat).copied())
+                    .unwrap_or(0),
                 colors: seat.info.colors,
             })
             .collect();
@@ -756,16 +764,11 @@ impl Server {
     /// clients it's someone talking, and nobody can type it.
     fn say(&mut self, index: usize, line: &str, team_only: bool) {
         let speaker = &self.seats[index].info;
-        let (name, team) = (speaker.name.clone(), speaker.colors & 15);
+        let (name, colors) = (speaker.name.clone(), speaker.colors);
         let line = plain_text(line, MAX_SAY);
         let message = ServerMessage::Print(format!("{TALK_MARK}{name}: {line}"));
-        let teams = self
-            .level
-            .settings
-            .iter()
-            .any(|(name, value)| name == "teamplay" && *value != 0.0);
         for seat in &mut self.seats {
-            let hears = !(teams && team_only) || seat.info.colors & 15 == team;
+            let hears = !team_only || self.game.same_team(colors, seat.info.colors);
             if seat.player.is_some() && hears {
                 seat.send(&message);
             }
@@ -933,7 +936,7 @@ impl Server {
                 let line = text.trim_start().strip_prefix(command).unwrap_or("");
                 self.say(index, line, command == "say_team");
             }
-            Some(command) if host || matches!(command, "kill") => {
+            Some(command) if host || self.rules.guest_commands.iter().any(|c| c == command) => {
                 let argument = words.collect::<Vec<_>>().join(" ");
                 self.game.client_command(id, command, &argument);
                 self.flush_outbox();

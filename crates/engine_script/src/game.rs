@@ -12,10 +12,20 @@ use engine_core::player::Liquid;
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_map::{Contents, Entity as MapEntity};
 use engine_sim::{
-    Callback, EntityId, FLAG_ON_GROUND, MoveKind, MoveType, Simulation, Solid, Target,
+    Callback, EntityId, FLAG_FLY, FLAG_ITEM, FLAG_MONSTER, FLAG_ON_GROUND, FLAG_PARTIAL_GROUND,
+    FLAG_SWIM, MoveKind, MoveType, Simulation, Solid, Target,
 };
 use mlua::chunk::Compiler;
 use mlua::{Function, Lua, Table, Value, Vector, VmState};
+
+/// What a game tells the engine about itself.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct GameRules {
+    /// Which of the numbers from `ClientData` is someone's frags.
+    pub frags_stat: Option<usize>,
+    /// The commands guests can use.
+    pub guest_commands: Vec<String>,
+}
 
 /// The prelude every game runs on.
 const PRELUDE: &str = include_str!("prelude.luau");
@@ -23,27 +33,73 @@ const PRELUDE: &str = include_str!("prelude.luau");
 /// The longest one call into a script may run.
 const CALL_LIMIT: Duration = Duration::from_secs(1);
 
-/// `SOLID_NOT`, `SOLID_TRIGGER` and `SOLID_BSP`, as scripts write them.
-const SOLID_NUMBERS: [(Solid, f64); 5] = [
-    (Solid::Not, 0.0),
-    (Solid::Trigger, 1.0),
-    (Solid::Bbox, 2.0),
-    (Solid::SlideBox, 3.0),
-    (Solid::Bsp, 4.0),
+/// How scripts write what blocks what, by the names they know it as.
+const SOLID_NUMBERS: [(Solid, f64, &str); 5] = [
+    (Solid::Not, 0.0, "SOLID_NOT"),
+    (Solid::Trigger, 1.0, "SOLID_TRIGGER"),
+    (Solid::Bbox, 2.0, "SOLID_BBOX"),
+    (Solid::SlideBox, 3.0, "SOLID_SLIDEBOX"),
+    (Solid::Bsp, 4.0, "SOLID_BSP"),
 ];
 
-/// `MOVETYPE_NONE` and `MOVETYPE_PUSH`, as scripts write them.
-const MOVE_TYPE_NUMBERS: [(MoveType, f64); 9] = [
-    (MoveType::None, 0.0),
-    (MoveType::Walk, 3.0),
-    (MoveType::Step, 4.0),
-    (MoveType::Fly, 5.0),
-    (MoveType::Toss, 6.0),
-    (MoveType::Push, 7.0),
-    (MoveType::Noclip, 8.0),
-    (MoveType::FlyMissile, 9.0),
-    (MoveType::Bounce, 10.0),
+/// How scripts write how things move, by the names they know it as.
+const MOVE_TYPE_NUMBERS: [(MoveType, f64, &str); 9] = [
+    (MoveType::None, 0.0, "MOVETYPE_NONE"),
+    (MoveType::Walk, 3.0, "MOVETYPE_WALK"),
+    (MoveType::Step, 4.0, "MOVETYPE_STEP"),
+    (MoveType::Fly, 5.0, "MOVETYPE_FLY"),
+    (MoveType::Toss, 6.0, "MOVETYPE_TOSS"),
+    (MoveType::Push, 7.0, "MOVETYPE_PUSH"),
+    (MoveType::Noclip, 8.0, "MOVETYPE_NOCLIP"),
+    (MoveType::FlyMissile, 9.0, "MOVETYPE_FLYMISSILE"),
+    (MoveType::Bounce, 10.0, "MOVETYPE_BOUNCE"),
 ];
+
+/// How scripts write what fills a point, by the names they know it as.
+const CONTENTS_NUMBERS: [(Contents, f64, &str); 6] = [
+    (Contents::Empty, -1.0, "CONTENT_EMPTY"),
+    (Contents::Solid, -2.0, "CONTENT_SOLID"),
+    (Contents::Water, -3.0, "CONTENT_WATER"),
+    (Contents::Slime, -4.0, "CONTENT_SLIME"),
+    (Contents::Lava, -5.0, "CONTENT_LAVA"),
+    (Contents::Sky, -6.0, "CONTENT_SKY"),
+];
+
+/// The flags the engine acts on, by the names scripts know them as.
+const FLAG_NUMBERS: [(u32, &str); 6] = [
+    (FLAG_FLY, "FL_FLY"),
+    (FLAG_SWIM, "FL_SWIM"),
+    (FLAG_MONSTER, "FL_MONSTER"),
+    (FLAG_ITEM, "FL_ITEM"),
+    (FLAG_ON_GROUND, "FL_ONGROUND"),
+    (FLAG_PARTIAL_GROUND, "FL_PARTIALGROUND"),
+];
+
+/// Gives scripts the numbers they share with the engine.
+fn share_numbers(lua: &Lua) -> mlua::Result<()> {
+    let globals = lua.globals();
+    for (_, number, name) in SOLID_NUMBERS {
+        globals.set(name, number)?;
+    }
+    for (_, number, name) in MOVE_TYPE_NUMBERS {
+        globals.set(name, number)?;
+    }
+    for (_, number, name) in CONTENTS_NUMBERS {
+        globals.set(name, number)?;
+    }
+    for (flag, name) in FLAG_NUMBERS {
+        globals.set(name, f64::from(flag))?;
+    }
+    Ok(())
+}
+
+/// How scripts write `contents`.
+fn contents_number(contents: Contents) -> f64 {
+    CONTENTS_NUMBERS
+        .iter()
+        .find(|(known, ..)| *known == contents)
+        .map_or(-1.0, |(_, number, _)| *number)
+}
 
 /// What `engine.launch` takes: an entity, its owner, its origin and velocity,
 /// the time, whether it bounces, whether it blows up on what it hits, how
@@ -169,12 +225,12 @@ fn read_player_field(sim: &Simulation, id: EntityId, field: &str) -> Value {
     };
     match field {
         "waterlevel" => Value::Number(f64::from(player.water_level)),
-        "watertype" => Value::Number(match player.liquid {
-            Liquid::None => -1.0,
-            Liquid::Water => -3.0,
-            Liquid::Slime => -4.0,
-            Liquid::Lava => -5.0,
-        }),
+        "watertype" => Value::Number(contents_number(match player.liquid {
+            Liquid::None => Contents::Empty,
+            Liquid::Water => Contents::Water,
+            Liquid::Slime => Contents::Slime,
+            Liquid::Lava => Contents::Lava,
+        })),
         "onground" => Value::Boolean(player.on_ground),
         "button2" => Value::Boolean(sim.jump_down(id)),
         "button0" => Value::Boolean(sim.attack_down(id)),
@@ -209,14 +265,14 @@ fn read_field(lua: &Lua, sim: &Simulation, id: EntityId, field: &str) -> mlua::R
         "solid" => Value::Number(
             SOLID_NUMBERS
                 .iter()
-                .find(|(solid, _)| *solid == entity.solid)
-                .map_or(0.0, |(_, number)| *number),
+                .find(|(solid, ..)| *solid == entity.solid)
+                .map_or(0.0, |(_, number, _)| *number),
         ),
         "movetype" => Value::Number(
             MOVE_TYPE_NUMBERS
                 .iter()
-                .find(|(kind, _)| *kind == entity.move_type)
-                .map_or(0.0, |(_, number)| *number),
+                .find(|(kind, ..)| *kind == entity.move_type)
+                .map_or(0.0, |(_, number, _)| *number),
         ),
         "nextthink" => Value::Number(entity.next_think),
         "ltime" => Value::Number(entity.local_time),
@@ -330,15 +386,15 @@ fn write_field(sim: &mut Simulation, id: EntityId, field: &str, value: &Value) -
                     let number = number?;
                     entity.solid = SOLID_NUMBERS
                         .iter()
-                        .find(|(_, value)| (*value - number).abs() < f64::EPSILON)
-                        .map_or(Solid::Not, |(solid, _)| *solid);
+                        .find(|(_, value, _)| (*value - number).abs() < f64::EPSILON)
+                        .map_or(Solid::Not, |(solid, ..)| *solid);
                 }
                 "movetype" => {
                     let number = number?;
                     entity.move_type = MOVE_TYPE_NUMBERS
                         .iter()
-                        .find(|(_, value)| (*value - number).abs() < f64::EPSILON)
-                        .map_or(MoveType::None, |(kind, _)| *kind);
+                        .find(|(_, value, _)| (*value - number).abs() < f64::EPSILON)
+                        .map_or(MoveType::None, |(kind, ..)| *kind);
                 }
                 _ => return Err(no_field(field)),
             }
@@ -380,6 +436,7 @@ impl Game {
             lua.globals().raw_set(global, Value::Nil)?;
         }
         lua.sandbox(true)?;
+        share_numbers(&lua)?;
         // Above level 0, Luau caches any global a chunk doesn't assign itself, as
         // if it were a constant. Games share globals between scripts, so one
         // script would never see what another writes.
@@ -577,14 +634,7 @@ impl Game {
         engine.set(
             "pointcontents",
             lua.create_function(move |_, point: Vector| {
-                Ok(match sim.borrow().point_contents(to_vec3(point)) {
-                    Contents::Empty => -1.0,
-                    Contents::Solid => -2.0,
-                    Contents::Water => -3.0,
-                    Contents::Slime => -4.0,
-                    Contents::Lava => -5.0,
-                    Contents::Sky => -6.0,
-                })
+                Ok(contents_number(sim.borrow().point_contents(to_vec3(point))))
             })?,
         )?;
         Self::register_walking(lua, simulation, engine)?;
@@ -1058,6 +1108,36 @@ impl Game {
             }
             (Err(error), _) => self.report(Err(error)),
             _ => {}
+        }
+    }
+
+    /// What the game's `GameRules` table says.
+    #[must_use]
+    pub fn rules(&self) -> GameRules {
+        let table: mlua::Result<Option<Table>> = self.lua.globals().get("GameRules");
+        let Ok(Some(table)) = table else {
+            return GameRules::default();
+        };
+        GameRules {
+            frags_stat: table.get("frags_stat").ok(),
+            guest_commands: table.get("guest_commands").unwrap_or_default(),
+        }
+    }
+
+    /// Whether a team message from someone wearing `colors` reaches someone
+    /// wearing `heard_by`. A game with no `SameTeam` has no teams.
+    pub fn same_team(&self, colors: u8, heard_by: u8) -> bool {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("SameTeam");
+        let Ok(Some(function)) = function else {
+            return true;
+        };
+        match function.call::<bool>((colors, heard_by)) {
+            Ok(same) => same,
+            Err(error) => {
+                self.report(Err(error));
+                true
+            }
         }
     }
 

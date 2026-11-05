@@ -11,6 +11,7 @@ mod bsp;
 mod game;
 mod hud;
 mod items;
+mod layout;
 mod mdl;
 mod menu;
 mod pak;
@@ -27,6 +28,11 @@ pub use bsp::{MapError, SpawnPoint, import_map, parse_entities, spawn_point, wit
 pub use game::{mount_game, mount_music};
 pub use hud::{Hud, Intermission, Score};
 pub use items::parse_item_bsp;
+pub use layout::{
+    BACKGROUND_PICTURE, BASE_GAME, DEFAULT_CONFIG, GAME_COMMANDS, GAME_RULES, LIVE_RULES,
+    LOADING_PICTURE, LoadedLevel, PAUSE_PICTURE, PICTURE_WAD, SKY_SOUND, STARTUP_SCRIPT,
+    TALK_SOUND, WATER_SOUND, load_level, load_palette, music_file,
+};
 pub use mdl::{parse_colored_mdl, parse_mdl};
 pub use menu::{Menu, MenuHost, SAVE_SLOTS, Screen};
 pub use pak::PakArchive;

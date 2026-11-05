@@ -15,7 +15,7 @@ use engine_map::Map;
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
-use fixture_quake::SCRIPTS;
+use fixture_quake::{SCRIPTS, shot_launch, weapon_rule};
 
 /// A level on normal skill, as the console's default sets.
 fn normal_level() -> Level {
@@ -1385,6 +1385,32 @@ fn what_flies_thinks_before_it_moves() {
         assert(flying.origin.x > 0, "the control: it went then")
         "#,
     );
+}
+
+#[test]
+fn a_grenades_spread_is_worked_out_the_same_on_both_sides() {
+    let map = map(&[], &[]);
+    let game = Game::new(&map, at_floor(0.0, 0.0));
+    let shot = weapon_rule(16, 5)
+        .and_then(|rule| rule.shot)
+        .expect("grenades fly");
+    let axes = [
+        Vec3::new(1.0, 0.0, 0.0),
+        Vec3::new(0.0, 1.0, 0.0),
+        Vec3::new(0.0, 0.0, 1.0),
+    ];
+    for seed in [0_u16, 1, 999, 40503, 65535] {
+        let (_, velocity) = shot_launch(&shot, Vec3::ZERO, axes, 10.0, seed);
+        game.check(&format!(
+            r#"
+            local shooter = {{ fire_seed = {seed} }}
+            assert(math.abs(grenade_spread(shooter, 0) * 10 - {right}) < 0.001)
+            assert(math.abs(grenade_spread(shooter, 1) * 10 - {up}) < 0.001)
+            "#,
+            right = velocity.y,
+            up = velocity.z - 200.0
+        ));
+    }
 }
 
 #[test]

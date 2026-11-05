@@ -8,7 +8,7 @@ use engine_client::{BeamPiece, DrawnEntity};
 use engine_core::math::Vec3;
 use engine_map::{AliasModel, Map, Sprite};
 use engine_render::{EntityDraw, LightDraw, Renderer, SpriteDraw};
-use fixture_quake::{Palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
+use fixture_quake::{load_palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
 
 /// How fast bonus items spin, in degrees a second.
 const SPIN_SPEED: f32 = 100.0;
@@ -316,7 +316,7 @@ fn load_colored(
     renderer: Option<&mut Renderer>,
 ) -> Option<Arc<Asset>> {
     let renderer = renderer?;
-    let palette = Palette::parse(&filesystem.read("gfx/palette.lmp").ok()?)?;
+    let palette = load_palette(filesystem).ok()?;
     let bytes = filesystem.read(name).ok()?;
     let model = Arc::new(parse_colored_mdl(&bytes, &palette, colors)?);
     let number = renderer.add_model(Arc::clone(&model)).ok()?;
@@ -330,8 +330,7 @@ fn load(
     renderer: Option<&mut Renderer>,
 ) -> Option<Arc<Asset>> {
     let renderer = renderer?;
-    let palette = filesystem.read("gfx/palette.lmp").ok()?;
-    let palette = Palette::parse(&palette)?;
+    let palette = load_palette(filesystem).ok()?;
     let bytes = filesystem.read(name).ok()?;
     if name.ends_with(".spr") {
         let sprite = Arc::new(parse_spr(&bytes, &palette)?);

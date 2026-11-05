@@ -15,9 +15,17 @@
 -- Ported from client.qc: level changes, the intermission, obituaries, and the
 -- player's sounds.
 
-local CONTENT_WATER = -3
-local CONTENT_SLIME = -4
-local CONTENT_LAVA = -5
+-- What the engine asks of a game: which of `ClientData`'s numbers, counting
+-- from zero, is someone's frags, and which commands guests can use.
+GameRules = {
+	frags_stat = 1,
+	guest_commands = { "kill" },
+}
+
+-- Whether someone hears a team message from another, from `Host_Say`.
+function SameTeam(colors, heard_by)
+	return teamplay == 0 or bit32.band(colors, 15) == bit32.band(heard_by, 15)
+end
 
 -- The next level, and where the last one was.
 nextmap = ""

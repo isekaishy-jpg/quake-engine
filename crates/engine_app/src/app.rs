@@ -36,8 +36,9 @@ use engine_render::{
 use engine_server::{FairSettings, Level, Seat, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
-    Hud, Intermission, Menu, Palette, ROCKET_BLAST, SCRIPTS, Score, WeaponRule, import_map,
-    mount_game, mount_music, shot_launch, spawn_point, weapon_rule,
+    GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
+    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, WeaponRule, load_level, mount_game,
+    mount_music, music_file, shot_launch, weapon_rule,
 };
 
 use crate::commands;
@@ -53,9 +54,6 @@ const TICK_RATE: Option<TickRate> = TickRate::new(TICK_HERTZ);
 
 /// The most time a stall can catch up on.
 const MAX_CATCH_UP: Duration = Duration::from_millis(250);
-
-/// What someone talking sounds like, from `Con_Print`.
-const TALK_SOUND: &str = "misc/talk.wav";
 
 /// The name of the saved settings.
 pub(crate) const CONFIG_NAME: &str = "config.cfg";
@@ -83,34 +81,8 @@ struct AudioLevels {
 /// How far the eye sits above a dead player's middle.
 const DEAD_VIEW_HEIGHT: f32 = -8.0;
 
-/// Settings a game can read, which go to it as each level starts.
-const LEVEL_SETTINGS: [&str; 19] = [
-    "sv_fair_enable",
-    "sv_fair_floor",
-    "sv_fair_width",
-    "sv_fair_ceiling",
-    "sv_fair_ceiling_margin",
-    "sv_fair_partial",
-    "sv_fair_outlier",
-    "sv_fair_interval",
-    "sv_unlag_debug",
-    "sv_unlag_enable",
-    "skill",
-    "deathmatch",
-    "coop",
-    "teamplay",
-    "fraglimit",
-    "timelimit",
-    "samelevel",
-    "noexit",
-    "registered",
-];
-
 /// How wide the view is with no `fov` set, in degrees.
 const DEFAULT_FOV: f32 = 90.0;
-
-/// Rules that change in play, rather than from the next level on.
-const LIVE_RULES: [&str; 4] = ["skill", "teamplay", "fraglimit", "timelimit"];
 
 /// How long a connection may take to open, in seconds.
 const CONNECT_SECONDS: f64 = 10.0;
@@ -385,12 +357,11 @@ impl World {
         name: &str,
         console: &Console<Self>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let bsp = self.filesystem.read(&format!("maps/{name}.bsp"))?;
-        let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
-        let palette = self.filesystem.read("gfx/palette.lmp")?;
-        let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
-        let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
-        let start = spawn_point(&map);
+        let LoadedLevel {
+            map,
+            palette,
+            start,
+        } = load_level(&self.filesystem, name)?;
         let level = Level {
             name: name.to_owned(),
             parms: self.next_parms.take(),
@@ -458,12 +429,11 @@ impl World {
         name: &str,
         transport: Box<dyn Transport>,
     ) -> Result<(), Box<dyn std::error::Error>> {
-        let bsp = self.filesystem.read(&format!("maps/{name}.bsp"))?;
-        let lit = self.filesystem.read(&format!("maps/{name}.lit")).ok();
-        let palette = self.filesystem.read("gfx/palette.lmp")?;
-        let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
-        let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
-        let start = spawn_point(&map);
+        let LoadedLevel {
+            map,
+            palette,
+            start,
+        } = load_level(&self.filesystem, name)?;
         let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
         let mut client = player_client(transport, collision, start.origin);
         client.send_info(&self.identity.name, self.identity.colors);
@@ -550,8 +520,10 @@ impl World {
 
     /// The settings a level starts with.
     fn level_settings(console: &Console<Self>) -> Vec<(String, f64)> {
-        LEVEL_SETTINGS
-            .iter()
+        let fair = FairSettings::default().cvars().map(|(name, _)| name);
+        let rules = GAME_RULES.map(|(name, _)| name);
+        fair.iter()
+            .chain(&rules)
             .map(|name| {
                 let value = console.cvar(name).map_or(0.0, engine_console::Cvar::number);
                 ((*name).to_owned(), f64::from(value))
@@ -578,10 +550,10 @@ impl World {
         self.audio.stop_sounds();
         let water = self
             .sounds
-            .clip("ambience/water1.wav", &self.filesystem, &mut self.audio);
+            .clip(WATER_SOUND, &self.filesystem, &mut self.audio);
         let sky = self
             .sounds
-            .clip("ambience/wind2.wav", &self.filesystem, &mut self.audio);
+            .clip(SKY_SOUND, &self.filesystem, &mut self.audio);
         self.audio.set_ambient_clips(water, sky);
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         self.models.clear_numbers();
@@ -842,7 +814,7 @@ impl World {
             return;
         }
         self.music_track = Some(track);
-        let bytes = self.filesystem.read(&format!("music/track{track:02}.ogg"));
+        let bytes = self.filesystem.read(&music_file(track));
         let playing = bytes.is_ok_and(|bytes| self.audio.play_music(bytes).is_ok());
         if !playing {
             self.audio.stop_music();
@@ -1170,17 +1142,7 @@ impl Engine {
         console.register_cvar("net_fake_latency", "0", CvarFlags::default());
         console.register_cvar("net_fake_jitter", "0", CvarFlags::default());
         console.register_cvar("net_fake_loss", "0", CvarFlags::default());
-        for (name, value) in [
-            ("skill", "1"),
-            ("deathmatch", "0"),
-            ("coop", "0"),
-            ("teamplay", "0"),
-            ("fraglimit", "0"),
-            ("timelimit", "0"),
-            ("samelevel", "0"),
-            ("noexit", "0"),
-            ("registered", "1"),
-        ] {
+        for (name, value) in GAME_RULES {
             console.register_cvar(name, value, CvarFlags::default());
         }
         let server_rule = CvarFlags { saved: true };
@@ -1584,7 +1546,7 @@ impl PlatformApp for Engine {
         self.world.renderer = Some(Renderer::new(target, self.size)?);
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
-        self.console.add("exec quake.rc");
+        self.console.add(&format!("exec {STARTUP_SCRIPT}"));
         if !self.has_config {
             self.console.add(MOVE_BINDINGS);
         }

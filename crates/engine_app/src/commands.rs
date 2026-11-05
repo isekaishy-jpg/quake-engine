@@ -14,7 +14,7 @@ use engine_net::{
 };
 use engine_render::Capture;
 use engine_server::Kicked;
-use fixture_quake::Screen;
+use fixture_quake::{DEFAULT_CONFIG, GAME_COMMANDS, Screen};
 
 use crate::app::{MOVE_BINDINGS, World};
 use crate::keys::to_hex;
@@ -83,9 +83,10 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("menu_multiplayer", open_menu);
     console.register("save", save);
     console.register("load", load);
-    for command in ["kill", "god", "notarget", "give", "status"] {
+    for command in GAME_COMMANDS {
         console.register(command, game_command);
     }
+    console.register("status", game_command);
     for ignored in ["+mlook", "-mlook", "+klook", "-klook", "sizeup", "sizedown"] {
         console.register(ignored, nothing);
     }
@@ -232,7 +233,7 @@ fn newgame(console: &mut Console<World>, _world: &mut World, _args: &Args) {
 
 /// `reset_defaults`: goes back to the game's settings, and this engine's keys.
 fn reset_defaults(console: &mut Console<World>, _world: &mut World, _args: &Args) {
-    console.add("exec default.cfg");
+    console.add(&format!("exec {DEFAULT_CONFIG}"));
     console.add(MOVE_BINDINGS);
 }
 

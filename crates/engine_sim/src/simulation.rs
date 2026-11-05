@@ -31,7 +31,7 @@ const LINK_MARGIN: f32 = 1.0;
 const ITEM_MARGIN: f32 = 15.0;
 
 /// `FL_ITEM`.
-const FLAG_ITEM: u32 = 256;
+pub const FLAG_ITEM: u32 = 256;
 
 /// How an entity blocks others.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]

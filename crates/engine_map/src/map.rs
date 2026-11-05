@@ -177,6 +177,22 @@ pub struct Map {
     pub entities: Vec<Entity>,
 }
 
+impl Model {
+    /// Which of the clipping hulls fits a box `width` across, and that hull's
+    /// low corner, or `None` for something small enough to be a point, as
+    /// `SV_HullForEntity` chooses.
+    #[must_use]
+    pub fn hull_for(width: f32) -> Option<(usize, Vec3)> {
+        if width < 3.0 {
+            None
+        } else if width <= 32.0 {
+            Some((0, Vec3::new(-16.0, -16.0, -24.0)))
+        } else {
+            Some((1, Vec3::new(-32.0, -32.0, -24.0)))
+        }
+    }
+}
+
 impl Map {
     /// The first entity of `class`, if any.
     #[must_use]

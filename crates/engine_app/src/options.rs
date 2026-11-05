@@ -3,8 +3,7 @@
 use std::fmt;
 use std::path::PathBuf;
 
-/// The game directory used when `-game` isn't given.
-const BASE_GAME: &str = "id1";
+use fixture_quake::BASE_GAME;
 
 /// A command line that can't be used.
 #[derive(Debug)]

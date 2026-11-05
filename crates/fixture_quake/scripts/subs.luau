@@ -14,22 +14,6 @@
 --
 -- Ported from subs.qc and the constants of defs.qc.
 
-SOLID_NOT = 0
-SOLID_TRIGGER = 1
-SOLID_BBOX = 2
-SOLID_SLIDEBOX = 3
-SOLID_BSP = 4
-
-MOVETYPE_NONE = 0
-MOVETYPE_WALK = 3
-MOVETYPE_STEP = 4
-MOVETYPE_FLY = 5
-MOVETYPE_TOSS = 6
-MOVETYPE_PUSH = 7
-MOVETYPE_NOCLIP = 8
-MOVETYPE_FLYMISSILE = 9
-MOVETYPE_BOUNCE = 10
-
 STATE_TOP = 0
 STATE_BOTTOM = 1
 STATE_UP = 2
@@ -69,16 +53,10 @@ IT_INVULNERABILITY = 1048576
 IT_SUIT = 2097152
 IT_QUAD = 4194304
 
-FL_FLY = 1
-FL_SWIM = 2
 FL_CLIENT = 8
 FL_INWATER = 16
-FL_MONSTER = 32
 FL_GODMODE = 64
 FL_NOTARGET = 128
-FL_ITEM = 256
-FL_ONGROUND = 512
-FL_PARTIALGROUND = 1024
 
 EF_BRIGHTFIELD = 1
 EF_MUZZLEFLASH = 2
@@ -93,13 +71,6 @@ DEAD_NO = 0
 DEAD_DYING = 1
 DEAD_DEAD = 2
 DEAD_RESPAWNABLE = 3
-
-CONTENT_EMPTY = -1
-CONTENT_SOLID = -2
-CONTENT_WATER = -3
-CONTENT_SLIME = -4
-CONTENT_LAVA = -5
-CONTENT_SKY = -6
 
 TE_SPIKE = 0
 TE_SUPERSPIKE = 1
@@ -131,6 +102,14 @@ VEC_HULL2_MIN = vector.create(-32, -32, -24)
 VEC_HULL2_MAX = vector.create(32, 32, 64)
 
 -- Fields that read as zero until they're set, as all of QuakeC's do.
+-- Map fields that aren't text.
+set_number_fields({
+	"speed", "wait", "lip", "dmg", "health", "spawnflags", "sounds", "height", "delay",
+	"style", "count", "t_length", "t_width", "worldtype", "angle", "volume",
+})
+
+set_player_defaults({ classname = "player", health = 100, items = 0 })
+
 set_field_defaults({
 	ammo_cells = 0,
 	ammo_nails = 0,

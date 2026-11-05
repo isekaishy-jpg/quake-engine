@@ -14,7 +14,7 @@ use box3d_rust::{Pos, Vec3 as BoxVec3};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::player::Liquid;
-use engine_map::{ClipChild, Contents, Map};
+use engine_map::{ClipChild, Contents, Map, Model};
 
 use crate::hull::{HullRoot, enter_box, trace_hull};
 use crate::solids::build_solids;
@@ -279,15 +279,9 @@ impl<'a> Collision<'a> {
     /// chooses. Entities are a job for whoever knows them.
     #[must_use]
     pub fn move_box(&self, start: Vec3, mins: Vec3, maxs: Vec3, end: Vec3) -> Trace {
-        let width = maxs.x - mins.x;
-        let (hull, hull_mins) = if width < 3.0 {
-            (None, mins)
-        } else if width <= 32.0 {
-            (Some(0), Vec3::new(-16.0, -16.0, -24.0))
-        } else {
-            (Some(1), Vec3::new(-32.0, -32.0, -24.0))
-        };
-        let shift = hull_mins - mins;
+        let chosen = Model::hull_for(maxs.x - mins.x);
+        let hull = chosen.map(|(hull, _)| hull);
+        let shift = chosen.map_or(Vec3::ZERO, |(_, hull_mins)| hull_mins - mins);
         let map = &self.world.map;
         let root_of = |number: u32| {
             let model = map.models.get(usize::try_from(number).ok()?)?;

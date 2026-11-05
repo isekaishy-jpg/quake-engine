@@ -17,7 +17,7 @@ pub(crate) const MAX_VELOCITY: f32 = 2000.0;
 pub const FLAG_ON_GROUND: u32 = 512;
 
 /// `FL_MONSTER`.
-const FLAG_MONSTER: u32 = 32;
+pub const FLAG_MONSTER: u32 = 32;
 
 /// Below this, part of a velocity stops, from `STOP_EPSILON`.
 const STOP_EPSILON: f32 = 0.1;

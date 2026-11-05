@@ -6,9 +6,6 @@ use engine_core::player::{
 };
 use engine_physics::{Collision, PointContents, Trace};
 
-/// The highest step a player walks up.
-const STEP_SIZE: f32 = 18.0;
-
 /// Velocity below this after a clip is stopped, to avoid tiny movements.
 const STOP_EPSILON: f32 = 0.1;
 
@@ -24,12 +21,6 @@ const MIN_GROUND_NORMAL: f32 = 0.7;
 /// Rising faster than this leaves the ground.
 const LEAVE_GROUND_SPEED: f32 = 180.0;
 
-/// The most air acceleration can aim for.
-const MAX_AIR_WISH: f32 = 30.0;
-
-/// The speed a jump adds.
-const JUMP_SPEED: f32 = 270.0;
-
 /// How far below the feet the edge check looks.
 const EDGE_DEPTH: f32 = 34.0;
 
@@ -41,9 +32,6 @@ const EDGE_FRICTION: f32 = 2.0;
 
 /// How far a stuck player is nudged, on each axis.
 const NUDGE: f32 = 0.125;
-
-/// The fastest noclip moves.
-const NOCLIP_SPEED: f32 = 800.0;
 
 /// The rules movement follows, which a server could change.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -62,6 +50,22 @@ pub struct MoveVars {
     pub friction: f32,
     /// Water friction.
     pub water_friction: f32,
+    /// The highest step a player walks up.
+    pub step_height: f32,
+    /// The speed a jump adds.
+    pub jump_speed: f32,
+    /// The most air acceleration can aim for.
+    pub air_wish_limit: f32,
+    /// The fastest noclip moves.
+    pub noclip_speed: f32,
+    /// What share of a wanted speed a swimmer gets.
+    pub swim_share: f32,
+    /// How fast a swimmer who's doing nothing sinks.
+    pub sink_speed: f32,
+    /// How fast a player swims up out of water, slime and lava.
+    pub surface_speeds: [f32; 3],
+    /// How hard climbing out of water pushes forwards and upwards.
+    pub climb_out: (f32, f32),
 }
 
 impl Default for MoveVars {
@@ -75,6 +79,14 @@ impl Default for MoveVars {
             water_accelerate: 10.0,
             friction: 4.0,
             water_friction: 1.0,
+            step_height: 18.0,
+            jump_speed: 270.0,
+            air_wish_limit: 30.0,
+            noclip_speed: 800.0,
+            swim_share: 0.7,
+            sink_speed: 60.0,
+            surface_speeds: [100.0, 80.0, 50.0],
+            climb_out: (50.0, 310.0),
         }
     }
 }
@@ -204,13 +216,13 @@ impl Mover<'_> {
         self.state.origin = original;
         self.state.velocity = original_velocity;
 
-        let raised = original + Vec3::new(0.0, 0.0, STEP_SIZE);
+        let raised = original + Vec3::new(0.0, 0.0, self.vars.step_height);
         let trace = self.trace(self.state.origin, raised);
         if !trace.start_solid && !trace.all_solid {
             self.state.origin = trace.end;
         }
         self.fly_move();
-        let lowered = self.state.origin - Vec3::new(0.0, 0.0, STEP_SIZE);
+        let lowered = self.state.origin - Vec3::new(0.0, 0.0, self.vars.step_height);
         let trace = self.trace(self.state.origin, lowered);
         if trace.normal.z < MIN_GROUND_NORMAL {
             self.state.origin = down;
@@ -286,7 +298,7 @@ impl Mover<'_> {
         if self.state.water_jump_time > 0.0 {
             return;
         }
-        let add = wish_speed.min(MAX_AIR_WISH) - self.state.velocity.dot(direction);
+        let add = wish_speed.min(self.vars.air_wish_limit) - self.state.velocity.dot(direction);
         if add <= 0.0 {
             return;
         }
@@ -299,16 +311,16 @@ impl Mover<'_> {
         let command = self.command;
         let mut wish = self.forward * command.forward + self.right * command.side;
         if command.forward == 0.0 && command.side == 0.0 && command.up == 0.0 {
-            wish.z -= 60.0;
+            wish.z -= self.vars.sink_speed;
         } else {
             wish.z += command.up;
         }
         let (direction, length) = direction_and_length(wish);
-        let wish_speed = length.min(self.vars.max_speed) * 0.7;
+        let wish_speed = length.min(self.vars.max_speed) * self.vars.swim_share;
         self.accelerate(direction, wish_speed, self.vars.water_accelerate);
 
         let destination = self.state.origin + self.state.velocity * command.seconds;
-        let start = destination + Vec3::new(0.0, 0.0, STEP_SIZE + 1.0);
+        let start = destination + Vec3::new(0.0, 0.0, self.vars.step_height + 1.0);
         let trace = self.trace(start, destination);
         if !trace.start_solid && !trace.all_solid {
             self.state.origin = trace.end;
@@ -395,9 +407,9 @@ impl Mover<'_> {
         if self.state.water_level >= 2 {
             self.state.on_ground = false;
             self.state.velocity.z = match self.state.liquid {
-                Liquid::Slime => 80.0,
-                Liquid::Lava => 50.0,
-                Liquid::Water | Liquid::None => 100.0,
+                Liquid::Slime => self.vars.surface_speeds[1],
+                Liquid::Lava => self.vars.surface_speeds[2],
+                Liquid::Water | Liquid::None => self.vars.surface_speeds[0],
             };
             return;
         }
@@ -405,7 +417,7 @@ impl Mover<'_> {
             return;
         }
         self.state.on_ground = false;
-        self.state.velocity.z += JUMP_SPEED;
+        self.state.velocity.z += self.vars.jump_speed;
         self.state.jump_held = true;
     }
 
@@ -424,8 +436,9 @@ impl Mover<'_> {
         if self.world.contents(spot) != PointContents::Empty {
             return;
         }
-        self.state.velocity = flat * 50.0;
-        self.state.velocity.z = 310.0;
+        let (forwards, upwards) = self.vars.climb_out;
+        self.state.velocity = flat * forwards;
+        self.state.velocity.z = upwards;
         self.state.water_jump_time = 2.0;
         self.state.jump_held = true;
     }
@@ -454,7 +467,7 @@ impl Mover<'_> {
             + self.right * command.side
             + Vec3::new(0.0, 0.0, command.up);
         let (direction, length) = direction_and_length(wish);
-        self.state.velocity = direction * length.min(NOCLIP_SPEED);
+        self.state.velocity = direction * length.min(self.vars.noclip_speed);
         self.state.origin = self.state.origin + self.state.velocity * command.seconds;
         self.state.on_ground = false;
         self.state.water_level = 0;

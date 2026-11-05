@@ -13,7 +13,7 @@ use engine_console::Console;
 use engine_net::loopback;
 use engine_physics::CollisionWorld;
 use engine_server::{SavedGame, Server};
-use fixture_quake::{Palette, SCRIPTS, import_map};
+use fixture_quake::{BASE_GAME, LoadedLevel, SCRIPTS, load_level};
 use serde::{Deserialize, Serialize};
 
 use crate::app::{CONFIG_NAME, World, player_client};
@@ -46,7 +46,7 @@ pub(crate) fn user_directory(options: &Options) -> PathBuf {
     let game = options
         .game_directories
         .last()
-        .map_or("id1", String::as_str);
+        .map_or(BASE_GAME, String::as_str);
     base.join(PRODUCT_FOLDER).join(game)
 }
 
@@ -113,11 +113,7 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     }
     let saved: SavedGame = serde_json::from_str(body)?;
     let level = saved.level_name().to_owned();
-    let bsp = world.filesystem.read(&format!("maps/{level}.bsp"))?;
-    let lit = world.filesystem.read(&format!("maps/{level}.lit")).ok();
-    let palette = world.filesystem.read("gfx/palette.lmp")?;
-    let palette = Palette::parse(&palette).ok_or("gfx/palette.lmp is the wrong size")?;
-    let map = Arc::new(import_map(&bsp, lit.as_deref(), &palette)?);
+    let LoadedLevel { map, palette, .. } = load_level(&world.filesystem, &level)?;
     let collision = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (client_end, server_end) = loopback();
     let server = Server::resume(

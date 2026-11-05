@@ -9,7 +9,10 @@ use engine_core::math::Vec3;
 use engine_core::sound::SoundStart;
 use engine_render::Renderer;
 use engine_ui::{canvas_scale, draw_plaque, draw_rate};
-use fixture_quake::{Intermission, MenuHost, Palette, SAVE_SLOTS, Wad, load_picture};
+use fixture_quake::{
+    BACKGROUND_PICTURE, Intermission, LOADING_PICTURE, MenuHost, PAUSE_PICTURE, PICTURE_WAD,
+    Palette, SAVE_SLOTS, Wad, load_palette, load_picture,
+};
 
 use crate::app::World;
 use crate::saves;
@@ -26,15 +29,6 @@ const VERSION: &str = concat!("Quake Engine ", env!("CARGO_PKG_VERSION"));
 /// What dims the view behind the menus, from `Draw_FadeScreen`.
 const MENU_FADE: [f32; 4] = [0.0, 0.0, 0.0, 0.8];
 
-/// What's behind the menus with no game running.
-const BACKGROUND_PICTURE: &str = "gfx/conback.lmp";
-
-/// The picture shown while paused.
-const PAUSE_PICTURE: &str = "gfx/pause.lmp";
-
-/// The picture shown while a level loads.
-const LOADING_PICTURE: &str = "gfx/loading.lmp";
-
 /// Pictures loaded so far, by name.
 #[derive(Default)]
 pub(crate) struct PictureBank {
@@ -48,8 +42,8 @@ impl PictureBank {
     /// Reads `gfx.wad` and the palette, the first time.
     fn source(&mut self, filesystem: &FileSystem) -> Option<&(Wad, Palette)> {
         if self.source.is_none() {
-            let wad = Wad::parse(&filesystem.read("gfx.wad").ok()?)?;
-            let palette = Palette::parse(&filesystem.read("gfx/palette.lmp").ok()?)?;
+            let wad = Wad::parse(&filesystem.read(PICTURE_WAD).ok()?)?;
+            let palette = load_palette(filesystem).ok()?;
             self.source = Some((wad, palette));
         }
         self.source.as_ref()

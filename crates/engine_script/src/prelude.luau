@@ -40,12 +40,21 @@ local ENGINE_FIELDS = {
 	frozen = true,
 }
 
--- Map fields that aren't text.
-local NUMBER_FIELDS = {
-	speed = true, wait = true, lip = true, dmg = true, health = true, spawnflags = true,
-	sounds = true, height = true, delay = true, style = true, count = true, t_length = true,
-	t_width = true, worldtype = true, angle = true, volume = true,
-}
+-- Map fields that aren't text. A game names them with `set_number_fields`.
+local NUMBER_FIELDS = {}
+
+function set_number_fields(names)
+	for _, name in names do
+		NUMBER_FIELDS[name] = true
+	end
+end
+
+-- What a player starts with. A game says with `set_player_defaults`.
+local player_defaults = {}
+
+function set_player_defaults(defaults)
+	player_defaults = defaults
+end
 local VECTOR_FIELDS = {
 	origin = true,
 	angles = true,
@@ -546,9 +555,9 @@ function adopt_player(id)
 	if the_player == nil then
 		the_player = player
 	end
-	rawset(player, "classname", "player")
-	rawset(player, "health", 100)
-	rawset(player, "items", 0)
+	for key, value in player_defaults do
+		rawset(player, key, value)
+	end
 	return player
 end
 
