@@ -150,11 +150,8 @@ function fire_fly(self)
 	local fireball = spawn()
 	fireball.solid = SOLID_TRIGGER
 	fireball.movetype = MOVETYPE_TOSS
-	fireball.velocity = vector.create(
-		random() * 100 - 50,
-		random() * 100 - 50,
-		self.speed + random() * 200
-	)
+	fireball.velocity =
+		vector.create(random() * 100 - 50, random() * 100 - 50, self.speed + random() * 200)
 	fireball.classname = "fireball"
 	setmodel(fireball, "progs/lavaball.mdl")
 	setsize(fireball, vector.zero, vector.zero)

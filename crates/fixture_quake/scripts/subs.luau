@@ -104,8 +104,22 @@ VEC_HULL2_MAX = vector.create(32, 32, 64)
 -- Fields that read as zero until they're set, as all of QuakeC's do.
 -- Map fields that aren't text.
 set_number_fields({
-	"speed", "wait", "lip", "dmg", "health", "spawnflags", "sounds", "height", "delay",
-	"style", "count", "t_length", "t_width", "worldtype", "angle", "volume",
+	"speed",
+	"wait",
+	"lip",
+	"dmg",
+	"health",
+	"spawnflags",
+	"sounds",
+	"height",
+	"delay",
+	"style",
+	"count",
+	"t_length",
+	"t_width",
+	"worldtype",
+	"angle",
+	"volume",
 })
 
 set_player_defaults({ classname = "player", health = 100, items = 0 })

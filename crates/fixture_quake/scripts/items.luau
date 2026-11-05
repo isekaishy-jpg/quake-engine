@@ -457,8 +457,12 @@ local function powerup(sample, model, name, item)
 	end
 end
 
-item_artifact_invulnerability =
-	powerup("items/protect.wav", "progs/invulner.mdl", "Pentagram of Protection", IT_INVULNERABILITY)
+item_artifact_invulnerability = powerup(
+	"items/protect.wav",
+	"progs/invulner.mdl",
+	"Pentagram of Protection",
+	IT_INVULNERABILITY
+)
 item_artifact_envirosuit = powerup("items/suit.wav", "progs/suit.mdl", "Biosuit", IT_SUIT)
 item_artifact_invisibility =
 	powerup("items/inv1.wav", "progs/invisibl.mdl", "Ring of Shadows", IT_INVISIBILITY)

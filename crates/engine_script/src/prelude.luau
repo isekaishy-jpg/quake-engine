@@ -356,12 +356,8 @@ function rint(value)
 end
 
 function traceline(start, finish, nomonsters, ignore)
-	local fraction, endpos, normal, hit, inopen, inwater = engine.traceline(
-		start,
-		finish,
-		nomonsters,
-		ignore and rawget(ignore, "_id")
-	)
+	local fraction, endpos, normal, hit, inopen, inwater =
+		engine.traceline(start, finish, nomonsters, ignore and rawget(ignore, "_id"))
 	trace_fraction = fraction
 	trace_endpos = endpos
 	trace_plane_normal = normal

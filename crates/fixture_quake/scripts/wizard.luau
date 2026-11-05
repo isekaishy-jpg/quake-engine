@@ -19,7 +19,10 @@ function LaunchMissile(self, missile, mspeed, accuracy)
 	local vec, fly
 	makevectors(self.angles)
 	-- set missile speed
-	vec = ent(self.enemy).origin + ent(self.enemy).mins + ent(self.enemy).size * 0.7 - missile.origin
+	vec = ent(self.enemy).origin
+		+ ent(self.enemy).mins
+		+ ent(self.enemy).size * 0.7
+		- missile.origin
 	-- calc aproximate time for missile to reach vec
 	fly = vector.magnitude(vec) / mspeed
 	-- get the entities xy velocity

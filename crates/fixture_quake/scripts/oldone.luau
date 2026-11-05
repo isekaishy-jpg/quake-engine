@@ -381,13 +381,13 @@ function finale_4(self)
 	end
 	-- start the end text
 	finale(
-		"Congratulations and well done! You have\n" ..
-		"beaten the hideous Shub-Niggurath, and\n" ..
-		"her hundreds of ugly changelings and\n" ..
-		"monsters. You have proven that your\n" ..
-		"skill and your cunning are greater than\n" ..
-		"all the powers of Quake. You are the\n" ..
-		"master now. Id Software salutes you."
+		"Congratulations and well done! You have\n"
+			.. "beaten the hideous Shub-Niggurath, and\n"
+			.. "her hundreds of ugly changelings and\n"
+			.. "monsters. You have proven that your\n"
+			.. "skill and your cunning are greater than\n"
+			.. "all the powers of Quake. You are the\n"
+			.. "master now. Id Software salutes you."
 	)
 	-- put a player model down
 	n = spawn()

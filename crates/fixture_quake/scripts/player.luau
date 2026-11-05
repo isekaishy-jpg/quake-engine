@@ -24,7 +24,8 @@ function SetNewParms()
 end
 
 function SetChangeParms(self)
-	local dropped = bit32.bor(IT_KEY1, IT_KEY2, IT_INVISIBILITY, IT_INVULNERABILITY, IT_SUIT, IT_QUAD)
+	local dropped =
+		bit32.bor(IT_KEY1, IT_KEY2, IT_INVISIBILITY, IT_INVULNERABILITY, IT_SUIT, IT_QUAD)
 	local items = self.items - bit32.band(self.items, dropped)
 	local health = math.clamp(self.health, 50, 100)
 	parms = {
@@ -521,7 +522,10 @@ end
 function show_eyes(self, invisible)
 	if invisible ~= (self.showing_eyes or false) then
 		self.showing_eyes = invisible
-		engine.set_model(rawget(self, "_id"), if invisible then "progs/eyes.mdl" else "progs/player.mdl")
+		engine.set_model(
+			rawget(self, "_id"),
+			if invisible then "progs/eyes.mdl" else "progs/player.mdl"
+		)
 		setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
 	end
 end

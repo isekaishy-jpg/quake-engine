@@ -25,13 +25,15 @@ function CanDamage(targ, inflictor)
 		traceline(inflictor.origin, (targ.absmin + targ.absmax) * 0.5, true, inflictor)
 		return trace_fraction == 1 or trace_ent == targ
 	end
-	for _, offset in {
-		vector.zero,
-		vector.create(15, 15, 0),
-		vector.create(-15, -15, 0),
-		vector.create(-15, 15, 0),
-		vector.create(15, -15, 0),
-	} do
+	for _, offset in
+		{
+			vector.zero,
+			vector.create(15, 15, 0),
+			vector.create(-15, -15, 0),
+			vector.create(-15, 15, 0),
+			vector.create(15, -15, 0),
+		}
+	do
 		traceline(inflictor.origin, targ.origin + offset, true, inflictor)
 		if trace_fraction == 1 then
 			return true

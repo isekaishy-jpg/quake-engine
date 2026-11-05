@@ -10,7 +10,6 @@ Done, in proposals 0001 to 0009, apart from:
 
 | Item | What research has to establish |
 |---|---|
-| Luau formatting | Which tool enforces `docs/style.md`, such as `StyLua` in `xtask` |
 | `engine_host`, `engine_worker` and `engine_cache` under the workspace lints | About 800 warnings to work through |
 
 ## Dependencies

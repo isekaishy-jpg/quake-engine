@@ -6,11 +6,13 @@
 //! - [`checks`] runs the required checks from DESIGN.md;
 //! - [`build_number`] reserves package build numbers that are never reused;
 //! - [`crate_graph`] states and enforces the crate dependency rules;
+//! - [`luau`] keeps Luau formatted;
 //! - [`product`] spells the product version and build identity.
 
 pub mod build_number;
 pub mod checks;
 pub mod crate_graph;
+pub mod luau;
 pub mod product;
 
 use std::path::PathBuf;

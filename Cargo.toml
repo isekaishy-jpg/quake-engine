@@ -50,6 +50,8 @@ publish = false
 egui = { version = "=0.37.0", default-features = false, features = ["default_fonts"] }
 # Proposal 0008: typed `cargo metadata` access for the crate-graph rule test.
 cargo_metadata = { version = "=0.23.1", default-features = false }
+# Proposal 0094: formats Luau for `xtask`, as a library.
+stylua = { version = "=2.6.0", default-features = false, features = ["luau"] }
 
 # Engine crates.
 engine_assets = { path = "crates/engine_assets" }
