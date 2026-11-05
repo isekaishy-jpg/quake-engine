@@ -25,11 +25,10 @@ function hknight_shot(self, offset)
 	-- set missile speed
 	vec = normalize(v_forward)
 	vec = with_z(vec, 0 - vec.z + (random() - 0.5) * 0.1)
-	launch_spike(self, org, vec)
+	launch_spike(self, org, vec, 300)
 	newmis.classname = "knightspike"
 	setmodel(newmis, "progs/k_spike.mdl")
 	setsize(newmis, VEC_ORIGIN, VEC_ORIGIN)
-	newmis.velocity = vec * 300
 	sound(self, CHAN_WEAPON, "hknight/attack1.wav", 1, ATTN_NORM)
 end
 

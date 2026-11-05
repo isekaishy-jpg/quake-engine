@@ -96,6 +96,10 @@ pub struct Entity {
     pub frame: u16,
     /// Which skin it shows.
     pub skin: u8,
+    /// Where it last touched triggers from. Only moving under its own power
+    /// or being pushed touches them again, as `SV_LinkEdict` is told.
+    #[serde(default)]
+    pub touched_from: Vec3,
     /// Effects, by the original's bits.
     pub effects: u8,
     /// Its pitch, yaw and roll in degrees.
@@ -269,6 +273,9 @@ pub struct SavedSimulation {
     check_index: usize,
     /// The leaves that player can be seen from.
     player_view: Vec<bool>,
+    /// How many more passes touch triggers for everything.
+    #[serde(default)]
+    force_retouch: u8,
     /// The level's gravity. Saves from before it was kept have the usual.
     #[serde(default = "usual_gravity")]
     gravity: f32,
@@ -304,6 +311,9 @@ pub struct Simulation {
     pub(crate) check_index: usize,
     /// The leaves that player can be seen from.
     pub(crate) player_view: Vec<bool>,
+    /// How many more passes touch triggers for everything, from
+    /// `force_retouch`.
+    force_retouch: u8,
     /// Where players are taken to be, while a shot looks into the past.
     rewound: Vec<(EntityId, Vec3)>,
     /// Whether shots show the boxes they're judged against.
@@ -340,6 +350,7 @@ impl Simulation {
             last_check: 0.0,
             check_index: 0,
             player_view: Vec::new(),
+            force_retouch: 0,
             rewound: Vec::new(),
             showing_rewind: false,
             event_time: None,
@@ -410,6 +421,7 @@ impl Simulation {
             last_check,
             check_index,
             player_view,
+            force_retouch,
             rewound: _,
             showing_rewind: _,
             event_time: _,
@@ -424,6 +436,7 @@ impl Simulation {
             last_check: *last_check,
             check_index: *check_index,
             player_view: player_view.clone(),
+            force_retouch: *force_retouch,
             gravity: vars.gravity,
         }
     }
@@ -449,6 +462,7 @@ impl Simulation {
             shapes: saved.shapes,
             seed: saved.seed,
             last_check: saved.last_check,
+            force_retouch: saved.force_retouch,
             check_index: saved.check_index,
             player_view: saved.player_view,
             rewound: Vec::new(),
@@ -749,7 +763,14 @@ impl Simulation {
             player.state.ground_model = None;
         } else if let Some(entity) = self.entities.get_mut(id) {
             entity.origin = origin;
+            entity.touched_from = origin;
         }
+    }
+
+    /// Makes even what isn't moving touch triggers for the next two passes,
+    /// from `force_retouch`.
+    pub fn force_retouch(&mut self) {
+        self.force_retouch = 2;
     }
 
     /// An entity's velocity.
@@ -866,8 +887,30 @@ impl Simulation {
         }
     }
 
+    /// What `id` has to think before moving by `seconds`. Things that fly
+    /// think first, in `SV_Physics_Toss` and `SV_Physics_Noclip`, so that they
+    /// can stop or turn before they go on.
+    pub fn think_before_moving(&mut self, id: EntityId, seconds: f64) -> Option<Callback> {
+        let entity = *self.entities.get(id)?;
+        let thinks_first = matches!(
+            entity.move_type,
+            MoveType::Noclip
+                | MoveType::Fly
+                | MoveType::Toss
+                | MoveType::FlyMissile
+                | MoveType::Bounce
+        );
+        if !thinks_first || self.is_player(id) {
+            return None;
+        }
+        let mut callbacks = Vec::new();
+        self.run_think(id, &entity, seconds, &mut callbacks);
+        callbacks.pop()
+    }
+
     /// Advances `id` by `seconds`, and returns what its script has to handle,
-    /// following `SV_Physics_Pusher` and `SV_RunThink`.
+    /// following `SV_Physics_Pusher` and `SV_RunThink`. What thinks before it
+    /// moves has had [`Simulation::think_before_moving`] first.
     pub fn advance(&mut self, id: EntityId, seconds: f64, world: &CollisionWorld) -> Vec<Callback> {
         let mut callbacks = Vec::new();
         let Some(entity) = self.entities.get(id).copied() else {
@@ -910,7 +953,6 @@ impl Simulation {
                 self.check_water_of(id, world, &mut callbacks);
             }
             MoveType::Noclip => {
-                self.run_think(id, &entity, seconds, &mut callbacks);
                 #[expect(
                     clippy::cast_possible_truncation,
                     reason = "a tick needs no more than f32"
@@ -918,7 +960,6 @@ impl Simulation {
                 self.drift(id, seconds as f32);
             }
             MoveType::Fly | MoveType::Toss | MoveType::FlyMissile | MoveType::Bounce => {
-                self.run_think(id, &entity, seconds, &mut callbacks);
                 #[expect(
                     clippy::cast_possible_truncation,
                     reason = "a tick needs no more than f32"
@@ -1122,9 +1163,12 @@ impl Simulation {
         Ok(())
     }
 
-    /// Triggers overlapping what's moved, as `SV_LinkEdict` finds: monsters,
-    /// and anything in flight. What's come to rest links no more.
-    fn moved_touches(&self, touches: &mut Vec<Callback>) {
+    /// Triggers overlapping what's moved, as `SV_LinkEdict` finds: monsters
+    /// that have stepped, and anything in flight. What's come to rest links no
+    /// more, unless the game has asked for everything to.
+    fn moved_touches(&mut self, touches: &mut Vec<Callback>) {
+        let everything = self.force_retouch > 0;
+        self.force_retouch = self.force_retouch.saturating_sub(1);
         let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);
         let triggers: Vec<(EntityId, Vec3, Vec3)> = self
             .entities
@@ -1143,7 +1187,9 @@ impl Simulation {
                 entity.move_type,
                 MoveType::Toss | MoveType::Bounce | MoveType::Fly | MoveType::FlyMissile
             ) && entity.velocity != Vec3::ZERO;
-            if !(entity.move_type == MoveType::Step || flying) || entity.solid == Solid::Not {
+            let stepped =
+                entity.move_type == MoveType::Step && entity.origin != entity.touched_from;
+            if !(everything || stepped || flying) || entity.solid == Solid::Not {
                 continue;
             }
             let low = entity.origin + entity.mins;
@@ -1156,6 +1202,9 @@ impl Simulation {
                     });
                 }
             }
+        }
+        for entity in self.entities.values_mut() {
+            entity.touched_from = entity.origin;
         }
     }
 
@@ -1316,7 +1365,7 @@ impl Simulation {
         self.moved_touches(&mut touches);
         for player in &self.players {
             let state = player.state;
-            if state.noclip || state.dead || state.frozen {
+            if state.dead || state.frozen {
                 continue;
             }
             let margin = Vec3::new(LINK_MARGIN, LINK_MARGIN, LINK_MARGIN);

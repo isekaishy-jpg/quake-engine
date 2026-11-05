@@ -1066,6 +1066,305 @@ fn a_teleport_waiting_to_be_used_leaves_what_stands_in_it_alone() {
     game.check(r#"assert(ogre.origin.x > 100, "it goes once it's used")"#);
 }
 
+/// Lua that makes `thing`, a monster standing still at `x`.
+fn still_monster(x: f32) -> String {
+    format!(
+        r#"
+        thing = spawn()
+        thing.classname = "monster_test"
+        thing.movetype = MOVETYPE_STEP
+        thing.solid = SOLID_SLIDEBOX
+        thing.flags = FL_ONGROUND
+        thing.health = 100
+        thing.takedamage = DAMAGE_AIM
+        thing.th_pain = SUB_Null
+        thing.th_die = SUB_Null
+        setsize(thing, vector.create(-16, -16, -24), vector.create(16, 16, 32))
+        setorigin(thing, vector.create({x}, 0, {z}))
+        "#,
+        z = at_floor(0.0, 0.0).z
+    )
+}
+
+#[test]
+fn a_monster_only_touches_a_trigger_by_moving() {
+    let hurt = (
+        Vec3::new(-200.0, -100.0, -256.0),
+        Vec3::new(0.0, 100.0, -100.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[&[("classname", "trigger_hurt"), ("model", "*1")]];
+    let map = map(&[hurt], entities);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.wait(0.1);
+    game.check(&still_monster(-100.0));
+    game.wait(2.5);
+    game.check(r#"assert(thing.health == 100, "it's been left alone")"#);
+    game.check(r#"assert(walkmove(thing, 0, 8), "it can step")"#);
+    game.wait(0.05);
+    game.check(r#"assert(thing.health < 100, "stepping touched it")"#);
+}
+
+#[test]
+fn a_noclipping_player_still_touches_triggers() {
+    let hurt = (
+        Vec3::new(100.0, 100.0, -256.0),
+        Vec3::new(250.0, 250.0, -100.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[&[("classname", "trigger_hurt"), ("model", "*1")]];
+    let map = map(&[hurt], entities);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.1);
+    game.client
+        .send(ClientMessage::Console("noclip".to_owned()).encode());
+    game.wait(0.1);
+    assert!(game.player().noclip);
+    game.check(
+        r#"
+        local player = find_all("classname", "player")[1]
+        assert(player.health == 100, "the control: it's not there yet")
+        setorigin(player, vector.create(200, 200, -200))
+        "#,
+    );
+    game.wait(0.1);
+    game.check(r#"assert(find_all("classname", "player")[1].health < 100)"#);
+}
+
+#[test]
+fn someone_arriving_telefrags_a_monster_standing_still() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.wait(0.1);
+    game.check(&still_monster(-100.0));
+    game.wait(0.1);
+    game.check(
+        r#"
+        assert(thing.health == 100)
+        spawn_tdeath(thing.origin, find_all("classname", "player")[1])
+        "#,
+    );
+    game.wait(0.1);
+    game.check(r#"assert(thing.health <= 0, "it was still, and it's dead")"#);
+}
+
+#[test]
+fn a_single_player_arrival_telefrags_too() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.3);
+    game.check(
+        r#"
+        assert(deathmatch == 0 and coop == 0)
+        assert(#find_all("classname", "teledeath") == 0, "the first has gone")
+        PutClientInServer(find_all("classname", "player")[1])
+        assert(#find_all("classname", "teledeath") == 1, "there's a new one")
+        "#,
+    );
+}
+
+#[test]
+fn slow_spikes_are_announced_at_their_real_speed() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.1);
+    game.check(
+        r#"
+        local real = engine.launch
+        local told = nil
+        engine.launch = function(id, from, origin, velocity, ...)
+            told = velocity
+            return real(id, from, origin, velocity, ...)
+        end
+        local player = find_all("classname", "player")[1]
+        local fast = launch_spike(player, player.origin, vector.create(1, 0, 0))
+        assert(told.x == 1000, "a nail")
+        local slow = launch_spike(player, player.origin, vector.create(1, 0, 0), 300)
+        assert(told.x == 300 and slow.velocity.x == 300, "a knight's")
+        local trap = spawn()
+        trap.movedir = vector.create(0, 1, 0)
+        trap.origin = player.origin
+        spikeshooter_use(trap)
+        assert(told.y == 500, "a trap's")
+        engine.launch = real
+        "#,
+    );
+}
+
+#[test]
+fn grunts_fire_again_on_nightmare() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.wait(0.1);
+    game.check(&still_monster(0.0));
+    game.check(
+        r#"
+        thing.enemy = find_all("classname", "player")[1]
+        army_atk7(thing)
+        assert(thing.think == army_atk8, "only on nightmare")
+        "#,
+    );
+    game.server.set_setting("skill", 3.0);
+    game.wait(TICK);
+    game.check(
+        r#"
+        army_atk7(thing)
+        assert(thing.think == army_atk1 and thing.cnt == 1, "again")
+        army_atk7(thing)
+        assert(thing.think == army_atk8, "but only once")
+        "#,
+    );
+}
+
+#[test]
+fn a_player_firing_or_unseen_makes_no_pain_sound() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.1);
+    game.sounds.clear();
+    game.check(
+        r#"
+        local player = find_all("classname", "player")[1]
+        player.weaponframe = 1
+        player_pain(player)
+        player.weaponframe = 0
+        player.invisible_finished = time() + 10
+        player_pain(player)
+        player.invisible_finished = 0
+        "#,
+    );
+    game.wait(0.05);
+    let pained = |game: &Game| {
+        game.sounds
+            .iter()
+            .any(|sound| sound.name.starts_with("player/pain"))
+    };
+    assert!(!pained(&game), "{:?}", game.sounds);
+    for _ in 0..16 {
+        game.check(
+            r#"
+            local player = find_all("classname", "player")[1]
+            player.pain_finished = 0
+            player_pain(player)
+            "#,
+        );
+        game.wait(0.05);
+    }
+    assert!(pained(&game), "the control: it's heard otherwise");
+}
+
+#[test]
+fn the_invisible_die_as_themselves() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.1);
+    game.check(
+        r#"
+        local real = engine.set_model
+        shown = nil
+        engine.set_model = function(id, model)
+            shown = model
+            return real(id, model)
+        end
+        local player = find_all("classname", "player")[1]
+        player.items = bit32.bor(player.items, IT_INVISIBILITY)
+        player.invisible_finished = time() + 10
+        CheckPowerups(player)
+        assert(shown == "progs/eyes.mdl", "the control: just eyes")
+        player.health = -1
+        PlayerDie(player)
+        assert(shown == "progs/player.mdl", "a body")
+        engine.set_model = real
+        "#,
+    );
+}
+
+#[test]
+fn angles_are_cut_towards_zero_as_c_does() {
+    let map = map(&[], &[]);
+    let game = Game::new(&map, at_floor(300.0, 300.0));
+    game.check(
+        r#"
+        local function towards(degrees)
+            local radians = math.rad(degrees)
+            return vector.create(math.cos(radians), math.sin(radians), 0)
+        end
+        assert(vectoyaw(towards(45.7)) == 45)
+        assert(vectoyaw(towards(-45.7)) == 315)
+        assert(vectoyaw(towards(-0.5)) == 0)
+        assert(vectoangles(towards(-45.7)).y == 315)
+        local down = vector.create(math.cos(math.rad(10.5)), 0, -math.sin(math.rad(10.5)))
+        assert(vectoangles(down).x == 350)
+        "#,
+    );
+}
+
+#[test]
+fn a_facing_trigger_goes_by_a_players_angles() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.run(
+        1,
+        UserCommand {
+            pitch: 60.0,
+            ..UserCommand::default()
+        },
+    );
+    game.check(
+        r#"
+        local player = find_all("classname", "player")[1]
+        local trigger = spawn()
+        trigger.movedir = vector.create(0, 0, 1)
+        trigger.wait = 0.2
+        multi_touch(trigger, player)
+        assert(trigger.enemy == player, "looking down tilts a player's body up")
+        "#,
+    );
+    game.run(
+        1,
+        UserCommand {
+            pitch: -60.0,
+            ..UserCommand::default()
+        },
+    );
+    game.check(
+        r#"
+        local player = find_all("classname", "player")[1]
+        local other = spawn()
+        other.movedir = vector.create(0, 0, 1)
+        other.wait = 0.2
+        multi_touch(other, player)
+        assert(other.enemy == nil, "the control")
+        "#,
+    );
+}
+
+#[test]
+fn what_flies_thinks_before_it_moves() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(300.0, 300.0));
+    game.wait(0.1);
+    game.check(
+        r#"
+        flying = spawn()
+        flying.movetype = MOVETYPE_FLY
+        flying.solid = SOLID_NOT
+        setsize(flying, vector.zero, vector.zero)
+        setorigin(flying, vector.create(0, 0, -100))
+        flying.velocity = vector.create(100, 0, 0)
+        flying.nextthink = time()
+        flying.think = function(self)
+            thought_at = self.origin
+        end
+        "#,
+    );
+    game.wait(0.1);
+    game.check(
+        r#"
+        assert(thought_at.x == 0, "it hadn't gone anywhere")
+        assert(flying.origin.x > 0, "the control: it went then")
+        "#,
+    );
+}
+
 #[test]
 fn a_wind_tunnel_takes_a_grenade_too() {
     let tunnel = (

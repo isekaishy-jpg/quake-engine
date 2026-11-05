@@ -548,11 +548,10 @@ function boss_missile(self, p)
 		d = ent(self.enemy).origin
 	end
 	vec = normalize(d - org)
-	launch_spike(self, org, vec)
+	launch_spike(self, org, vec, 300)
 	setmodel(newmis, "progs/lavaball.mdl")
 	newmis.avelocity = vector.create(200, 100, 300)
 	setsize(newmis, VEC_ORIGIN, VEC_ORIGIN)
-	newmis.velocity = vec * 300
 	newmis.touch = T_MissileTouch
 	-- rocket explosion
 	sound(self, CHAN_WEAPON, "boss1/throw.wav", 1, ATTN_NORM)

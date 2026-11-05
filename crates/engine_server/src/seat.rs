@@ -18,6 +18,10 @@ const MAX_ALLOWANCE: f32 = 0.25;
 /// The most a single command can cost.
 const MAX_COMMAND_COST: f32 = 0.1;
 
+/// The least a single command can cost, because even one that lasts no time
+/// runs the game's scripts.
+const MIN_COMMAND_COST: f32 = 0.001;
+
 /// How many snapshots are kept to send differences from.
 const SNAPSHOT_HISTORY: usize = 64;
 
@@ -266,10 +270,12 @@ impl Seat {
         self.ping.is_some()
     }
 
-    /// Their ping as measured here, in milliseconds. Nothing they say counts:
-    /// it's how long their answer to a snapshot took, less the tick that
-    /// waiting for a command to carry it takes, and less what this server
-    /// added itself.
+    /// Their ping as measured here, in milliseconds. It's how long their
+    /// answer to a snapshot took, less the tick that waiting for a command to
+    /// carry it takes, and less what this server added itself. They can't claim
+    /// a better one than they have. Holding answers back makes a worse one,
+    /// which can't be told from a worse connection, so fairness's ceiling is
+    /// what bounds it.
     #[must_use]
     pub(crate) fn ping(&self) -> f64 {
         self.ping.unwrap_or(0.0)
@@ -341,7 +347,7 @@ impl Seat {
     /// Uses `seconds` of movement, and says whether they had it. A command
     /// never lasts longer than the simulation lets it, so that's all it costs.
     pub(crate) fn spend(&mut self, seconds: f32) -> bool {
-        let cost = seconds.clamp(0.0, MAX_COMMAND_COST);
+        let cost = seconds.clamp(MIN_COMMAND_COST, MAX_COMMAND_COST);
         if cost > self.allowance {
             return false;
         }

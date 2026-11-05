@@ -135,6 +135,11 @@ impl<T> SlotTable<T> {
         self.iter().map(|(id, _)| id).collect()
     }
 
+    /// Every value, in slot order.
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut T> {
+        self.slots.iter_mut().filter_map(|slot| slot.value.as_mut())
+    }
+
     /// Every entry, in slot order.
     pub fn iter(&self) -> impl Iterator<Item = (EntityId, &T)> {
         self.slots.iter().enumerate().filter_map(|(index, slot)| {

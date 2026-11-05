@@ -466,6 +466,14 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "force_retouch",
+            lua.create_function(move |_, ()| {
+                sim.borrow_mut().force_retouch();
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "set_model",
             lua.create_function(move |_, (id, model): (f64, String)| {
                 if let Some(number) = model.strip_prefix('*').and_then(|n| n.parse().ok()) {

@@ -251,7 +251,7 @@ end
 function enf_atk14(self)
 	animate(self, 40, enf_run1)
 	ai_face(self)
-	SUB_CheckRefire(enf_atk1)
+	SUB_CheckRefire(self, enf_atk1)
 end
 
 function enf_paina1(self)

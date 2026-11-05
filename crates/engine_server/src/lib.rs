@@ -620,6 +620,13 @@ impl Server {
         self.update_fairness();
         let ids = self.simulation.borrow().ids();
         for id in ids {
+            let think = self
+                .simulation
+                .borrow_mut()
+                .think_before_moving(id, self.seconds);
+            if let Some(think) = think {
+                self.game.run(think);
+            }
             let callbacks = self
                 .simulation
                 .borrow_mut()

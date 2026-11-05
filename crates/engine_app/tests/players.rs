@@ -470,6 +470,57 @@ fn a_player_who_leaves_is_gone() {
 }
 
 #[test]
+fn nobody_goes_on_hunting_a_player_who_has_left() {
+    let (mut server, _host, guest) = two_players();
+    server
+        .exec(
+            r#"
+            gone = find_all("classname", "player")[2]
+            assert(gone.health > 0, "the control")
+            "#,
+        )
+        .expect("they're here");
+    drop(guest);
+    server.tick();
+    server.tick();
+    server
+        .exec(
+            r#"
+            assert(gone.health <= 0, "nothing hunts them now")
+            assert(bodyque_head ~= nil, "something's left of them")
+            "#,
+        )
+        .expect("they've gone");
+}
+
+#[test]
+fn commands_lasting_no_time_still_cost_something() {
+    let (mut server, _host, mut guest) = two_players();
+    let mut sequence = 0;
+    for _ in 0..200 {
+        let commands = (0..8)
+            .map(|_| {
+                sequence += 1;
+                UserCommand {
+                    sequence,
+                    seconds: 0.0,
+                    ..UserCommand::default()
+                }
+            })
+            .collect();
+        guest.end.send(ClientMessage::Move(commands, 0).encode());
+    }
+    server.tick();
+    guest.read();
+    let snapshot = guest.latest.expect("it's told how far it got");
+    assert!(snapshot.acknowledged > 0, "the control: some of them ran");
+    assert!(
+        snapshot.acknowledged < 1000,
+        "1600 of them were sent, and they're not free"
+    );
+}
+
+#[test]
 fn malformed_messages_are_ignored() {
     let (mut server, mut host, mut guest) = two_players();
     for bytes in [

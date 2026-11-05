@@ -255,7 +255,7 @@ end
 function army_atk7(self)
 	animate(self, 87, army_atk8)
 	ai_face(self)
-	SUB_CheckRefire(army_atk1)
+	SUB_CheckRefire(self, army_atk1)
 end
 
 function army_atk8(self)

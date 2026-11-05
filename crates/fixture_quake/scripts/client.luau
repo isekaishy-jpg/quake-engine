@@ -309,6 +309,10 @@ function ClientDisconnect(self)
 	bprint(self.netname .. " left the game with " .. tostring(self.frags or 0) .. " frags")
 	sound(self, CHAN_BODY, "player/tornoff2.wav", 1, ATTN_NONE)
 	set_suicide_frame(self)
+	-- The original's body stays where it is. This one goes with them, so
+	-- something else has to stay, and nothing should go on hunting it.
+	CopyToBodyQue(self)
+	self.health = 0
 end
 
 -- What each monster did to the player.

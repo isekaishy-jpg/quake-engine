@@ -84,7 +84,9 @@ function multi_touch(self, other)
 
 	-- If the trigger has an angles field, check the player's facing direction.
 	if self.movedir ~= vector.zero then
-		local forward = makevectors(other.view)
+		-- A player's `angles`, which `SV_ClientThink` makes of their view.
+		local view = other.view
+		local forward = makevectors(vector.create(-view.x / 3, view.y, 0))
 		if vector.dot(forward, self.movedir) < 0 then
 			return
 		end
@@ -244,6 +246,7 @@ function spawn_tdeath(org, death_owner)
 	death.nextthink = time() + 0.2
 	death.think = SUB_Remove
 	death.owner = death_owner
+	engine.force_retouch()
 end
 
 function teleport_touch(self, other)
@@ -300,6 +303,7 @@ end
 
 function teleport_use(self, _other)
 	self.nextthink = time() + 0.2
+	engine.force_retouch()
 	self.think = SUB_Null
 end
 

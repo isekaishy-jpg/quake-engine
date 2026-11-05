@@ -221,8 +221,7 @@ function spikeshooter_use(self, _other)
 		return LaunchLaser(self, self.origin, self.movedir)
 	end
 	sound(self, CHAN_VOICE, "weapons/spike2.wav", 1, ATTN_NORM)
-	local spike = launch_spike(self, self.origin, self.movedir)
-	spike.velocity = self.movedir * 500
+	local spike = launch_spike(self, self.origin, self.movedir, 500)
 	if bit32.band(self.spawnflags, SPAWNFLAG_SUPERSPIKE) ~= 0 then
 		spike.touch = superspike_touch
 	end

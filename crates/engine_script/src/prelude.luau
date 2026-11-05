@@ -376,12 +376,18 @@ function normalize(value)
 	return vector.normalize(value)
 end
 
+-- What a C `(int)` makes of `value`, in whole degrees towards zero.
+local function whole_degrees(value)
+	local degrees = math.deg(value)
+	return if degrees < 0 then math.ceil(degrees) else math.floor(degrees)
+end
+
 -- The yaw of a direction, from `PF_vectoyaw`.
 function vectoyaw(value)
 	if value.x == 0 and value.y == 0 then
 		return 0
 	end
-	local yaw = math.floor(math.deg(math.atan2(value.y, value.x)))
+	local yaw = whole_degrees(math.atan2(value.y, value.x))
 	if yaw < 0 then
 		yaw += 360
 	end
@@ -394,12 +400,12 @@ function vectoangles(value)
 	if value.x == 0 and value.y == 0 then
 		pitch = if value.z > 0 then 90 else 270
 	else
-		yaw = math.floor(math.deg(math.atan2(value.y, value.x)))
+		yaw = whole_degrees(math.atan2(value.y, value.x))
 		if yaw < 0 then
 			yaw += 360
 		end
 		local forward = math.sqrt(value.x * value.x + value.y * value.y)
-		pitch = math.floor(math.deg(math.atan2(value.z, forward)))
+		pitch = whole_degrees(math.atan2(value.z, forward))
 		if pitch < 0 then
 			pitch += 360
 		end

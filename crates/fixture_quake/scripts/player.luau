@@ -124,8 +124,8 @@ function PutClientInServer(self)
 	if deathmatch ~= 0 or coop ~= 0 then
 		local forward = makevectors(self.angles)
 		spawn_tfog(self.origin + forward * 20)
-		spawn_tdeath(self.origin, self)
 	end
+	spawn_tdeath(self.origin, self)
 end
 
 -- The first frame of each of `player.mdl`'s sequences, from `player.qc`.
@@ -353,10 +353,10 @@ local function PainSound(self)
 end
 
 function player_pain(self, _attacker, _damage)
-	PainSound(self)
 	if self.weaponframe ~= 0 or (self.invisible_finished or 0) > time() then
 		return
 	end
+	PainSound(self)
 	local first = if self.weapon == IT_AXE then FRAME_AXPAIN else FRAME_PAIN
 	body_frames(self, first, 6, player_run)
 end
@@ -429,6 +429,7 @@ end
 
 function PlayerDie(self)
 	self.items -= bit32.band(self.items, IT_INVISIBILITY)
+	show_eyes(self, false)
 	self.invisible_finished = 0
 	self.invincible_finished = 0
 	self.super_damage_finished = 0
@@ -516,6 +517,15 @@ local function check_powerup(self, finished, timer, item, warning, sample)
 	end
 end
 
+-- Others only see the eyes of the invisible, and the dead aren't.
+function show_eyes(self, invisible)
+	if invisible ~= (self.showing_eyes or false) then
+		self.showing_eyes = invisible
+		engine.set_model(rawget(self, "_id"), if invisible then "progs/eyes.mdl" else "progs/player.mdl")
+		setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
+	end
+end
+
 function CheckPowerups(self)
 	if self.health <= 0 then
 		return
@@ -523,12 +533,7 @@ function CheckPowerups(self)
 	-- From `R_DrawViewModel`: the invisible can't see their own gun.
 	local invisible = bit32.band(self.items, IT_INVISIBILITY) ~= 0
 	self.weaponhidden = invisible
-	-- Others only see their eyes.
-	if invisible ~= (self.showing_eyes or false) then
-		self.showing_eyes = invisible
-		engine.set_model(rawget(self, "_id"), if invisible then "progs/eyes.mdl" else "progs/player.mdl")
-		setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 32))
-	end
+	show_eyes(self, invisible)
 	if (self.invisible_finished or 0) ~= 0 and (self.invisible_sound or 0) < time() then
 		sound(self, CHAN_AUTO, "items/inv3.wav", 0.5, ATTN_IDLE)
 		self.invisible_sound = time() + random() * 3 + 1

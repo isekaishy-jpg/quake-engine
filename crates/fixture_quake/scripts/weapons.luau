@@ -374,8 +374,9 @@ function W_FireGrenade(self)
 	announce_launch(missile, self, true, false, 2.5)
 end
 
--- Used for both the player and the ogre.
-function launch_spike(self, org, dir)
+-- Used for both the player and the ogre. What's slower than a nail says so here
+-- rather than setting `velocity` afterwards, because clients hear of it here.
+function launch_spike(self, org, dir, speed)
 	local spike = spawn()
 	spike.owner = self
 	spike.movetype = MOVETYPE_FLYMISSILE
@@ -388,7 +389,7 @@ function launch_spike(self, org, dir)
 	setmodel(spike, "progs/spike.mdl")
 	setsize(spike, vector.zero, vector.zero)
 	setorigin(spike, org)
-	spike.velocity = dir * 1000
+	spike.velocity = dir * (speed or 1000)
 	newmis = spike
 	announce_launch(spike, self, false, false)
 	return spike
