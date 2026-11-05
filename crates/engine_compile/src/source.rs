@@ -57,6 +57,51 @@ pub struct EntitySource {
     pub placed: Option<PlacedMesh>,
 }
 
+impl EntitySource {
+    /// The value of a field.
+    #[must_use]
+    pub fn field(&self, key: &str) -> Option<&Value> {
+        self.fields
+            .iter()
+            .find(|(name, _)| name == key)
+            .map(|(_, value)| value)
+    }
+
+    /// A field's number.
+    #[must_use]
+    pub fn number(&self, key: &str) -> Option<f64> {
+        self.field(key).and_then(Value::number)
+    }
+
+    /// A field's text.
+    #[must_use]
+    pub fn text(&self, key: &str) -> Option<&str> {
+        self.field(key).and_then(Value::text)
+    }
+
+    /// A field's three numbers.
+    #[must_use]
+    pub fn point(&self, key: &str) -> Option<Point> {
+        self.field(key).and_then(point_of)
+    }
+
+    /// A field's points, three numbers each.
+    #[must_use]
+    pub fn points(&self, key: &str) -> Vec<Point> {
+        self.field(key)
+            .and_then(Value::numbers)
+            .map_or_else(Vec::new, |numbers| numbers.as_chunks::<3>().0.to_vec())
+    }
+
+    /// Whether a field is on, as a flag or a number that isn't zero.
+    #[must_use]
+    pub fn is_on(&self, key: &str) -> bool {
+        self.field(key).is_some_and(|value| {
+            value.flag().unwrap_or(false) || value.number().is_some_and(|number| number != 0.0)
+        })
+    }
+}
+
 /// Where a mesh goes.
 #[derive(Clone, Debug, PartialEq)]
 pub struct MeshPlacement {

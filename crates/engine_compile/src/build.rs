@@ -12,6 +12,7 @@ use engine_map::{
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
+use crate::effects::{build_flames, build_live_light, build_stencil};
 use crate::error::CompileError;
 use crate::geometry::{
     Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
@@ -21,7 +22,6 @@ use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, DecalSource, StampSource, WorkingMap, read_map};
 use crate::stamp::stamp_piece;
-use crate::stencil::{build_flames, build_live_light, build_stencil};
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
 /// Supplies textures for materials.

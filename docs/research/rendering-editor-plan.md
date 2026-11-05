@@ -47,7 +47,7 @@ Status is one of todo, doing or done.
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | done |
 | 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | done |
 | 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | done |
-| 24 | Reviews | Circular quality and bug passes until none are left | todo |
+| 24 | Reviews | Circular quality and bug passes until none are left | done |
 
 ## Log
 
@@ -71,3 +71,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 21 is done, with a walkable grid read from the player's hull in place of a polygon navmesh.
 - Stage 22 is done.
 - Stage 23 is done: `showcase`, `tile_world`, and maps for each area, all rebuildable.
+- Stage 24 is done, in [review 0015](../reviews/0015-increment-11.md).

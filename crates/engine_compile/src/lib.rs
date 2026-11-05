@@ -6,6 +6,7 @@
 mod bake;
 mod build;
 mod cells;
+mod effects;
 mod error;
 mod geometry;
 mod light;
@@ -15,7 +16,6 @@ mod mesh;
 mod nav;
 mod source;
 mod stamp;
-mod stencil;
 mod texture;
 mod tiles;
 mod tree;

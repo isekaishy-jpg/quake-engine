@@ -1,9 +1,9 @@
-//! Ray stencils and flames, from entities (proposals 0076 and 0079).
+//! What entities become beyond scripts: ray stencils, flames and moving lights
+//! (proposals 0076, 0079 and 0084).
 
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
-use engine_format::Value;
 use engine_map::{Emitter, LiveLightSource, RayStencil, stencil_boxes};
 
 use crate::build::TextureSource;
@@ -12,35 +12,16 @@ use crate::geometry::Point;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::EntitySource;
 
-/// The value of a field.
-fn field<'a>(entity: &'a EntitySource, key: &str) -> Option<&'a Value> {
-    entity
-        .fields
-        .iter()
-        .find(|(name, _)| name == key)
-        .map(|(_, value)| value)
+/// A point as the map stores it.
+#[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
+fn stored(point: Point) -> Vec3 {
+    Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32)
 }
 
-/// A field's points, three numbers each.
-#[expect(clippy::cast_possible_truncation, reason = "stencils store f32")]
-fn points_of(entity: &EntitySource, key: &str) -> Vec<Vec3> {
-    field(entity, key)
-        .and_then(Value::numbers)
-        .map_or_else(Vec::new, |numbers| {
-            let (points, _) = numbers.as_chunks::<3>();
-            points
-                .iter()
-                .map(|[x, y, z]| Vec3::new(*x as f32, *y as f32, *z as f32))
-                .collect()
-        })
-}
-
-/// A field's number.
-#[expect(clippy::cast_possible_truncation, reason = "stencils store f32")]
+/// A field's number as the map stores it, or `default`.
+#[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
 fn number_of(entity: &EntitySource, key: &str, default: f32) -> f32 {
-    field(entity, key)
-        .and_then(Value::number)
-        .map_or(default, |value| value as f32)
+    entity.number(key).map_or(default, |value| value as f32)
 }
 
 /// How tall a flame is unless it says.
@@ -71,13 +52,11 @@ pub(crate) fn build_flames<'a>(
     let mut faces = PlacedMesh::default();
     let mut emitters = Vec::new();
     for flame in flames {
-        let Some(origin) = points_of(flame, "origin").first().copied() else {
+        let Some(origin) = flame.point("origin").map(stored) else {
             continue;
         };
         let size = number_of(flame, "size", FLAME_SIZE);
-        let material = field(flame, "material")
-            .and_then(Value::text)
-            .unwrap_or("torch_flame");
+        let material = flame.text("material").unwrap_or("torch_flame");
         let (x, y, z) = (
             f64::from(origin.x),
             f64::from(origin.y),
@@ -114,23 +93,20 @@ pub(crate) fn build_flames<'a>(
 
 /// The light of a `live_light` entity, if it says where it is.
 pub(crate) fn build_live_light(entity: &EntitySource) -> Option<LiveLightSource> {
-    let origin = points_of(entity, "origin").first().copied()?;
-    let color = points_of(entity, "color").first().copied();
+    let origin = entity.point("origin").map(stored)?;
+    let color = entity.point("color").map(stored);
     let color = color.map_or([1.0; 3], |c| [c.x, c.y, c.z]);
-    let spot = points_of(entity, "spot_direction").first().copied();
+    let spot = entity.point("spot_direction").map(stored);
     let spot = spot.map_or(Vec3::ZERO, Vec3::normalized);
     let degrees = number_of(entity, "spot_angle", 45.0);
-    let shadows = field(entity, "shadows").is_some_and(|value| {
-        value.flag().unwrap_or(false) || value.number().is_some_and(|number| number != 0.0)
-    });
     Some(LiveLightSource {
         origin,
         radius: number_of(entity, "radius", 300.0),
         color,
         spot,
         spot_cosine: degrees.to_radians().cos(),
-        shadows,
-        path: points_of(entity, "path"),
+        shadows: entity.is_on("shadows"),
+        path: entity.points("path").into_iter().map(stored).collect(),
         period: number_of(entity, "period", 0.0),
     })
 }
@@ -145,16 +121,11 @@ pub(crate) fn build_stencil(
     source: &mut dyn TextureSource,
 ) -> Result<RayStencil, CompileError> {
     let missing = |what: &str| CompileError::Bad(format!("a ray_stencil needs {what}"));
-    let point = |key: &str| points_of(entity, key).first().copied();
-    let name = field(entity, "image")
-        .and_then(Value::text)
-        .ok_or_else(|| missing("an image"))?;
+    let point = |key: &str| entity.point(key).map(stored);
+    let name = entity.text("image").ok_or_else(|| missing("an image"))?;
     let image = source.texture(name).mips;
-    let sun = field(entity, "sun").is_some_and(|value| {
-        value.flag().unwrap_or(false) || value.number().is_some_and(|number| number != 0.0)
-    });
-    let marks = field(entity, "marks").and_then(Value::text);
-    let boxes = marks
+    let boxes = entity
+        .text("marks")
         .and_then(|name| source.texture(name).mips.into_iter().next())
         .map_or_else(
             || vec![[0.0, 0.0, 1.0, 1.0]],
@@ -165,8 +136,8 @@ pub(crate) fn build_stencil(
         across: point("across").ok_or_else(|| missing("an across edge"))?,
         down: point("down").ok_or_else(|| missing("a down edge"))?,
         light: point("light").ok_or_else(|| missing("a light"))?,
-        sun,
-        path: points_of(entity, "path"),
+        sun: entity.is_on("sun"),
+        path: entity.points("path").into_iter().map(stored).collect(),
         period: number_of(entity, "period", 0.0),
         strength: number_of(entity, "strength", 1.0),
         reach: number_of(entity, "reach", 1024.0),

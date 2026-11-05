@@ -12,6 +12,7 @@ mod live;
 mod map;
 mod material;
 mod nav;
+mod occluder;
 mod pool;
 mod probes;
 mod sky;
@@ -31,7 +32,8 @@ pub use material::{
     mip_chain,
 };
 pub use nav::{NavGrid, NavPlace, Spline};
-pub use pool::{ModelOccluder, OccluderSphere, Pool, PoolLook};
+pub use occluder::{ModelOccluder, OccluderSphere};
+pub use pool::{Pool, PoolLook};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};

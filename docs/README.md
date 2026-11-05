@@ -8,6 +8,7 @@
   - [Open research questions](research/open-questions.md)
   - [Windows window previews](research/windows-previews.md)
   - [Maps, materials and lighting](research/maps-materials-lighting.md)
+  - [Rendering and editor plan](research/rendering-editor-plan.md)
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
   - [0001: engine architecture and the road to playing Quake](proposals/0001-architecture.md)
@@ -86,6 +87,33 @@
     - [0063: the level clock](proposals/0063-the-level-clock.md)
     - [0064: the rest of the player](proposals/0064-players-in-the-details.md)
     - [0065: rules in play](proposals/0065-rules-in-play.md)
+  - Increment 11:
+    - [0066: the map format](proposals/0066-the-map-format.md)
+    - [0067: compiling brushes](proposals/0067-compiling-brushes.md)
+    - [0068: containers](proposals/0068-containers.md)
+    - [0069: materials](proposals/0069-materials.md)
+    - [0070: sampling](proposals/0070-sampling.md)
+    - [0071: the sky sphere](proposals/0071-the-sky-sphere.md)
+    - [0072: the light compiler](proposals/0072-the-light-compiler.md)
+    - [0073: the development platform](proposals/0073-the-platform.md)
+    - [0074: the editor](proposals/0074-the-editor.md)
+    - [0075: the final pass](proposals/0075-the-final-pass.md)
+    - [0076: stencil rays and capsule shadows](proposals/0076-stencil-rays-and-capsules.md)
+    - [0077: water light and the fog grid](proposals/0077-water-light-and-the-fog-grid.md)
+    - [0078: meshes and occlusion sidecars](proposals/0078-meshes-and-occlusion-sidecars.md)
+    - [0079: small fires](proposals/0079-small-fires.md)
+    - [0080: surface extras](proposals/0080-surface-extras.md)
+    - [0081: hull outlines](proposals/0081-hull-outlines.md)
+    - [0082: anti-aliasing and alpha](proposals/0082-antialiasing-and-alpha.md)
+    - [0083: crisp shadows and light tracks](proposals/0083-crisp-shadows-and-light-tracks.md)
+    - [0084: live lights](proposals/0084-live-lights.md)
+    - [0085: painted layers and flattening](proposals/0085-painted-layers.md)
+    - [0086: stamping](proposals/0086-stamping.md)
+    - [0087: mega texture and seams](proposals/0087-mega-texture-and-seams.md)
+    - [0088: visibility and entity culling](proposals/0088-visibility-and-entity-culling.md)
+    - [0089: tiles](proposals/0089-tiles.md)
+    - [0090: pathing](proposals/0090-pathing.md)
+    - [0091: the platform catches up](proposals/0091-the-platform-catches-up.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -101,6 +129,7 @@
   - [0012: increment 9](reviews/0012-increment-9.md)
   - [0013: increment 10](reviews/0013-increment-10.md)
   - [0014: the whole application](reviews/0014-app-wide.md)
+  - [0015: increment 11](reviews/0015-increment-11.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

@@ -18,7 +18,7 @@ use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::mega::bake_mega;
 use crate::mesh::PlacedMesh;
 use crate::nav::build_nav;
-use crate::source::{EntitySource, PaintStroke, WorkingMap};
+use crate::source::{PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
 use crate::visibility::bake_visibility;
 
@@ -396,28 +396,6 @@ fn light_on(
     )
 }
 
-/// A field's number.
-fn number(entity: &EntitySource, key: &str) -> Option<f64> {
-    let (_, value) = entity.fields.iter().find(|(name, _)| name == key)?;
-    value.number().or_else(|| value.text()?.parse().ok())
-}
-
-/// A field's three numbers.
-fn point_of(entity: &EntitySource, key: &str) -> Option<Point> {
-    let (_, value) = entity.fields.iter().find(|(name, _)| name == key)?;
-    let numbers = value.numbers()?;
-    (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
-}
-
-/// A field's text.
-fn text_of<'a>(entity: &'a EntitySource, key: &str) -> Option<&'a str> {
-    entity
-        .fields
-        .iter()
-        .find(|(name, _)| name == key)
-        .and_then(|(_, value)| value.text())
-}
-
 /// The next style free for keyframes, after the scripts' switchable range.
 const FIRST_KEYFRAME_STYLE: u8 = 48;
 
@@ -451,7 +429,7 @@ pub fn light_tracks(working: &WorkingMap) -> Vec<LightTrack> {
         tracks.push(LightTrack {
             first_style: next,
             count,
-            period: number(entity, "period").unwrap_or(4.0) as f32,
+            period: entity.number("period").unwrap_or(4.0) as f32,
         });
         next = next.saturating_add(count).min(LAST_KEYFRAME_STYLE);
     }
@@ -471,9 +449,9 @@ fn read_lights(
         .iter()
         .filter(|e| e.kind.starts_with("light"))
     {
-        let origin = point_of(entity, "origin").unwrap_or([0.0; 3]);
-        let cone_degrees = number(entity, "spot_angle").unwrap_or(0.0);
-        let cookie = text_of(entity, "cookie").map(&mut *images).transpose()?;
+        let origin = entity.point("origin").unwrap_or([0.0; 3]);
+        let cone_degrees = entity.number("spot_angle").unwrap_or(0.0);
+        let cookie = entity.text("cookie").map(&mut *images).transpose()?;
         let profile = entity
             .fields
             .iter()
@@ -485,24 +463,22 @@ fn read_lights(
             clippy::cast_sign_loss,
             reason = "styles are small numbers"
         )]
-        let style = number(entity, "style").unwrap_or(0.0).clamp(0.0, 47.0) as u8;
+        let style = entity.number("style").unwrap_or(0.0).clamp(0.0, 47.0) as u8;
         let base = BakeLight {
             origin,
-            color: point_of(entity, "color").unwrap_or([1.0, 1.0, 1.0]),
-            intensity: number(entity, "intensity")
-                .or_else(|| number(entity, "light"))
+            color: entity.point("color").unwrap_or([1.0, 1.0, 1.0]),
+            intensity: entity
+                .number("intensity")
+                .or_else(|| entity.number("light"))
                 .unwrap_or(300.0),
             style,
-            size: number(entity, "size").unwrap_or(0.0),
-            direction: point_of(entity, "spot_direction").and_then(normalized),
+            size: entity.number("size").unwrap_or(0.0),
+            direction: entity.point("spot_direction").and_then(normalized),
             cone: cone_degrees.to_radians().cos(),
             cookie,
             profile,
             sun: false,
-            crisp: entity
-                .fields
-                .iter()
-                .any(|(name, value)| name == "crisp" && value.flag() == Some(true)),
+            crisp: entity.is_on("crisp"),
         };
         let keyframes = entity
             .fields
@@ -1168,20 +1144,20 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         .iter()
         .find(|entity| entity.kind == "worldspawn");
     let spacing = world
-        .and_then(|world| number(world, "light_spacing"))
+        .and_then(|world| world.number("light_spacing"))
         .unwrap_or(DEFAULT_SPACING)
         .max(1.0);
     let ambient = world
-        .and_then(|world| number(world, "ambient"))
+        .and_then(|world| world.number("ambient"))
         .unwrap_or(0.0);
     let bounce_gain = world
-        .and_then(|world| number(world, "bounce"))
+        .and_then(|world| world.number("bounce"))
         .unwrap_or(1.0)
         * 0.25;
     if let Some(sky) = &map.sky {
         let direction = sky.sun_direction;
         let intensity = world
-            .and_then(|world| number(world, "sun_intensity"))
+            .and_then(|world| world.number("sun_intensity"))
             .unwrap_or(0.0);
         if intensity > 0.0 {
             lights.push(BakeLight {
@@ -1189,7 +1165,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
                 color: sky.sun_color.map(f64::from),
                 intensity,
                 style: 0,
-                size: world.and_then(|w| number(w, "sun_size")).unwrap_or(0.0),
+                size: world.and_then(|w| w.number("sun_size")).unwrap_or(0.0),
                 direction: Some(wide(direction)),
                 cone: -1.0,
                 cookie: None,

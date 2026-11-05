@@ -29,9 +29,7 @@ fn moved_numbers(values: &[Value], offset: Point) -> Vec<Value> {
 
 /// `entity` moved by `offset`.
 fn move_entity(entity: &mut EntitySource, offset: Point) {
-    let sun = entity.fields.iter().any(|(key, value)| {
-        key == "sun" && (value.flag() == Some(true) || value.number().is_some_and(|n| n != 0.0))
-    });
+    let sun = entity.is_on("sun");
     for (key, value) in &mut entity.fields {
         // A stencil's light is a place, unless it's the sun's direction.
         let moves = PLACE_FIELDS.contains(&key.as_str()) || (key == "light" && !sun);
