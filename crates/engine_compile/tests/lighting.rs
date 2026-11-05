@@ -461,6 +461,35 @@ fn a_mega_surface_keeps_its_other_maps() {
     assert!((material.specular_strength - 4.0).abs() < f32::EPSILON);
 }
 
+/// Reading a bake puts mega surfaces and their light just where baking did.
+#[test]
+fn a_bake_keeps_mega_surfaces_where_they_were() {
+    let text = format!("{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 500 }}\n");
+    let baked_map = baked(&text, &[mega_texture()]);
+    let bytes = write_bake(&baked_map, 7);
+    let working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    let mut source = |name: &str| {
+        if name == "floor" {
+            mega_texture()
+        } else {
+            placeholder_texture(name)
+        }
+    };
+    let mut map = compile(&working, &mut source).expect("compiles");
+    assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
+    assert_eq!(map.faces.len(), baked_map.faces.len());
+    let moved = baked_map
+        .faces
+        .iter()
+        .filter(|face| baked_map.textures[face.texture as usize].name == "*mega");
+    assert!(moved.count() > 1, "there's something to compare");
+    for (read, made) in map.faces.iter().zip(&baked_map.faces) {
+        assert_eq!(read.light, made.light);
+        assert_eq!(read.axes, made.axes);
+        assert_eq!(read.texture, made.texture);
+    }
+}
+
 /// What's not marked keeps its own texture.
 #[test]
 fn other_surfaces_stay_out_of_the_mega_texture() {

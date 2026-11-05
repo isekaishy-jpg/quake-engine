@@ -7,6 +7,9 @@ use engine_core::math::Vec3;
 use engine_map::{Map, OccluderSphere, RayStencil, STENCIL_GRID};
 use engine_render::{CapsuleDraw, LightDraw, LiveLight, MAX_LIVE_LIGHTS};
 
+/// A ball of shade: where it is, and how big.
+type Sphere = (Vec3, f32);
+
 /// A stencil's occlusion grid.
 pub(super) type StencilMask = [f32; STENCIL_GRID * STENCIL_GRID];
 
@@ -244,20 +247,25 @@ fn model_spheres(map: &Map, eye: Vec3, instances: &[ModelInstance]) -> Vec<(Vec3
 }
 
 /// Where the spheres of posed models are, for a view from `eye`: the whole of
-/// each far off, and its parts up close, as moving brush models are.
-fn posed_spheres(eye: Vec3, shades: &[Vec<(Vec3, f32)>]) -> Vec<(Vec3, f32)> {
+/// each far off, and its parts up close, as moving brush models are. Parts only
+/// go to the nearest while there's room, so that a crowd doesn't push the
+/// furthest of it out of the shader's list.
+fn posed_spheres(eye: Vec3, shades: &[Vec<Sphere>]) -> Vec<Sphere> {
+    let distance = |whole: &Sphere| (whole.0 - eye).length();
+    let mut wholes: Vec<(&Sphere, &[Sphere])> = shades
+        .iter()
+        .filter_map(|shade| shade.split_first())
+        .filter(|(whole, _)| whole.1 >= LEAST_SHADE)
+        .collect();
+    wholes.sort_by(|a, b| distance(a.0).total_cmp(&distance(b.0)));
     let mut out = Vec::new();
-    for shade in shades {
-        let Some((whole, parts)) = shade.split_first() else {
-            continue;
-        };
-        if whole.1 < LEAST_SHADE {
-            continue;
-        }
-        if parts.is_empty() || (whole.0 - eye).length() > PART_DETAIL_REACH {
-            out.push(*whole);
-        } else {
+    for (index, (whole, parts)) in wholes.iter().enumerate() {
+        let others = wholes.len() - index - 1;
+        let room = out.len() + parts.len() + others < MAX_CAPSULES;
+        if room && !parts.is_empty() && distance(whole) <= PART_DETAIL_REACH {
             out.extend_from_slice(parts);
+        } else {
+            out.push(**whole);
         }
     }
     out

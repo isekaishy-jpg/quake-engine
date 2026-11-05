@@ -325,6 +325,15 @@ pub(crate) fn bake_mega(
         });
     }
     apply_mega(map, &places, rgba.clone(), &maps);
+    // A face's light follows its texture coordinates, and a bake holds it moved,
+    // so this is only done here, and not each time a bake is read.
+    for place in &places {
+        let light = map.faces.get_mut(place.face as usize);
+        if let Some(light) = light.and_then(|face| face.light.as_mut()) {
+            light.texel_origin[0] += place.shift[0];
+            light.texel_origin[1] += place.shift[1];
+        }
+    }
     Some((places, rgba, maps))
 }
 
@@ -360,8 +369,7 @@ fn material_slots_push(slots: &mut Vec<SlotImage>, mips: Vec<MipLevel>) -> Optio
     u8::try_from(slots.len()).ok()
 }
 
-/// Points the faces in `places` at a mega texture of `rgba`. A face's light
-/// follows its texture coordinates, so it moves the same way.
+/// Points the faces in `places` at a mega texture of `rgba`.
 pub(crate) fn apply_mega(map: &mut Map, places: &[MegaPlace], rgba: Vec<u8>, maps: &MegaMaps) {
     let number = u32::try_from(map.textures.len()).unwrap_or(0);
     map.textures.push(Texture {
@@ -381,10 +389,6 @@ pub(crate) fn apply_mega(map: &mut Map, places: &[MegaPlace], rgba: Vec<u8>, map
             #[expect(clippy::cast_precision_loss, reason = "texel coordinates are small")]
             let moved = shift as f32;
             axis.offset += moved;
-        }
-        if let Some(light) = &mut face.light {
-            light.texel_origin[0] += place.shift[0];
-            light.texel_origin[1] += place.shift[1];
         }
     }
 }

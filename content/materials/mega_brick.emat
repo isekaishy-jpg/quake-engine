@@ -1,0 +1,10 @@
+format 1 material
+
+surface {
+    base = textures/brick.png
+    normal = textures/brick_normal.png
+    specular = textures/metal_specular.png
+    specular_strength = 0.4
+    gloss = 32
+    mega = true
+}

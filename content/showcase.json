@@ -186,6 +186,22 @@
 {
 "op": "place_prefab",
 "args": {
+"prefab": "pillar",
+"at": [
+448,
+576,
+0
+],
+"params": {
+"size": 64,
+"height": 384,
+"material": "mega_brick"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
 "prefab": "crate",
 "at": [
 128,
@@ -999,6 +1015,27 @@
 "params": {
 "kind": "monster_ogre",
 "angle": 90
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "sweeping_light",
+"at": [
+3808,
+180,
+0
+],
+"params": {
+"reach": 120,
+"height": 120,
+"radius": 360,
+"color": [
+0.4,
+0.6,
+1
+]
 }
 }
 }

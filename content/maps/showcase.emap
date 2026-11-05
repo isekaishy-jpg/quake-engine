@@ -201,52 +201,59 @@ brush {
 }
 
 brush {
+    cuboid = [416 544 0 480 608 384]
+    material = "mega_brick"
+    prefab = "pillar"
+    id = 26
+}
+
+brush {
     cuboid = [128 640 0 176 688 48]
     material = "metal"
     prefab = "crate"
-    id = 26
+    id = 27
 }
 
 brush {
     cuboid = [176 640 0 224 688 48]
     material = "brick"
     prefab = "crate"
-    id = 27
+    id = 28
 }
 
 brush {
     cuboid = [152 640 48 200 688 96]
     material = "mossy_stone"
     prefab = "crate"
-    id = 28
+    id = 29
 }
 
 entity {
     origin = [256 320 8]
     type = "item_health"
     prefab = "item"
-    id = 29
+    id = 30
 }
 
 entity {
     origin = [256 448 8]
     type = "item_armor1"
     prefab = "item"
-    id = 30
+    id = 31
 }
 
 entity {
     origin = [320 384 8]
     type = "weapon_supershotgun"
     prefab = "item"
-    id = 31
+    id = 32
 }
 
 brush {
     cuboid = [4 188 96 12 196 120]
     material = "metal"
     prefab = "torch"
-    id = 32
+    id = 33
 }
 
 entity {
@@ -257,21 +264,21 @@ entity {
     style = 1
     type = "light"
     prefab = "torch"
-    id = 33
+    id = 34
 }
 
 entity {
     origin = [8 192 132]
     type = "flame"
     prefab = "torch"
-    id = 34
+    id = 35
 }
 
 brush {
     cuboid = [4 572 96 12 580 120]
     material = "metal"
     prefab = "torch"
-    id = 35
+    id = 36
 }
 
 entity {
@@ -282,28 +289,28 @@ entity {
     style = 1
     type = "light"
     prefab = "torch"
-    id = 36
+    id = 37
 }
 
 entity {
     origin = [8 576 132]
     type = "flame"
     prefab = "torch"
-    id = 37
+    id = 38
 }
 
 brush {
     cuboid = [511 383 352 513 385 384]
     material = "metal"
     prefab = "lamp"
-    id = 38
+    id = 39
 }
 
 brush {
     cuboid = [504 376 346 520 392 352]
     material = "light_panel"
     prefab = "lamp"
-    id = 39
+    id = 40
 }
 
 entity {
@@ -312,7 +319,7 @@ entity {
     origin = [512 384 336]
     type = "light"
     prefab = "lamp"
-    id = 40
+    id = 41
 }
 
 entity {
@@ -320,28 +327,28 @@ entity {
     origin = [480 384 16]
     type = "tell_tale"
     prefab = "tell_tale"
-    id = 41
+    id = 42
 }
 
 brush {
     cuboid = [1024 0 0 1056 320 384]
     material = "brick"
     prefab = "doorway"
-    id = 42
+    id = 43
 }
 
 brush {
     cuboid = [1024 448 0 1056 768 384]
     material = "brick"
     prefab = "doorway"
-    id = 43
+    id = 44
 }
 
 brush {
     cuboid = [1024 320 160 1056 448 384]
     material = "brick"
     prefab = "doorway"
-    id = 44
+    id = 45
 }
 
 entity first_door {
@@ -351,7 +358,7 @@ entity first_door {
     type = "func_door"
     wait = 3
     prefab = "door"
-    id = 45
+    id = 46
     brush {
         cuboid = [1032 320 0 1048 448 160]
         material = "metal"
@@ -362,70 +369,70 @@ brush {
     cuboid = [1024 -32 -32 2112 800 0]
     material = "stone"
     prefab = "room"
-    id = 46
+    id = 47
 }
 
 brush {
     cuboid = [1024 -32 384 2112 800 416]
     material = "metal"
     prefab = "room"
-    id = 47
+    id = 48
 }
 
 brush {
     cuboid = [1024 -32 0 1056 800 384]
     material = "brick"
     prefab = "room"
-    id = 48
+    id = 49
 }
 
 brush {
     cuboid = [2080 -32 0 2112 800 384]
     material = "brick"
     prefab = "room"
-    id = 49
+    id = 50
 }
 
 brush {
     cuboid = [1056 -32 0 2080 0 384]
     material = "brick"
     prefab = "room"
-    id = 50
+    id = 51
 }
 
 brush {
     cuboid = [1056 768 0 2080 800 384]
     material = "brick"
     prefab = "room"
-    id = 51
+    id = 52
 }
 
 brush {
     cuboid = [1184 128 0 1696 640 4]
     material = "polished"
     prefab = "mirror_floor"
-    id = 52
+    id = 53
 }
 
 brush {
     cuboid = [1344 288 4 1408 352 384]
     material = "stone"
     prefab = "pillar"
-    id = 53
+    id = 54
 }
 
 brush {
     cuboid = [1312 744 32 1792 760 96]
     material = "panel_sheet"
     prefab = "trim_panels"
-    id = 54
+    id = 55
 }
 
 brush {
     cuboid = [1312 744 96 1472 760 224]
     material = "panel_sheet"
     prefab = "trim_panels"
-    id = 55
+    id = 56
 }
 
 decal {
@@ -435,13 +442,13 @@ decal {
     origin = [1176 750 180]
     size = 128
     prefab = "poster"
-    id = 56
+    id = 57
 }
 
 brush {
     material = "stone"
     cuboid = [1756 16 0 2056 48 288]
-    id = 57
+    id = 58
 }
 
 stamp {
@@ -452,7 +459,7 @@ stamp {
     origin = [1836 48 170]
     size = [128 192]
     prefab = "brick_relief"
-    id = 58
+    id = 59
 }
 
 stamp {
@@ -464,14 +471,14 @@ stamp {
     origin = [1976 48 150]
     size = 120
     prefab = "carved_sign"
-    id = 59
+    id = 60
 }
 
 brush {
     cuboid = [1776 320 0 2000 544 8]
     material = "painted_stone"
     prefab = "moss_stroke"
-    id = 60
+    id = 61
 }
 
 paint {
@@ -479,28 +486,28 @@ paint {
     points = [1776 394.6666666666667 8 1888 432 8 2000 394.6666666666667 8]
     radius = 40
     prefab = "moss_stroke"
-    id = 61
+    id = 62
 }
 
 brush {
     cuboid = [1776 560 0 1936 720 12]
     material = "swirl"
     prefab = "lava_slab"
-    id = 62
+    id = 63
 }
 
 brush {
     cuboid = [1567 383 352 1569 385 384]
     material = "metal"
     prefab = "lamp"
-    id = 63
+    id = 64
 }
 
 brush {
     cuboid = [1560 376 346 1576 392 352]
     material = "light_panel"
     prefab = "lamp"
-    id = 64
+    id = 65
 }
 
 entity {
@@ -509,105 +516,105 @@ entity {
     origin = [1568 384 336]
     type = "light"
     prefab = "lamp"
-    id = 65
+    id = 66
 }
 
 brush {
     cuboid = [2080 0 0 2112 320 384]
     material = "brick"
     prefab = "doorway"
-    id = 66
+    id = 67
 }
 
 brush {
     cuboid = [2080 448 0 2112 768 384]
     material = "brick"
     prefab = "doorway"
-    id = 67
+    id = 68
 }
 
 brush {
     cuboid = [2080 320 160 2112 448 384]
     material = "brick"
     prefab = "doorway"
-    id = 68
+    id = 69
 }
 
 brush {
     cuboid = [2080 -32 -32 3168 800 0]
     material = "stone"
     prefab = "room"
-    id = 69
+    id = 70
 }
 
 brush {
     cuboid = [2080 -32 448 3168 800 480]
     material = "metal"
     prefab = "room"
-    id = 70
+    id = 71
 }
 
 brush {
     cuboid = [2080 -32 0 2112 800 448]
     material = "brick"
     prefab = "room"
-    id = 71
+    id = 72
 }
 
 brush {
     cuboid = [3136 -32 0 3168 800 448]
     material = "brick"
     prefab = "room"
-    id = 72
+    id = 73
 }
 
 brush {
     cuboid = [2112 -32 0 3136 0 448]
     material = "brick"
     prefab = "room"
-    id = 73
+    id = 74
 }
 
 brush {
     cuboid = [2112 768 0 3136 800 448]
     material = "brick"
     prefab = "room"
-    id = 74
+    id = 75
 }
 
 brush {
     cuboid = [3104 144 0 3136 272 320]
     material = "brick"
     prefab = "stained_window"
-    id = 75
+    id = 76
 }
 
 brush {
     cuboid = [3104 496 0 3136 624 320]
     material = "brick"
     prefab = "stained_window"
-    id = 76
+    id = 77
 }
 
 brush {
     cuboid = [3104 272 0 3136 496 48]
     material = "brick"
     prefab = "stained_window"
-    id = 77
+    id = 78
 }
 
 brush {
     cuboid = [3104 272 272 3136 496 320]
     material = "brick"
     prefab = "stained_window"
-    id = 78
+    id = 79
 }
 
 brush {
     cuboid = [3116 272 48 3124 496 272]
     material = "stained_glass"
     prefab = "stained_window"
-    id = 79
+    id = 80
 }
 
 entity {
@@ -622,7 +629,7 @@ entity {
     sun = true
     type = "ray_stencil"
     prefab = "stained_window"
-    id = 80
+    id = 81
 }
 
 mesh {
@@ -631,7 +638,7 @@ mesh {
     scale = 1.4
     source = "statue"
     prefab = "statue"
-    id = 81
+    id = 82
 }
 
 mesh {
@@ -640,7 +647,7 @@ mesh {
     scale = 1.1
     source = "statue"
     prefab = "statue"
-    id = 82
+    id = 83
 }
 
 mesh {
@@ -649,7 +656,7 @@ mesh {
     scale = 2
     source = "barrel"
     prefab = "statue"
-    id = 83
+    id = 84
 }
 
 entity rolling {
@@ -661,14 +668,14 @@ entity rolling {
     type = "func_door"
     wait = 2
     prefab = "rolling_barrel"
-    id = 84
+    id = 85
 }
 
 brush {
     cuboid = [2244 132 0 2280 168 12]
     material = "stone"
     prefab = "fire_pit"
-    id = 85
+    id = 86
 }
 
 entity {
@@ -677,7 +684,7 @@ entity {
     sparks = 6
     type = "flame"
     prefab = "fire_pit"
-    id = 86
+    id = 87
 }
 
 entity {
@@ -688,14 +695,14 @@ entity {
     style = 1
     type = "light"
     prefab = "fire_pit"
-    id = 87
+    id = 88
 }
 
 brush {
     cuboid = [2244 602 0 2280 638 12]
     material = "stone"
     prefab = "fire_pit"
-    id = 88
+    id = 89
 }
 
 entity {
@@ -704,7 +711,7 @@ entity {
     sparks = 6
     type = "flame"
     prefab = "fire_pit"
-    id = 89
+    id = 90
 }
 
 entity {
@@ -715,7 +722,7 @@ entity {
     style = 1
     type = "light"
     prefab = "fire_pit"
-    id = 90
+    id = 91
 }
 
 entity {
@@ -727,7 +734,7 @@ entity {
     shadows = true
     type = "live_light"
     prefab = "sweeping_light"
-    id = 91
+    id = 92
 }
 
 entity {
@@ -738,7 +745,7 @@ entity {
     period = 4
     type = "light"
     prefab = "swinging_lamp"
-    id = 92
+    id = 93
 }
 
 entity {
@@ -749,7 +756,7 @@ entity {
     shadows = true
     spot_angle = 16
     spot_direction = [0.7 -0.7 -0.3]
-    id = 93
+    id = 94
 }
 
 entity grille {
@@ -762,105 +769,105 @@ entity grille {
     marks = "glass_marks"
     reach = 600
     strength = 0.6
-    id = 94
+    id = 95
 }
 
 brush {
     cuboid = [3136 0 0 3168 320 448]
     material = "brick"
     prefab = "doorway"
-    id = 95
+    id = 96
 }
 
 brush {
     cuboid = [3136 448 0 3168 768 448]
     material = "brick"
     prefab = "doorway"
-    id = 96
+    id = 97
 }
 
 brush {
     cuboid = [3136 320 160 3168 448 448]
     material = "brick"
     prefab = "doorway"
-    id = 97
+    id = 98
 }
 
 brush {
     cuboid = [3136 -32 -32 4224 800 0]
     material = "stone"
     prefab = "room"
-    id = 98
+    id = 99
 }
 
 brush {
     cuboid = [3136 -32 384 4224 800 416]
     material = "metal"
     prefab = "room"
-    id = 99
+    id = 100
 }
 
 brush {
     cuboid = [3136 -32 0 3168 800 384]
     material = "brick"
     prefab = "room"
-    id = 100
+    id = 101
 }
 
 brush {
     cuboid = [4192 -32 0 4224 800 384]
     material = "brick"
     prefab = "room"
-    id = 101
+    id = 102
 }
 
 brush {
     cuboid = [3168 -32 0 4192 0 384]
     material = "brick"
     prefab = "room"
-    id = 102
+    id = 103
 }
 
 brush {
     cuboid = [3168 768 0 4192 800 384]
     material = "brick"
     prefab = "room"
-    id = 103
+    id = 104
 }
 
 brush {
     cuboid = [3472 176 -240 3888 592 -224]
     material = "stone"
     prefab = "pool"
-    id = 104
+    id = 105
 }
 
 brush {
     cuboid = [3472 176 -224 3488 592 0]
     material = "stone"
     prefab = "pool"
-    id = 105
+    id = 106
 }
 
 brush {
     cuboid = [3872 176 -224 3888 592 0]
     material = "stone"
     prefab = "pool"
-    id = 106
+    id = 107
 }
 
 brush {
     cuboid = [3488 176 -224 3872 192 0]
     material = "stone"
     prefab = "pool"
-    id = 107
+    id = 108
 }
 
 brush {
     cuboid = [3488 576 -224 3872 592 0]
     material = "stone"
     prefab = "pool"
-    id = 108
+    id = 109
 }
 
 brush {
@@ -868,42 +875,42 @@ brush {
     cuboid = [3488 192 -224 3872 576 -8]
     material = "water"
     prefab = "pool"
-    id = 109
+    id = 110
 }
 
 brush {
     cuboid = [3912 504 -80 4104 696 -64]
     material = "stone"
     prefab = "pool"
-    id = 110
+    id = 111
 }
 
 brush {
     cuboid = [3912 504 -64 3928 696 0]
     material = "stone"
     prefab = "pool"
-    id = 111
+    id = 112
 }
 
 brush {
     cuboid = [4088 504 -64 4104 696 0]
     material = "stone"
     prefab = "pool"
-    id = 112
+    id = 113
 }
 
 brush {
     cuboid = [3928 504 -64 4088 520 0]
     material = "stone"
     prefab = "pool"
-    id = 113
+    id = 114
 }
 
 brush {
     cuboid = [3928 680 -64 4088 696 0]
     material = "stone"
     prefab = "pool"
-    id = 114
+    id = 115
 }
 
 brush {
@@ -911,14 +918,14 @@ brush {
     cuboid = [3928 520 -64 4088 680 -8]
     material = "slime"
     prefab = "pool"
-    id = 115
+    id = 116
 }
 
 spline guard_route {
     closed = true
     points = [3264 96 24 3424 96 24 3424 256 24 3264 256 24]
     prefab = "patrol"
-    id = 116
+    id = 117
 }
 
 entity {
@@ -926,7 +933,7 @@ entity {
     route = "guard_route"
     type = "patrol_walker"
     prefab = "patrol"
-    id = 117
+    id = 118
 }
 
 entity {
@@ -934,7 +941,7 @@ entity {
     origin = [3264 640 24]
     type = "seeker"
     prefab = "seeker"
-    id = 118
+    id = 119
 }
 
 entity {
@@ -942,7 +949,7 @@ entity {
     origin = [4048 384 24]
     type = "monster_army"
     prefab = "monster"
-    id = 119
+    id = 120
 }
 
 entity {
@@ -950,7 +957,7 @@ entity {
     origin = [4048 256 24]
     type = "monster_dog"
     prefab = "monster"
-    id = 120
+    id = 121
 }
 
 entity lift_1 {
@@ -958,7 +965,7 @@ entity lift_1 {
     speed = 150
     type = "func_plat"
     prefab = "lift"
-    id = 121
+    id = 122
     brush {
         cuboid = [4048 64 184 4160 176 192]
         material = "metal"
@@ -969,7 +976,7 @@ entity {
     target = "back_home"
     type = "trigger_teleport"
     prefab = "portal"
-    id = 122
+    id = 123
     brush {
         cuboid = [3264 400 0 3328 464 96]
         material = "hidden"
@@ -980,28 +987,28 @@ brush {
     cuboid = [3264 400 -2 3328 464 0]
     material = "light_panel"
     prefab = "portal"
-    id = 123
+    id = 124
 }
 
 entity back_home {
     origin = [3424 784 40]
     type = "info_teleport_destination"
     prefab = "portal"
-    id = 124
+    id = 125
 }
 
 brush {
     cuboid = [3679 383 352 3681 385 384]
     material = "metal"
     prefab = "lamp"
-    id = 125
+    id = 126
 }
 
 brush {
     cuboid = [3672 376 346 3688 392 352]
     material = "light_panel"
     prefab = "lamp"
-    id = 126
+    id = 127
 }
 
 entity {
@@ -1010,21 +1017,21 @@ entity {
     origin = [3680 384 336]
     type = "light"
     prefab = "lamp"
-    id = 127
+    id = 128
 }
 
 brush {
     cuboid = [3367 179 352 3369 181 384]
     material = "metal"
     prefab = "lamp"
-    id = 128
+    id = 129
 }
 
 brush {
     cuboid = [3360 172 346 3376 188 352]
     material = "light_panel"
     prefab = "lamp"
-    id = 129
+    id = 130
 }
 
 entity {
@@ -1033,7 +1040,7 @@ entity {
     origin = [3368 180 336]
     type = "light"
     prefab = "lamp"
-    id = 130
+    id = 131
 }
 
 entity {
@@ -1041,5 +1048,17 @@ entity {
     origin = [3688 120 24]
     type = "monster_ogre"
     prefab = "monster"
-    id = 131
+    id = 132
+}
+
+entity {
+    color = [0.4 0.6 1]
+    origin = [3928 180 120]
+    path = [3928 180 120 3808 300 120 3688 180 120 3808 60 120]
+    period = 8
+    radius = 360
+    shadows = true
+    type = "live_light"
+    prefab = "sweeping_light"
+    id = 133
 }
