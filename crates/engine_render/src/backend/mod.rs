@@ -10,7 +10,6 @@ mod upload;
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite};
 use pipelines::make_pass;
@@ -195,12 +194,14 @@ struct GpuMap {
     shadow_indices: GpuBuffer,
     /// How many of those are the world's.
     shadow_world_count: u32,
-    /// Kept alive for the set.
-    _atlas: GpuImage,
-    /// Kept alive for the set.
-    _direction_atlas: GpuImage,
-    /// Kept alive for the frame set.
-    _paint_atlas: GpuImage,
+    /// The world's, a part at a time.
+    shadow_parts: Vec<shadow::ShadowRange>,
+    /// The light atlas.
+    atlas: GpuImage,
+    /// Where the atlas's light comes from.
+    direction_atlas: GpuImage,
+    /// How much of each layer the atlas's samples paint.
+    paint_atlas: GpuImage,
 }
 
 /// A flat picture on the GPU.
@@ -957,11 +958,11 @@ impl Backend {
 
     /// What a shadow map draws: the world's opaque faces, then moving models',
     /// as first indices, counts and offsets.
-    fn shadow_ranges(&self, scene: &Scene<'_>) -> Vec<(u32, u32, Vec3)> {
+    fn shadow_ranges(&self, scene: &Scene<'_>) -> Vec<shadow::ShadowRange> {
         let Some(map) = &self.map else {
             return Vec::new();
         };
-        let mut ranges = vec![(0, map.shadow_world_count, Vec3::ZERO)];
+        let mut ranges = map.shadow_parts.clone();
         for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
             let found = scene.mesh.model_ranges.get(instance.model as usize);
             for range in found.into_iter().flatten() {
@@ -970,7 +971,12 @@ impl Backend {
                     continue;
                 }
                 let first = map.shadow_world_count + range.first;
-                ranges.push((first, range.count, instance.origin));
+                ranges.push(shadow::ShadowRange {
+                    first,
+                    count: range.count,
+                    offset: instance.origin,
+                    bounds: None,
+                });
             }
         }
         ranges

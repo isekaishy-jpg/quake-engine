@@ -747,6 +747,48 @@ fn a_tiled_map_reads_its_grids_from_beside_its_bake() {
     assert_eq!(map.find_path(32.0, from, to).expect("a way"), expected);
 }
 
+/// A tiled map's light goes beside its bake, tile by tile. Held, a point's light
+/// is what it was when baked, and with nothing held it's near that, from the
+/// face's average.
+#[test]
+#[expect(clippy::float_cmp, reason = "the same sums on the same bytes")]
+fn a_tiled_map_reads_its_light_from_beside_its_bake() {
+    let text = format!(
+        "{TWO_ROOMS}tile_grid {{ size = 1024 }}\n\
+         entity lamp {{ type = light origin = -600 0 128 intensity = 900 }}\n"
+    );
+    let baked_map = baked(&text, &[]);
+    let styles = [1.0; 64];
+    let point = Vec3::new(-600.0, 0.0, 24.0);
+    let expected = baked_map.light_at(point, &styles);
+    assert!(expected > 10.0, "it's lit: {expected}");
+    let bytes = write_bake(&baked_map, 7);
+    let beside: HashMap<String, Vec<u8>> = side_files(&baked_map)
+        .into_iter()
+        .map(|(name, bytes)| (format!("{}{name}", bake_folder("here")), bytes))
+        .collect();
+    let working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let mut map = compile(&working, &mut source).expect("compiles");
+    assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
+    assert!(map.light.len() < baked_map.light.len(), "it went elsewhere");
+    let files: SideFiles = Arc::new(move |path| beside.get(path).cloned());
+    attach_side_files(&mut map, "here", &files);
+    let far = map.light_at(point, &styles);
+    assert!(far > 0.0, "an average's better than dark");
+    let tiles = map.light_tiles.as_ref().expect("tiled");
+    assert!(tiles.cells().len() >= 2, "{:?}", tiles.cells());
+    for tile in 0..u32::try_from(tiles.cells().len()).expect("few") {
+        let read = tiles.read(tile).expect("it's there");
+        tiles.hold(tile, Some(Arc::new(read)));
+    }
+    assert_eq!(map.light_at(point, &styles), expected);
+    for tile in 0..u32::try_from(tiles.cells().len()).expect("few") {
+        tiles.hold(tile, None);
+    }
+    assert_eq!(map.light_at(point, &styles), far, "let go again");
+}
+
 /// A bake keeps its walkable grid.
 #[test]
 fn a_bake_keeps_the_nav_grid() {

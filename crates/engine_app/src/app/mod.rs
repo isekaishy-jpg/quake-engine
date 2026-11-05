@@ -33,7 +33,7 @@ use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{PostSettings, Renderer, Target, TextureFilter};
+use engine_render::{PostSettings, Renderer, Target, TextureFilter, TileStreamer};
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
@@ -102,6 +102,8 @@ pub(crate) struct World {
     pub(crate) motion_events: u64,
     /// The renderer, once the window exists.
     pub(crate) renderer: Option<Renderer>,
+    /// Keeps detailed light near the view, on a map whose light streams.
+    pub(crate) tile_streamer: Option<TileStreamer>,
     /// The local player's side of the game, once a map is loaded.
     pub(crate) client: Option<Client>,
     /// The game, once a map is loaded.
@@ -350,6 +352,7 @@ impl World {
         self.palette = Some(palette);
         self.map = Some(Arc::clone(&map));
         if let Some(renderer) = &mut self.renderer {
+            self.tile_streamer = TileStreamer::new(&map);
             renderer.load_map(map)?;
         }
         Ok(())
@@ -569,6 +572,7 @@ impl Engine {
                 look: Look::new(LookScale::from_settings(0.0, 0.0, 0.0)),
                 motion_events: 0,
                 renderer: None,
+                tile_streamer: None,
                 client: None,
                 server: None,
                 step: StepSmoother::default(),

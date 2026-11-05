@@ -4,20 +4,21 @@
 //! records the text it was made from, so one that's out of date is ignored and
 //! the map falls back on playing unlit.
 
+use std::collections::BTreeMap;
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
 use engine_map::{
-    CHUNK_COLUMNS, ChunkedNav, Face, FaceLight, Map, MegaMaps, NavGrid, NavPlace, NavShape,
-    ProbeGrid, SideFiles, chunks_of,
+    CHUNK_COLUMNS, CRISP_STYLE, ChunkedNav, Face, FaceLight, LightTiles, Map, MegaMaps, NavGrid,
+    NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TileLight, chunks_of,
 };
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 11;
+const BAKE_VERSION: u64 = 12;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -40,6 +41,9 @@ pub fn map_hash(document: &Document, used: &str) -> u64 {
 fn hash_text(hash: u64) -> String {
     format!("{hash:016x}")
 }
+
+/// Where a shadow's edge is, on the scale of [`Map::light_edges`].
+const CRISP_EDGE: u8 = 128;
 
 /// The start of the name of hull `hull`'s chunks.
 fn nav_prefix(hull: usize) -> String {
@@ -76,6 +80,120 @@ fn read_shape(bytes: &[u8]) -> Option<NavShape> {
     })
 }
 
+/// A tiled map's light, sorted out by who holds it.
+struct SplitLight {
+    /// Each face's light, pointing where its samples went.
+    faces: Vec<Option<FaceLight>>,
+    /// What's always held.
+    resident: TileLight,
+    /// Each tile's place on the grid.
+    cells: Vec<[i32; 2]>,
+    /// Each tile's light.
+    tiles: Vec<TileLight>,
+}
+
+/// The middle of a face's corners.
+fn face_middle(map: &Map, face: &Face) -> Vec3 {
+    let points = map.face_points(face);
+    #[expect(clippy::cast_precision_loss, reason = "faces have few corners")]
+    let share = 1.0 / points.len().max(1) as f32;
+    points
+        .iter()
+        .fold(Vec3::ZERO, |sum, point| sum + *point * share)
+}
+
+/// A face's colour at a distance: each sample's layers added together, as they
+/// show with styles at their usual brightness, then averaged.
+fn average_of(map: &Map, light: &FaceLight) -> [u8; 3] {
+    let layer = (light.width * light.height) as usize;
+    let first = light.first_sample as usize;
+    let mut total = [0_u64; 3];
+    for sample in 0..layer {
+        let mut color = [0_u32; 3];
+        for (number, style) in light.styles.iter().enumerate() {
+            if *style == Face::NO_STYLE {
+                break;
+            }
+            let at = first + number * layer + sample;
+            let shadowed = *style == CRISP_STYLE
+                && map
+                    .light_edges
+                    .get(at)
+                    .is_some_and(|edge| *edge < CRISP_EDGE);
+            if let (false, Some(found)) = (shadowed, map.light.get(at)) {
+                for (sum, part) in color.iter_mut().zip(found) {
+                    *sum += u32::from(*part);
+                }
+            }
+        }
+        for (sum, part) in total.iter_mut().zip(color) {
+            *sum += u64::from(part.min(255));
+        }
+    }
+    let count = u64::try_from(layer.max(1)).unwrap_or(1);
+    total.map(|sum| u8::try_from(sum / count).unwrap_or(u8::MAX))
+}
+
+/// Copies the samples of `light` to the end of `into`, and returns where they
+/// start.
+fn copy_samples(map: &Map, light: &FaceLight, into: &mut TileLight) -> u32 {
+    let count = (light.width * light.height * light.style_count().max(1)) as usize;
+    let first = light.first_sample as usize;
+    let range = first..first + count;
+    let at = u32::try_from(into.light.len()).unwrap_or(u32::MAX);
+    into.light
+        .extend_from_slice(map.light.get(range.clone()).unwrap_or_default());
+    into.directions
+        .extend_from_slice(map.light_directions.get(range.clone()).unwrap_or_default());
+    into.edges
+        .extend_from_slice(map.light_edges.get(range.clone()).unwrap_or_default());
+    into.paint
+        .extend_from_slice(map.paint.get(range).unwrap_or_default());
+    at
+}
+
+/// Sorts `map`'s light by tile. What a world face has goes with the tile its
+/// middle is in, and a moving model's stays held.
+fn split_light(map: &Map) -> SplitLight {
+    let world = map.models.first().map_or(0..0, |model| {
+        model.first_face as usize..(model.first_face + model.face_count) as usize
+    });
+    let mut numbers: BTreeMap<[i32; 2], usize> = BTreeMap::new();
+    let cell_of = |face: &Face| map.tile_of(face_middle(map, face)).0;
+    for (at, face) in map.faces.iter().enumerate() {
+        if world.contains(&at) && face.light.is_some() {
+            numbers.entry(cell_of(face)).or_default();
+        }
+    }
+    for (number, slot) in numbers.values_mut().enumerate() {
+        *slot = number;
+    }
+    let mut split = SplitLight {
+        faces: Vec::with_capacity(map.faces.len()),
+        resident: TileLight::default(),
+        cells: numbers.keys().copied().collect(),
+        tiles: vec![TileLight::default(); numbers.len()],
+    };
+    for (at, face) in map.faces.iter().enumerate() {
+        let Some(mut light) = face.light else {
+            split.faces.push(None);
+            continue;
+        };
+        light.average = average_of(map, &light);
+        if world.contains(&at) {
+            let number = numbers[&cell_of(face)];
+            light.first_sample = copy_samples(map, &light, &mut split.tiles[number]);
+            light.tile = u32::try_from(number).unwrap_or(RESIDENT);
+        } else {
+            let source = face.light.unwrap_or(light);
+            light.first_sample = copy_samples(map, &source, &mut split.resident);
+            light.tile = RESIDENT;
+        }
+        split.faces.push(Some(light));
+    }
+    split
+}
+
 /// What a tiled map keeps beside its bake, as names and bytes, for the folder
 /// [`bake_folder`] names. Other maps keep nothing there.
 #[must_use]
@@ -83,6 +201,10 @@ pub fn side_files(map: &Map) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     if map.tile_size <= 0.0 {
         return out;
+    }
+    let split = split_light(map);
+    for (cell, tile) in split.cells.iter().zip(&split.tiles) {
+        out.push((LightTiles::tile_file(*cell), tile.to_bytes()));
     }
     for (hull, nav) in [&map.nav, &map.nav_large].into_iter().enumerate() {
         let Some(nav) = nav else {
@@ -107,6 +229,9 @@ pub fn attach_side_files(map: &mut Map, name: &str, files: &SideFiles) {
     let folder = bake_folder(name);
     for nav in map.nav_chunks.iter_mut().flatten() {
         nav.attach(&folder, Arc::clone(files));
+    }
+    if let Some(tiles) = &mut map.light_tiles {
+        tiles.attach(&folder, Arc::clone(files));
     }
 }
 
@@ -175,9 +300,15 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     let mut info = Block::new("source");
     info.set("hash", Value::Text(hash_text(hash)));
     document.blocks.push(info);
+    let tiled = map.tile_size > 0.0;
+    let split = tiled.then(|| split_light(map));
+    let face_lights: Vec<Option<FaceLight>> = split.as_ref().map_or_else(
+        || map.faces.iter().map(|face| face.light).collect(),
+        |split| split.faces.clone(),
+    );
     let mut lights = Vec::new();
-    for face in &map.faces {
-        match face.light {
+    for face_light in &face_lights {
+        match *face_light {
             None => lights.push(0),
             Some(light) => {
                 lights.push(1);
@@ -188,21 +319,41 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
                 lights.extend_from_slice(&light.texel_origin[1].to_le_bytes());
                 lights.extend_from_slice(&light.texels_per_sample.to_le_bytes());
                 lights.extend_from_slice(&light.styles);
+                lights.extend_from_slice(&light.tile.to_le_bytes());
+                lights.extend_from_slice(&light.average);
             }
         }
     }
     let mut block = Block::new("light");
     block.set("faces", Value::Bytes(lights));
-    block.set("samples", Value::Bytes(map.light.as_flattened().to_vec()));
+    let (samples, directions, edges, paint) = split.as_ref().map_or(
+        (
+            &map.light,
+            &map.light_directions,
+            &map.light_edges,
+            &map.paint,
+        ),
+        |split| {
+            let held = &split.resident;
+            (&held.light, &held.directions, &held.edges, &held.paint)
+        },
+    );
+    block.set("samples", Value::Bytes(samples.as_flattened().to_vec()));
     block.set(
         "directions",
-        Value::Bytes(map.light_directions.as_flattened().to_vec()),
+        Value::Bytes(directions.as_flattened().to_vec()),
     );
-    block.set("edges", Value::Bytes(map.light_edges.clone()));
-    block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
+    block.set("edges", Value::Bytes(edges.clone()));
+    block.set("paint", Value::Bytes(paint.as_flattened().to_vec()));
+    if let Some(split) = &split {
+        let mut cells = Vec::with_capacity(split.cells.len() * 8);
+        for part in split.cells.as_flattened() {
+            cells.extend_from_slice(&part.to_le_bytes());
+        }
+        block.set("light_cells", Value::Bytes(cells));
+    }
     block.set("visibility", Value::Bytes(map.tree.visibility.clone()));
     // A tiled map's grids go beside the bake, and only their shapes are here.
-    let tiled = map.tile_size > 0.0;
     if let Some(nav) = &map.nav {
         if tiled {
             block.set("nav_shape", Value::Bytes(write_shape(nav)));
@@ -298,8 +449,10 @@ fn read_face_lights(bytes: &[u8], faces: &[Face]) -> Option<Vec<Option<FaceLight
             texel_origin: [i32::from_le_bytes(word(12)?), i32::from_le_bytes(word(16)?)],
             texels_per_sample: u32::from_le_bytes(word(20)?),
             styles: word(24)?,
+            tile: u32::from_le_bytes(word(28)?),
+            average: bytes.get(at + 32..at + 35)?.try_into().ok()?,
         };
-        at += 28;
+        at += 35;
         out.push(Some(light));
     }
     (at == bytes.len()).then_some(out)
@@ -408,6 +561,11 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     }
     map.nav = bytes_of(light, "nav").and_then(read_nav);
     map.nav_large = bytes_of(light, "nav_large").and_then(read_nav);
+    map.light_tiles = bytes_of(light, "light_cells").map(|bytes| {
+        let (words, _) = bytes.as_chunks::<4>();
+        let numbers: Vec<i32> = words.iter().map(|word| i32::from_le_bytes(*word)).collect();
+        LightTiles::new(map.tile_size, numbers.as_chunks::<2>().0.to_vec())
+    });
     for (hull, name) in ["nav_shape", "nav_large_shape"].into_iter().enumerate() {
         map.nav_chunks[hull] = bytes_of(light, name)
             .and_then(read_shape)

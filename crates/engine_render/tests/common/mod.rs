@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_map::{
-    Face, FaceLight, Leaf, Map, MipLevel, Model, TexelAxis, Texture, TextureKind, Tree,
+    Face, FaceLight, Leaf, Map, MipLevel, Model, RESIDENT, TexelAxis, Texture, TextureKind, Tree,
 };
 
 /// A map of `models` models, each one 128 unit square at z = 0, facing up.
@@ -67,6 +67,8 @@ pub(crate) fn map(models: u32) -> Map {
                 texel_origin: [0, 0],
                 texels_per_sample: 16,
                 styles: [0, Face::NO_STYLE, Face::NO_STYLE, Face::NO_STYLE],
+                tile: RESIDENT,
+                average: [0; 3],
             }),
         });
         map.models.push(Model {

@@ -15,7 +15,7 @@ use vulkane::safe::{
     MemoryPropertyFlags, PhysicalDevice, PipelineStage,
 };
 
-use super::shadow::shadow_figures;
+use super::shadow::{ShadowRange, shadow_figures};
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
     GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
@@ -31,9 +31,57 @@ use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::world::{BatchKind, uses_material};
+use crate::world::{TileImage, VertexPatch, shadow_groups};
 use crate::world::{Vertex, WorldMesh};
 
 /// A buffer the CPU can write.
+/// Copies a square `size` across from `offset` in `staging` to `corner` of
+/// `atlas`, which is read before and after.
+fn copy_into_atlas(
+    rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+    staging: &GpuBuffer,
+    atlas: &GpuImage,
+    offset: u64,
+    size: u32,
+    corner: [u32; 2],
+) {
+    rec.image_barrier(
+        PipelineStage::ALL_GRAPHICS,
+        PipelineStage::TRANSFER,
+        ImageBarrier::color(
+            &atlas.image,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            ImageLayout::TRANSFER_DST_OPTIMAL,
+            AccessFlags::SHADER_READ,
+            AccessFlags::TRANSFER_WRITE,
+        ),
+    );
+    let mut region = BufferImageCopy::full_2d(size, size);
+    region.buffer_offset = offset;
+    region.image_offset = [
+        i32::try_from(corner[0]).unwrap_or(0),
+        i32::try_from(corner[1]).unwrap_or(0),
+        0,
+    ];
+    rec.copy_buffer_to_image(
+        &staging.buffer,
+        &atlas.image,
+        ImageLayout::TRANSFER_DST_OPTIMAL,
+        &[region],
+    );
+    rec.image_barrier(
+        PipelineStage::TRANSFER,
+        PipelineStage::FRAGMENT_SHADER,
+        ImageBarrier::color(
+            &atlas.image,
+            ImageLayout::TRANSFER_DST_OPTIMAL,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            AccessFlags::TRANSFER_WRITE,
+            AccessFlags::SHADER_READ,
+        ),
+    );
+}
+
 pub(super) fn host_buffer(
     device: &Device,
     physical: &PhysicalDevice,
@@ -557,13 +605,18 @@ impl Backend {
                 )
             })
         };
-        let shadow_world: Vec<u32> = mesh
-            .face_batches
-            .iter()
-            .zip(&mesh.face_indices)
-            .filter(|(batch, _)| opaque_batch(batch))
-            .flat_map(|(_, indices)| indices.iter().copied())
-            .collect();
+        let groups = shadow_groups(map, mesh, opaque_batch);
+        let mut shadow_world = Vec::new();
+        let mut shadow_parts = Vec::with_capacity(groups.len());
+        for group in groups {
+            shadow_parts.push(ShadowRange {
+                first: u32::try_from(shadow_world.len()).unwrap_or(0),
+                count: u32::try_from(group.indices.len()).unwrap_or(0),
+                offset: Vec3::ZERO,
+                bounds: group.bounds,
+            });
+            shadow_world.extend(group.indices);
+        }
         let shadow_world_count = u32::try_from(shadow_world.len()).unwrap_or(0);
         let mut shadow_indices = host_buffer(
             &self.device,
@@ -716,6 +769,7 @@ impl Backend {
             indices,
             shadow_indices,
             shadow_world_count,
+            shadow_parts,
             texture_sets,
             _material_params: material_params,
             _textures: {
@@ -725,9 +779,9 @@ impl Backend {
             },
             _pool: pool,
             frame_set,
-            _atlas: atlas,
-            _direction_atlas: direction_atlas,
-            _paint_atlas: paint_atlas,
+            atlas,
+            direction_atlas,
+            paint_atlas,
         });
         Ok(())
     }
@@ -771,6 +825,100 @@ impl Backend {
     }
 
     /// An image holding `levels`, largest first, ready to sample.
+    /// Points vertices at where their light is now.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub(crate) fn write_vertices(&self, patches: &[VertexPatch]) -> Result<(), RenderError> {
+        self.write_tile(None, patches)
+    }
+
+    /// Copies a tile's light into the atlas at `corner`, and points vertices at
+    /// it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub(crate) fn write_tile_light(
+        &self,
+        image: &TileImage,
+        corner: [u32; 2],
+        patches: &[VertexPatch],
+    ) -> Result<(), RenderError> {
+        self.write_tile(Some((image, corner)), patches)
+    }
+
+    /// Writes what's given in one go. Barriers wait for any frame still using
+    /// what's written.
+    fn write_tile(
+        &self,
+        image: Option<(&TileImage, [u32; 2])>,
+        patches: &[VertexPatch],
+    ) -> Result<(), RenderError> {
+        let Some(map) = &self.map else {
+            return Ok(());
+        };
+        let parts = image.iter().flat_map(|(image, _)| {
+            [
+                image.bytes.as_slice(),
+                image.directions.as_slice(),
+                image.paint.as_slice(),
+            ]
+        });
+        let mut bytes = Vec::new();
+        let mut offsets = Vec::new();
+        for part in parts {
+            offsets.push(bytes.len() as u64);
+            bytes.extend_from_slice(part);
+        }
+        let mut copies = Vec::with_capacity(patches.len());
+        for (first, patch) in patches {
+            copies.push(BufferCopy {
+                src_offset: bytes.len() as u64,
+                dst_offset: u64::from(*first) * Vertex::SIZE as u64,
+                size: patch.len() as u64,
+            });
+            bytes.extend_from_slice(patch);
+        }
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let mut staging = host_buffer(
+            &self.device,
+            &self.physical,
+            bytes.len(),
+            BufferUsage::TRANSFER_SRC,
+        )?;
+        staging.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
+        let atlases = [&map.atlas, &map.direction_atlas, &map.paint_atlas];
+        self.queue
+            .one_shot(&self.device, self.queue_family, |rec| {
+                if let Some((image, corner)) = image {
+                    for (atlas, offset) in atlases.iter().zip(&offsets) {
+                        copy_into_atlas(rec, &staging, atlas, *offset, image.size, corner);
+                    }
+                }
+                if !copies.is_empty() {
+                    rec.memory_barrier(
+                        PipelineStage::ALL_GRAPHICS,
+                        PipelineStage::TRANSFER,
+                        AccessFlags::VERTEX_ATTRIBUTE_READ,
+                        AccessFlags::TRANSFER_WRITE,
+                    );
+                    rec.copy_buffer(&staging.buffer, &map.vertices.buffer, &copies);
+                    rec.memory_barrier(
+                        PipelineStage::TRANSFER,
+                        PipelineStage::ALL_GRAPHICS,
+                        AccessFlags::TRANSFER_WRITE,
+                        AccessFlags::VERTEX_ATTRIBUTE_READ,
+                    );
+                }
+                Ok(())
+            })?;
+        Ok(())
+    }
+
     pub(super) fn upload_image(
         &self,
         levels: &[(u32, u32, &[u8])],

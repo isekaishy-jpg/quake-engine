@@ -3,6 +3,7 @@
 use engine_core::math::Vec3;
 
 use crate::map::{Face, Map};
+use crate::tile_light::RESIDENT;
 use crate::tree::NodeChild;
 
 /// How far down a point looks for the floor it takes its light from.
@@ -68,6 +69,14 @@ impl Map {
         };
         let across = reach(0, light.width)?;
         let down = reach(1, light.height)?;
+        let held = (light.tile != RESIDENT)
+            .then(|| self.light_tiles.as_ref()?.held(light.tile))
+            .flatten();
+        if light.tile != RESIDENT && held.is_none() {
+            let [red, green, blue] = light.average.map(f32::from);
+            return Some((red + green + blue) / 3.0);
+        }
+        let samples = held.as_ref().map_or(&self.light, |tile| &tile.light);
         let layer = light.width * light.height;
         let mut total = 0.0;
         for (number, &style) in (0_u32..).zip(&light.styles) {
@@ -75,7 +84,7 @@ impl Map {
                 break;
             }
             let at = light.first_sample + number * layer + down * light.width + across;
-            let sample = self.light.get(usize::try_from(at).ok()?)?;
+            let sample = samples.get(usize::try_from(at).ok()?)?;
             let sum = u16::from(sample[0]) + u16::from(sample[1]) + u16::from(sample[2]);
             let brightness = styles.get(usize::from(style)).copied().unwrap_or(1.0);
             total += f32::from(sum) / 3.0 * brightness;

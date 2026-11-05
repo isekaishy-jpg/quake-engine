@@ -1,7 +1,9 @@
 //! The light on a point, from the floor below it.
 
 use engine_core::math::Vec3;
-use engine_map::{Face, FaceLight, Leaf, LightTrack, Map, Node, NodeChild, Plane, TexelAxis, Tree};
+use engine_map::{
+    Face, FaceLight, Leaf, LightTrack, Map, Node, NodeChild, Plane, RESIDENT, TexelAxis, Tree,
+};
 
 /// A floor at z = 0 with a lit face over x and y from 0 to 16, with 2 by 2
 /// samples, in style 3.
@@ -23,6 +25,8 @@ fn map() -> Map {
                 texel_origin: [0, 0],
                 texels_per_sample: 16,
                 styles: [3, Face::NO_STYLE, Face::NO_STYLE, Face::NO_STYLE],
+                tile: RESIDENT,
+                average: [0; 3],
             }),
         }],
         light: vec![[30; 3], [60; 3], [90; 3], [120; 3]],

@@ -339,6 +339,13 @@ impl World {
             styles,
             gamma: self.gamma,
         };
+        // A device that's failed says so when it draws. Without this, far
+        // colours stay, which is safe.
+        if let (Some(streamer), Some(renderer)) = (&mut self.tile_streamer, &mut self.renderer)
+            && streamer.update(view.origin, renderer).is_err()
+        {
+            self.tile_streamer = None;
+        }
         Picture {
             view,
             instances,

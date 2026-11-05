@@ -8,15 +8,17 @@ use std::time::Duration;
 
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
-use engine_compile::{MaterialLibrary, apply_bake, compile, map_hash, read_map};
+use engine_compile::{MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map};
 use engine_core::math::Vec3;
 use engine_editor::camera::{Camera, FOV, Keys};
 use engine_format::from_text;
-use engine_map::{Map, Spline, Texture};
+use engine_map::{Map, SideFiles, Spline, Texture};
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, View};
+use engine_render::{
+    Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, TileStreamer, View,
+};
 use engine_tools::{Session, prefab_names, run};
 use serde_json::{Value, json};
 
@@ -116,6 +118,8 @@ pub(crate) struct Editor {
     window: Option<Window>,
     /// The renderer, once there's a window.
     renderer: Option<Renderer>,
+    /// Keeps detailed light near the view, on a map whose light streams.
+    tile_streamer: Option<TileStreamer>,
     /// The window's size.
     size: (u32, u32),
     /// The UI.
@@ -329,6 +333,7 @@ impl Editor {
             content: content.to_owned(),
             window: None,
             renderer: None,
+            tile_streamer: None,
             size,
             context,
             input: UiInput::default(),
@@ -472,8 +477,10 @@ impl Editor {
             && let Ok(bytes) = std::fs::read(path.with_extension("ebake"))
         {
             let _applied = apply_bake(&mut map, &bytes, map_hash(&document, &used));
+            attach_beside(&mut map, &path);
         }
         let map = Arc::new(map);
+        self.tile_streamer = TileStreamer::new(&map);
         if let Err(error) = renderer.load_map(Arc::clone(&map)) {
             self.log.push(format!("render: {error}"));
         }
@@ -1116,6 +1123,18 @@ impl Editor {
     }
 }
 
+/// Says where `map` can read what's beside its bake, from where it's saved.
+fn attach_beside(map: &mut Map, path: &Path) {
+    let name = path
+        .file_stem()
+        .map(|name| name.to_string_lossy().into_owned());
+    let content = path.parent().and_then(Path::parent).map(Path::to_owned);
+    if let (Some(name), Some(content)) = (name, content) {
+        let files: SideFiles = Arc::new(move |file| std::fs::read(content.join(file)).ok());
+        attach_side_files(map, &name, &files);
+    }
+}
+
 /// The saved path of the session.
 fn saved_map_path(session: &Session) -> Option<PathBuf> {
     session.saved_path()
@@ -1268,6 +1287,11 @@ impl PlatformApp for Editor {
             ]
         });
         renderer.set_view_area(area);
+        if let Some(streamer) = &mut self.tile_streamer
+            && let Err(error) = streamer.update(view.origin, renderer)
+        {
+            self.log.push(format!("tiles: {error}"));
+        }
         if let Err(error) = renderer.draw(&view, drawables) {
             self.log.push(format!("draw: {error}"));
         }

@@ -46,6 +46,19 @@ const GONE_REACH: f32 = 64.0;
 /// The shaders.
 const SHADOW_SHADER: &str = include_str!("../shaders/shadow.wgsl");
 
+/// Some of what shadows are drawn from.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub(super) struct ShadowRange {
+    /// The first index.
+    pub(super) first: u32,
+    /// How many indices.
+    pub(super) count: u32,
+    /// Where it's moved to.
+    pub(super) offset: Vec3,
+    /// The middle and size of it, if a light can miss it.
+    pub(super) bounds: Option<(Vec3, f32)>,
+}
+
 /// What a shadow slot was last drawn for.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 struct Kept {
@@ -414,7 +427,7 @@ impl Shadows {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: Option<&GpuMap>,
-        mesh_ranges: &[(u32, u32, Vec3)],
+        mesh_ranges: &[ShadowRange],
         figures: &[Figure<'_>],
     ) {
         if !self.ready.replace(true) {
@@ -446,7 +459,7 @@ impl Shadows {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: &GpuMap,
-        ranges: &[(u32, u32, Vec3)],
+        ranges: &[ShadowRange],
         tile: usize,
         face: usize,
         light: &LiveLight,
@@ -470,10 +483,16 @@ impl Shadows {
         rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
         rec.bind_index_buffer(&map.shadow_indices.buffer, 0, INDEX_TYPE_U32);
         let matrix = cube_face(light.origin, face, light.radius);
-        for (first, count, offset) in ranges {
+        let reached = |range: &&ShadowRange| {
+            range
+                .bounds
+                .is_none_or(|(middle, size)| (middle - light.origin).length() < light.radius + size)
+        };
+        for range in ranges.iter().filter(reached) {
+            let offset = range.offset;
             let tail = [offset.x, offset.y, offset.z, 0.0, 0.0, 0.0, 0.0, 0.0];
             self.push(rec, &matrix, tail);
-            rec.draw_indexed(*count, 1, *first, 0, 0);
+            rec.draw_indexed(range.count, 1, range.first, 0, 0);
         }
     }
 

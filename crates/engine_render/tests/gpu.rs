@@ -9,13 +9,13 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, Map, Material, MaterialLayer,
-    MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sky, Sprite,
-    SpriteFacing, SpriteFrame, SpriteImage, TextureKind,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, LightTiles, Map, Material,
+    MaterialLayer, MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Shading,
+    SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
-    ParticleDraw, PostSettings, Renderer, SpriteDraw, Target, View, build_world,
+    ParticleDraw, PostSettings, Renderer, SpriteDraw, Target, TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -992,6 +992,114 @@ fn blended_faces_draw_far_to_near() {
         .capture(&view_from_above(), Drawables::default(), 64, 64)
         .expect("capture");
     assert!(centre(&capture)[0] > 100);
+}
+
+/// `map` with its one face's light moved out to tile 0, half red in its first
+/// sample's column, with `average` as its colour at a distance.
+fn tiled_map(average: [u8; 3]) -> (Map, TileLight) {
+    let mut built = map(1);
+    let light = built.faces[0].light.as_mut().expect("lit");
+    light.tile = 0;
+    light.average = average;
+    let tile = TileLight {
+        light: std::mem::take(&mut built.light),
+        ..TileLight::default()
+    };
+    built.tile_size = 1024.0;
+    built.light_tiles = Some(LightTiles::new(1024.0, vec![[0, 0]]));
+    (built, tile)
+}
+
+/// A tile with no detail draws in its average colour, its detail replaces that,
+/// and taking the detail away puts the average back.
+#[test]
+fn a_tile_shows_its_average_until_its_light_arrives() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let (built, tile) = tiled_map([0, 10, 240]);
+    renderer.load_map(Arc::new(built)).expect("load");
+    let centre_of = |renderer: &mut Renderer| {
+        let capture = renderer
+            .capture(&view_from_above(), Drawables::default(), 16, 16)
+            .expect("capture");
+        centre(&capture)
+    };
+    let far = centre_of(&mut renderer);
+    assert!(far[2] > far[0] + 100, "the average: {far:?}");
+    assert!(renderer.show_tile_light(0, &tile).expect("shows"));
+    assert_eq!(renderer.shown_tiles(), 1);
+    let near = centre_of(&mut renderer);
+    assert!(near[0] > near[2] + 50, "its own light: {near:?}");
+    assert!(!renderer.show_tile_light(0, &tile).expect("shows"), "once");
+    renderer.hide_tile_light(0).expect("hides");
+    assert_eq!(renderer.shown_tiles(), 0);
+    assert_eq!(centre_of(&mut renderer), far, "back as it was");
+    assert!(renderer.show_tile_light(0, &tile).expect("shows"), "again");
+    assert_eq!(centre_of(&mut renderer), near, "just the same");
+}
+
+/// A streamer brings a tile's light to the view off the main thread, and takes
+/// it away when the view goes far off.
+#[test]
+fn a_tile_streams_in_and_out_as_the_view_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let (mut built, tile) = tiled_map([0, 10, 240]);
+    let file = LightTiles::tile_file([0, 0]);
+    let bytes = tile.to_bytes();
+    let files: SideFiles = Arc::new(move |path| (path == file).then(|| bytes.clone()));
+    built.light_tiles.as_mut().expect("tiled").attach("", files);
+    let built = Arc::new(built);
+    renderer.load_map(Arc::clone(&built)).expect("load");
+    let mut streamer = TileStreamer::new(&built).expect("it streams");
+    let near = Vec3::new(64.0, 64.0, 64.0);
+    let settle = |streamer: &mut TileStreamer, renderer: &mut Renderer, eye: Vec3| {
+        for _ in 0..2000 {
+            streamer.update(eye, renderer).expect("updates");
+            if streamer.settled() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(1));
+        }
+        streamer.update(eye, renderer).expect("updates");
+    };
+    settle(&mut streamer, &mut renderer, near);
+    assert_eq!(renderer.shown_tiles(), 1, "it came");
+    let tiles = built.light_tiles.as_ref().expect("tiled");
+    assert!(tiles.held(0).is_some(), "light at a point can use it");
+    settle(&mut streamer, &mut renderer, Vec3::new(9000.0, 0.0, 0.0));
+    assert_eq!(renderer.shown_tiles(), 0, "it went");
+    assert!(tiles.held(0).is_none());
+    settle(&mut streamer, &mut renderer, near);
+    assert_eq!(renderer.shown_tiles(), 1, "it came back");
+}
+
+/// `count` faces each with a 256 sample square of light, which takes more than
+/// the largest atlas could hold at once.
+fn too_much_light(count: u32, tile: u32) -> Map {
+    let mut built = map(count);
+    for face in &mut built.faces {
+        let light = face.light.as_mut().expect("lit");
+        light.width = 256;
+        light.height = 256;
+        light.tile = tile;
+    }
+    built
+}
+
+/// Light that won't fit the atlas stops a map loading, unless it streams, and
+/// then only what's near has to fit.
+#[test]
+fn streamed_light_goes_past_what_an_atlas_holds() {
+    let count = 1100;
+    assert!(build_world(&too_much_light(count, RESIDENT)).is_none());
+    let mut built = too_much_light(count, 0);
+    built.tile_size = 1024.0;
+    built.light_tiles = Some(LightTiles::new(1024.0, vec![[0, 0]]));
+    let mesh = build_world(&built).expect("it builds");
+    assert_eq!(mesh.atlas_size, 4096);
 }
 
 /// How many different colours a capture has.

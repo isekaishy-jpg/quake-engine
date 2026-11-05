@@ -6,7 +6,7 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, STENCIL_GRID, Sprite};
+use engine_map::{AliasModel, Map, STENCIL_GRID, Sprite, TileLight};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
@@ -15,7 +15,7 @@ use crate::error::RenderError;
 use crate::live::LiveLight;
 use crate::sprite::{LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
-use crate::world::{WorldMesh, build_world};
+use crate::world::{ShownTiles, WorldMesh, build_world, detail_patches, far_patches, tile_image};
 
 /// How many light styles a view carries.
 const STYLE_COUNT: usize = 64;
@@ -118,6 +118,8 @@ struct LoadedMap {
     mesh: WorldMesh,
     /// What's visible now.
     visible: VisibleSet,
+    /// Which tiles' light is in the atlas.
+    shown: ShownTiles,
 }
 
 /// What the final pass does (proposal 0075).
@@ -195,12 +197,59 @@ impl Renderer {
         let mesh =
             build_world(&map).ok_or_else(|| RenderError("map's light won't fit".to_owned()))?;
         self.backend.load_map(&map, &mesh)?;
+        let shown = ShownTiles::new(&mesh);
         self.loaded = Some(LoadedMap {
             map,
             mesh,
             visible: VisibleSet::default(),
+            shown,
         });
         Ok(())
+    }
+
+    /// Gives `tile` its detailed light. Returns whether it did: with the atlas
+    /// full it stays in its average colours, which is safe to leave.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn show_tile_light(&mut self, tile: u32, light: &TileLight) -> Result<bool, RenderError> {
+        let Some(loaded) = &mut self.loaded else {
+            return Ok(false);
+        };
+        let Some(image) = tile_image(&loaded.mesh, &loaded.map, tile, light) else {
+            return Ok(false);
+        };
+        let Some(corner) = loaded.shown.place(tile, image.size) else {
+            return Ok(false);
+        };
+        let patches = detail_patches(&loaded.map, &loaded.mesh, &image, corner);
+        self.backend.write_tile_light(&image, corner, &patches)?;
+        Ok(true)
+    }
+
+    /// Takes `tile`'s detail away again, back to its average colours.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn hide_tile_light(&mut self, tile: u32) -> Result<(), RenderError> {
+        let Some(loaded) = &mut self.loaded else {
+            return Ok(());
+        };
+        if loaded.shown.free(tile) {
+            let patches = far_patches(&loaded.map, &loaded.mesh, tile);
+            self.backend.write_vertices(&patches)?;
+        }
+        Ok(())
+    }
+
+    /// How many tiles are showing their detail.
+    #[must_use]
+    pub fn shown_tiles(&self) -> usize {
+        self.loaded
+            .as_ref()
+            .map_or(0, |loaded| loaded.shown.count())
     }
 
     /// Uploads a model, and returns the number to draw it by.

@@ -14,6 +14,7 @@ use crate::pool::Pool;
 use crate::probes::{LightTrack, ProbeGrid};
 use crate::sky::{Fog, Sky};
 use crate::stencil::RayStencil;
+use crate::tile_light::LightTiles;
 
 use crate::tree::{ClipChild, NodeChild, Tree};
 
@@ -105,6 +106,11 @@ pub struct FaceLight {
     pub texels_per_sample: u32,
     /// The light style of each layer. Unused layers hold [`Face::NO_STYLE`].
     pub styles: [u8; 4],
+    /// Which tile's light holds its samples, or [`crate::RESIDENT`] for
+    /// [`Map::light`].
+    pub tile: u32,
+    /// Its average colour, for when its tile's light isn't held.
+    pub average: [u8; 3],
 }
 
 impl FaceLight {
@@ -226,6 +232,8 @@ pub struct Map {
     pub nav_large: Option<NavGrid>,
     /// The same two, for a tiled map, read a chunk at a time.
     pub nav_chunks: [Option<ChunkedNav>; 2],
+    /// Where a tiled map's light is, for faces not in [`Map::light`].
+    pub light_tiles: Option<LightTiles>,
     /// Lines for movement set out by hand.
     pub splines: Vec<Spline>,
     /// How wide a tile is, or 0 for a map with no tiles.

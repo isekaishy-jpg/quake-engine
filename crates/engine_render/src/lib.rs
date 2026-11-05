@@ -16,11 +16,12 @@ mod material;
 mod matrix;
 mod renderer;
 mod sprite;
+mod streamer;
 mod visible;
 mod world;
 
 pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
-pub use atlas::Atlas;
+pub use atlas::{Atlas, AtlasSpace};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
 pub use error::RenderError;
 pub use live::{
@@ -37,5 +38,8 @@ pub use sprite::{
     LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, ParticleColor, ParticleDraw, SpriteDraw,
     ViewAxes, sprite_axes, sprite_push_bytes,
 };
+pub use streamer::TileStreamer;
 pub use visible::VisibleSet;
-pub use world::{Batch, BatchKind, ModelRange, Vertex, WorldMesh, build_world};
+pub use world::{
+    Batch, BatchKind, ModelRange, ShownTiles, TileImage, Vertex, WorldMesh, build_world, tile_image,
+};

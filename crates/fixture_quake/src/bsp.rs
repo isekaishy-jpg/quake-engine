@@ -6,7 +6,7 @@ use std::fmt;
 use engine_core::math::Vec3;
 use engine_map::{
     Animation, ClipChild, ClipNode, Contents, Entity, Face, FaceLight, Leaf, Map, MipLevel, Model,
-    Node, NodeChild, Plane, TexelAxis, Texture, TextureKind, Tree,
+    Node, NodeChild, Plane, RESIDENT, TexelAxis, Texture, TextureKind, Tree,
 };
 use qbsp::data::models::BspFace;
 use qbsp::data::nodes::{BspLeaf, BspLeafContentFlags, BspNodeRef};
@@ -229,6 +229,8 @@ fn face_light(face: &BspFace, points: &[Vec3], axes: &[TexelAxis; 2]) -> Option<
         texel_origin,
         texels_per_sample: TEXELS_PER_SAMPLE,
         styles,
+        tile: RESIDENT,
+        average: [0; 3],
     })
 }
 

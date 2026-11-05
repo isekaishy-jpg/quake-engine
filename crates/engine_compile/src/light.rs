@@ -10,7 +10,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, FaceLight, LightTrack, Map, Material, MegaImage,
-    MipLevel, ProbeGrid, TextureKind,
+    MipLevel, ProbeGrid, RESIDENT, TextureKind,
 };
 
 use crate::error::CompileError;
@@ -749,6 +749,8 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
             texel_origin: origin,
             texels_per_sample,
             styles: [Face::NO_STYLE; 4],
+            tile: RESIDENT,
+            average: [0; 3],
         },
         positions,
         frame,
