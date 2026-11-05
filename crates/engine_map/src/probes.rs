@@ -24,7 +24,7 @@ pub struct ProbeGrid {
 /// The light at a point.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ProbeSample {
-    /// Its average brightness, from 0 to 255.
+    /// The brightness of its strongest side, from 0 to 255.
     pub brightness: f32,
     /// Which way the strongest light comes from.
     pub direction: Vec3,
@@ -83,12 +83,15 @@ impl ProbeGrid {
             let weight = weight(0, bit(0)) * weight(1, bit(1)) * weight(2, bit(2));
             let index = self.index(at)?;
             let colors = self.colors.get(index)?;
-            let sum: f32 = colors
+            // A probe in solid saw nothing, and shouldn't darken its neighbours.
+            let strongest = colors
                 .iter()
-                .flatten()
-                .map(|part| f32::from(*part))
-                .sum::<f32>()
-                / 18.0;
+                .map(|side| (f32::from(side[0]) + f32::from(side[1]) + f32::from(side[2])) / 3.0)
+                .fold(0.0, f32::max);
+            if strongest <= 0.0 {
+                continue;
+            }
+            let sum = strongest;
             total += sum * weight;
             weights += weight;
             if let Some(bytes) = self.directions.get(index) {

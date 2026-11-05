@@ -185,7 +185,7 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     let fields = block
         .fields
         .iter()
-        .filter(|(key, _)| key != "type")
+        .filter(|(key, _)| !matches!(key.as_str(), "type" | "id" | "prefab"))
         .cloned()
         .collect();
     let brushes = block

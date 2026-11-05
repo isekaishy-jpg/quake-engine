@@ -1,0 +1,618 @@
+format 1 map
+
+entity {
+    type = "worldspawn"
+    ambient = 10
+    bounce = 1.5
+    light_spacing = 16
+    sun_intensity = 240
+    sun_size = 24
+    id = 1
+}
+
+brush {
+    cuboid = [-32 -32 -32 1056 800 0]
+    material = "stone"
+    prefab = "room"
+    id = 2
+}
+
+brush {
+    cuboid = [-32 -32 320 1056 800 352]
+    material = "metal"
+    prefab = "room"
+    id = 3
+}
+
+brush {
+    cuboid = [-32 -32 0 0 800 320]
+    material = "brick"
+    prefab = "room"
+    id = 4
+}
+
+brush {
+    cuboid = [1024 -32 0 1056 800 320]
+    material = "brick"
+    prefab = "room"
+    id = 5
+}
+
+brush {
+    cuboid = [0 -32 0 1024 0 320]
+    material = "brick"
+    prefab = "room"
+    id = 6
+}
+
+brush {
+    cuboid = [0 768 0 1024 800 320]
+    material = "brick"
+    prefab = "room"
+    id = 7
+}
+
+entity {
+    type = "info_player_start"
+    origin = [128 384 24]
+    angle = 0
+    id = 8
+}
+
+brush {
+    cuboid = [288 160 0 352 224 320]
+    material = "metal"
+    prefab = "pillar"
+    id = 9
+}
+
+brush {
+    cuboid = [288 544 0 352 608 320]
+    material = "cel_stone"
+    prefab = "pillar"
+    id = 10
+}
+
+brush {
+    cuboid = [608 160 0 672 224 320]
+    material = "shiny"
+    prefab = "pillar"
+    id = 11
+}
+
+brush {
+    cuboid = [608 544 0 672 608 320]
+    material = "triplanar_rock"
+    prefab = "pillar"
+    id = 12
+}
+
+brush {
+    cuboid = [448 32 0 480 128 16]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 13
+}
+
+brush {
+    cuboid = [480 32 0 512 128 32]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 14
+}
+
+brush {
+    cuboid = [512 32 0 544 128 48]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 15
+}
+
+brush {
+    cuboid = [544 32 0 576 128 64]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 16
+}
+
+brush {
+    cuboid = [576 32 0 608 128 80]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 17
+}
+
+brush {
+    cuboid = [608 32 0 640 128 96]
+    material = "mossy_stone"
+    prefab = "stairs"
+    id = 18
+}
+
+brush {
+    material = "stone"
+    prefab = "ramp"
+    id = 19
+    face {
+        distance = -277.3191861997341
+        normal = [-0.39391929857916763 0 0.9191450300180578]
+    }
+    face {
+        distance = 928
+        normal = [1 0 0]
+    }
+    face {
+        distance = 0
+        normal = [0 0 -1]
+    }
+    face {
+        distance = 128
+        normal = [0 1 0]
+    }
+    face {
+        distance = -32
+        normal = [0 -1 0]
+    }
+}
+
+brush {
+    cuboid = [448 134 140 640 138 144]
+    material = "metal"
+    prefab = "railing"
+    id = 20
+}
+
+brush {
+    cuboid = [446 134 96 450 138 140]
+    material = "metal"
+    prefab = "railing"
+    id = 21
+}
+
+brush {
+    cuboid = [510 134 96 514 138 140]
+    material = "metal"
+    prefab = "railing"
+    id = 22
+}
+
+brush {
+    cuboid = [574 134 96 578 138 140]
+    material = "metal"
+    prefab = "railing"
+    id = 23
+}
+
+brush {
+    cuboid = [638 134 96 642 138 140]
+    material = "metal"
+    prefab = "railing"
+    id = 24
+}
+
+brush {
+    cuboid = [192 640 0 240 688 48]
+    material = "metal"
+    prefab = "crate"
+    id = 25
+}
+
+brush {
+    cuboid = [240 640 0 288 688 48]
+    material = "brick"
+    prefab = "crate"
+    id = 26
+}
+
+brush {
+    cuboid = [216 640 48 264 688 96]
+    material = "mossy_stone"
+    prefab = "crate"
+    id = 27
+}
+
+brush {
+    cuboid = [744 464 -112 968 688 -96]
+    material = "stone"
+    prefab = "pool"
+    id = 28
+}
+
+brush {
+    cuboid = [744 464 -96 760 688 0]
+    material = "stone"
+    prefab = "pool"
+    id = 29
+}
+
+brush {
+    cuboid = [952 464 -96 968 688 0]
+    material = "stone"
+    prefab = "pool"
+    id = 30
+}
+
+brush {
+    cuboid = [760 464 -96 952 480 0]
+    material = "stone"
+    prefab = "pool"
+    id = 31
+}
+
+brush {
+    cuboid = [760 672 -96 952 688 0]
+    material = "stone"
+    prefab = "pool"
+    id = 32
+}
+
+brush {
+    contents = "water"
+    cuboid = [760 480 -96 952 672 -8]
+    material = "water"
+    prefab = "pool"
+    id = 33
+}
+
+brush {
+    cuboid = [4 156 96 12 164 120]
+    material = "metal"
+    prefab = "torch"
+    id = 34
+}
+
+entity {
+    color = [1 0.7 0.4]
+    intensity = 240
+    origin = [8 160 136]
+    size = 4
+    style = 1
+    type = "light"
+    prefab = "torch"
+    id = 35
+}
+
+entity {
+    origin = [8 160 132]
+    type = "prop_flame"
+    prefab = "torch"
+    id = 36
+}
+
+brush {
+    cuboid = [4 604 96 12 612 120]
+    material = "metal"
+    prefab = "torch"
+    id = 37
+}
+
+entity {
+    color = [1 0.7 0.4]
+    intensity = 240
+    origin = [8 608 136]
+    size = 4
+    style = 1
+    type = "light"
+    prefab = "torch"
+    id = 38
+}
+
+entity {
+    origin = [8 608 132]
+    type = "prop_flame"
+    prefab = "torch"
+    id = 39
+}
+
+brush {
+    cuboid = [511 383 288 513 385 320]
+    material = "metal"
+    prefab = "lamp"
+    id = 40
+}
+
+brush {
+    cuboid = [504 376 282 520 392 288]
+    material = "light_panel"
+    prefab = "lamp"
+    id = 41
+}
+
+entity {
+    color = [1 0.95 0.85]
+    intensity = 380
+    origin = [512 384 272]
+    type = "light"
+    prefab = "lamp"
+    id = 42
+}
+
+entity {
+    origin = [160 192 8]
+    type = "item_health"
+    prefab = "item"
+    id = 43
+}
+
+entity {
+    origin = [160 576 8]
+    type = "item_armor1"
+    prefab = "item"
+    id = 44
+}
+
+entity {
+    origin = [256 384 8]
+    type = "weapon_supershotgun"
+    prefab = "item"
+    id = 45
+}
+
+brush {
+    cuboid = [1024 0 0 1056 336 320]
+    material = "brick"
+    prefab = "doorway"
+    id = 46
+}
+
+brush {
+    cuboid = [1024 432 0 1056 768 320]
+    material = "brick"
+    prefab = "doorway"
+    id = 47
+}
+
+brush {
+    cuboid = [1024 336 128 1056 432 320]
+    material = "brick"
+    prefab = "doorway"
+    id = 48
+}
+
+entity hall_door {
+    angle = -1
+    lip = 8
+    speed = 120
+    type = "func_door"
+    wait = 3
+    prefab = "door"
+    id = 49
+    brush {
+        cuboid = [1032 336 0 1048 432 128]
+        material = "metal"
+    }
+}
+
+brush {
+    cuboid = [1024 -32 -32 1984 800 0]
+    material = "stone"
+    prefab = "room"
+    id = 50
+}
+
+brush {
+    cuboid = [1024 -32 448 1984 800 480]
+    material = "metal"
+    prefab = "room"
+    id = 51
+}
+
+brush {
+    cuboid = [1024 -32 0 1056 800 448]
+    material = "brick"
+    prefab = "room"
+    id = 52
+}
+
+brush {
+    cuboid = [1952 -32 0 1984 800 448]
+    material = "brick"
+    prefab = "room"
+    id = 53
+}
+
+brush {
+    cuboid = [1056 -32 0 1952 0 448]
+    material = "brick"
+    prefab = "room"
+    id = 54
+}
+
+brush {
+    cuboid = [1056 768 0 1952 800 448]
+    material = "brick"
+    prefab = "room"
+    id = 55
+}
+
+entity lift_1 {
+    height = 192
+    speed = 150
+    type = "func_plat"
+    prefab = "lift"
+    id = 56
+    brush {
+        cuboid = [1600 96 184 1728 224 192]
+        material = "metal"
+    }
+}
+
+brush {
+    cuboid = [1200 640 0 1232 736 16]
+    material = "stone"
+    prefab = "stairs"
+    id = 57
+}
+
+brush {
+    cuboid = [1232 640 0 1264 736 32]
+    material = "stone"
+    prefab = "stairs"
+    id = 58
+}
+
+brush {
+    cuboid = [1264 640 0 1296 736 48]
+    material = "stone"
+    prefab = "stairs"
+    id = 59
+}
+
+brush {
+    cuboid = [1296 640 0 1328 736 64]
+    material = "stone"
+    prefab = "stairs"
+    id = 60
+}
+
+brush {
+    cuboid = [1328 640 0 1360 736 80]
+    material = "stone"
+    prefab = "stairs"
+    id = 61
+}
+
+brush {
+    cuboid = [1360 640 0 1392 736 96]
+    material = "stone"
+    prefab = "stairs"
+    id = 62
+}
+
+brush {
+    cuboid = [1392 640 0 1424 736 112]
+    material = "stone"
+    prefab = "stairs"
+    id = 63
+}
+
+brush {
+    cuboid = [1424 640 0 1456 736 128]
+    material = "stone"
+    prefab = "stairs"
+    id = 64
+}
+
+brush {
+    cuboid = [1456 640 0 1488 736 144]
+    material = "stone"
+    prefab = "stairs"
+    id = 65
+}
+
+brush {
+    cuboid = [1488 640 0 1520 736 160]
+    material = "stone"
+    prefab = "stairs"
+    id = 66
+}
+
+brush {
+    cuboid = [1520 640 0 1552 736 176]
+    material = "stone"
+    prefab = "stairs"
+    id = 67
+}
+
+brush {
+    cuboid = [1552 640 0 1584 736 192]
+    material = "stone"
+    prefab = "stairs"
+    id = 68
+}
+
+entity {
+    target = "back_home"
+    type = "trigger_teleport"
+    prefab = "portal"
+    id = 69
+    brush {
+        cuboid = [1800 640 0 1864 704 96]
+        material = "hidden"
+    }
+}
+
+brush {
+    cuboid = [1800 640 -2 1864 704 0]
+    material = "light_panel"
+    prefab = "portal"
+    id = 70
+}
+
+entity back_home {
+    origin = [1960 1024 40]
+    type = "info_teleport_destination"
+    prefab = "portal"
+    id = 71
+}
+
+entity {
+    angle = 180
+    origin = [1500 384 24]
+    type = "monster_army"
+    prefab = "monster"
+    id = 72
+}
+
+entity {
+    angle = 180
+    origin = [1700 256 24]
+    type = "monster_dog"
+    prefab = "monster"
+    id = 73
+}
+
+brush {
+    cuboid = [1499 383 416 1501 385 448]
+    material = "metal"
+    prefab = "lamp"
+    id = 74
+}
+
+brush {
+    cuboid = [1492 376 410 1508 392 416]
+    material = "light_panel"
+    prefab = "lamp"
+    id = 75
+}
+
+entity {
+    color = [0.8 0.9 1]
+    intensity = 420
+    origin = [1500 384 400]
+    type = "light"
+    prefab = "lamp"
+    id = 76
+}
+
+brush {
+    cuboid = [1299 199 416 1301 201 448]
+    material = "metal"
+    prefab = "lamp"
+    id = 77
+}
+
+brush {
+    cuboid = [1292 192 410 1308 208 416]
+    material = "light_panel"
+    prefab = "lamp"
+    id = 78
+}
+
+entity {
+    color = [1 0.6 0.4]
+    intensity = 300
+    origin = [1300 200 400]
+    type = "light"
+    prefab = "lamp"
+    id = 79
+}
+
+entity swing {
+    type = "light"
+    origin = [1700 500 300]
+    color = [0.6 1 0.6]
+    intensity = 320
+    keyframes = [1620 500 300 1700 500 300 1780 500 300]
+    id = 80
+}

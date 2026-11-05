@@ -5,8 +5,10 @@
 //!
 //! May depend on `engine_core`, `engine_map`, `engine_sim`. See proposal 0008.
 
+mod builder;
 mod game;
 mod save;
 
+pub use builder::{ScriptValue, run_builder};
 pub use game::{Game, GameRules, Outbox, ScriptError};
 pub use save::{SavedEntity, SavedScripts, SavedValue};

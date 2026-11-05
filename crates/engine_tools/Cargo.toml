@@ -1,0 +1,27 @@
+[package]
+name = "engine_tools"
+description = "The development platform's core: map editing as named operations, prefabs and tool runs."
+version.workspace = true
+license.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "engine-tool"
+path = "src/bin/engine-tool.rs"
+
+[[bin]]
+name = "engine-mcp"
+path = "src/bin/engine-mcp.rs"
+
+[dependencies]
+engine_assets.workspace = true
+engine_compile.workspace = true
+engine_format.workspace = true
+engine_map.workspace = true
+engine_script.workspace = true
+serde_json.workspace = true
+
+[lints]
+workspace = true

@@ -185,7 +185,7 @@ fn stained_glass_tints_what_passes_through() {
 #[test]
 fn keyframes_each_get_a_style_and_probes_follow_the_light() {
     let text = format!(
-        "{ROOM}entity lamp {{ type = light origin = 0 0 0 intensity = 500 keyframes = -128 0 0 128 0 0 }}\n"
+        "{ROOM}entity lamp {{ type = light origin = 0 0 0 intensity = 500 keyframes = 64 0 0 128 0 0 }}\n"
     );
     let map = baked(&text, &[]);
     let floor = face_of(&map, "floor").light.expect("light");

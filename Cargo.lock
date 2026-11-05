@@ -816,6 +816,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "engine_tools"
+version = "0.0.0-alpha"
+dependencies = [
+ "engine_assets",
+ "engine_compile",
+ "engine_format",
+ "engine_map",
+ "engine_script",
+ "serde_json",
+]
+
+[[package]]
 name = "engine_ui"
 version = "0.0.0-alpha"
 dependencies = [
