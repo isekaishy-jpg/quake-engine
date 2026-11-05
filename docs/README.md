@@ -134,6 +134,7 @@
   - [0013: increment 10](reviews/0013-increment-10.md)
   - [0014: the whole application](reviews/0014-app-wide.md)
   - [0015: increment 11](reviews/0015-increment-11.md)
+  - [0016: increment 12](reviews/0016-increment-12.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

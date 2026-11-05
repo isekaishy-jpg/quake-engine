@@ -72,3 +72,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 22 is done.
 - Stage 23 is done: `showcase`, `tile_world`, and maps for each area, all rebuildable.
 - Stage 24 is done, in [review 0015](../reviews/0015-increment-11.md).
+- What the report named as not done is finished in [review 0016](../reviews/0016-increment-12.md), apart from streaming, which waits on the human.
