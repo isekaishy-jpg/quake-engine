@@ -3,6 +3,7 @@
 use std::collections::VecDeque;
 use std::time::Duration;
 
+use crate::identity::PublicKey;
 use crate::transport::Transport;
 
 /// What a connection suffers, each way it's applied.
@@ -123,7 +124,7 @@ impl Transport for Conditioned {
         self.inner.refusal()
     }
 
-    fn peer_identity(&self) -> Option<[u8; 32]> {
+    fn peer_identity(&self) -> Option<PublicKey> {
         self.inner.peer_identity()
     }
 

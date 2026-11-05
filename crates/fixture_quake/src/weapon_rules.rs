@@ -4,35 +4,10 @@
 use engine_core::entity::{BlastRule, ShotFeel};
 use engine_core::math::Vec3;
 
-/// `IT_SHOTGUN`.
-const IT_SHOTGUN: i32 = 1;
-
-/// `IT_SUPER_SHOTGUN`.
-const IT_SUPER_SHOTGUN: i32 = 2;
-
-/// `IT_NAILGUN`.
-const IT_NAILGUN: i32 = 4;
-
-/// `IT_SUPER_NAILGUN`.
-const IT_SUPER_NAILGUN: i32 = 8;
-
-/// `IT_GRENADE_LAUNCHER`.
-const IT_GRENADE_LAUNCHER: i32 = 16;
-
-/// `IT_ROCKET_LAUNCHER`.
-const IT_ROCKET_LAUNCHER: i32 = 32;
-
-/// `IT_LIGHTNING`.
-const IT_LIGHTNING: i32 = 64;
-
-/// `IT_AXE`.
-const IT_AXE: i32 = 4096;
-
-/// `IT_QUAD`.
-pub(crate) const IT_QUAD: i32 = 1 << 22;
-
-/// `STAT_ITEMS`, among what `ClientData` sends.
-const STAT_ITEMS: usize = 15;
+use crate::stats::{
+    IT_AXE, IT_GRENADE_LAUNCHER, IT_LIGHTNING, IT_NAILGUN, IT_QUAD, IT_ROCKET_LAUNCHER, IT_SHOTGUN,
+    IT_SUPER_NAILGUN, IT_SUPER_SHOTGUN, STAT_ITEMS,
+};
 
 /// A rocket's blast on the one who fired it, from `T_MissileTouch`,
 /// `T_RadiusDamage` and `T_Damage` (proposal 0053).

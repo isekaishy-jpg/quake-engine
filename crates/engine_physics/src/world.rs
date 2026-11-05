@@ -34,7 +34,8 @@ const MAX_BACK_OUT_STEPS: u32 = 16;
 const SEARCH_STEPS: u32 = 24;
 
 /// How far around a model's bounds a trace still checks it, which covers the
-/// growth of the hull.
+/// growth of the largest hull. `solids` starts further out, so that what it
+/// clips is always bigger than anything this can reach.
 const MODEL_BOUNDS_MARGIN: f32 = 64.0;
 
 /// The result of a trace.
@@ -56,6 +57,22 @@ pub struct Trace {
     pub in_open: bool,
     /// Whether it passed through liquid.
     pub in_water: bool,
+}
+
+impl Trace {
+    /// A trace that got to `end` without touching anything.
+    fn clear(end: Vec3) -> Self {
+        Self {
+            fraction: 1.0,
+            end,
+            normal: Vec3::ZERO,
+            start_solid: false,
+            all_solid: false,
+            model: None,
+            in_open: false,
+            in_water: false,
+        }
+    }
 }
 
 /// What fills a point.
@@ -143,6 +160,12 @@ impl std::fmt::Debug for CollisionWorld {
 }
 
 impl CollisionWorld {
+    /// The map this was built from.
+    #[must_use]
+    pub fn map(&self) -> &Arc<Map> {
+        &self.map
+    }
+
     /// Builds the collision of every model in `map`.
     #[must_use]
     pub fn new(map: Arc<Map>) -> Self {
@@ -273,16 +296,7 @@ impl<'a> Collision<'a> {
                 Some(hull) => Some(HullRoot::Clip(model.hulls[hull])),
             }
         };
-        let mut best = Trace {
-            fraction: 1.0,
-            end,
-            normal: Vec3::ZERO,
-            start_solid: false,
-            all_solid: false,
-            model: None,
-            in_open: false,
-            in_water: false,
-        };
+        let mut best = Trace::clear(end);
         if let Some(root) = root_of(0) {
             let trace = trace_hull(&map.tree, root, start - shift, end - shift);
             best = Trace {
@@ -437,25 +451,12 @@ impl<'a> Collision<'a> {
         if self.in_solid(start) {
             return Trace {
                 fraction: 0.0,
-                end: start,
-                normal: Vec3::ZERO,
                 start_solid: true,
                 all_solid: self.in_solid(end),
-                model: None,
-                in_open: false,
-                in_water: false,
+                ..Trace::clear(start)
             };
         }
-        let clear = Trace {
-            fraction: 1.0,
-            end,
-            normal: Vec3::ZERO,
-            start_solid: false,
-            all_solid: false,
-            model: None,
-            in_open: false,
-            in_water: false,
-        };
+        let clear = Trace::clear(end);
         let delta = end - start;
         if delta == Vec3::ZERO {
             return clear;
@@ -481,13 +482,9 @@ impl<'a> Collision<'a> {
         let fraction = self.back_out(start, delta, fraction);
         Trace {
             fraction,
-            end: start + delta * fraction,
             normal,
-            start_solid: false,
-            all_solid: false,
             model,
-            in_open: false,
-            in_water: false,
+            ..Trace::clear(start + delta * fraction)
         }
     }
 
@@ -519,13 +516,8 @@ impl<'a> Collision<'a> {
         }
         Trace {
             fraction: clear,
-            end: start + delta * clear,
             normal: (delta * -1.0).normalized(),
-            start_solid: false,
-            all_solid: false,
-            model: None,
-            in_open: false,
-            in_water: false,
+            ..Trace::clear(start + delta * clear)
         }
     }
 }

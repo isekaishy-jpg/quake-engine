@@ -33,8 +33,8 @@ use spake2::{Ed25519Group, Identity, Password, Spake2};
 use x25519_dalek::{PublicKey as AgreementKey, StaticSecret};
 
 use crate::identity::{
-    HostIdentity, LINK_BYTES, Link, PlayerIdentity, PublicKey, SIGNATURE_BYTES, follows, host_code,
-    links_from_wire, verify,
+    HostIdentity, LINK_BYTES, Link, PUBLIC_KEY_BYTES, PlayerIdentity, PublicKey, SIGNATURE_BYTES,
+    follows, host_code, links_from_wire, verify,
 };
 
 /// What a request starts with.
@@ -326,8 +326,9 @@ impl Doorman {
         self.starts.push_back(now);
         let _last = self.addresses.insert(from.ip(), now);
         let keys = first + MESSAGE_BYTES;
-        let player: PublicKey = request.get(keys..keys + 32)?.try_into().ok()?;
-        let signature = request.get(keys + 32..keys + 32 + SIGNATURE_BYTES)?;
+        let signed = keys + PUBLIC_KEY_BYTES;
+        let player: PublicKey = request.get(keys..signed)?.try_into().ok()?;
+        let signature = request.get(signed..signed + SIGNATURE_BYTES)?;
         if !verify(&player, &player_message(&asked), signature) {
             return None;
         }
@@ -376,8 +377,6 @@ pub(crate) struct Expected {
 pub(crate) struct Asker {
     /// The exchange, until it's finished.
     state: Option<Agreement>,
-    /// Which kind it is.
-    kind: u8,
     /// What this side said.
     asked: [u8; MESSAGE_BYTES],
     /// What the host said.
@@ -391,10 +390,10 @@ pub(crate) struct Asker {
 impl Asker {
     /// Starts asking.
     pub(crate) fn new(expected: Expected) -> Self {
-        let (state, kind, asked) = if expected.password.is_empty() {
+        let (state, asked) = if expected.password.is_empty() {
             let secret = StaticSecret::from(generate_random_bytes::<32>());
             let message = open_message(&secret);
-            (Agreement::Open(secret), KIND_OPEN, message)
+            (Agreement::Open(secret), message)
         } else {
             let (state, asked) = Spake2::<Ed25519Group>::start_a(
                 &Password::new(expected.password.as_bytes()),
@@ -403,15 +402,23 @@ impl Asker {
             );
             let mut message = [0; MESSAGE_BYTES];
             message.copy_from_slice(&asked);
-            (Agreement::Password(state), KIND_PASSWORD, message)
+            (Agreement::Password(state), message)
         };
         Self {
             state: Some(state),
-            kind,
             asked,
             answer: None,
             parts: Vec::new(),
             expected,
+        }
+    }
+
+    /// This exchange's word for itself.
+    fn kind(&self) -> u8 {
+        if self.expected.password.is_empty() {
+            KIND_OPEN
+        } else {
+            KIND_PASSWORD
         }
     }
 
@@ -436,7 +443,7 @@ impl Asker {
         let mut out = Vec::with_capacity(REQUEST_BYTES);
         out.extend_from_slice(REQUEST_MAGIC);
         out.push(part);
-        out.push(self.kind);
+        out.push(self.kind());
         out.extend_from_slice(&self.asked);
         out.extend_from_slice(&self.expected.identity.public());
         out.extend_from_slice(&self.expected.identity.sign(&player_message(&self.asked)));
@@ -458,7 +465,7 @@ impl Asker {
 
     /// Opens the token, with everything here.
     fn open(&mut self) -> Heard {
-        let kind = self.kind;
+        let kind = self.kind();
         let wrong = || {
             let reason = if kind == KIND_OPEN {
                 "the host's answer was spoiled"
@@ -493,9 +500,9 @@ impl Asker {
 
     /// Checks who's sent `opened`, in answer to `answer`.
     fn check(&self, opened: &[u8], answer: &[u8; MESSAGE_BYTES]) -> Option<Heard> {
-        let host: PublicKey = opened.get(..32)?.try_into().ok()?;
-        let signature = opened.get(32..32 + SIGNATURE_BYTES)?;
-        let links_at = 32 + SIGNATURE_BYTES + 1;
+        let host: PublicKey = opened.get(..PUBLIC_KEY_BYTES)?.try_into().ok()?;
+        let signature = opened.get(PUBLIC_KEY_BYTES..PUBLIC_KEY_BYTES + SIGNATURE_BYTES)?;
+        let links_at = PUBLIC_KEY_BYTES + SIGNATURE_BYTES + 1;
         let count = usize::from(*opened.get(links_at - 1)?);
         let token_at = links_at + count * LINK_BYTES;
         let links = links_from_wire(opened.get(links_at..token_at)?, count)?;

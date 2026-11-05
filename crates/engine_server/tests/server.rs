@@ -21,7 +21,6 @@ fn setup() -> (Server, Loopback) {
     let server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         origin,
         &[],
         1.0 / 72.0,

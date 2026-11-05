@@ -10,7 +10,6 @@
 mod fair;
 mod seat;
 
-use engine_core::time::TICK_SECONDS;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
@@ -20,14 +19,17 @@ use engine_core::canvas::TALK_MARK;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::sound::StaticSound;
-use engine_map::Map;
-use engine_net::{ClientMessage, PlayerScore, ServerMessage, Snapshot, Transport};
+use engine_core::time::TICK_SECONDS;
+use engine_net::{
+    ClientMessage, PlayerScore, PublicKey, ServerMessage, Snapshot, Transport, short_id,
+};
 use engine_physics::CollisionWorld;
 use engine_script::{Game, SavedScripts, ScriptError};
 use engine_sim::{EntityId, SavedSimulation, Simulation};
 use serde::{Deserialize, Serialize};
 
 pub use fair::{FairSettings, Zone};
+use seat::plain_text;
 pub use seat::{Seat, SeatInfo};
 
 /// Which level a game starts, and what the player brings to it.
@@ -133,7 +135,18 @@ pub struct SeatReport {
     /// Whether they're over the ceiling, and get no help.
     pub over_ceiling: bool,
     /// The key they've proved they hold, if they came over the network.
-    pub identity: Option<[u8; 32]>,
+    pub identity: Option<PublicKey>,
+}
+
+/// Who `Server::kick` put out.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Kicked {
+    /// Nobody by that name.
+    Nobody,
+    /// Someone with no key, such as a bot.
+    Anonymous,
+    /// Someone who's proved to hold this key.
+    Key(PublicKey),
 }
 
 /// How fast added delay and compensation move towards their targets, in
@@ -142,19 +155,6 @@ const FAIR_RAMP: f64 = 2.0;
 
 /// The most of one thing said that's passed on.
 const MAX_SAY: usize = 128;
-
-/// The longest name, from `client_t`.
-const MAX_NAME: usize = 32;
-
-/// `text` with nothing in it that could pass for something else, and no longer
-/// than `limit` characters.
-fn plain_text(text: &str, limit: usize) -> String {
-    text.trim()
-        .chars()
-        .filter(|character| !character.is_control())
-        .take(limit)
-        .collect()
-}
 
 /// How much later than a shooter's ping a view can be, in seconds: the
 /// interpolation buffer, with a tick to spare.
@@ -170,22 +170,23 @@ impl Server {
     pub fn new(
         transport: Box<dyn Transport>,
         world: Rc<CollisionWorld>,
-        map: &Arc<Map>,
         origin: Vec3,
         sources: &[(&str, &str)],
         seconds: f64,
         level: Level,
     ) -> Result<Self, ScriptError> {
-        let simulation = Rc::new(RefCell::new(Simulation::new(Arc::clone(map), origin)));
+        let map = Arc::clone(world.map());
+        let simulation = Rc::new(RefCell::new(Simulation::new(Arc::clone(&map), origin)));
         simulation.borrow_mut().set_world(Rc::clone(&world));
         let game = Game::new(&simulation, sources)?;
         game.start_level(&level.name, &level.settings, level.flags);
         let fair = FairSettings::from_settings(&level.settings);
         game.spawn_map(&map.entities);
         let host = simulation.borrow().player_id();
-        game.connect_player(host, &level.name, level.parms.as_deref(), &level.host.name);
-        game.player_info(host, &level.host.name, level.host.colors);
-        let mut seat = Seat::new(transport, level.host.clone());
+        let who = level.host.clone().tidied();
+        game.connect_player(host, &level.name, level.parms.as_deref(), &who.name);
+        game.player_info(host, &who.name, who.colors);
+        let mut seat = Seat::new(transport, who);
         seat.player = Some(host);
         let mut server = Self {
             seats: vec![seat],
@@ -217,12 +218,11 @@ impl Server {
     pub fn resume(
         transport: Box<dyn Transport>,
         world: Rc<CollisionWorld>,
-        map: &Arc<Map>,
         sources: &[(&str, &str)],
         seconds: f64,
         saved: SavedGame,
     ) -> Result<Self, ScriptError> {
-        let simulation = Simulation::restored(Arc::clone(map), saved.simulation);
+        let simulation = Simulation::restored(Arc::clone(world.map()), saved.simulation);
         let simulation = Rc::new(RefCell::new(simulation));
         simulation.borrow_mut().set_world(Rc::clone(&world));
         let game = Game::new(&simulation, sources)?;
@@ -369,16 +369,11 @@ impl Server {
             ClientMessage::Console(text) => self.console(index, &text),
             ClientMessage::Ready => self.seat_ready(index),
             ClientMessage::Info(info) => {
-                let name = plain_text(&info.name, MAX_NAME);
-                let name = if name.is_empty() {
-                    SeatInfo::default().name
-                } else {
-                    name
-                };
                 self.seats[index].info = SeatInfo {
-                    name,
+                    name: info.name,
                     colors: info.colors,
-                };
+                }
+                .tidied();
                 self.tell_game_who(index);
             }
         }
@@ -589,17 +584,15 @@ impl Server {
         }
     }
 
-    /// Puts out the guest called `name`, telling them why. Says whether anyone
-    /// was found, and who they've proved to be if they have.
-    pub fn kick(&mut self, name: &str, why: &str) -> Option<Option<[u8; 32]>> {
-        let seat = self
-            .seats
-            .iter_mut()
-            .skip(1)
-            .find(|seat| seat.info.name == name)?;
+    /// Puts out the guest called `name`, telling them why.
+    pub fn kick(&mut self, name: &str, why: &str) -> Kicked {
+        let guests = self.seats.iter_mut().skip(1);
+        let Some(seat) = guests.into_iter().find(|seat| seat.info.name == name) else {
+            return Kicked::Nobody;
+        };
         seat.send(&ServerMessage::Print(why.to_owned()));
         seat.kick();
-        Some(seat.identity)
+        seat.identity.map_or(Kicked::Anonymous, Kicked::Key)
     }
 
     /// Lets go of anyone who's left, or gone quiet.
@@ -764,9 +757,10 @@ impl Server {
 
     /// Sends `message` to everyone in the game.
     fn broadcast(&mut self, message: &ServerMessage) {
+        let bytes = message.encode();
         for seat in &mut self.seats {
             if seat.player.is_some() {
-                seat.send(message);
+                seat.send_bytes(bytes.clone());
             }
         }
     }
@@ -883,10 +877,9 @@ impl Server {
             } else {
                 format!("{:.0} ms made up for", seat.compensated)
             };
-            let id = seat.identity.map_or_else(String::new, |key| {
-                let start: String = key[..4].iter().map(|byte| format!("{byte:02x}")).collect();
-                format!(" [{start}]")
-            });
+            let id = seat
+                .identity
+                .map_or_else(String::new, |key| format!(" [{}]", short_id(&key)));
             lines.push(format!(
                 "{}{id}: {:.0} ms, {:.0} ms added, {help}",
                 seat.name, seat.ping, seat.added

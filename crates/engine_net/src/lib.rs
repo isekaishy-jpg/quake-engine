@@ -15,8 +15,10 @@ mod transport;
 
 pub use conditioned::{Conditioned, Conditions};
 pub use delta::{apply_delta, delta_baseline, delta_from};
-pub use identity::{HostIdentity, PlayerIdentity, PublicKey, host_code, tidy_code};
-pub use message::{ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot};
+pub use identity::{HostIdentity, PlayerIdentity, PublicKey, host_code, short_id, tidy_code};
+pub use message::{
+    ClientMessage, FireCommand, MAX_NAME_BYTES, PlayerInfo, PlayerScore, ServerMessage, Snapshot,
+};
 pub use online::{
     DEFAULT_PORT, HostOptions, JoinOptions, NetClient, NetError, NetServer, full_address,
 };

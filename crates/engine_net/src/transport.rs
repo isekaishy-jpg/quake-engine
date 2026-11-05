@@ -3,6 +3,8 @@
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::time::Duration;
 
+use crate::identity::PublicKey;
+
 /// Something that carries messages to the other side.
 pub trait Transport {
     /// Sends one message that has to arrive, in order. A closed connection
@@ -23,7 +25,7 @@ pub trait Transport {
     }
 
     /// Who's at the other end, once that's been proved.
-    fn peer_identity(&self) -> Option<[u8; 32]> {
+    fn peer_identity(&self) -> Option<PublicKey> {
         None
     }
 

@@ -1,14 +1,12 @@
 //! Entities, players and pusher physics.
 
-use engine_core::entity::EFFECT_MUZZLE_FLASH;
-use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_core::entity::{EntityState, ModelInstance};
+use engine_core::entity::{EFFECT_MUZZLE_FLASH, EntityState, ModelInstance};
 use engine_core::math::Vec3;
-use engine_core::player::{PlayerState, UserCommand};
+use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY, PlayerState, UserCommand};
 use engine_map::Map;
 use engine_movement::{MoveVars, player_move};
 use engine_physics::CollisionWorld;

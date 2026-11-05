@@ -20,7 +20,7 @@ use engine_client::{
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::{Quad, TALK_MARK};
 use engine_core::entity::ModelInstance;
-use engine_core::math::Vec3;
+use engine_core::math::{Vec3, view_axes};
 use engine_core::player::UserCommand;
 use engine_core::time::{FpsMeter, TICK_HERTZ, TICK_SECONDS, TickClock, TickRate};
 use engine_map::{Contents, Map};
@@ -33,7 +33,7 @@ use engine_render::{
     Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw, Target,
     View,
 };
-use engine_server::{Level, Seat, SeatInfo, Server};
+use engine_server::{FairSettings, Level, Seat, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
     Hud, Intermission, Menu, Palette, ROCKET_BLAST, SCRIPTS, Score, WeaponRule, import_map,
@@ -105,6 +105,9 @@ const LEVEL_SETTINGS: [&str; 19] = [
     "noexit",
     "registered",
 ];
+
+/// How wide the view is with no `fov` set, in degrees.
+const DEFAULT_FOV: f32 = 90.0;
 
 /// Rules that change in play, rather than from the next level on.
 const LIVE_RULES: [&str; 4] = ["skill", "teamplay", "fraglimit", "timelimit"];
@@ -404,7 +407,6 @@ impl World {
         self.server = Some(Server::new(
             Box::new(server_end),
             Rc::clone(&collision),
-            &map,
             start.origin,
             SCRIPTS,
             TICK_SECONDS,
@@ -635,13 +637,7 @@ impl World {
     )]
     fn guess_shot(&mut self, rule: &WeaponRule, carrying_on: bool, seed: u16) {
         let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
-        let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
-        let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
-        let axes = [
-            Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin),
-            Vec3::new(yaw_sin, -yaw_cos, 0.0),
-            Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos),
-        ];
+        let axes = view_axes(yaw, pitch);
         let sounds = !(rule.sound_once && carrying_on);
         if let Some(client) = &mut self.client {
             if let Some(shot) = &rule.shot {
@@ -793,10 +789,7 @@ impl World {
         };
         let count = (f32::from(blood) * 0.5 + f32::from(armor) * 0.5).max(10.0);
         let direction = (from - client.predicted().origin).normalized();
-        let (yaw_sin, yaw_cos) = (self.look.yaw() as f32).to_radians().sin_cos();
-        let (pitch_sin, pitch_cos) = (self.look.pitch() as f32).to_radians().sin_cos();
-        let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
-        let right = Vec3::new(yaw_sin, -yaw_cos, 0.0);
+        let [forward, right, _up] = view_axes(self.look.yaw() as f32, self.look.pitch() as f32);
         self.kick
             .hit(count, direction.dot(right), direction.dot(forward));
     }
@@ -1017,7 +1010,7 @@ impl World {
                 id: client.player_entity(),
                 origin: body,
                 angles: Vec3::new(self.look.pitch() as f32, self.look.yaw() as f32, 0.0),
-                effects: client.player_effects(),
+                effects: client.take_player_effects(),
                 model_flags: 0,
             };
             lights = self.update_effects(time + leftover, &drawn, player);
@@ -1050,9 +1043,7 @@ impl World {
                 }
                 let yaw = self.look.yaw() as f32;
                 let pitch = self.look.pitch() as f32;
-                let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
-                let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
-                let forward = Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin);
+                let [forward, ..] = view_axes(yaw, pitch);
                 // From `V_CalcRefdef`, with the status bar's 2 units.
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
@@ -1153,10 +1144,7 @@ impl Engine {
         let mut console = Console::new();
         commands::register(&mut console);
         console.register_cvar("show_input", "0", CvarFlags::default());
-        let saved = CvarFlags {
-            saved: true,
-            server: false,
-        };
+        let saved = CvarFlags { saved: true };
         console.register_cvar("m_capture", "1", CvarFlags::default());
         console.register_cvar("password", "", CvarFlags::default());
         console.register_cvar("sv_password", "", CvarFlags::default());
@@ -1195,30 +1183,16 @@ impl Engine {
         ] {
             console.register_cvar(name, value, CvarFlags::default());
         }
-        let server_rule = CvarFlags {
-            saved: true,
-            server: true,
-        };
-        for (name, value) in [
-            ("sv_fair_enable", "1"),
-            ("sv_fair_floor", "20"),
-            ("sv_fair_width", "20"),
-            ("sv_fair_ceiling", "90"),
-            ("sv_fair_ceiling_margin", "5"),
-            ("sv_fair_partial", "0.5"),
-            ("sv_fair_outlier", "100"),
-            ("sv_fair_interval", "30"),
-            ("sv_unlag_debug", "0"),
-            ("sv_unlag_enable", "1"),
-        ] {
-            console.register_cvar(name, value, server_rule);
+        let server_rule = CvarFlags { saved: true };
+        for (name, value) in FairSettings::default().cvars() {
+            console.register_cvar(name, &value, server_rule);
         }
         // Not saved, or leaving `e1m8` would carry its gravity into the next game.
-        let unsaved_rule = CvarFlags {
-            saved: false,
-            server: true,
-        };
-        console.register_cvar("sv_gravity", &USUAL_GRAVITY.to_string(), unsaved_rule);
+        console.register_cvar(
+            "sv_gravity",
+            &USUAL_GRAVITY.to_string(),
+            CvarFlags::default(),
+        );
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -1239,7 +1213,7 @@ impl Engine {
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,
-                fov: 90.0,
+                fov: DEFAULT_FOV,
                 audio: if options.no_sound {
                     Audio::silent()
                 } else {
@@ -1324,8 +1298,8 @@ impl Engine {
         self.world.fov = self
             .console
             .cvar("fov")
-            .map_or(90.0, engine_console::Cvar::number);
-        let seconds = 1.0 / f64::from(self.clock.rate().hertz());
+            .map_or(DEFAULT_FOV, engine_console::Cvar::number);
+        let seconds = TICK_SECONDS;
         self.world.update_network(seconds, &mut self.console);
         if self.world.is_running() {
             #[expect(
@@ -1445,7 +1419,7 @@ impl Engine {
             if !repeat {
                 self.console.add("togglemenu");
             }
-        } else if !repeat && let Some(command) = self.world.bindings.press(&key) {
+        } else if !repeat && let Some(command) = self.world.bindings.get(&key) {
             let command = command.to_owned();
             if command == "+attack" {
                 self.fire_now();
@@ -1709,7 +1683,7 @@ impl PlatformApp for Engine {
             let since_service = frame
                 .now
                 .saturating_sub(self.last_service.unwrap_or(frame.now));
-            let tick_seconds = 1.0 / f64::from(self.clock.rate().hertz());
+            let tick_seconds = TICK_SECONDS;
             // With the game stopped, what's drawn has to stay put.
             let fraction = if self.world.is_running() {
                 self.clock.fraction_after(since_service)

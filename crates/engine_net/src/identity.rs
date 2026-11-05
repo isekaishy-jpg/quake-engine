@@ -13,14 +13,17 @@ use std::collections::BTreeSet;
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use renet_netcode::generate_random_bytes;
 
+/// How long a public key is.
+pub(crate) const PUBLIC_KEY_BYTES: usize = 32;
+
 /// The public half of a key pair.
-pub type PublicKey = [u8; 32];
+pub type PublicKey = [u8; PUBLIC_KEY_BYTES];
 
 /// How long a signature is.
 pub(crate) const SIGNATURE_BYTES: usize = 64;
 
 /// How long a link is, once encoded.
-pub(crate) const LINK_BYTES: usize = 32 + 32 + SIGNATURE_BYTES;
+pub(crate) const LINK_BYTES: usize = 2 * PUBLIC_KEY_BYTES + SIGNATURE_BYTES;
 
 /// How many links a host keeps at most. Anyone further behind has to be given
 /// the host's code again.
@@ -48,6 +51,12 @@ pub(crate) fn verify(key: &PublicKey, message: &[u8], signature: &[u8]) -> bool 
         return false;
     };
     key.verify(message, &signature).is_ok()
+}
+
+/// The start of `key`, which is enough to tell players apart.
+#[must_use]
+pub fn short_id(key: &PublicKey) -> String {
+    key[..4].iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// The code people can read out to be sure of the host behind `key`.
@@ -156,9 +165,15 @@ impl Link {
     /// A link as `bytes` have it, with nobody waiting.
     fn from_wire(bytes: &[u8]) -> Option<Self> {
         Some(Self {
-            old: bytes.get(..32)?.try_into().ok()?,
-            new: bytes.get(32..64)?.try_into().ok()?,
-            signature: bytes.get(64..LINK_BYTES)?.try_into().ok()?,
+            old: bytes.get(..PUBLIC_KEY_BYTES)?.try_into().ok()?,
+            new: bytes
+                .get(PUBLIC_KEY_BYTES..2 * PUBLIC_KEY_BYTES)?
+                .try_into()
+                .ok()?,
+            signature: bytes
+                .get(2 * PUBLIC_KEY_BYTES..LINK_BYTES)?
+                .try_into()
+                .ok()?,
             waiting: BTreeSet::new(),
         })
     }
@@ -344,7 +359,7 @@ fn take_keys(bytes: &mut &[u8]) -> Option<BTreeSet<PublicKey>> {
     let count = take_count(bytes)?;
     let mut keys = BTreeSet::new();
     for _ in 0..count {
-        let _new = keys.insert(take(bytes, 32)?.try_into().ok()?);
+        let _new = keys.insert(take(bytes, PUBLIC_KEY_BYTES)?.try_into().ok()?);
     }
     Some(keys)
 }

@@ -252,7 +252,6 @@ fn run_scripts(map: &Arc<Map>, seconds: u32) -> (Vec<String>, usize) {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        map,
         origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -303,7 +302,6 @@ fn start(base: &Path, name: &str) -> (Server, Loopback, Arc<Map>) {
     let server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -475,15 +473,8 @@ fn a_saved_game_keeps_its_gravity() {
     let saved = server.save().expect("it saves");
     let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
     let (_client, server_end) = loopback();
-    let resumed = Server::resume(
-        Box::new(server_end),
-        world,
-        &map,
-        SCRIPTS,
-        1.0 / 72.0,
-        saved,
-    )
-    .expect("it resumes");
+    let resumed = Server::resume(Box::new(server_end), world, SCRIPTS, 1.0 / 72.0, saved)
+        .expect("it resumes");
     assert_eq!(resumed.gravity(), 100.0);
 }
 
@@ -643,7 +634,6 @@ fn fire_everything_listening(
     let mut server = Server::new(
         Box::new(server_end),
         Rc::clone(world),
-        map,
         origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -871,7 +861,6 @@ fn fight_everything(map: &Arc<Map>) -> (Vec<String>, u32) {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        map,
         origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -1018,7 +1007,6 @@ fn shoot_everything(map: &Arc<Map>) -> Vec<String> {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        map,
         spawn_point(map).origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -1221,7 +1209,6 @@ fn save_and_compare(map: &Arc<Map>, name: &str) -> Result<(), String> {
     let server = Server::new(
         Box::new(server_end),
         Rc::clone(&world),
-        map,
         spawn_point(map).origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -1247,7 +1234,7 @@ fn save_and_compare(map: &Arc<Map>, name: &str) -> Result<(), String> {
     let text = serde_json::to_string(&saved).map_err(|error| error.to_string())?;
     let saved = serde_json::from_str(&text).map_err(|error| error.to_string())?;
     let (client, server_end) = loopback();
-    let server = Server::resume(Box::new(server_end), world, map, SCRIPTS, 1.0 / 72.0, saved)
+    let server = Server::resume(Box::new(server_end), world, SCRIPTS, 1.0 / 72.0, saved)
         .map_err(|error| error.to_string())?;
     let mut second = Side {
         server,
@@ -1357,7 +1344,6 @@ fn coming_back_with_a_rune_lands_in_the_other_start() {
         let server = Server::new(
             Box::new(server_end),
             Rc::new(CollisionWorld::new(Arc::clone(&map))),
-            &map,
             spawn_point(&map).origin,
             SCRIPTS,
             1.0 / 72.0,
@@ -1441,7 +1427,6 @@ fn play_online(
     let mut server = Server::new(
         Box::new(lossy_server),
         Rc::clone(&world),
-        &map,
         origin,
         SCRIPTS,
         1.0 / 72.0,
@@ -1631,7 +1616,6 @@ fn every_class_on_every_map_has_a_function() {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         Vec3::ZERO,
         SCRIPTS,
         1.0 / 72.0,

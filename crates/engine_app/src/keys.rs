@@ -44,11 +44,6 @@ fn from_hex(text: &str) -> Option<PublicKey> {
     Some(key)
 }
 
-/// The start of `key`, which is enough to tell players apart.
-pub(crate) fn short_id(key: &PublicKey) -> String {
-    to_hex(key)[..8].to_owned()
-}
-
 /// Writes `bytes` whole or not at all, for only this user to read.
 fn write_file(path: &Path, bytes: &[u8]) -> std::io::Result<()> {
     let waiting = path.with_extension("new");

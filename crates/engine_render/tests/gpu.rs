@@ -19,10 +19,14 @@ use engine_render::{
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
 /// failure fails the test, so a broken shader can't pass as a missing device.
+#[expect(clippy::print_stderr, reason = "a skipped test should say so")]
 fn renderer() -> Option<Renderer> {
     match Renderer::new(Target::Offscreen, (64, 64)) {
         Ok(renderer) => Some(renderer),
-        Err(error) if error.is_no_device() => None,
+        Err(error) if error.is_no_device() => {
+            eprintln!("skipped: no GPU here");
+            None
+        }
         Err(error) => panic!("{error}"),
     }
 }

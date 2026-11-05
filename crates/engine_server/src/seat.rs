@@ -4,7 +4,10 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use engine_core::player::UserCommand;
-use engine_net::{ClientMessage, FireCommand, ServerMessage, Snapshot, Transport, delta_from};
+use engine_net::{
+    ClientMessage, FireCommand, MAX_NAME_BYTES, PublicKey, ServerMessage, Snapshot, Transport,
+    delta_from,
+};
 use engine_sim::EntityId;
 use serde::{Deserialize, Serialize};
 
@@ -41,6 +44,36 @@ pub struct SeatInfo {
     pub colors: u8,
 }
 
+/// `text` with nothing in it that could pass for something else, and no longer
+/// than `limit` bytes, which is what the wire counts.
+pub(crate) fn plain_text(text: &str, limit: usize) -> String {
+    let mut plain = String::new();
+    for character in text.trim().chars().filter(|c| !c.is_control()) {
+        if plain.len() + character.len_utf8() > limit {
+            break;
+        }
+        plain.push(character);
+    }
+    plain
+}
+
+impl SeatInfo {
+    /// This with a name that's safe to show and send, or the usual one if
+    /// nothing's left of it.
+    #[must_use]
+    pub fn tidied(self) -> Self {
+        let name = plain_text(&self.name, MAX_NAME_BYTES);
+        if name.is_empty() {
+            Self {
+                name: Self::default().name,
+                ..self
+            }
+        } else {
+            Self { name, ..self }
+        }
+    }
+}
+
 impl Default for SeatInfo {
     fn default() -> Self {
         Self {
@@ -59,7 +92,7 @@ pub struct Seat {
     /// Who they are.
     pub(crate) info: SeatInfo,
     /// The key they've proved they hold, if they came over the network.
-    pub(crate) identity: Option<[u8; 32]>,
+    pub(crate) identity: Option<PublicKey>,
     /// Seconds left before they're put out, so they get to hear why.
     kicked: Option<f64>,
     /// What they carry to the next level.
@@ -109,7 +142,7 @@ impl Seat {
         Self {
             transport,
             player: None,
-            info,
+            info: info.tidied(),
             identity,
             kicked: None,
             parms: None,
@@ -136,6 +169,11 @@ impl Seat {
     /// Sends a message that has to arrive.
     pub(crate) fn send(&mut self, message: &ServerMessage) {
         self.transport.send(message.encode());
+    }
+
+    /// Sends a message that has to arrive, already encoded.
+    pub(crate) fn send_bytes(&mut self, bytes: Vec<u8>) {
+        self.transport.send(bytes);
     }
 
     /// Sends a message that may be lost.
@@ -230,7 +268,8 @@ impl Seat {
 
     /// Their ping as measured here, in milliseconds. Nothing they say counts:
     /// it's how long their answer to a snapshot took, less the tick that
-    /// waiting for a command to carry it takes.
+    /// waiting for a command to carry it takes, and less what this server
+    /// added itself.
     #[must_use]
     pub(crate) fn ping(&self) -> f64 {
         self.ping.unwrap_or(0.0)

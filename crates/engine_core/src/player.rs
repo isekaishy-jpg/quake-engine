@@ -24,6 +24,10 @@ pub const PLAYER_MINS: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
 /// The high corner of a player's box, from `VEC_HULL_MAX`.
 pub const PLAYER_MAXS: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
+/// How high the eyes are above the middle of the box, from
+/// `DEFAULT_VIEWHEIGHT`.
+pub const VIEW_HEIGHT: f32 = 22.0;
+
 /// How fast the view comes back from a kick, in degrees a second, from
 /// `DropPunchAngle`.
 pub const PUNCH_RECOVERY: f32 = 10.0;

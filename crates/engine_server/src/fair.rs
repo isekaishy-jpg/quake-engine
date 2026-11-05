@@ -46,6 +46,24 @@ impl Default for FairSettings {
 }
 
 impl FairSettings {
+    /// Each rule's console name and its value as text.
+    #[must_use]
+    pub fn cvars(&self) -> [(&'static str, String); 10] {
+        let flag = |on: bool| String::from(if on { "1" } else { "0" });
+        [
+            ("sv_fair_enable", flag(self.enable)),
+            ("sv_fair_floor", self.floor.to_string()),
+            ("sv_fair_width", self.width.to_string()),
+            ("sv_fair_ceiling", self.ceiling.to_string()),
+            ("sv_fair_ceiling_margin", self.ceiling_margin.to_string()),
+            ("sv_fair_partial", self.partial.to_string()),
+            ("sv_fair_outlier", self.outlier.to_string()),
+            ("sv_fair_interval", self.interval.to_string()),
+            ("sv_unlag_debug", flag(self.show)),
+            ("sv_unlag_enable", flag(self.unlag)),
+        ]
+    }
+
     /// The rules among a level's `settings`, with defaults for the rest.
     #[must_use]
     pub fn from_settings(settings: &[(String, f64)]) -> Self {

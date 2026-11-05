@@ -83,7 +83,7 @@ pub struct Statistics {
     pub total_triangles: u32,
     /// Triangles drawn.
     pub drawn_triangles: u32,
-    /// The GPU's name is reported separately by [`Renderer::device_name`].
+    /// Draw calls made.
     pub batches: u32,
 }
 

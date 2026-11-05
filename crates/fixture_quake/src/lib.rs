@@ -17,6 +17,7 @@ mod pak;
 mod quit_messages;
 mod scripts;
 mod spr;
+mod stats;
 mod texture;
 mod wad;
 mod wav;

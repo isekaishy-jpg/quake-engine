@@ -13,8 +13,8 @@ pub use check::{Violation, check_workspace};
 pub use load::{LoadError, load_workspace};
 pub use manifest::inherits_workspace_lints;
 pub use rules::{
-    BACKEND_RULES, BackendRule, CRATE_RULES, CrateRule, DEV_TOOLS, FORMAT_RULES, FormatRule,
-    LINT_EXEMPT, REQUIRED_EDITION, REQUIRED_RUST_VERSION, TESTING_FEATURES, TestingFeature,
+    BACKEND_RULES, BackendRule, CRATE_RULES, CrateRule, FORMAT_RULES, FormatRule, LINT_EXEMPT,
+    REQUIRED_EDITION, REQUIRED_RUST_VERSION,
 };
 
 /// The kind of a dependency declaration.

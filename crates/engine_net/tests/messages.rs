@@ -212,7 +212,8 @@ fn sound_bytes(channel: u8, volume: f32, attenuation: f32, name: &str) -> Vec<u8
     })
     .encode();
     bytes.truncate(bytes.len() - 1);
-    bytes[9] = channel;
+    let channel_at = 1 + size_of::<u64>();
+    bytes[channel_at] = channel;
     let volume_at = bytes.len() - 8;
     bytes[volume_at..volume_at + 4].copy_from_slice(&volume.to_le_bytes());
     bytes[volume_at + 4..].copy_from_slice(&attenuation.to_le_bytes());

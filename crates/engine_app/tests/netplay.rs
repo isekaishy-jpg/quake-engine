@@ -62,7 +62,6 @@ fn game(
     let server = Server::new(
         Box::new(server_end),
         Rc::clone(&world),
-        map,
         origin,
         SCRIPTS,
         TICK,
@@ -1272,7 +1271,7 @@ fn feel_of_a_shot(ping: u64, showing: bool, refused: bool) -> FeltShot {
         };
         felt.kicks.push(-client.punch(1.0).x);
         felt.frames.push(client.weapon().1);
-        felt.flashes += u32::from(client.player_effects() & 2 != 0);
+        felt.flashes += u32::from(client.take_player_effects() & 2 != 0);
         client.send_command(command, tick);
         client.flush_network();
         host.send_command(UserCommand::default(), tick);
@@ -1372,7 +1371,7 @@ fn every_weapon_rule_matches_what_its_script_does() {
             if frame == 0 {
                 frame = host.weapon().1;
             }
-            flashed |= host.player_effects() & 2 != 0;
+            flashed |= host.take_player_effects() & 2 != 0;
         }
         println!("{weapon}: {sounds} sounds, {kick:.1} degrees, frame {frame}, flash {flashed}");
         assert!(sounds > 0, "{weapon} sounds as its rule says");

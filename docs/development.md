@@ -10,7 +10,7 @@ How to build and check the engine. The rules behind these commands are in [DESIG
 
 | Command | What it does |
 | --- | --- |
-| `cargo run` | Builds and runs the engine. It exits at once for now |
+| `cargo run` | Builds and runs the game |
 | `cargo xtask check` | The required checks, in order: `cargo fmt -- --check`, clippy with `-D warnings`, and all workspace tests |
 | `cargo xtask build-number` | Shows the tracked build number and build identity |
 | `cargo xtask reserve-build-number` | Reserves the next package build number |

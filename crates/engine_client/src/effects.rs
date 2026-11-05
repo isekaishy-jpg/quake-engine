@@ -9,7 +9,7 @@ use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use std::collections::HashMap;
 
 use engine_core::entity::Effect;
-use engine_core::math::Vec3;
+use engine_core::math::{Vec3, view_axes};
 use engine_core::sound::SoundStart;
 
 use crate::particles::{Particles, Trail};
@@ -145,9 +145,7 @@ pub struct Effects {
 
 /// The forward direction of `angles`, from `AngleVectors`.
 fn forward(angles: Vec3) -> Vec3 {
-    let (pitch_sin, pitch_cos) = angles.x.to_radians().sin_cos();
-    let (yaw_sin, yaw_cos) = angles.y.to_radians().sin_cos();
-    Vec3::new(pitch_cos * yaw_cos, pitch_cos * yaw_sin, -pitch_sin)
+    view_axes(angles.y, angles.x)[0]
 }
 
 /// The pitch and yaw that look along `direction`, from `CL_UpdateTEnts`.

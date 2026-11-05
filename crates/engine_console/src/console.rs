@@ -106,7 +106,10 @@ impl<C> Console<C> {
     /// The cvar called `name`, if registered.
     #[must_use]
     pub fn cvar(&self, name: &str) -> Option<&Cvar> {
-        self.cvars.get(&name.to_lowercase())
+        // Names here are almost always lower case already.
+        self.cvars
+            .get(name)
+            .or_else(|| self.cvars.get(&name.to_lowercase()))
     }
 
     /// Every command, alias and cvar name starting with `prefix`, sorted.

@@ -15,8 +15,8 @@ const ON_PLANE: f64 = 1e-6;
 /// Corners closer together than this count as one.
 const SAME_POINT: f64 = 1e-4;
 
-/// How far past a model's bounds the box starts, which also covers the growth
-/// of the hull.
+/// How far past a model's bounds the box starts. It has to be more than any
+/// trace reaches past them, so a hull's growth never meets the box's edge.
 const BOUNDS_MARGIN: f32 = 128.0;
 
 /// The dot product.

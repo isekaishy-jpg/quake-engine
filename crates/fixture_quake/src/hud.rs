@@ -5,57 +5,14 @@
 use engine_core::canvas::{CHARACTER_SIZE, Canvas};
 use engine_map::Contents;
 
+use crate::stats::{
+    IT_ARMOR1, IT_ARMOR2, IT_ARMOR3, IT_CELLS, IT_INVISIBILITY, IT_INVULNERABILITY, IT_NAILS,
+    IT_QUAD, IT_ROCKETS, IT_SHELLS, IT_SHOTGUN, IT_SUIT, STAT_ACTIVE_WEAPON, STAT_AMMO, STAT_ARMOR,
+    STAT_COUNT, STAT_DEATHMATCH, STAT_HEALTH, STAT_ITEMS, STAT_MONSTERS, STAT_SECRETS, STAT_SHELLS,
+    STAT_TOTAL_MONSTERS, STAT_TOTAL_SECRETS,
+};
 use crate::texture::Palette;
 
-/// `STAT_HEALTH`.
-const STAT_HEALTH: usize = 0;
-/// `STAT_AMMO`.
-const STAT_AMMO: usize = 3;
-/// `STAT_ARMOR`.
-const STAT_ARMOR: usize = 4;
-/// `STAT_SHELLS`, the first of four ammo counts.
-const STAT_SHELLS: usize = 6;
-/// `STAT_ACTIVEWEAPON`.
-const STAT_ACTIVE_WEAPON: usize = 10;
-/// `STAT_TOTALSECRETS`.
-const STAT_TOTAL_SECRETS: usize = 11;
-/// `STAT_TOTALMONSTERS`.
-const STAT_TOTAL_MONSTERS: usize = 12;
-/// `STAT_SECRETS`.
-const STAT_SECRETS: usize = 13;
-/// `STAT_MONSTERS`.
-const STAT_MONSTERS: usize = 14;
-/// The items, which the original sends apart from its stats.
-const STAT_ITEMS: usize = 15;
-/// Whether this is deathmatch.
-const STAT_DEATHMATCH: usize = 16;
-/// How many stats there are.
-const STAT_COUNT: usize = 17;
-
-/// `IT_QUAD`.
-const IT_QUAD: u32 = crate::weapon_rules::IT_QUAD.unsigned_abs();
-/// `IT_SHOTGUN`, the first of seven weapons.
-const IT_SHOTGUN: u32 = 1;
-/// `IT_SHELLS`.
-const IT_SHELLS: u32 = 256;
-/// `IT_NAILS`.
-const IT_NAILS: u32 = 512;
-/// `IT_ROCKETS`.
-const IT_ROCKETS: u32 = 1024;
-/// `IT_CELLS`.
-const IT_CELLS: u32 = 2048;
-/// `IT_ARMOR1`.
-const IT_ARMOR1: u32 = 8192;
-/// `IT_ARMOR2`.
-const IT_ARMOR2: u32 = 16384;
-/// `IT_ARMOR3`.
-const IT_ARMOR3: u32 = 32768;
-/// `IT_INVISIBILITY`.
-const IT_INVISIBILITY: u32 = 1 << 19;
-/// `IT_INVULNERABILITY`.
-const IT_INVULNERABILITY: u32 = 1 << 20;
-/// `IT_SUIT`.
-const IT_SUIT: u32 = 1 << 21;
 /// The bit of the first item on the bar.
 const FIRST_ITEM_BIT: u32 = 17;
 /// The bit of the first sigil.
@@ -271,9 +228,8 @@ impl Hud {
     }
 
     /// The items held.
-    #[expect(clippy::cast_sign_loss, reason = "the items are bits")]
-    fn items(&self) -> u32 {
-        self.stats[STAT_ITEMS] as u32
+    fn items(&self) -> i32 {
+        self.stats[STAT_ITEMS]
     }
 
     /// Takes the game's numbers at game time `time`, noting what's new.
@@ -702,7 +658,7 @@ impl Hud {
                 reason = "tenths of a second, counted from zero"
             )]
             let picture = if held >= 10.0 {
-                let selected = active == i32::try_from(bit).unwrap_or(0);
+                let selected = active == bit;
                 format!("{}_{name}", if selected { "inv2" } else { "inv" })
             } else {
                 format!("inva{}_{name}", held.max(0.0) as u32 % 5 + 1)

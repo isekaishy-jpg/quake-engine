@@ -1,7 +1,9 @@
 //! A port of `PlayerMove` from `pmove.c`, with WinQuake's values.
 
-use engine_core::math::Vec3;
-use engine_core::player::{Liquid, PlayerState, USUAL_GRAVITY, UserCommand};
+use engine_core::math::{Vec3, view_axes};
+use engine_core::player::{
+    Liquid, PLAYER_MAXS, PLAYER_MINS, PlayerState, USUAL_GRAVITY, UserCommand, VIEW_HEIGHT,
+};
 use engine_physics::{Collision, PointContents, Trace};
 
 /// The highest step a player walks up.
@@ -36,12 +38,6 @@ const EDGE_REACH: f32 = 16.0;
 
 /// How much an edge multiplies friction.
 const EDGE_FRICTION: f32 = 2.0;
-
-/// The bottom of the player's box, from its centre.
-const PLAYER_BOTTOM: f32 = -24.0;
-
-/// The top of the player's box, from its centre.
-const PLAYER_TOP: f32 = 32.0;
 
 /// How far a stuck player is nudged, on each axis.
 const NUDGE: f32 = 0.125;
@@ -253,7 +249,7 @@ impl Mover<'_> {
         let mut friction = self.vars.friction;
         if self.state.on_ground {
             let ahead = Vec3::new(velocity.x, velocity.y, 0.0) * (EDGE_REACH / speed);
-            let start = self.state.origin + ahead + Vec3::new(0.0, 0.0, PLAYER_BOTTOM);
+            let start = self.state.origin + ahead + Vec3::new(0.0, 0.0, PLAYER_MINS.z);
             let stop = start - Vec3::new(0.0, 0.0, EDGE_DEPTH);
             if self.trace(start, stop).fraction >= 1.0 {
                 friction *= EDGE_FRICTION;
@@ -377,12 +373,12 @@ impl Mover<'_> {
         let origin = self.state.origin;
         let at = |height: f32| origin + Vec3::new(0.0, 0.0, height);
         self.state.water_level = 0;
-        self.state.liquid = self.liquid_at(at(PLAYER_BOTTOM + 1.0));
+        self.state.liquid = self.liquid_at(at(PLAYER_MINS.z + 1.0));
         if self.state.liquid != Liquid::None {
             self.state.water_level = 1;
-            if self.liquid_at(at((PLAYER_BOTTOM + PLAYER_TOP) * 0.5)) != Liquid::None {
+            if self.liquid_at(at((PLAYER_MINS.z + PLAYER_MAXS.z) * 0.5)) != Liquid::None {
                 self.state.water_level = 2;
-                if self.liquid_at(at(22.0)) != Liquid::None {
+                if self.liquid_at(at(VIEW_HEIGHT)) != Liquid::None {
                     self.state.water_level = 3;
                 }
             }
@@ -522,16 +518,15 @@ pub fn player_move(
     let held = state.no_backing > 0.0 && state.water_level < 2;
     let command = if held { &onwards } else { command };
     state.no_backing = (state.no_backing - command.seconds).max(0.0);
-    let (yaw_sin, yaw_cos) = command.yaw.to_radians().sin_cos();
-    let (pitch_sin, pitch_cos) = command.pitch.to_radians().sin_cos();
+    let [forward, right, _up] = view_axes(command.yaw, command.pitch);
     Mover {
         state,
         command,
         vars,
         world,
         touched,
-        forward: Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin),
-        right: Vec3::new(yaw_sin, -yaw_cos, 0.0),
+        forward,
+        right,
     }
     .run();
 }

@@ -3,8 +3,8 @@
 use std::fmt;
 
 use super::rules::{
-    BACKEND_RULES, CRATE_RULES, CrateRule, DEV_TOOLS, FORMAT_RULES, LINT_EXEMPT, REQUIRED_EDITION,
-    REQUIRED_RUST_VERSION, TESTING_FEATURES,
+    BACKEND_RULES, CRATE_RULES, CrateRule, FORMAT_RULES, LINT_EXEMPT, REQUIRED_EDITION,
+    REQUIRED_RUST_VERSION,
 };
 use super::{Kind, WorkspacePackage};
 
@@ -213,7 +213,6 @@ fn check_dependencies(
     packages: &[WorkspacePackage],
     violations: &mut Vec<Violation>,
 ) {
-    check_testing_features(package, violations);
     for dependency in &package.dependencies {
         let is_workspace = packages.iter().any(|other| other.name == dependency.name);
         let is_own_tests = dependency.name == package.name && dependency.kind == Kind::Development;
@@ -230,7 +229,6 @@ fn check_dependencies(
             .find(|backend| backend.dependency == dependency.name);
         if let Some(backend) = backend
             && backend.owner != package.name
-            && !DEV_TOOLS.contains(&package.name.as_str())
         {
             violations.push(Violation::MisplacedBackend {
                 package: package.name.clone(),
@@ -247,34 +245,6 @@ fn check_dependencies(
             violations.push(Violation::MisplacedFormat {
                 package: package.name.clone(),
                 dependency: dependency.name.clone(),
-            });
-        }
-    }
-}
-
-/// Checks that the test-only features are enabled only by development
-/// dependencies: not by a normal or build dependency, nor by one of the
-/// package's own features.
-fn check_testing_features(package: &WorkspacePackage, violations: &mut Vec<Violation>) {
-    for testing in TESTING_FEATURES {
-        let in_build = package.dependencies.iter().any(|dependency| {
-            dependency.name == testing.package
-                && dependency.kind != Kind::Development
-                && dependency
-                    .features
-                    .iter()
-                    .any(|name| name == testing.feature)
-        });
-        let enable = format!("{}/{}", testing.package, testing.feature);
-        let by_feature = package
-            .feature_enables
-            .iter()
-            .any(|value| *value == enable || value.replace('?', "") == enable);
-        if in_build || by_feature {
-            violations.push(Violation::TestingFeatureInBuild {
-                package: package.name.clone(),
-                dependency: testing.package.to_owned(),
-                feature: testing.feature,
             });
         }
     }

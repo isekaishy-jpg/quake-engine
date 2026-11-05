@@ -123,7 +123,6 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
     let server = Server::resume(
         Box::new(server_end),
         Rc::clone(&collision),
-        &map,
         SCRIPTS,
         TICK_SECONDS,
         saved,

@@ -129,14 +129,7 @@ fn a_cvar_prints_with_no_value_and_sets_with_one() {
 #[test]
 fn a_non_numeric_cvar_reads_as_zero() {
     let (mut console, mut context) = console();
-    console.register_cvar(
-        "name",
-        "player",
-        CvarFlags {
-            saved: true,
-            server: false,
-        },
-    );
+    console.register_cvar("name", "player", CvarFlags { saved: true });
     console.add("");
     console.execute(&mut context);
     let cvar = console.cvar("name").expect("cvar");

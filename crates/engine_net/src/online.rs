@@ -2,7 +2,7 @@
 //! 0059).
 
 use std::cell::RefCell;
-use std::collections::{BTreeSet, HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
 use std::fmt;
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
@@ -323,8 +323,8 @@ pub struct NetServer {
     end: Rc<RefCell<ServerEnd>>,
     /// Clients that have connected and haven't been taken.
     arrived: VecDeque<ClientId>,
-    /// Clients that have gone.
-    gone: Rc<RefCell<Vec<ClientId>>>,
+    /// Clients that have gone, until their ends are dropped.
+    gone: Rc<RefCell<HashSet<ClientId>>>,
 }
 
 impl NetServer {
@@ -358,7 +358,7 @@ impl NetServer {
                 identity_changed: false,
             })),
             arrived: VecDeque::new(),
-            gone: Rc::new(RefCell::new(Vec::new())),
+            gone: Rc::new(RefCell::new(HashSet::new())),
         })
     }
 
@@ -376,7 +376,7 @@ impl NetServer {
             match event {
                 ServerEvent::ClientConnected { client_id } => self.arrived.push_back(client_id),
                 ServerEvent::ClientDisconnected { client_id, .. } => {
-                    self.gone.borrow_mut().push(client_id);
+                    let _new = self.gone.borrow_mut().insert(client_id);
                 }
             }
         }
@@ -444,8 +444,8 @@ impl NetServer {
 struct ServerSide {
     /// What's shared.
     end: Rc<RefCell<ServerEnd>>,
-    /// Clients that have gone.
-    gone: Rc<RefCell<Vec<ClientId>>>,
+    /// Clients that have gone, until their ends are dropped.
+    gone: Rc<RefCell<HashSet<ClientId>>>,
     /// Who.
     id: ClientId,
 }
@@ -477,13 +477,14 @@ impl Transport for ServerSide {
         !self.gone.borrow().contains(&self.id)
     }
 
-    fn peer_identity(&self) -> Option<[u8; 32]> {
+    fn peer_identity(&self) -> Option<PublicKey> {
         self.end.borrow().people.get(&self.id).copied()
     }
 }
 
 impl Drop for ServerSide {
     fn drop(&mut self) {
+        let _was = self.gone.borrow_mut().remove(&self.id);
         if let Ok(mut end) = self.end.try_borrow_mut() {
             end.server.disconnect(self.id);
         }
@@ -653,7 +654,7 @@ impl Transport for NetClient {
         }
     }
 
-    fn peer_identity(&self) -> Option<[u8; 32]> {
+    fn peer_identity(&self) -> Option<PublicKey> {
         match &self.stage {
             Stage::Open { host, .. } => Some(*host),
             _ => None,

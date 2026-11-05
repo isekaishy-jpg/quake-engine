@@ -6,36 +6,20 @@ use std::io::BufWriter;
 use std::time::Duration;
 
 use engine_assets::AssetError;
+use engine_client::Buttons;
 use engine_console::{Args, Console};
 use engine_net::{
     Conditioned, Conditions, DEFAULT_PORT, HostOptions, JoinOptions, NetClient, NetServer,
-    Transport, full_address,
+    Transport, full_address, short_id,
 };
 use engine_render::Capture;
+use engine_server::Kicked;
 use fixture_quake::Screen;
 
 use crate::app::{MOVE_BINDINGS, World};
-use crate::keys::{short_id, to_hex};
+use crate::keys::to_hex;
 use crate::saves;
 use crate::screen::MenuActions;
-
-/// The movement buttons, as the console sees them.
-const BUTTONS: [&str; 14] = [
-    "attack",
-    "left",
-    "right",
-    "lookup",
-    "lookdown",
-    "strafe",
-    "forward",
-    "back",
-    "moveleft",
-    "moveright",
-    "moveup",
-    "movedown",
-    "speed",
-    "jump",
-];
 
 /// The width of a screenshot.
 const SCREENSHOT_WIDTH: u32 = 1280;
@@ -105,7 +89,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     for ignored in ["+mlook", "-mlook", "+klook", "-klook", "sizeup", "sizedown"] {
         console.register(ignored, nothing);
     }
-    for button in BUTTONS {
+    for button in Buttons::NAMES {
         console.register(&format!("+{button}"), button_down);
         console.register(&format!("-{button}"), button_up);
     }
@@ -399,9 +383,9 @@ fn fake_network(console: &Console<World>) -> Option<Conditions> {
 }
 
 /// `connect address [code]`: joins a game, checking the host against its code
-/// if it's given, or else against who was there last time, through the `net_fake` settings if any are
-/// set: `net_fake_latency` and `net_fake_jitter` in milliseconds, and
-/// `net_fake_loss` in percent, of what's sent.
+/// if it's given, or else against who was there last time. It goes through the
+/// `net_fake` settings if any are set: `net_fake_latency` and `net_fake_jitter`
+/// in milliseconds, and `net_fake_loss` in percent, of what's sent.
 fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
     let password = console
         .cvar("password")
@@ -469,23 +453,21 @@ fn forget_host(console: &mut Console<World>, world: &mut World, args: &Args) {
 
 /// `kick name`: puts a guest out.
 fn kick(console: &mut Console<World>, world: &mut World, args: &Args) {
-    let found = world
-        .server
-        .as_mut()
-        .and_then(|server| server.kick(args.get(1), "you've been kicked"));
-    if found.is_none() {
+    let found = world.server.as_mut().map_or(Kicked::Nobody, |server| {
+        server.kick(args.get(1), "you've been kicked")
+    });
+    if found == Kicked::Nobody {
         console.print(format!("nobody here is called {}", args.get(1)));
     }
 }
 
 /// `ban name`: puts a guest out, and keeps them out.
 fn ban(console: &mut Console<World>, world: &mut World, args: &Args) {
-    let found = world
-        .server
-        .as_mut()
-        .and_then(|server| server.kick(args.get(1), "you've been banned"));
+    let found = world.server.as_mut().map_or(Kicked::Nobody, |server| {
+        server.kick(args.get(1), "you've been banned")
+    });
     match found {
-        Some(Some(key)) => {
+        Kicked::Key(key) => {
             let _new = world.keys.banned.insert(key);
             world.keys.save_bans();
             if let Some(net_server) = &mut world.net_server {
@@ -493,8 +475,8 @@ fn ban(console: &mut Console<World>, world: &mut World, args: &Args) {
             }
             console.print(format!("banned {}: {}", args.get(1), short_id(&key)));
         }
-        Some(None) => console.print("kicked them, but they've no key to ban"),
-        None => console.print(format!("nobody here is called {}", args.get(1))),
+        Kicked::Anonymous => console.print("kicked them, but they've no key to ban"),
+        Kicked::Nobody => console.print(format!("nobody here is called {}", args.get(1))),
     }
 }
 

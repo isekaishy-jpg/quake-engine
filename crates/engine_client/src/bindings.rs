@@ -86,12 +86,6 @@ impl Bindings {
             .map(|(key, command)| (key.as_str(), command.as_str()))
     }
 
-    /// The command to run when `key` goes down.
-    #[must_use]
-    pub fn press(&self, key: &str) -> Option<&str> {
-        self.get(key)
-    }
-
     /// The command to run when `key` comes up: the matching `-` of a `+`
     /// binding, and nothing otherwise.
     #[must_use]

@@ -380,11 +380,8 @@ impl<A: PlatformApp> SAApplication for Adapter<'_, A> {
             now: frame.raw.elapsed(),
             reduced: self.minimized,
         };
-        let next = match self.app.frame(&frame) {
-            FrameOutcome::Continue => cx.request_frame(),
-            FrameOutcome::Stop => Err(SAError::application("stop requested")),
-        };
-        if next.is_err() {
+        let wants_more = self.app.frame(&frame) == FrameOutcome::Continue;
+        if !wants_more || cx.request_frame().is_err() {
             cx.request_stop();
         }
     }

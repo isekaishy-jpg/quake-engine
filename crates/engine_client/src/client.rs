@@ -1,6 +1,6 @@
 //! The client: commands, prediction and the render tick (proposal 0024).
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -10,7 +10,7 @@ use engine_core::entity::{
 use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
-use engine_core::time::TICK_SECONDS;
+use engine_core::time::{TICK_HERTZ, TICK_SECONDS};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
     ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport,
@@ -28,7 +28,8 @@ const MAX_BLENDED_MOVE: f32 = 200.0;
 
 /// How many ticks a model takes to blend to a new frame, which is the original's
 /// 10 frames a second.
-const FRAME_BLEND_TICKS: f32 = 7.2;
+#[expect(clippy::cast_precision_loss, reason = "the tick rate is small")]
+const FRAME_BLEND_TICKS: f32 = TICK_HERTZ as f32 / 10.0;
 
 /// Something the game wants the player to see.
 #[derive(Clone, Debug, PartialEq)]
@@ -408,7 +409,7 @@ impl Client {
 
     /// The player's effect bits.
     #[must_use]
-    pub fn player_effects(&mut self) -> u8 {
+    pub fn take_player_effects(&mut self) -> u8 {
         let mut effects = self.player_effects;
         if self.shown.is_active() {
             effects &= !EFFECT_MUZZLE_FLASH;
@@ -630,8 +631,7 @@ impl Client {
     /// Follows what's flying, and predicts the knock of our own rockets. Only
     /// movement is predicted, and the server's next word corrects it.
     fn follow_flights(&mut self) {
-        let ids: std::collections::HashSet<u64> =
-            self.entities.iter().map(|entity| entity.id).collect();
+        let ids: HashSet<u64> = self.entities.iter().map(|entity| entity.id).collect();
         let give_up = self.round_trip() + GUESS_PATIENCE;
         self.flights
             .retain(|id| ids.contains(&id), self.clock.time(), give_up);

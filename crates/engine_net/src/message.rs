@@ -90,7 +90,7 @@ const TAG_GRAVITY: u8 = 26;
 const MAX_MOVE_COMMANDS: usize = 8;
 
 /// The longest name.
-const MAX_NAME_BYTES: usize = 32;
+pub const MAX_NAME_BYTES: usize = 32;
 
 /// The most players the scores can list.
 const MAX_SCORES: usize = 64;
@@ -260,6 +260,18 @@ pub enum ServerMessage {
     Scores(Vec<PlayerScore>),
 }
 
+/// As much of `name` as goes on the wire, ending between characters.
+fn short_name(name: &str) -> &str {
+    &name[..name.floor_char_boundary(MAX_NAME_BYTES)]
+}
+
+/// Adds a count of what follows, and says how many of them a byte has room for.
+fn put_count(out: &mut Vec<u8>, count: usize) -> usize {
+    let kept = u8::try_from(count).unwrap_or(u8::MAX);
+    out.push(kept);
+    usize::from(kept)
+}
+
 /// Reads fields from the front of a message.
 pub(crate) struct Reader<'a> {
     /// What's left.
@@ -288,6 +300,16 @@ impl Reader<'_> {
         }
     }
 
+    /// A small number.
+    pub(crate) fn u16(&mut self) -> Option<u16> {
+        self.take().map(u16::from_le_bytes)
+    }
+
+    /// A large number.
+    pub(crate) fn u64(&mut self) -> Option<u64> {
+        self.take().map(u64::from_le_bytes)
+    }
+
     /// A number.
     pub(crate) fn u32(&mut self) -> Option<u32> {
         self.take().map(u32::from_le_bytes)
@@ -307,8 +329,8 @@ impl Reader<'_> {
             .filter(|value| value.is_finite())
     }
 
-    /// The rest of the message, as a sound's name.
-    fn sound_name(&mut self) -> Option<String> {
+    /// The rest of the message, as the name of a file.
+    fn file_name(&mut self) -> Option<String> {
         let name = std::mem::take(&mut self.bytes);
         if name.is_empty() || name.len() > MAX_SOUND_NAME_BYTES {
             return None;
@@ -407,8 +429,8 @@ impl ClientMessage {
             Self::Move(commands, seen) => {
                 out.push(TAG_MOVE);
                 out.extend_from_slice(&seen.to_le_bytes());
-                out.push(u8::try_from(commands.len()).unwrap_or(0));
-                for command in commands {
+                let count = put_count(&mut out, commands.len());
+                for command in commands.iter().take(count) {
                     encode_command(command, &mut out);
                 }
             }
@@ -422,7 +444,7 @@ impl ClientMessage {
             Self::Ready => out.push(TAG_READY),
             Self::Info(info) => {
                 out.extend_from_slice(&[TAG_INFO, info.colors]);
-                out.extend_from_slice(info.name.as_bytes());
+                out.extend_from_slice(short_name(&info.name).as_bytes());
             }
             Self::Console(text) => {
                 out.push(TAG_CONSOLE);
@@ -453,7 +475,7 @@ impl ClientMessage {
             TAG_FIRE => {
                 let mut reader = Reader { bytes: rest };
                 let offset = reader.byte()?;
-                let seed = u16::from_le_bytes(reader.take()?);
+                let seed = reader.u16()?;
                 let fire = FireCommand {
                     yaw: reader.f32()?,
                     pitch: reader.f32()?,
@@ -590,13 +612,14 @@ impl ServerMessage {
             }
             Self::Scores(scores) => {
                 out.push(TAG_SCORES);
-                out.push(u8::try_from(scores.len()).unwrap_or(0));
-                for score in scores {
+                let count = put_count(&mut out, scores.len());
+                for score in scores.iter().take(count) {
                     out.extend_from_slice(&score.entity.to_le_bytes());
                     out.extend_from_slice(&score.frags.to_le_bytes());
                     out.push(score.colors);
-                    out.push(u8::try_from(score.name.len()).unwrap_or(0));
-                    out.extend_from_slice(score.name.as_bytes());
+                    let name = short_name(&score.name);
+                    let _all = put_count(&mut out, name.len());
+                    out.extend_from_slice(name.as_bytes());
                 }
             }
         }
@@ -628,7 +651,7 @@ impl ServerMessage {
                     kind: reader.byte()?,
                     origin: reader.vec3()?,
                     end: reader.vec3()?,
-                    entity: u64::from_le_bytes(reader.take()?),
+                    entity: reader.u64()?,
                 };
                 reader.finished().then_some(Self::Effect(effect))
             }
@@ -636,8 +659,8 @@ impl ServerMessage {
                 let mut reader = Reader { bytes: rest };
                 let flags = reader.byte()?;
                 let launch = Projectile {
-                    entity: u64::from_le_bytes(reader.take()?),
-                    owner: u64::from_le_bytes(reader.take()?),
+                    entity: reader.u64()?,
+                    owner: reader.u64()?,
                     origin: reader.vec3()?,
                     velocity: reader.vec3()?,
                     time: reader.f64()?,
@@ -671,8 +694,8 @@ impl ServerMessage {
             }
             TAG_MODEL_NAME => {
                 let mut reader = Reader { bytes: rest };
-                let number = u16::from_le_bytes(reader.take()?);
-                let name = reader.sound_name()?;
+                let number = reader.u16()?;
+                let name = reader.file_name()?;
                 Some(Self::ModelName { number, name })
             }
             TAG_GRAVITY => {
@@ -715,12 +738,12 @@ fn sound_values_fit(volume: f32, attenuation: f32) -> bool {
 /// Reads a sound starting.
 fn decode_sound(bytes: &[u8]) -> Option<SoundStart> {
     let mut reader = Reader { bytes };
-    let entity = u64::from_le_bytes(reader.take()?);
+    let entity = reader.u64()?;
     let channel = reader.byte().filter(|channel| *channel <= 7)?;
     let own = reader.flag()?;
     let origin = reader.vec3()?;
     let (volume, attenuation) = (reader.f32()?, reader.f32()?);
-    let name = reader.sound_name()?;
+    let name = reader.file_name()?;
     sound_values_fit(volume, attenuation).then_some(SoundStart {
         entity,
         channel,
@@ -737,7 +760,7 @@ fn decode_static_sound(bytes: &[u8]) -> Option<StaticSound> {
     let mut reader = Reader { bytes };
     let origin = reader.vec3()?;
     let (volume, attenuation) = (reader.f32()?, reader.f32()?);
-    let name = reader.sound_name()?;
+    let name = reader.file_name()?;
     sound_values_fit(volume, attenuation).then_some(StaticSound {
         origin,
         volume,
@@ -763,7 +786,7 @@ fn decode_scores(bytes: &[u8]) -> Option<Vec<PlayerScore>> {
     }
     let mut scores = Vec::with_capacity(count);
     for _ in 0..count {
-        let entity = u64::from_le_bytes(reader.take()?);
+        let entity = reader.u64()?;
         let frags = i32::from_le_bytes(reader.take()?);
         let colors = reader.byte()?;
         let length = usize::from(reader.byte()?);
@@ -891,12 +914,12 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             origin: reader.vec3()?,
             visible: reader.flag()?,
             solid: reader.flag()?,
-            frame: u16::from_le_bytes(reader.take()?),
+            frame: reader.u16()?,
         });
     }
-    let weapon_model = u16::from_le_bytes(reader.take()?);
-    let weapon_frame = u16::from_le_bytes(reader.take()?);
-    let player_entity = u64::from_le_bytes(reader.take()?);
+    let weapon_model = reader.u16()?;
+    let weapon_frame = reader.u16()?;
+    let player_entity = reader.u64()?;
     let player_effects = reader.byte()?;
     let punch = reader.vec3()?;
     let time = reader.f64()?;
@@ -915,9 +938,9 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
     let mut entities = Vec::with_capacity(count);
     for _ in 0..count {
         entities.push(EntityState {
-            id: u64::from_le_bytes(reader.take()?),
-            model: u16::from_le_bytes(reader.take()?),
-            frame: u16::from_le_bytes(reader.take()?),
+            id: reader.u64()?,
+            model: reader.u16()?,
+            frame: reader.u16()?,
             skin: reader.byte()?,
             effects: reader.byte()?,
             origin: reader.vec3()?,

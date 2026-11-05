@@ -9,6 +9,7 @@ use std::time::Duration;
 
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
+use engine_core::player::VIEW_HEIGHT;
 use engine_net::Transport;
 use engine_physics::CollisionWorld;
 
@@ -16,9 +17,6 @@ use crate::client::{Client, DrawnEntity};
 
 /// How fast a bot asks to run.
 const RUN_SPEED: f32 = 400.0;
-
-/// How high a bot's eyes are above its middle.
-const EYE_HEIGHT: f32 = 22.0;
 
 /// How far a bot notices others.
 const SIGHT_RANGE: f32 = 1500.0;
@@ -148,7 +146,7 @@ impl Bot {
 
     /// Where its eyes are.
     fn eye(&self) -> Vec3 {
-        self.client.predicted().origin + Vec3::new(0.0, 0.0, EYE_HEIGHT)
+        self.client.predicted().origin + Vec3::new(0.0, 0.0, VIEW_HEIGHT)
     }
 
     /// Turns towards `point`, as far as it can over `seconds`.

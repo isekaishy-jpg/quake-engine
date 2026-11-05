@@ -16,7 +16,7 @@ Status: accepted, 2026-11-04, increment 3.
 - `engine_physics::build_solids` walks a hull tree, clipping a bounding box by each plane, and returns each solid leaf's points. It works in `f64`.
 - `CollisionWorld` loads solids into a static `box3d` body. `trace` first asks the hull tree if the start is solid, which covers what rays can't see. It then casts a ray, and stops `DIST_EPSILON` short of the plane it hits, using Quake's formula.
 - `contents` reads the map's tree, for water.
-- Brush models aren't solid yet. Doors and lifts arrive with entities in increment 4, as kinematic bodies.
+- Brush models aren't solid yet. Doors and lifts arrive with entities in increment 4. [Proposal 0026](0026-entities-and-movers.md) traces them by their hulls instead of the kinematic bodies planned here.
 
 ## Proposal
 

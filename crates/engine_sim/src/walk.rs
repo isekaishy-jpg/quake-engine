@@ -3,6 +3,7 @@
 use std::rc::Rc;
 
 use engine_core::math::Vec3;
+use engine_core::player::VIEW_HEIGHT;
 use engine_map::Contents;
 use engine_physics::CollisionWorld;
 
@@ -29,9 +30,6 @@ const MAX_BUMPS: usize = 4;
 
 /// How often monsters take a new look at where the player can be seen from.
 const CHECK_SECONDS: f64 = 0.1;
-
-/// How high the player's eyes are.
-const PLAYER_VIEW_HEIGHT: f32 = 22.0;
 
 /// A speed fast enough to land with a thud, as a fraction of gravity.
 const HARD_LANDING: f32 = -0.1;
@@ -429,7 +427,7 @@ impl Simulation {
             let target = self
                 .player_of(ids[self.check_index])
                 .map_or(Vec3::ZERO, |state| state.origin);
-            let eyes = target + Vec3::new(0.0, 0.0, PLAYER_VIEW_HEIGHT);
+            let eyes = target + Vec3::new(0.0, 0.0, VIEW_HEIGHT);
             let mut visible = vec![false; tree.leaves.len()];
             tree.mark_visible(tree.leaf_at(eyes), &mut visible);
             self.player_view = visible;

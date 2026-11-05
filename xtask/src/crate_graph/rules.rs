@@ -160,21 +160,6 @@ pub const LINT_EXEMPT: &[&str] = &[
     "solcache-solworker-example",
 ];
 
-/// External packages that are development tools, allowed to use backends.
-pub const DEV_TOOLS: &[&str] = &[];
-
-/// A workspace crate feature that exists only for tests.
-#[derive(Clone, Copy, Debug)]
-pub struct TestingFeature {
-    /// The workspace package that declares the feature.
-    pub package: &'static str,
-    /// The feature name.
-    pub feature: &'static str,
-}
-
-/// Test-only features, which only development dependencies may enable.
-pub const TESTING_FEATURES: &[TestingFeature] = &[];
-
 /// An external dependency that is a swappable backend and therefore private
 /// to one owning crate.
 #[derive(Clone, Copy, Debug)]

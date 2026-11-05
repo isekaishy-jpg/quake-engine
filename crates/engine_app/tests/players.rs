@@ -17,7 +17,7 @@ use engine_net::{
     apply_delta, delta_baseline, delta_from, loopback,
 };
 use engine_physics::CollisionWorld;
-use engine_server::{Level, Seat, SeatInfo, Server};
+use engine_server::{Kicked, Level, Seat, SeatInfo, Server};
 use fixture_quake::SCRIPTS;
 
 /// A tick.
@@ -135,7 +135,6 @@ fn two_players_with(teamplay: f64) -> (Server, Player, Player) {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         Vec3::new(0.0, 0.0, 0.0),
         SCRIPTS,
         TICK,
@@ -280,6 +279,37 @@ fn a_new_name_reaches_the_game_with_nothing_hidden_in_it() {
 }
 
 #[test]
+fn a_long_foreign_name_costs_nobody_the_scores() {
+    let name = "\u{e9}".repeat(40);
+    let (mut server, _host, mut guest) = two_players();
+    let info = PlayerInfo {
+        name: name.clone(),
+        colors: 0,
+    };
+    guest.end.send(ClientMessage::Info(info).encode());
+    server.tick();
+    let mut scores = None;
+    while let Some(bytes) = guest.end.receive() {
+        if let Some(ServerMessage::Scores(list)) = ServerMessage::decode(&bytes) {
+            scores = Some(list);
+        }
+    }
+    let scores = scores.expect("the scores still read");
+    assert_eq!(
+        scores[1].name,
+        "\u{e9}".repeat(16),
+        "cut between characters"
+    );
+    let info = SeatInfo { name, colors: 0 }.tidied();
+    assert_eq!(info.name.len(), 32);
+    let info = SeatInfo {
+        name: "\n\n".to_owned(),
+        colors: 3,
+    };
+    assert_eq!(info.tidied().name, SeatInfo::default().name);
+}
+
+#[test]
 fn a_save_from_before_no_backing_was_kept_still_reads() {
     let mut state = serde_json::to_value(PlayerState::default()).expect("it writes");
     state
@@ -293,9 +323,13 @@ fn a_save_from_before_no_backing_was_kept_still_reads() {
 #[test]
 fn a_guest_can_be_put_out_but_the_host_cant() {
     let (mut server, mut host, mut guest) = two_players();
-    assert_eq!(server.kick("nobody", "why"), None);
-    assert_eq!(server.kick("player", "why"), None, "the host stays");
-    assert!(server.kick("guest", "out you go").is_some());
+    assert_eq!(server.kick("nobody", "why"), Kicked::Nobody);
+    assert_eq!(
+        server.kick("player", "why"),
+        Kicked::Nobody,
+        "the host stays"
+    );
+    assert_eq!(server.kick("guest", "out you go"), Kicked::Anonymous);
     for _ in 0..36 {
         server.tick();
         host.read();
@@ -317,7 +351,6 @@ fn a_guest_gets_a_player_only_once_ready() {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         Vec3::ZERO,
         SCRIPTS,
         TICK,
@@ -658,7 +691,6 @@ fn a_fraglimit_ends_the_level() {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         Vec3::ZERO,
         SCRIPTS,
         TICK,
@@ -704,7 +736,6 @@ fn items_come_back_in_deathmatch() {
     let mut server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         Vec3::ZERO,
         SCRIPTS,
         TICK,

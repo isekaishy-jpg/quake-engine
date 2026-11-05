@@ -69,7 +69,6 @@ impl Game {
         let server = Server::new(
             Box::new(server_end),
             world,
-            map,
             origin,
             SCRIPTS,
             TICK,
@@ -334,7 +333,6 @@ fn view_wobble(follow: bool) -> (f32, f32) {
     let mut server = Server::new(
         Box::new(server_end),
         Rc::clone(&world),
-        &map,
         start,
         SCRIPTS,
         TICK,
@@ -1933,7 +1931,6 @@ fn a_rune_stays_collected_on_the_next_level() {
     let server = Server::new(
         Box::new(server_end),
         world,
-        &map,
         at_floor(0.0, 0.0),
         SCRIPTS,
         TICK,

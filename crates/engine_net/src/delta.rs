@@ -115,7 +115,7 @@ fn read_instance(reader: &mut Reader<'_>) -> Option<ModelInstance> {
         origin: reader.vec3()?,
         visible: reader.flag()?,
         solid: reader.flag()?,
-        frame: u16::from_le_bytes(reader.take()?),
+        frame: reader.u16()?,
     })
 }
 
@@ -212,17 +212,17 @@ pub fn delta_baseline(bytes: &[u8]) -> Option<u32> {
 
 /// Reads one entity's changes onto what it was.
 fn read_entity(reader: &mut Reader<'_>, old: &HashMap<u64, EntityState>) -> Option<EntityState> {
-    let id = u64::from_le_bytes(reader.take()?);
+    let id = reader.u64()?;
     let mask = reader.byte()?;
     let mut entity = old.get(&id).copied().unwrap_or(EntityState {
         id,
         ..EntityState::default()
     });
     if mask & MODEL != 0 {
-        entity.model = u16::from_le_bytes(reader.take()?);
+        entity.model = reader.u16()?;
     }
     if mask & FRAME != 0 {
-        entity.frame = u16::from_le_bytes(reader.take()?);
+        entity.frame = reader.u16()?;
     }
     if mask & SKIN != 0 {
         entity.skin = reader.byte()?;
@@ -256,7 +256,7 @@ fn read_entities(reader: &mut Reader<'_>, base: &[EntityState]) -> Option<Vec<En
     }
     let mut gone = HashMap::new();
     for _ in 0..read_count(reader)? {
-        gone.insert(u64::from_le_bytes(reader.take()?), ());
+        gone.insert(reader.u64()?, ());
     }
     let expected = read_count(reader)?;
     let mut entities: Vec<EntityState> = base
@@ -312,9 +312,9 @@ pub fn apply_delta(base: &Snapshot, bytes: &[u8]) -> Option<Snapshot> {
     }
     let acknowledged = reader.u32()?;
     let player = read_player(&mut reader)?;
-    let weapon_model = u16::from_le_bytes(reader.take()?);
-    let weapon_frame = u16::from_le_bytes(reader.take()?);
-    let player_entity = u64::from_le_bytes(reader.take()?);
+    let weapon_model = reader.u16()?;
+    let weapon_frame = reader.u16()?;
+    let player_entity = reader.u64()?;
     let player_effects = reader.byte()?;
     let punch = reader.vec3()?;
     let time = reader.f64()?;

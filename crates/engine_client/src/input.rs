@@ -58,6 +58,24 @@ fn axis(positive: bool, negative: bool) -> f32 {
 }
 
 impl Buttons {
+    /// Every button's name, as the console sees it.
+    pub const NAMES: [&str; 14] = [
+        "attack",
+        "left",
+        "right",
+        "lookup",
+        "lookdown",
+        "strafe",
+        "forward",
+        "back",
+        "moveleft",
+        "moveright",
+        "moveup",
+        "movedown",
+        "speed",
+        "jump",
+    ];
+
     /// Sets the button called `name`, without its `+` or `-`. Returns whether
     /// the name was a button.
     pub fn set(&mut self, name: &str, held: bool) -> bool {

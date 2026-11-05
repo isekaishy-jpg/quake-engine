@@ -14,7 +14,7 @@ fn config_names_and_platform_names_meet() {
 fn a_plus_binding_presses_and_releases() {
     let mut bindings = Bindings::new();
     bindings.bind("uparrow", "+forward");
-    assert_eq!(bindings.press("UP"), Some("+forward"));
+    assert_eq!(bindings.get("UP"), Some("+forward"));
     assert_eq!(bindings.release("UP").as_deref(), Some("-forward"));
 }
 
@@ -22,7 +22,7 @@ fn a_plus_binding_presses_and_releases() {
 fn a_plain_binding_runs_on_press_only() {
     let mut bindings = Bindings::new();
     bindings.bind("1", "impulse 1");
-    assert_eq!(bindings.press("1"), Some("impulse 1"));
+    assert_eq!(bindings.get("1"), Some("impulse 1"));
     assert_eq!(bindings.release("1"), None);
 }
 

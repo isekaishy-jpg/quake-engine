@@ -5,8 +5,6 @@
 pub struct CvarFlags {
     /// The value is written to the user's config.
     pub saved: bool,
-    /// Changes are announced to connected players.
-    pub server: bool,
 }
 
 /// A named variable, stored as a string as in Quake.

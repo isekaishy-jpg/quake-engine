@@ -269,8 +269,7 @@ pub(crate) struct Backend {
     resized: bool,
     /// The loaded map.
     map: Option<GpuMap>,
-    /// The text to show.
-    /// What draws it, set up just after the rest.
+    /// What draws text and pictures, set up just after the rest.
     canvas: Option<CanvasPass>,
     /// The frame uniforms.
     uniforms: GpuBuffer,

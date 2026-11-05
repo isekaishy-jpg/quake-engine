@@ -1,8 +1,6 @@
 //! Where the eye goes.
 
-/// The eye's height above the middle of the player's box, from
-/// `DEFAULT_VIEWHEIGHT`.
-pub const VIEW_HEIGHT: f32 = 22.0;
+pub use engine_core::player::VIEW_HEIGHT;
 
 /// How fast the view catches up after a stair, in units a second.
 const STEP_SPEED: f32 = 80.0;

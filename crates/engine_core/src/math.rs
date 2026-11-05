@@ -15,6 +15,19 @@ pub struct Vec3 {
     pub z: f32,
 }
 
+/// The forward, right and up directions of a view, in degrees, from
+/// `AngleVectors` with no roll.
+#[must_use]
+pub fn view_axes(yaw: f32, pitch: f32) -> [Vec3; 3] {
+    let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
+    let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
+    [
+        Vec3::new(yaw_cos * pitch_cos, yaw_sin * pitch_cos, -pitch_sin),
+        Vec3::new(yaw_sin, -yaw_cos, 0.0),
+        Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos),
+    ]
+}
+
 impl Vec3 {
     /// The origin.
     pub const ZERO: Self = Self::new(0.0, 0.0, 0.0);

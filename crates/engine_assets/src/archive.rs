@@ -3,7 +3,7 @@
 use crate::error::AssetError;
 
 /// A source of files. Paths are normalized by [`crate::normalize_path`].
-pub trait Archive: Send + Sync {
+pub trait Archive {
     /// A name to show for this archive.
     fn label(&self) -> &str;
 
