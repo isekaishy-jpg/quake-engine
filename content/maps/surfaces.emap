@@ -30,6 +30,11 @@ brush { material = panel_sheet cuboid = -448 352 64 -320 384 192 }
 brush { material = painted_stone cuboid = 448 -256 0 512 128 256 }
 paint { layer = 0 radius = 56 points = 448 -256 40  448 -120 150  448 0 90  448 128 200 }
 
+# A flat wall stamped into bricks, and letters carved through to metal.
+brush { material = stone cuboid = -448 -384 0 -64 -352 288 }
+stamp { image = stamp_bricks origin = -352 -352 160 normal = 0 1 0 size = 160 224 depth = 6 detail = 4 }
+stamp { image = stamp_letters inner = metal origin = -160 -352 150 normal = 0 1 0 size = 180 180 depth = 12 detail = 3 }
+
 # The flow map, on a slab.
 brush { material = swirl cuboid = 256 128 0 448 320 16 }
 

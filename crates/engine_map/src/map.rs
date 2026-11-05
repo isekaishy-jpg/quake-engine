@@ -195,6 +195,9 @@ pub struct Map {
     pub light_edges: Vec<u8>,
     /// Baked lights that move between keyframes.
     pub light_tracks: Vec<LightTrack>,
+    /// Faces lit from elsewhere, with how far to lift their light samples, as
+    /// stamped faces are, since they sit inside a solid.
+    pub light_lifts: Vec<(u32, Vec3)>,
     /// How much of each material layer is painted at each light sample, beside
     /// `light`. Empty if nothing is painted.
     pub paint: Vec<[u8; 4]>,

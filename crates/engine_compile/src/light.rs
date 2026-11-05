@@ -802,6 +802,16 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
     let space = face_space(map, face)?;
     let normal = space.plane.normal;
     let (light, points, grid) = light_grid(map, face, spacing)?;
+    let lift = map.light_lifts.iter().find(|(at, _)| {
+        map.faces
+            .get(*at as usize)
+            .is_some_and(|known| known.first_point == face.first_point)
+    });
+    let shine_at = lift.map(|(_, lift)| wide(*lift));
+    let lifted: Vec<Point> = points
+        .iter()
+        .map(|point| shine_at.map_or(*point, |lift| add_scaled(*point, lift, 1.0)))
+        .collect();
     let count = points.len();
     let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
     let mut directions = vec![[0.0; 3]; count];
@@ -822,7 +832,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
             }
             None => continue,
         };
-        for (index, point) in points.iter().enumerate() {
+        for (index, point) in lifted.iter().enumerate() {
             let (color, direction) = light_on(scene, source, *point, normal, !source.crisp);
             let energy = color[0] + color[1] + color[2];
             if energy > 0.0 {

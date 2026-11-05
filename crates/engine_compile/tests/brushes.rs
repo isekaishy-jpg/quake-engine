@@ -8,7 +8,7 @@ use engine_compile::{
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{Contents, Face, Map, Material, NodeChild, PoolLook};
+use engine_map::{Contents, Face, Map, Material, MipLevel, NodeChild, PoolLook, Texture};
 use engine_physics::CollisionWorld;
 
 /// A closed room from -256 to 256 with 32 unit walls, and a pillar.
@@ -461,4 +461,130 @@ fn a_cut_face_fits_a_hotspot_as_a_whole() {
     for piece in &tops {
         assert_eq!(piece.axes, tops[0].axes, "one fit for all of them");
     }
+}
+
+/// A stencil image for stamps: black in the middle, mid grey round it.
+fn stencil(name: &str, inner: [u8; 4]) -> Texture {
+    let mut texture = placeholder_texture(name);
+    let mut rgba = Vec::new();
+    for y in 0..16 {
+        for x in 0..16 {
+            let middle = (4..12).contains(&x) && (4..12).contains(&y);
+            rgba.extend_from_slice(&if middle { inner } else { [128, 128, 128, 255] });
+        }
+    }
+    texture.mips = vec![MipLevel {
+        width: 16,
+        height: 16,
+        rgba,
+    }];
+    texture
+}
+
+/// A floor with `stamp` pressed into it, in the room.
+fn stamped_room(inner: [u8; 4]) -> (Map, usize) {
+    let text = format!(
+        "{ROOM}\nstamp {{ image = cut inner = carved origin = -128 -128 -256 normal = 0 0 1 \
+         size = 64 depth = 16 detail = 8 }}\n"
+    );
+    let mut source = |name: &str| {
+        if name == "cut" {
+            stencil(name, inner)
+        } else {
+            placeholder_texture(name)
+        }
+    };
+    let map = compile_text(&text, &mut source).expect("compiles");
+    let carved = map.textures.iter().position(|t| t.name == "carved");
+    (map, carved.unwrap_or(usize::MAX))
+}
+
+/// The heights of faces of a texture, over or under the floor.
+fn floor_levels(map: &Map) -> Vec<f32> {
+    let mut levels: Vec<f32> = Vec::new();
+    for face in &map.faces {
+        let first = face.first_point as usize;
+        let points = &map.points[first..first + face.point_count as usize];
+        let z = points[0].z;
+        let flat = points.iter().all(|p| (p.z - z).abs() < 0.01);
+        let inside = points
+            .iter()
+            .all(|p| (-160.01..=-95.99).contains(&p.x) && (-160.01..=-95.99).contains(&p.y));
+        if flat && inside && !levels.iter().any(|l| (*l - z).abs() < 0.01) {
+            levels.push(z);
+        }
+    }
+    levels
+}
+
+/// Black cuts into a surface, and leaves walls of the inner material.
+#[test]
+fn a_dark_stamp_carves_with_walls() {
+    let (map, carved) = stamped_room([0, 0, 0, 255]);
+    let levels = floor_levels(&map);
+    assert!(
+        levels.iter().any(|z| (*z + 272.0).abs() < 0.01),
+        "{levels:?}"
+    );
+    assert!(
+        levels.iter().any(|z| (*z + 256.0).abs() < 0.01),
+        "{levels:?}"
+    );
+    let walls = map
+        .faces
+        .iter()
+        .filter(|f| f.texture as usize == carved)
+        .count();
+    assert!(walls >= 4, "a wall on each side: {walls}");
+}
+
+/// White stands out from a surface.
+#[test]
+fn a_bright_stamp_raises() {
+    let (map, _) = stamped_room([255, 255, 255, 255]);
+    let levels = floor_levels(&map);
+    assert!(
+        levels.iter().any(|z| (*z + 240.0).abs() < 0.01),
+        "{levels:?}"
+    );
+}
+
+/// Stamped faces say where to take their light from, past the surface.
+#[test]
+fn a_stamp_lifts_its_light() {
+    let (map, _) = stamped_room([0, 0, 0, 255]);
+    assert!(!map.light_lifts.is_empty());
+    let deepest = map
+        .light_lifts
+        .iter()
+        .map(|(_, lift)| lift.z)
+        .fold(0.0, f32::max);
+    assert!(deepest >= 16.0, "past the surface: {deepest}");
+}
+
+/// The floor stays whole round a stamp, and collision doesn't change.
+#[test]
+fn a_stamp_leaves_collision_and_the_rest_alone() {
+    let (map, _) = stamped_room([0, 0, 0, 255]);
+    let map = Arc::new(map);
+    let world = CollisionWorld::new(Arc::clone(&map));
+    assert!(
+        world.in_solid(Vec3::new(-128.0, -128.0, -258.0)),
+        "still solid where cut"
+    );
+    let covers = |x: f32, y: f32| {
+        map.faces.iter().any(|face| {
+            let first = face.first_point as usize;
+            let points = &map.points[first..first + face.point_count as usize];
+            points.iter().all(|p| (p.z + 256.0).abs() < 0.01) && {
+                let low_x = points.iter().map(|p| p.x).fold(f32::MAX, f32::min);
+                let high_x = points.iter().map(|p| p.x).fold(f32::MIN, f32::max);
+                let low_y = points.iter().map(|p| p.y).fold(f32::MAX, f32::min);
+                let high_y = points.iter().map(|p| p.y).fold(f32::MIN, f32::max);
+                (low_x..=high_x).contains(&x) && (low_y..=high_y).contains(&y)
+            }
+        })
+    };
+    assert!(covers(-200.0, -200.0), "the floor beyond it");
+    assert!(!covers(-128.0, -128.0), "no flat floor over the cut");
 }

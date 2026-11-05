@@ -79,6 +79,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Images that turn parts of faces into relief or carving.
+    pub stamps: Vec<StampSource>,
     /// Strokes of paint.
     pub paint: Vec<PaintStroke>,
     /// Images laid over the world's surfaces.
@@ -106,6 +108,28 @@ pub struct SkySource {
 fn point_of(value: &Value) -> Option<Point> {
     let numbers = value.numbers()?;
     (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// An image pressed into surfaces, as a box against them. Its brightness is
+/// height, where mid grey leaves a surface alone.
+#[derive(Clone, Debug, PartialEq)]
+pub struct StampSource {
+    /// The material whose image it is.
+    pub image: String,
+    /// The material of what's cut or raised, if not the surface's own.
+    pub inner: Option<String>,
+    /// Its middle.
+    pub origin: Point,
+    /// The way out of the surface it's pressed against.
+    pub normal: Point,
+    /// Its width and height.
+    pub size: [f64; 2],
+    /// How far it turns on the surface, in degrees.
+    pub angle: f64,
+    /// How far white stands out, and black cuts in.
+    pub depth: f64,
+    /// How wide its cells are.
+    pub detail: f64,
 }
 
 /// A stroke of a material layer across surfaces.
@@ -278,6 +302,41 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
         brushes,
         mesh,
         placed: None,
+    })
+}
+
+/// A stamp, from its block.
+fn read_stamp(block: &Block) -> Result<StampSource, CompileError> {
+    let missing = |what: &str| CompileError::Bad(format!("a stamp needs {what}"));
+    let number =
+        |key: &str, default: f64| block.get(key).and_then(Value::number).unwrap_or(default);
+    let size = block
+        .get("size")
+        .and_then(Value::numbers)
+        .unwrap_or_default();
+    let size = match size.as_slice() {
+        [width, height] => [*width, *height],
+        _ => [number("size", 64.0); 2],
+    };
+    Ok(StampSource {
+        image: block
+            .get("image")
+            .and_then(Value::text)
+            .ok_or_else(|| missing("an image"))?
+            .to_owned(),
+        inner: block.get("inner").and_then(Value::text).map(str::to_owned),
+        origin: block
+            .get("origin")
+            .and_then(point_of)
+            .ok_or_else(|| missing("an origin"))?,
+        normal: block
+            .get("normal")
+            .and_then(point_of)
+            .ok_or_else(|| missing("a normal"))?,
+        size,
+        angle: number("angle", 0.0),
+        depth: number("depth", 8.0),
+        detail: number("detail", 4.0).max(1.0),
     })
 }
 
@@ -458,6 +517,10 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        stamps: document
+            .blocks_of("stamp")
+            .map(read_stamp)
+            .collect::<Result<Vec<_>, _>>()?,
         paint: document.blocks_of("paint").map(read_paint).collect(),
         decals: document
             .blocks_of("decal")

@@ -1,5 +1,6 @@
 //! Putting a map together.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -17,7 +18,8 @@ use crate::geometry::{
 };
 use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
-use crate::source::{Brush, BrushFace, DecalSource, WorkingMap, read_map};
+use crate::source::{Brush, BrushFace, DecalSource, StampSource, WorkingMap, read_map};
+use crate::stamp::stamp_piece;
 use crate::stencil::{build_flames, build_live_light, build_stencil};
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
@@ -206,9 +208,11 @@ struct VisibleFace<'a> {
     /// The whole of the face it's from, which brushes in front of it have cut.
     whole: Arc<Polygon>,
     /// The face.
-    face: &'a BrushFace,
+    face: Cow<'a, BrushFace>,
     /// What's behind it.
     contents: Contents,
+    /// How far its light samples are lifted, if a stamp made it.
+    lift: Option<Point>,
 }
 
 /// How far a decal sits off its surface.
@@ -247,7 +251,7 @@ fn decal_triangles(decal: &DecalSource, faces: &[VisibleFace<'_>]) -> Vec<Placed
         wall(flipped(normal), decal.depth),
     ];
     for visible in faces {
-        let face = visible.face;
+        let face = &visible.face;
         if visible.contents != Contents::Solid || dot(face.plane.normal, normal) < 0.25 {
             continue;
         }
@@ -366,8 +370,9 @@ fn visible_faces(brushes: &[Brush]) -> Vec<VisibleFace<'_>> {
                 out.push(VisibleFace {
                     polygon: piece,
                     whole: Arc::clone(&whole),
-                    face,
+                    face: Cow::Borrowed(face),
                     contents: brush.contents,
+                    lift: None,
                 });
             }
         }
@@ -500,27 +505,79 @@ impl Builder<'_> {
         Some(())
     }
 
-    /// Adds a model for `brushes` and `meshes`, and returns its number.
+    /// `faces`, with `stamps` pressed into them.
+    fn stamped<'a>(
+        &mut self,
+        faces: Vec<VisibleFace<'a>>,
+        stamps: &[StampSource],
+    ) -> Vec<VisibleFace<'a>> {
+        let mut faces = faces;
+        for stamp in stamps {
+            let texture = self.source.texture(&stamp.image);
+            let Some(image) = texture.mips.first() else {
+                continue;
+            };
+            let mut out = Vec::with_capacity(faces.len());
+            for visible in faces {
+                let touched = (visible.contents == Contents::Solid && visible.lift.is_none())
+                    .then(|| stamp_piece(stamp, image, &visible.polygon, &visible.face))
+                    .flatten();
+                let Some((outside, new_faces)) = touched else {
+                    out.push(visible);
+                    continue;
+                };
+                for piece in outside.into_iter().filter(|piece| piece.len() >= 3) {
+                    out.push(VisibleFace {
+                        polygon: piece,
+                        whole: Arc::clone(&visible.whole),
+                        face: visible.face.clone(),
+                        contents: visible.contents,
+                        lift: None,
+                    });
+                }
+                for made in new_faces {
+                    out.push(VisibleFace {
+                        whole: Arc::new(made.polygon.clone()),
+                        polygon: made.polygon,
+                        face: Cow::Owned(made.face),
+                        contents: Contents::Solid,
+                        lift: Some(made.lift),
+                    });
+                }
+            }
+            faces = out;
+        }
+        faces
+    }
+
+    /// Adds a model for `brushes` and `meshes`, with `stamps` pressed into its
+    /// faces, and returns its number.
     fn add_model(
         &mut self,
         brushes: &[Brush],
         meshes: &[&PlacedMesh],
+        stamps: &[StampSource],
     ) -> Result<u32, CompileError> {
         let too_big = || CompileError::Bad("the map is too big".to_owned());
         let first_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
         let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-        for visible in visible_faces(brushes) {
+        for visible in self.stamped(visible_faces(brushes), stamps) {
             let VisibleFace {
                 polygon,
                 whole,
                 face,
                 contents,
+                ..
             } = &visible;
             for point in polygon {
                 for axis in 0..3 {
                     low[axis] = low[axis].min(point[axis]);
                     high[axis] = high[axis].max(point[axis]);
                 }
+            }
+            if let Some(lift) = visible.lift {
+                let face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
+                self.map.light_lifts.push((face, vec3(lift)));
             }
             self.add_face(polygon, whole, face).ok_or_else(too_big)?;
             if *contents != Contents::Solid {
@@ -668,7 +725,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
     let mut world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
     world_meshes.push(&flame_faces);
     world_meshes.push(&decals);
-    builder.add_model(&working.brushes, &world_meshes)?;
+    builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
     builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);
     let is_world = |kind: &str| kind == "worldspawn";
@@ -698,7 +755,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         );
         let meshes: Vec<&PlacedMesh> = entity.placed.iter().collect();
         if !entity.brushes.is_empty() || !meshes.is_empty() {
-            let number = builder.add_model(&entity.brushes, &meshes)?;
+            let number = builder.add_model(&entity.brushes, &meshes, &[])?;
             fields.push(("model".to_owned(), format!("*{number}")));
             let spheres: Vec<OccluderSphere> = meshes
                 .iter()

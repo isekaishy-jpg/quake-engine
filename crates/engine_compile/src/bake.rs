@@ -10,7 +10,7 @@ use engine_map::{Face, FaceLight, Map, ProbeGrid};
 use crate::error::CompileError;
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 3;
+const BAKE_VERSION: u64 = 4;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]

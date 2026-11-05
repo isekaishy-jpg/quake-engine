@@ -11,6 +11,7 @@ mod light;
 mod material;
 mod mesh;
 mod source;
+mod stamp;
 mod stencil;
 mod texture;
 mod tree;
@@ -27,6 +28,6 @@ pub use mesh::{
 };
 pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,
-    WaterSource, WorkingMap, read_map,
+    StampSource, WaterSource, WorkingMap, read_map,
 };
 pub use texture::placeholder_texture;

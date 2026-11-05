@@ -188,6 +188,36 @@ def flow_swirl(x, y):
     return (clamp(128 - dy * 120), clamp(128 + dx * 120), 128, 255)
 
 
+FONT = {
+    'Q': ['01110', '10001', '10001', '10101', '10010', '01101'],
+    'U': ['10001', '10001', '10001', '10001', '10001', '01110'],
+    'A': ['01110', '10001', '10001', '11111', '10001', '10001'],
+    'K': ['10001', '10010', '11100', '10010', '10001', '10001'],
+    'E': ['11111', '10000', '11110', '10000', '10000', '11111'],
+}
+
+
+def stamp_letters(x, y):
+    """Height for a stamp: letters cut into a flat surface."""
+    word = 'QUAKE'
+    scale = 8
+    left = (SIZE - len(word) * 6 * scale) // 2
+    top = (SIZE - 6 * scale) // 2
+    cx, cy = (x - left) // scale, (y - top) // scale
+    if 0 <= cy < 6 and 0 <= cx < len(word) * 6 and cx % 6 < 5:
+        if FONT[word[cx // 6]][cy][cx % 6] == '1':
+            return (0, 0, 0, 255)
+    return (128, 128, 128, 255)
+
+
+def stamp_bricks(x, y):
+    """Height for a stamp: rows of bricks standing off a flat surface."""
+    row = y // 32
+    shift = 32 if row % 2 else 0
+    mortar = y % 32 < 4 or (x + shift) % 64 < 4
+    return (128, 128, 128, 255) if mortar else (255, 255, 255, 255)
+
+
 def glass_rays(x, y):
     """The window's stencil: a few chunky panes, with wide frames to cut them."""
     colors = [(255, 70, 50), (70, 110, 255), (255, 210, 60), (70, 220, 120)]
@@ -252,6 +282,8 @@ def flame_sheet(x, y):
 
 IMAGES = {
     'glass_marks': glass_marks,
+    'stamp_letters': stamp_letters,
+    'stamp_bricks': stamp_bricks,
     'panel_sheet': panel_sheet,
     'lettering': lettering,
     'flow_swirl': flow_swirl,
@@ -293,6 +325,8 @@ MATERIALS_TEXT = {
     'conveyor': 'base = textures/metal.png\n    scroll = 0 0.5',
     'torch_flame': 'base = textures/flame.png\n    alpha = blend\n    shading = unlit\n    flipbook = 2 2 10',
     'glass_marks': 'base = textures/glass_marks.png',
+    'stamp_letters': 'base = textures/stamp_letters.png',
+    'stamp_bricks': 'base = textures/stamp_bricks.png',
     'lettering': 'base = textures/lettering.png\n    alpha = blend',
     'painted_stone': 'base = textures/stone.png\n    height = textures/stone_height.png\n    layer { base = textures/grass.png mask = paint }',
     'polished': 'base = textures/metal.png\n    reflect = 0.7',
