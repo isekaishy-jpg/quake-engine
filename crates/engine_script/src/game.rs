@@ -735,8 +735,10 @@ impl Game {
             lua.create_function(
                 move |lua, (from, to, width): (Vector, Vector, Option<f32>)| {
                     let simulation = sim.borrow();
-                    let nav = simulation.map().nav_for(width.unwrap_or(PLAYER_WIDTH));
-                    let path = nav.and_then(|nav| nav.find_path(to_vec3(from), to_vec3(to)));
+                    let width = width.unwrap_or(PLAYER_WIDTH);
+                    let path = simulation
+                        .map()
+                        .find_path(width, to_vec3(from), to_vec3(to));
                     match path {
                         Some(points) => {
                             let list = lua.create_table()?;

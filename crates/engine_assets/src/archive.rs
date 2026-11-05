@@ -2,8 +2,9 @@
 
 use crate::error::AssetError;
 
-/// A source of files. Paths are normalized by [`crate::normalize_path`].
-pub trait Archive {
+/// A source of files. Paths are normalized by [`crate::normalize_path`]. Files
+/// can be read from any thread, as tiles are while a game goes on.
+pub trait Archive: Send + Sync {
     /// A name to show for this archive.
     fn label(&self) -> &str;
 

@@ -1,17 +1,18 @@
 //! Baking light into compiled maps.
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, apply_bake, bake_light, compile, placeholder_texture,
-    read_map, write_bake,
+    BakeInput, CompileError, MaterialLibrary, apply_bake, attach_side_files, bake_folder,
+    bake_light, compile, placeholder_texture, read_map, side_files, write_bake,
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, Map, Material, MaterialLayer, MipLevel, PAINT_MASK,
-    Texture, TextureKind,
+    SideFiles, Texture, TextureKind,
 };
 use engine_physics::CollisionWorld;
 
@@ -719,6 +720,31 @@ fn a_path_goes_round_lava() {
         let over = place.point.x.abs() < 100.0 && place.point.y > -100.0 && place.point.y < 230.0;
         !(over && place.point.z < 10.0)
     }));
+}
+
+/// A tiled map's grids go beside its bake, and paths on what's read back are
+/// the paths it was baked with.
+#[test]
+fn a_tiled_map_reads_its_grids_from_beside_its_bake() {
+    let text = format!("{TWO_ROOMS}tile_grid {{ size = 1024 }}\n");
+    let baked_map = baked(&text, &[]);
+    assert!(baked_map.tile_size > 0.0, "it's tiled");
+    let (from, to) = (Vec3::new(-800.0, 0.0, 24.0), Vec3::new(-300.0, 100.0, 24.0));
+    let expected = baked_map.find_path(32.0, from, to).expect("a way");
+    let bytes = write_bake(&baked_map, 7);
+    let beside: HashMap<String, Vec<u8>> = side_files(&baked_map)
+        .into_iter()
+        .map(|(name, bytes)| (format!("{}{name}", bake_folder("here")), bytes))
+        .collect();
+    assert!(!beside.is_empty());
+    let working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let mut map = compile(&working, &mut source).expect("compiles");
+    assert!(apply_bake(&mut map, &bytes, 7).expect("reads"));
+    assert!(map.nav.is_none(), "the bake doesn't hold it");
+    let files: SideFiles = Arc::new(move |path| beside.get(path).cloned());
+    attach_side_files(&mut map, "here", &files);
+    assert_eq!(map.find_path(32.0, from, to).expect("a way"), expected);
 }
 
 /// A bake keeps its walkable grid.

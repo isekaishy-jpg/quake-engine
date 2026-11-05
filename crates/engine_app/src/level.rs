@@ -4,8 +4,10 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{MaterialLibrary, apply_bake, compile, document_of, map_hash, read_map};
-use engine_map::Texture;
+use engine_compile::{
+    MaterialLibrary, apply_bake, attach_side_files, compile, document_of, map_hash, read_map,
+};
+use engine_map::{SideFiles, Texture};
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
 /// A level's text, in the engine's own format.
@@ -28,7 +30,7 @@ pub(crate) fn level_scripts(filesystem: &FileSystem, name: &str) -> Vec<(String,
 /// Reads the level called `name`. A working map plays straight from its text,
 /// with nothing baked (proposal 0067).
 pub(crate) fn load_level(
-    filesystem: &FileSystem,
+    filesystem: &Arc<FileSystem>,
     name: &str,
 ) -> Result<LoadedLevel, Box<dyn Error>> {
     // Text while it's being worked on, and what compiling made once it isn't.
@@ -55,6 +57,9 @@ pub(crate) fn load_level(
     }
     if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
         apply_bake(&mut map, &baked, map_hash(&document, &used))?;
+        let source = Arc::clone(filesystem);
+        let files: SideFiles = Arc::new(move |path| source.read(path).ok());
+        attach_side_files(&mut map, name, &files);
     }
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;

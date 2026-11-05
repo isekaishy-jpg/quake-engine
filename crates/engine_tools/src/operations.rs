@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, bake_light, compile, map_hash, read_map, write_bake,
+    BakeInput, CompileError, MaterialLibrary, bake_light, compile, map_hash, read_map, side_files,
+    write_bake,
 };
 use engine_format::{Block, Value, to_binary};
 use engine_map::{MipLevel, Texture};
@@ -442,6 +443,14 @@ fn bake(session: &Session) -> Result<Json, String> {
     let out = path.with_extension("ebake");
     std::fs::write(&out, write_bake(&map, map_hash(&session.document, &used)))
         .map_err(|error| error.to_string())?;
+    let beside = side_files(&map);
+    if !beside.is_empty() {
+        let folder = path.with_extension("").join("bake");
+        std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+        for (file, bytes) in beside {
+            std::fs::write(folder.join(file), bytes).map_err(|error| error.to_string())?;
+        }
+    }
     std::fs::write(path.with_extension("ebin"), to_binary(&session.document))
         .map_err(|error| error.to_string())?;
     Ok(json!({

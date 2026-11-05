@@ -8,6 +8,7 @@ use crate::emitter::Emitter;
 use crate::live::LiveLightSource;
 use crate::material::Material;
 use crate::nav::{NavGrid, Spline};
+use crate::nav_chunks::ChunkedNav;
 use crate::occluder::ModelOccluder;
 use crate::pool::Pool;
 use crate::probes::{LightTrack, ProbeGrid};
@@ -223,6 +224,8 @@ pub struct Map {
     pub nav: Option<NavGrid>,
     /// Where large monsters can walk, from the larger clipping hull.
     pub nav_large: Option<NavGrid>,
+    /// The same two, for a tiled map, read a chunk at a time.
+    pub nav_chunks: [Option<ChunkedNav>; 2],
     /// Lines for movement set out by hand.
     pub splines: Vec<Spline>,
     /// How wide a tile is, or 0 for a map with no tiles.
@@ -281,6 +284,16 @@ impl Map {
             Some((1, _)) => self.nav_large.as_ref(),
             _ => self.nav.as_ref(),
         }
+    }
+
+    /// The way for something `width` across, wherever this map keeps its grids.
+    #[must_use]
+    pub fn find_path(&self, width: f32, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+        if let Some(nav) = self.nav_for(width) {
+            return nav.find_path(from, to);
+        }
+        let hull = usize::from(matches!(Model::hull_for(width), Some((1, _))));
+        self.nav_chunks.get(hull)?.as_ref()?.find_path(from, to)
     }
 
     /// The tile `point` is in, and where it is in that tile. With no tiles it's

@@ -1,7 +1,7 @@
 //! Working out where things can walk (proposal 0090).
 
 use engine_core::math::Vec3;
-use engine_map::{ClipChild, Contents, Map, NavGrid, NavPlace};
+use engine_map::{ClipChild, Contents, Map, NAV_WAYS, NavGrid, NavPlace};
 
 /// How far apart places are.
 const SPACING: f32 = 16.0;
@@ -14,18 +14,6 @@ const CLEARANCE: f32 = 2.0;
 
 /// How finely a column is looked down.
 const SCAN: f32 = 8.0;
-
-/// The eight ways round a place, as columns.
-const AROUND: [(i32, i32); 8] = [
-    (1, 0),
-    (0, 1),
-    (-1, 0),
-    (0, -1),
-    (1, 1),
-    (-1, 1),
-    (1, -1),
-    (-1, -1),
-];
 
 /// What's needed to ask about a clipping hull.
 struct Hull<'a> {
@@ -173,7 +161,7 @@ fn link_places(grid: &mut NavGrid, hull: &Hull<'_>) {
                         })
                     })
                 };
-                for (way, (dx, dy)) in AROUND.iter().enumerate() {
+                for (way, (dx, dy)) in NAV_WAYS.iter().enumerate() {
                     // A corner is only cut if both sides of it are open.
                     let open = *dx == 0
                         || *dy == 0

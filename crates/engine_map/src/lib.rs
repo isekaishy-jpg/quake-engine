@@ -12,6 +12,7 @@ mod live;
 mod map;
 mod material;
 mod nav;
+mod nav_chunks;
 mod occluder;
 mod pool;
 mod probes;
@@ -31,7 +32,8 @@ pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, PAINT_MASK, Shading, SlotImage,
     mip_chain,
 };
-pub use nav::{NavGrid, NavPlace, Spline};
+pub use nav::{LINKS, NAV_WAYS, NavGrid, NavPlace, Spline};
+pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, chunks_of};
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};

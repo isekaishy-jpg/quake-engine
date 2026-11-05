@@ -2,18 +2,35 @@
 //! for movement set out by hand (proposal 0090).
 
 use std::cmp::Ordering;
-use std::collections::BinaryHeap;
+use std::collections::{BinaryHeap, HashMap};
+use std::hash::Hash;
 
 use engine_core::math::Vec3;
 
 /// The most links a place has, one each way round.
-const LINKS: usize = 8;
+pub const LINKS: usize = 8;
+
+/// The eight ways round a place, as columns.
+pub const NAV_WAYS: [(i32, i32); LINKS] = [
+    (1, 0),
+    (0, 1),
+    (-1, 0),
+    (0, -1),
+    (1, 1),
+    (-1, 1),
+    (1, -1),
+    (-1, -1),
+];
 
 /// No link.
-const NONE: u32 = u32::MAX;
+pub(crate) const NONE: u32 = u32::MAX;
 
 /// How far off the walkable grid a point can start or end, in cells.
-const SEARCH_REACH: i32 = 3;
+pub(crate) const SEARCH_REACH: i32 = 3;
+
+/// How many places a search looks at before giving up, so a goal nothing
+/// reaches can't walk a whole world.
+const SEARCH_BUDGET: usize = 500_000;
 
 /// How far apart points of a line are checked, as a share of a cell.
 const LINE_STEP: f32 = 0.5;
@@ -55,25 +72,153 @@ pub struct NavGrid {
 
 /// A place in a search, by how good it looks.
 #[derive(Clone, Copy, Debug, PartialEq)]
-struct Open {
+struct Open<P> {
     /// How long a way through here looks.
     score: f32,
     /// The place.
-    place: u32,
+    place: P,
 }
 
-impl Eq for Open {}
+impl<P: PartialEq> Eq for Open<P> {}
 
-impl Ord for Open {
+impl<P: PartialEq> Ord for Open<P> {
     fn cmp(&self, other: &Self) -> Ordering {
         other.score.total_cmp(&self.score)
     }
 }
 
-impl PartialOrd for Open {
+impl<P: PartialEq> PartialOrd for Open<P> {
     fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
+}
+
+/// What a search needs to know about somewhere to walk.
+pub(crate) trait Walk {
+    /// A place.
+    type Place: Copy + Eq + Hash;
+
+    /// How far apart places are.
+    fn spacing(&self) -> f32;
+
+    /// Where a place is.
+    fn point(&self, place: Self::Place) -> Vec3;
+
+    /// The places a place links to.
+    fn links(&self, place: Self::Place) -> [Option<Self::Place>; LINKS];
+
+    /// The place nearest `point`.
+    fn nearest_place(&self, point: Vec3) -> Option<Self::Place>;
+}
+
+/// Whether something can walk straight from `from` to `to`, staying on the grid
+/// and only changing height by steps it can take.
+fn walks_straight<W: Walk>(walk: &W, from: W::Place, to: W::Place) -> bool {
+    let (start, end) = (walk.point(from), walk.point(to));
+    let step = walk.spacing() * LINE_STEP;
+    let length = (end - start).length();
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a short count"
+    )]
+    let count = (length / step).ceil() as u32;
+    let mut here = from;
+    for index in 1..=count {
+        #[expect(clippy::cast_precision_loss, reason = "a short count")]
+        let share = index as f32 / count.max(1) as f32;
+        let point = start + (end - start) * share;
+        let Some(next) = step_towards(walk, here, point) else {
+            return false;
+        };
+        here = next;
+    }
+    true
+}
+
+/// `here`, or the linked place nearest `point`, if it's within a cell.
+fn step_towards<W: Walk>(walk: &W, here: W::Place, point: Vec3) -> Option<W::Place> {
+    let mut best = here;
+    let flat = |at: Vec3| {
+        let offset = at - point;
+        (offset.x * offset.x + offset.y * offset.y).sqrt()
+    };
+    let mut closest = flat(walk.point(here));
+    for link in walk.links(here).into_iter().flatten() {
+        let distance = flat(walk.point(link));
+        if distance < closest {
+            closest = distance;
+            best = link;
+        }
+    }
+    (closest <= walk.spacing() * 0.75).then_some(best)
+}
+
+/// The places from `start` to `goal`, by A*, or `None` if there's no way
+/// within [`SEARCH_BUDGET`].
+fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<W::Place>> {
+    let mut came_from: HashMap<W::Place, W::Place> = HashMap::new();
+    let mut cost: HashMap<W::Place, f32> = HashMap::new();
+    let target = walk.point(goal);
+    let mut open = BinaryHeap::new();
+    cost.insert(start, 0.0);
+    open.push(Open {
+        score: 0.0,
+        place: start,
+    });
+    let mut visited = 0;
+    while let Some(Open { place, .. }) = open.pop() {
+        if place == goal {
+            let mut route = vec![goal];
+            let mut at = goal;
+            while at != start {
+                at = *came_from.get(&at)?;
+                route.push(at);
+            }
+            route.reverse();
+            return Some(route);
+        }
+        visited += 1;
+        if visited > SEARCH_BUDGET {
+            return None;
+        }
+        let here = walk.point(place);
+        let so_far = cost.get(&place).copied().unwrap_or(f32::MAX);
+        for link in walk.links(place).into_iter().flatten() {
+            let there = walk.point(link);
+            let next = so_far + (there - here).length();
+            if next < cost.get(&link).copied().unwrap_or(f32::MAX) {
+                cost.insert(link, next);
+                came_from.insert(link, place);
+                open.push(Open {
+                    score: next + (there - target).length(),
+                    place: link,
+                });
+            }
+        }
+    }
+    None
+}
+
+/// The way from `from` to `to`, with its corners cut where that's walkable, or
+/// `None` if there's no way. It starts and ends at the places nearest them.
+pub(crate) fn find_path_on<W: Walk>(walk: &W, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+    let (start, goal) = (walk.nearest_place(from)?, walk.nearest_place(to)?);
+    let route = search(walk, start, goal)?;
+    let mut kept = vec![start];
+    let mut at = 0;
+    while at + 1 < route.len() {
+        let mut furthest = at + 1;
+        for later in (at + 2..route.len()).rev() {
+            if walks_straight(walk, route[at], route[later]) {
+                furthest = later;
+                break;
+            }
+        }
+        kept.push(route[furthest]);
+        at = furthest;
+    }
+    Some(kept.iter().map(|place| walk.point(*place)).collect())
 }
 
 impl NavGrid {
@@ -92,7 +237,7 @@ impl NavGrid {
     }
 
     /// The places of a column.
-    fn places_in(&self, column: usize) -> std::ops::Range<u32> {
+    pub(crate) fn places_in(&self, column: usize) -> std::ops::Range<u32> {
         let first = self.columns.get(column).copied().unwrap_or(0);
         let last = self.columns.get(column + 1).copied().unwrap_or(first);
         first..last
@@ -127,118 +272,34 @@ impl NavGrid {
         best
     }
 
-    /// Whether something can walk straight from `from` to `to`, staying on the
-    /// grid and only changing height by steps it can take.
-    fn walks_straight(&self, from: u32, to: u32) -> bool {
-        let (start, end) = (
-            self.places[from as usize].point,
-            self.places[to as usize].point,
-        );
-        let step = self.spacing * LINE_STEP;
-        let length = (end - start).length();
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a short count"
-        )]
-        let count = (length / step).ceil() as u32;
-        let mut here = from;
-        for index in 1..=count {
-            #[expect(clippy::cast_precision_loss, reason = "a short count")]
-            let share = index as f32 / count.max(1) as f32;
-            let point = start + (end - start) * share;
-            let Some(next) = self.step_towards(here, point) else {
-                return false;
-            };
-            here = next;
-        }
-        true
-    }
-
-    /// `here`, or the linked place nearest `point`, if it's within a cell.
-    fn step_towards(&self, here: u32, point: Vec3) -> Option<u32> {
-        let mut best = here;
-        let flat = |at: Vec3| {
-            let offset = at - point;
-            (offset.x * offset.x + offset.y * offset.y).sqrt()
-        };
-        let place = &self.places[here as usize];
-        let mut closest = flat(place.point);
-        for link in place.links.iter().filter(|link| **link != NONE) {
-            let distance = flat(self.places[*link as usize].point);
-            if distance < closest {
-                closest = distance;
-                best = *link;
-            }
-        }
-        (closest <= self.spacing * 0.75).then_some(best)
-    }
-
     /// The way from `from` to `to` over the grid, with its corners cut where
     /// that's walkable, or `None` if there's no way. It starts and ends at the
     /// places nearest them.
     #[must_use]
     pub fn find_path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
-        let (start, goal) = (self.nearest(from)?, self.nearest(to)?);
-        let route = self.search(start, goal)?;
-        let mut kept = vec![start];
-        let mut at = 0;
-        while at + 1 < route.len() {
-            let mut furthest = at + 1;
-            for later in (at + 2..route.len()).rev() {
-                if self.walks_straight(route[at], route[later]) {
-                    furthest = later;
-                    break;
-                }
-            }
-            kept.push(route[furthest]);
-            at = furthest;
-        }
-        Some(
-            kept.iter()
-                .map(|place| self.places[*place as usize].point)
-                .collect(),
-        )
+        find_path_on(self, from, to)
+    }
+}
+
+impl Walk for NavGrid {
+    type Place = u32;
+
+    fn spacing(&self) -> f32 {
+        self.spacing
     }
 
-    /// The places from `start` to `goal`, by A*.
-    fn search(&self, start: u32, goal: u32) -> Option<Vec<u32>> {
-        let count = self.places.len();
-        let mut came_from = vec![NONE; count];
-        let mut cost = vec![f32::MAX; count];
-        let target = self.places[goal as usize].point;
-        let mut open = BinaryHeap::new();
-        cost[start as usize] = 0.0;
-        open.push(Open {
-            score: 0.0,
-            place: start,
-        });
-        while let Some(Open { place, .. }) = open.pop() {
-            if place == goal {
-                let mut route = vec![goal];
-                let mut at = goal;
-                while at != start {
-                    at = came_from[at as usize];
-                    route.push(at);
-                }
-                route.reverse();
-                return Some(route);
-            }
-            let here = self.places[place as usize];
-            for link in here.links.iter().filter(|link| **link != NONE) {
-                let there = self.places[*link as usize].point;
-                let next = cost[place as usize] + (there - here.point).length();
-                if next < cost[*link as usize] {
-                    cost[*link as usize] = next;
-                    came_from[*link as usize] = place;
-                    open.push(Open {
-                        score: next + (there - target).length(),
-                        place: *link,
-                    });
-                }
-            }
-        }
-        None
+    fn point(&self, place: u32) -> Vec3 {
+        self.places[place as usize].point
+    }
+
+    fn links(&self, place: u32) -> [Option<u32>; LINKS] {
+        self.places[place as usize]
+            .links
+            .map(|link| (link != NONE).then_some(link))
+    }
+
+    fn nearest_place(&self, point: Vec3) -> Option<u32> {
+        self.nearest(point)
     }
 }
 

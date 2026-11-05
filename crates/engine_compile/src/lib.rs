@@ -21,7 +21,9 @@ mod tiles;
 mod tree;
 mod visibility;
 
-pub use bake::{apply_bake, map_hash, source_hash, write_bake};
+pub use bake::{
+    apply_bake, attach_side_files, bake_folder, map_hash, side_files, source_hash, write_bake,
+};
 pub use build::{TextureSource, compile, compile_text, read_map_text};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};

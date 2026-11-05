@@ -15,8 +15,8 @@ use std::time::Instant;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, MaterialLibrary, bake_light, compile, map_hash, occluders_of, read_map, write_bake,
-    write_occlusion,
+    BakeInput, MaterialLibrary, bake_folder, bake_light, compile, map_hash, occluders_of, read_map,
+    side_files, write_bake, write_occlusion,
 };
 use engine_format::{from_text, to_binary};
 use engine_map::{MipLevel, Texture};
@@ -69,6 +69,14 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     let out = content.join("maps").join(format!("{name}.ebake"));
     let hash = map_hash(&document, &used);
     std::fs::write(&out, write_bake(&map, hash))?;
+    let beside = side_files(&map);
+    if !beside.is_empty() {
+        let folder = content.join(bake_folder(name));
+        std::fs::create_dir_all(&folder)?;
+        for (file, bytes) in beside {
+            std::fs::write(folder.join(file), bytes)?;
+        }
+    }
     // What ships: the same document, in binary, which plays with no text.
     let binary = content.join("maps").join(format!("{name}.ebin"));
     std::fs::write(&binary, to_binary(&document))?;

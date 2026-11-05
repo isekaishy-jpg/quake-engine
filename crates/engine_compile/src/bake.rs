@@ -4,15 +4,20 @@
 //! records the text it was made from, so one that's out of date is ignored and
 //! the map falls back on playing unlit.
 
+use std::sync::Arc;
+
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
-use engine_map::{Face, FaceLight, Map, MegaMaps, NavGrid, NavPlace, ProbeGrid};
+use engine_map::{
+    CHUNK_COLUMNS, ChunkedNav, Face, FaceLight, Map, MegaMaps, NavGrid, NavPlace, NavShape,
+    ProbeGrid, SideFiles, chunks_of,
+};
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 10;
+const BAKE_VERSION: u64 = 11;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -34,6 +39,75 @@ pub fn map_hash(document: &Document, used: &str) -> u64 {
 /// A number as text, so a 64 bit hash survives exactly.
 fn hash_text(hash: u64) -> String {
     format!("{hash:016x}")
+}
+
+/// The start of the name of hull `hull`'s chunks.
+fn nav_prefix(hull: usize) -> String {
+    format!("nav{hull}")
+}
+
+/// A grid's shape as bytes.
+fn write_shape(nav: &NavGrid) -> Vec<u8> {
+    let mut out = Vec::new();
+    for value in [nav.origin.x, nav.origin.y, nav.origin.z, nav.spacing] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    for value in [nav.size[0], nav.size[1], CHUNK_COLUMNS] {
+        out.extend_from_slice(&value.to_le_bytes());
+    }
+    out
+}
+
+/// A grid's shape from bytes, if they make one.
+fn read_shape(bytes: &[u8]) -> Option<NavShape> {
+    let (words, _) = bytes.as_chunks::<4>();
+    let mut words = words.iter().copied();
+    let mut float = || words.next().map(f32::from_le_bytes);
+    let origin = Vec3::new(float()?, float()?, float()?);
+    let spacing = float()?;
+    let mut number = || words.next().map(u32::from_le_bytes);
+    let size = [number()?, number()?];
+    let chunk = number()?;
+    (chunk > 0).then_some(NavShape {
+        origin,
+        spacing,
+        size,
+        chunk,
+    })
+}
+
+/// What a tiled map keeps beside its bake, as names and bytes, for the folder
+/// [`bake_folder`] names. Other maps keep nothing there.
+#[must_use]
+pub fn side_files(map: &Map) -> Vec<(String, Vec<u8>)> {
+    let mut out = Vec::new();
+    if map.tile_size <= 0.0 {
+        return out;
+    }
+    for (hull, nav) in [&map.nav, &map.nav_large].into_iter().enumerate() {
+        let Some(nav) = nav else {
+            continue;
+        };
+        for (at, chunk) in chunks_of(nav, CHUNK_COLUMNS) {
+            let name = ChunkedNav::chunk_file(&nav_prefix(hull), at);
+            out.push((name, chunk.to_bytes()));
+        }
+    }
+    out
+}
+
+/// The folder of what's beside map `name`'s bake, from the content root.
+#[must_use]
+pub fn bake_folder(name: &str) -> String {
+    format!("maps/{name}/bake/")
+}
+
+/// Says where `map` can read what's beside its bake.
+pub fn attach_side_files(map: &mut Map, name: &str, files: &SideFiles) {
+    let folder = bake_folder(name);
+    for nav in map.nav_chunks.iter_mut().flatten() {
+        nav.attach(&folder, Arc::clone(files));
+    }
 }
 
 /// A walkable grid as bytes.
@@ -127,11 +201,21 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     block.set("edges", Value::Bytes(map.light_edges.clone()));
     block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
     block.set("visibility", Value::Bytes(map.tree.visibility.clone()));
+    // A tiled map's grids go beside the bake, and only their shapes are here.
+    let tiled = map.tile_size > 0.0;
     if let Some(nav) = &map.nav {
-        block.set("nav", Value::Bytes(write_nav(nav)));
+        if tiled {
+            block.set("nav_shape", Value::Bytes(write_shape(nav)));
+        } else {
+            block.set("nav", Value::Bytes(write_nav(nav)));
+        }
     }
     if let Some(nav) = &map.nav_large {
-        block.set("nav_large", Value::Bytes(write_nav(nav)));
+        if tiled {
+            block.set("nav_large_shape", Value::Bytes(write_shape(nav)));
+        } else {
+            block.set("nav_large", Value::Bytes(write_nav(nav)));
+        }
     }
     let mut starts = Vec::with_capacity(map.tree.leaves.len() * 4);
     for leaf in &map.tree.leaves {
@@ -324,6 +408,11 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     }
     map.nav = bytes_of(light, "nav").and_then(read_nav);
     map.nav_large = bytes_of(light, "nav_large").and_then(read_nav);
+    for (hull, name) in ["nav_shape", "nav_large_shape"].into_iter().enumerate() {
+        map.nav_chunks[hull] = bytes_of(light, name)
+            .and_then(read_shape)
+            .map(|shape| ChunkedNav::new(shape, nav_prefix(hull)));
+    }
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {

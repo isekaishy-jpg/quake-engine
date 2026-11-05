@@ -83,7 +83,7 @@ pub(crate) fn player_client(
 /// The state console commands work on.
 pub(crate) struct World {
     /// The search path.
-    pub(crate) filesystem: FileSystem,
+    pub(crate) filesystem: Arc<FileSystem>,
     /// Set by `quit`.
     pub(crate) quit: bool,
     /// Commands from the command line, until `stuffcmds` takes them.
@@ -559,7 +559,7 @@ impl Engine {
         Ok(Self {
             console,
             world: World {
-                filesystem,
+                filesystem: Arc::new(filesystem),
                 quit: false,
                 startup_commands: options.startup_commands,
                 ticks: 0,
