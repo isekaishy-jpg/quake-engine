@@ -462,6 +462,11 @@ function cvar(name)
 	return level_settings[name] or 0
 end
 
+-- Takes a rule the host changed in play.
+function set_level_setting(name, value)
+	level_settings[name] = value
+end
+
 -- Takes what the host set. A game adds to this with `level_started`.
 function start_level(name, settings, flags)
 	level_settings = settings

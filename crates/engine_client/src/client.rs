@@ -500,6 +500,12 @@ impl Client {
         self.pending.len()
     }
 
+    /// The level's gravity, as the server last said.
+    #[must_use]
+    pub fn gravity(&self) -> f32 {
+        self.vars.gravity
+    }
+
     /// Numbers `command`, sends it, and predicts its result.
     pub fn send_command(&mut self, mut command: UserCommand, seconds: f32) {
         command.sequence = self.next_sequence;
@@ -607,6 +613,7 @@ impl Client {
                 blasts,
                 strength: self.own_strength(),
                 fuse,
+                gravity: self.vars.gravity,
             };
             let behind = self.clock.time();
             let fired_on = self.next_sequence;
@@ -891,7 +898,7 @@ impl Client {
                         &projectile,
                         own,
                         fired_on,
-                        behind,
+                        (behind, self.vars.gravity),
                         &self.world,
                         &self.instances,
                     );
@@ -918,6 +925,7 @@ impl Client {
                     }
                 }
                 Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
+                Some(ServerMessage::Gravity(gravity)) => self.vars.gravity = gravity,
                 Some(ServerMessage::Music(track)) => self.music = Some(track),
                 Some(ServerMessage::SetView { yaw, pitch }) => self.view = Some((yaw, pitch)),
                 Some(ServerMessage::CenterPrint(text)) => {

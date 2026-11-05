@@ -1159,6 +1159,60 @@ fn a_grenade_going_off_nearby_is_predicted_from_its_fuse() {
     let _error = check_incoming("a grenade's fuse", shot);
 }
 
+/// The worst gap between a jumping client on `name` and the server.
+fn jumping_error(name: &str, ping: u64) -> (f32, f32) {
+    let map = load(name);
+    let (mut server, mut host, world) = game(&map, name, &[("deathmatch", 1.0)]);
+    let skill = BotSkill {
+        moves: false,
+        shoots: false,
+        ..BotSkill::default()
+    };
+    let mut bots = vec![add_bot(
+        &mut server,
+        &world,
+        network(ping, 0, 0.0),
+        skill,
+        1,
+    )];
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    let mut worst = 0.0_f32;
+    let mut predictions = std::collections::HashMap::new();
+    for tick_number in 0..400 {
+        let client = bots[0].client_mut();
+        client.update_network(Duration::from_secs_f32(tick));
+        client.receive();
+        let sequence = client.next_sequence();
+        let command = UserCommand {
+            jump: tick_number == 10,
+            ..UserCommand::default()
+        };
+        client.send_command(command, tick);
+        client.flush_network();
+        predictions.insert(sequence, client.predicted().origin);
+        if let Some((answered, truth)) = client.last_answer()
+            && let Some(predicted) = predictions.get(&answered)
+        {
+            worst = worst.max((*predicted - truth.origin).length());
+        }
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    }
+    (worst, bots[0].client_mut().gravity())
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_client_predicts_a_levels_own_gravity() {
+    let (error, gravity) = jumping_error("e1m8", 60);
+    println!("e1m8 at 60 ms: {error:.2} units from the server");
+    assert_eq!(gravity, 100.0, "it was told");
+    assert!(error < 1.0, "{error}");
+}
+
 #[test]
 #[ignore = "needs game data"]
 fn nails_at_your_feet_dont_knock_you() {

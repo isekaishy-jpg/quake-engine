@@ -83,6 +83,9 @@ const TAG_FIRE: u8 = 23;
 /// A box to show for a moment.
 const TAG_OUTLINE: u8 = 25;
 
+/// The level's gravity.
+const TAG_GRAVITY: u8 = 26;
+
 /// The most commands in a move message.
 const MAX_MOVE_COMMANDS: usize = 8;
 
@@ -214,6 +217,8 @@ pub enum ServerMessage {
     StaticSound(StaticSound),
     /// A music track plays.
     Music(u8),
+    /// The level's gravity, in units a second each second.
+    Gravity(f32),
     /// Something short-lived happens.
     Effect(Effect),
     /// A model's number is given its name.
@@ -512,6 +517,10 @@ impl ServerMessage {
                 out.extend_from_slice(sound.name.as_bytes());
             }
             Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
+            Self::Gravity(gravity) => {
+                out.push(TAG_GRAVITY);
+                put_f32(&mut out, *gravity);
+            }
             Self::Effect(Effect::Launch(launch)) => {
                 let flags = u8::from(launch.bounces) | u8::from(launch.blasts) << 1;
                 out.extend_from_slice(&[TAG_LAUNCH, flags]);
@@ -666,6 +675,11 @@ impl ServerMessage {
                 let name = reader.sound_name()?;
                 Some(Self::ModelName { number, name })
             }
+            TAG_GRAVITY => {
+                let mut reader = Reader { bytes: rest };
+                let gravity = reader.f32()?;
+                reader.finished().then_some(Self::Gravity(gravity))
+            }
             TAG_MUSIC => match rest {
                 [track] => Some(Self::Music(*track)),
                 _ => None,
@@ -774,6 +788,7 @@ pub(crate) fn encode_player(player: &PlayerState, out: &mut Vec<u8>) {
     put_vec3(out, player.origin);
     put_vec3(out, player.velocity);
     put_f32(out, player.water_jump_time);
+    put_f32(out, player.no_backing);
     out.extend_from_slice(&[
         u8::from(player.on_ground),
         player.water_level,
@@ -834,6 +849,7 @@ pub(crate) fn read_player(reader: &mut Reader<'_>) -> Option<PlayerState> {
     let origin = reader.vec3()?;
     let velocity = reader.vec3()?;
     let water_jump_time = reader.f32()?;
+    let no_backing = reader.f32()?;
     let on_ground = reader.flag()?;
     let water_level = reader.byte().filter(|level| *level <= 3)?;
     let liquid = liquid_from(reader.byte()?)?;
@@ -849,6 +865,7 @@ pub(crate) fn read_player(reader: &mut Reader<'_>) -> Option<PlayerState> {
         water_level,
         liquid,
         water_jump_time,
+        no_backing,
         jump_held,
         noclip,
         dead,

@@ -7,7 +7,7 @@ use engine_map::Contents;
 use engine_physics::CollisionWorld;
 
 use crate::flight::{
-    FLAG_ON_GROUND, FLOOR_NORMAL, GRAVITY, MAX_VELOCITY, MoveKind, MoveTrace, clip_velocity,
+    FLAG_ON_GROUND, FLOOR_NORMAL, MAX_VELOCITY, MoveKind, MoveTrace, clip_velocity,
 };
 use crate::simulation::{Callback, Entity, Simulation, Solid};
 use crate::table::EntityId;
@@ -532,14 +532,15 @@ impl Simulation {
         world: &CollisionWorld,
         callbacks: &mut Vec<Callback>,
     ) {
+        let gravity = self.vars.gravity;
         let Some(entity) = self.entity_mut(id) else {
             return;
         };
         if entity.flags & (FLAG_ON_GROUND | FLAG_FLY | FLAG_SWIM) != 0 {
             return;
         }
-        let hard = entity.velocity.z < GRAVITY * HARD_LANDING;
-        entity.velocity.z -= GRAVITY * seconds;
+        let hard = entity.velocity.z < gravity * HARD_LANDING;
+        entity.velocity.z -= gravity * seconds;
         let limit = |part: f32| part.clamp(-MAX_VELOCITY, MAX_VELOCITY);
         entity.velocity = Vec3::new(
             limit(entity.velocity.x),

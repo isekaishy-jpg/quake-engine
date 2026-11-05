@@ -37,6 +37,10 @@ function worldspawn(self)
 	-- spawned one to name them by.
 	engine.precache_model("progs/missile.mdl")
 	engine.precache_model("progs/grenade.mdl")
+	engine.precache_model("progs/spike.mdl")
+	engine.precache_model("progs/s_spike.mdl")
+	-- Custom map attributes.
+	engine.set_gravity(if mapname == "e1m8" then 100 else 800)
 	if self.sounds ~= 0 then
 		engine.music(self.sounds)
 	end

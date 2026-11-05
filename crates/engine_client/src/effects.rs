@@ -301,6 +301,11 @@ impl Effects {
         }
     }
 
+    /// Sets what particles fall by.
+    pub fn set_gravity(&mut self, gravity: f32) {
+        self.particles.set_gravity(gravity);
+    }
+
     /// Shows the box of a player at `origin`, as this client has them on
     /// screen, to compare with the one the server judged a shot against.
     pub fn show_seen_box(&mut self, origin: Vec3) {

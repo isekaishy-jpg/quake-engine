@@ -280,12 +280,54 @@ function player_light1(self)
 	held_fire(self, 5, W_FireLightning, player_light1, FRAME_LIGHT)
 end
 
+-- Sends up one bubble at a time from a player under water.
+function DeathBubblesSpawn(self)
+	if self.owner.waterlevel ~= 3 then
+		return
+	end
+	local bubble = spawn()
+	setmodel(bubble, "progs/s_bubble.spr")
+	setorigin(bubble, self.owner.origin + vector.create(0, 0, 24))
+	bubble.movetype = MOVETYPE_NOCLIP
+	bubble.solid = SOLID_NOT
+	bubble.velocity = vector.create(0, 0, 15)
+	bubble.nextthink = time() + 0.5
+	bubble.think = bubble_bob
+	bubble.classname = "bubble"
+	bubble.frame = 0
+	bubble.cnt = 0
+	setsize(bubble, vector.create(-8, -8, -8), vector.create(8, 8, 8))
+	self.nextthink = time() + 0.1
+	self.think = DeathBubblesSpawn
+	self.air_finished += 1
+	if self.air_finished >= self.bubble_count then
+		remove(self)
+	end
+end
+
+function DeathBubbles(self, num_bubbles)
+	local bubble_spawner = spawn()
+	setorigin(bubble_spawner, self.origin)
+	bubble_spawner.movetype = MOVETYPE_NONE
+	bubble_spawner.solid = SOLID_NOT
+	bubble_spawner.nextthink = time() + 0.1
+	bubble_spawner.think = DeathBubblesSpawn
+	bubble_spawner.air_finished = 0
+	bubble_spawner.owner = self
+	bubble_spawner.bubble_count = num_bubbles
+end
+
 local function PainSound(self)
 	if self.health < 0 then
 		return
 	end
+	if damage_attacker and damage_attacker.classname == "teledeath" then
+		sound(self, CHAN_VOICE, "player/teledth1.wav", 1, ATTN_NONE)
+		return
+	end
 	-- Drowning.
 	if self.watertype == CONTENT_WATER and self.waterlevel == 3 then
+		DeathBubbles(self, 1)
 		local sample = if random() > 0.5 then "player/drown1.wav" else "player/drown2.wav"
 		sound(self, CHAN_VOICE, sample, 1, ATTN_NORM)
 		return
@@ -321,6 +363,7 @@ end
 
 local function DeathSound(self)
 	if self.waterlevel == 3 then
+		DeathBubbles(self, 20)
 		sound(self, CHAN_VOICE, "player/h2odeath.wav", 1, ATTN_NONE)
 		return
 	end
@@ -369,6 +412,21 @@ function ThrowHead(self, gibname, dm)
 	self.avelocity = crandom() * vector.create(0, 600, 0)
 end
 
+function GibPlayer(self)
+	ThrowHead(self, "progs/h_player.mdl", self.health)
+	ThrowGib(self, "progs/gib1.mdl", self.health)
+	ThrowGib(self, "progs/gib2.mdl", self.health)
+	ThrowGib(self, "progs/gib3.mdl", self.health)
+	self.deadflag = DEAD_DEAD
+	local by = damage_attacker and damage_attacker.classname
+	if by == "teledeath" or by == "teledeath2" then
+		sound(self, CHAN_VOICE, "player/teledth1.wav", 1, ATTN_NONE)
+		return
+	end
+	local sample = if random() < 0.5 then "player/gib.wav" else "player/udeath.wav"
+	sound(self, CHAN_VOICE, sample, 1, ATTN_NONE)
+end
+
 function PlayerDie(self)
 	self.items -= bit32.band(self.items, IT_INVISIBILITY)
 	self.invisible_finished = 0
@@ -383,18 +441,16 @@ function PlayerDie(self)
 	self.solid = SOLID_NOT
 	self.dead = true
 	self.view_ofs = vector.create(0, 0, -8)
+	self.flags -= bit32.band(self.flags, FL_ONGROUND)
+	if self.velocity.z < 10 then
+		self.velocity = with_z(self.velocity, self.velocity.z + random() * 300)
+	end
 	if self.health < -40 then
-		ThrowGib(self, "progs/gib1.mdl", self.health)
-		ThrowGib(self, "progs/gib2.mdl", self.health)
-		ThrowGib(self, "progs/gib3.mdl", self.health)
-		local sample = if random() < 0.5 then "player/gib.wav" else "player/udeath.wav"
-		sound(self, CHAN_VOICE, sample, 1, ATTN_NONE)
-		ThrowHead(self, "progs/h_player.mdl", self.health)
-		self.nextthink = time() + 1
-		self.think = PlayerDead
+		GibPlayer(self)
 		return
 	end
 	DeathSound(self)
+	self.angles = vector.create(0, self.angles.y, 0)
 	if self.weapon == IT_AXE then
 		body_frames(self, FRAME_AXDETH, 9, PlayerDead)
 		return

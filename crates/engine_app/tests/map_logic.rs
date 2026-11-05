@@ -131,6 +131,7 @@ impl Game {
                         self.damage.push((armor, blood, from));
                     }
                     ServerMessage::LightStyle { .. }
+                    | ServerMessage::Gravity(_)
                     | ServerMessage::ModelName { .. }
                     | ServerMessage::LevelTitle(_)
                     | ServerMessage::SnapshotDelta(_)
@@ -967,12 +968,290 @@ fn a_button_with_health_fires_when_shot() {
     assert!(game.instance(1).origin.z > 0.0, "the shot pressed it");
 }
 
+/// A map with a door, and a trigger with health in front of the player.
+fn shootable_trigger(class: &str) -> Arc<Map> {
+    let (door_mins, door_maxs) = door_box();
+    let trigger_mins = Vec3::new(40.0, -32.0, -256.0);
+    let trigger_maxs = Vec3::new(50.0, 32.0, -160.0);
+    let door = [DOOR, &[("targetname", "d"), ("wait", "0.2")]].concat();
+    let trigger: &[(&str, &str)] = &[
+        ("classname", class),
+        ("model", "*2"),
+        ("target", "d"),
+        ("health", "1"),
+        ("wait", "1"),
+    ];
+    map(
+        &[(door_mins, door_maxs), (trigger_mins, trigger_maxs)],
+        &[&door, trigger],
+    )
+}
+
+#[test]
+fn a_trigger_with_health_fires_when_shot_not_when_touched() {
+    let map = shootable_trigger("trigger_multiple");
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    let forward = UserCommand {
+        forward: 400.0,
+        ..UserCommand::default()
+    };
+    game.run(72, forward);
+    assert!(
+        game.player().origin.x < 40.0,
+        "it's solid, like the original"
+    );
+    assert!(
+        game.instance(1).origin.z.abs() < 0.5,
+        "walking in does nothing"
+    );
+    game.run(1, attack());
+    game.wait(0.4);
+    assert!(game.instance(1).origin.z > 0.0, "the shot fired it");
+}
+
+#[test]
+fn a_shot_trigger_comes_back_after_its_wait() {
+    let map = shootable_trigger("trigger_multiple");
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    game.check(r#"shot = find(nil, "classname", "trigger_multiple")"#);
+    game.check("assert(shot.takedamage == DAMAGE_YES)");
+    game.run(1, attack());
+    game.wait(0.1);
+    game.check("assert(shot.takedamage == DAMAGE_NO)");
+    game.wait(1.2);
+    game.check("assert(shot.takedamage == DAMAGE_YES and shot.health == 1)");
+}
+
+#[test]
+fn a_shot_trigger_once_goes_away() {
+    let map = shootable_trigger("trigger_once");
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    game.run(1, attack());
+    game.wait(0.5);
+    game.check(r#"assert(find(nil, "classname", "trigger_once") == nil)"#);
+}
+
+#[test]
+fn a_teleport_waiting_to_be_used_leaves_what_stands_in_it_alone() {
+    let trigger = (
+        Vec3::new(-300.0, -32.0, -256.0),
+        Vec3::new(-236.0, 32.0, -200.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[
+        &[
+            ("classname", "trigger_teleport"),
+            ("model", "*1"),
+            ("target", "there"),
+            ("targetname", "later"),
+        ],
+        &[
+            ("classname", "info_teleport_destination"),
+            ("targetname", "there"),
+            ("origin", "200 200 -200"),
+        ],
+        &[("classname", "monster_ogre"), ("origin", "-268 0 -230")],
+    ];
+    let map = map(&[trigger], entities);
+    let mut game = Game::new(&map, at_floor(300.0, -300.0));
+    game.wait(0.2);
+    game.check(
+        r#"
+        ogre = find(nil, "classname", "monster_ogre")
+        assert(ogre.origin.x < -200, "it hasn't gone anywhere")
+        find(nil, "classname", "trigger_teleport").use(find(nil, "classname", "trigger_teleport"))
+        "#,
+    );
+    game.wait(0.1);
+    game.check(r#"assert(ogre.origin.x > 100, "it goes once it's used")"#);
+}
+
+#[test]
+fn nobody_can_back_up_straight_after_a_teleport() {
+    let trigger = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[
+        &[
+            ("classname", "trigger_teleport"),
+            ("model", "*1"),
+            ("target", "there"),
+        ],
+        &[
+            ("classname", "info_teleport_destination"),
+            ("targetname", "there"),
+            ("origin", "200 200 -200"),
+            ("angle", "90"),
+        ],
+    ];
+    let map = map(&[trigger], entities);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    assert!(
+        game.player().no_backing > 0.0,
+        "it starts with the teleport"
+    );
+    let back = UserCommand {
+        yaw: 90.0,
+        forward: -400.0,
+        ..UserCommand::default()
+    };
+    let start = game.player().origin.y;
+    game.run(36, back);
+    let held = game.player().origin.y - start;
+    assert!(held > 0.0, "still going forwards: {held}");
+    game.run(36, UserCommand::default());
+    assert_eq!(game.player().no_backing, 0.0, "and it wears off");
+    let start = game.player().origin.y;
+    game.run(36, back);
+    assert!(
+        game.player().origin.y < start,
+        "after which backing up works"
+    );
+}
+
+/// The sounds a player makes taking `damage` from something called `class`.
+fn hurt_by(class: &str, damage: u32) -> Vec<String> {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.sounds.clear();
+    game.check(&format!(
+        r#"
+        local from = spawn()
+        from.classname = "{class}"
+        from.owner = player
+        T_Damage(player, from, from, {damage})
+        "#
+    ));
+    game.wait(0.05);
+    game.sounds.iter().map(|sound| sound.name.clone()).collect()
+}
+
+#[test]
+fn a_telefrag_has_a_sound_of_its_own() {
+    let telefrag = "player/teledth1.wav".to_owned();
+    assert!(hurt_by("teledeath", 10).contains(&telefrag), "as pain");
+    assert!(hurt_by("teledeath", 50_000).contains(&telefrag), "as a gib");
+    assert!(hurt_by("teledeath2", 50_000).contains(&telefrag));
+    assert!(
+        !hurt_by("monster_ogre", 10).contains(&telefrag),
+        "and only then"
+    );
+    assert!(!hurt_by("monster_ogre", 50_000).contains(&telefrag));
+}
+
+#[test]
+fn a_gibbed_player_is_dead_at_once() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check("T_Damage(player, world, world, 50000)");
+    game.check("assert(player.deadflag == DEAD_DEAD)");
+}
+
+#[test]
+fn a_dying_player_is_thrown_up_a_little() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.3);
+    let floor = game.player().origin.z;
+    // The first numbers from a new seed are small, and the hop is random.
+    game.check("for _ = 1, 8 do random() end");
+    game.check("T_Damage(player, world, world, 110)");
+    let mut highest = floor;
+    for _ in 0..36 {
+        game.run(1, UserCommand::default());
+        highest = highest.max(game.player().origin.z);
+    }
+    assert!(highest > floor + 0.5, "{highest} from {floor}");
+    assert!(game.player().origin.z - floor < 0.5, "and lands again");
+}
+
+/// Whether taking an item brings it back later, in deathmatch `kind`.
+fn comes_back(class: &'static str, kind: u8) -> bool {
+    let thing = item(class);
+    let map = map(&[], &[&thing]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.check(&format!("deathmatch = {kind}"));
+    game.check(&format!(r#"thing = find(nil, "classname", "{class}")"#));
+    game.wait(0.3);
+    game.check("came_back = thing.think == SUB_regen");
+    game.check("engine.print(tostring(came_back))");
+    game.wait(0.05);
+    game.prints.iter().any(|line| line.contains("true"))
+}
+
+#[test]
+fn powerups_come_back_in_every_deathmatch_and_armor_only_the_first() {
+    assert!(comes_back("item_artifact_super_damage", 1));
+    assert!(comes_back("item_artifact_super_damage", 2));
+    assert!(!comes_back("item_artifact_super_damage", 0));
+    assert!(comes_back("item_armor1", 1));
+    assert!(!comes_back("item_armor1", 2));
+}
+
+/// Whether touching a `trigger_onlyregistered` fires it, by `registered`.
+fn registered_fires(registered: u8) -> (bool, Vec<String>) {
+    let trigger = (
+        Vec3::new(-32.0, -32.0, -256.0),
+        Vec3::new(32.0, 32.0, -200.0),
+    );
+    let entities: &[&[(&str, &str)]] = &[&[
+        ("classname", "trigger_onlyregistered"),
+        ("model", "*1"),
+        ("message", "Registered only"),
+    ]];
+    let map = map(&[trigger], entities);
+    let mut game = Game::new(&map, at_floor(200.0, 200.0));
+    game.check(&format!(r#"set_level_setting("registered", {registered})"#));
+    game.check(r#"setorigin(player, vector.create(0, 0, -232))"#);
+    game.wait(0.1);
+    game.check(
+        r#"engine.print(tostring(find(nil, "classname", "trigger_onlyregistered") == nil))"#,
+    );
+    game.wait(0.05);
+    let gone = game.prints.iter().any(|line| line.contains("true"));
+    (gone, game.prints.clone())
+}
+
+#[test]
+fn only_a_registered_game_gets_past_a_registered_trigger() {
+    let (fired, _prints) = registered_fires(1);
+    assert!(fired);
+    let (fired, prints) = registered_fires(0);
+    assert!(!fired, "the shareware game stops here");
+    assert!(
+        prints.iter().any(|line| line == "Registered only"),
+        "{prints:?}"
+    );
+}
+
+#[test]
+fn rules_changed_in_play_take_effect_on_the_next_tick() {
+    let map = map(&[], &[]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.05);
+    game.check("assert(teamplay == 0 and skill == 1)");
+    game.server.set_setting("teamplay", 1.0);
+    game.server.set_setting("skill", 3.0);
+    game.check("assert(teamplay == 0)");
+    game.wait(0.05);
+    game.check("assert(teamplay == 1 and skill == 3)");
+    game.server.set_setting("skill", 9.0);
+    game.wait(0.05);
+    game.check("assert(skill == 3)");
+}
+
 #[test]
 fn a_dead_player_stays_down_and_a_button_restarts_the_level() {
     let map = map(&[], &[]);
     let mut game = Game::new(&map, at_floor(0.0, 0.0));
     game.wait(0.05);
-    game.check("T_Damage(player, world, world, 200)");
+    game.check("T_Damage(player, world, world, 110)");
     game.wait(0.05);
     assert!(game.player().dead);
     game.check("assert(player.deadflag == DEAD_DYING)");
@@ -1116,7 +1395,10 @@ fn a_spike_trap_fires_when_used_and_a_shooter_on_its_own() {
         .iter()
         .filter(|name| **name == "weapons/spike2.wav")
         .count();
-    assert_eq!(shots, 2, "the shooter, every quarter of a second");
+    assert_eq!(
+        shots, 3,
+        "the shooter, at once, then every quarter of a second"
+    );
     game.check(
         r#"local trap = find_all("classname", "trap_spikeshooter")[1]
         local before = #find_all("classname", "spike")

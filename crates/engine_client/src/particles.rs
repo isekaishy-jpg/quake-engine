@@ -7,7 +7,7 @@ use engine_core::math::Vec3;
 const MAX_PARTICLES: usize = 16_384;
 
 /// How fast things fall, as `sv_gravity`.
-const GRAVITY: f32 = 800.0;
+const USUAL_GRAVITY: f32 = 800.0;
 
 /// The colours of the first half of an explosion, brightest first.
 const RAMP_EXPLODE: [u8; 8] = [0x6f, 0x6d, 0x6b, 0x69, 0x67, 0x65, 0x63, 0x61];
@@ -100,6 +100,8 @@ pub struct Particles {
     tracers: u32,
     /// Seconds on the same clock as [`Particles::update`].
     time: f32,
+    /// `sv_gravity`.
+    gravity: f32,
 }
 
 impl Default for Particles {
@@ -109,11 +111,17 @@ impl Default for Particles {
             seed: 1,
             tracers: 0,
             time: 0.0,
+            gravity: USUAL_GRAVITY,
         }
     }
 }
 
 impl Particles {
+    /// Sets what particles fall by.
+    pub fn set_gravity(&mut self, gravity: f32) {
+        self.gravity = gravity;
+    }
+
     /// The particles to draw.
     #[must_use]
     pub fn live(&self) -> &[Particle] {
@@ -374,7 +382,7 @@ impl Particles {
     pub fn update(&mut self, time: f32) {
         let seconds = (time - self.time).max(0.0);
         self.time = time;
-        let fall = seconds * GRAVITY * 0.05;
+        let fall = seconds * self.gravity * 0.05;
         let grow = 4.0 * seconds;
         self.live.retain_mut(|particle| {
             particle.origin = particle.origin + particle.velocity * seconds;

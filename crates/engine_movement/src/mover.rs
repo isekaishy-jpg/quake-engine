@@ -352,7 +352,13 @@ impl Mover<'_> {
 
     /// `PM_CatagorizePosition`: works out the ground and water level.
     fn categorize(&mut self) {
-        if self.state.velocity.z > LEAVE_GROUND_SPEED {
+        // The dead leave the ground on any hop, not having legs to hold them.
+        let leaving = if self.state.dead {
+            0.0
+        } else {
+            LEAVE_GROUND_SPEED
+        };
+        if self.state.velocity.z > leaving {
             self.state.on_ground = false;
             self.state.ground_model = None;
         } else {
@@ -508,6 +514,14 @@ pub fn player_move(
         ..*command
     };
     let command = if state.dead { &still } else { command };
+    // `SV_AirMove`: fresh from a teleport, nobody can back up.
+    let onwards = UserCommand {
+        forward: command.forward.max(0.0),
+        ..*command
+    };
+    let held = state.no_backing > 0.0 && state.water_level < 2;
+    let command = if held { &onwards } else { command };
+    state.no_backing = (state.no_backing - command.seconds).max(0.0);
     let (yaw_sin, yaw_cos) = command.yaw.to_radians().sin_cos();
     let (pitch_sin, pitch_cos) = command.pitch.to_radians().sin_cos();
     Mover {

@@ -22,6 +22,7 @@ local CONTENT_LAVA = -5
 -- The next level, and where the last one was.
 nextmap = ""
 mapname = ""
+framecount = 0
 
 -- From `SV_SpawnServer`: what's fixed for the level, before anything spawns.
 function level_started(name, flags)
@@ -34,6 +35,13 @@ function level_started(name, flags)
 	if coop ~= 0 then
 		deathmatch = 0
 	end
+end
+
+-- Runs at the start of each tick, so rules changed in play take effect.
+function StartFrame()
+	teamplay = cvar("teamplay")
+	skill = math.clamp(rint(cvar("skill")), 0, 3)
+	framecount += 1
 end
 
 -- The camera for the end of a level, from `FindIntermission`.
@@ -362,7 +370,10 @@ local function killed_self(targ)
 	if targ.weapon == 16 then
 		return " tries to put the pin back in"
 	end
-	return " becomes bored with life"
+	if random() ~= 0 then
+		return " becomes bored with life"
+	end
+	return " checks if their weapon is loaded"
 end
 
 -- What took a player without another player's help.

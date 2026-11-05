@@ -10,9 +10,6 @@ use engine_physics::{CollisionWorld, PointContents, enter_box};
 use crate::simulation::{Callback, Entity, MoveType, Simulation, Solid};
 use crate::table::EntityId;
 
-/// `sv_gravity`, in units a second each second.
-pub(crate) const GRAVITY: f32 = 800.0;
-
 /// `sv_maxvelocity`, on each axis.
 pub(crate) const MAX_VELOCITY: f32 = 2000.0;
 
@@ -252,7 +249,7 @@ impl Simulation {
             return;
         }
         if matches!(entity.move_type, MoveType::Toss | MoveType::Bounce) {
-            entity.velocity.z -= GRAVITY * seconds;
+            entity.velocity.z -= self.vars.gravity * seconds;
         }
         let limit = |part: f32| part.clamp(-MAX_VELOCITY, MAX_VELOCITY);
         entity.velocity = Vec3::new(

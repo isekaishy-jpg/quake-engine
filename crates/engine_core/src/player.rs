@@ -33,6 +33,8 @@ pub struct PlayerState {
     pub liquid: Liquid,
     /// Seconds left of a jump out of water.
     pub water_jump_time: f32,
+    /// Seconds left of not being able to back up, after a teleport.
+    pub no_backing: f32,
     /// Whether jump was held last time, so holding it doesn't repeat.
     pub jump_held: bool,
     /// Whether the player passes through everything.

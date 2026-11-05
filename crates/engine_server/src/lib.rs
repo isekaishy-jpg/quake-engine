@@ -56,6 +56,9 @@ struct Told {
     music: Option<u8>,
     /// The level's title.
     level_title: Option<String>,
+    /// The gravity last told of, which saves from before it was kept lack.
+    #[serde(default)]
+    gravity: Option<f32>,
 }
 
 /// A game, written down (proposal 0044).
@@ -274,6 +277,9 @@ impl Server {
         }
         if let Some(title) = told.level_title {
             seat.send(&ServerMessage::LevelTitle(title));
+        }
+        if let Some(gravity) = told.gravity {
+            seat.send(&ServerMessage::Gravity(gravity));
         }
         if let Some(player) = seat.player {
             let (yaw, pitch) = self.simulation.borrow().view(player);
@@ -522,6 +528,35 @@ impl Server {
         self.retell(index);
     }
 
+    /// Tells everyone if gravity has changed, since prediction runs on it.
+    fn tell_gravity(&mut self) {
+        let gravity = self.simulation.borrow().gravity();
+        if self.told.gravity != Some(gravity) {
+            self.told.gravity = Some(gravity);
+            self.broadcast(&ServerMessage::Gravity(gravity));
+        }
+    }
+
+    /// The level's gravity.
+    #[must_use]
+    pub fn gravity(&self) -> f32 {
+        self.simulation.borrow().gravity()
+    }
+
+    /// Sets the level's gravity.
+    pub fn set_gravity(&mut self, gravity: f32) {
+        self.simulation.borrow_mut().set_gravity(gravity);
+    }
+
+    /// Changes a rule in play, as `cvar` sees it.
+    pub fn set_setting(&mut self, name: &str, value: f64) {
+        self.game.set_setting(name, value);
+        match self.level.settings.iter_mut().find(|rule| rule.0 == name) {
+            Some(rule) => rule.1 = value,
+            None => self.level.settings.push((name.to_owned(), value)),
+        }
+    }
+
     /// Puts out the guest called `name`, telling them why. Says whether anyone
     /// was found, and who they've proved to be if they have.
     pub fn kick(&mut self, name: &str, why: &str) -> Option<Option<[u8; 32]>> {
@@ -554,6 +589,7 @@ impl Server {
     /// Runs what clients asked for, moves the world, and tells clients the
     /// result.
     pub fn tick(&mut self) {
+        self.game.start_frame();
         self.listen();
         self.drop_lost();
         self.update_fairness();
@@ -572,6 +608,7 @@ impl Server {
             self.game.run(touch);
         }
         self.simulation.borrow_mut().end_tick(self.seconds);
+        self.tell_gravity();
         let stats: Vec<Vec<i32>> = self
             .seats
             .iter()

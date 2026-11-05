@@ -13,7 +13,7 @@ use engine_audio::Audio;
 use engine_client::Client;
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
-use engine_map::{AliasCorner, AliasModel, ClipChild, Map, Tree};
+use engine_map::{AliasCorner, AliasModel, ClipChild, Contents, Map, Tree};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
@@ -280,6 +280,293 @@ fn run_scripts(map: &Arc<Map>, seconds: u32) -> (Vec<String>, usize) {
         }
     }
     (errors, moved.len())
+}
+
+/// The name of every level, leaving out the item models among them.
+fn map_names(filesystem: &FileSystem) -> Vec<String> {
+    filesystem
+        .list("maps/")
+        .iter()
+        .filter_map(|path| path.strip_prefix("maps/")?.strip_suffix(".bsp"))
+        .filter(|name| !name.starts_with("b_"))
+        .map(str::to_owned)
+        .collect()
+}
+
+/// A server on `name`, with its client's end.
+fn start(base: &Path, name: &str) -> (Server, Loopback, Arc<Map>) {
+    let filesystem = game(base, "id1");
+    let map = load(&filesystem, name, &palette(base));
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let (client, server_end) = loopback();
+    let origin = spawn_point(&map).origin;
+    let server = Server::new(
+        Box::new(server_end),
+        world,
+        &map,
+        origin,
+        SCRIPTS,
+        1.0 / 72.0,
+        Level {
+            name: name.to_owned(),
+            ..normal_level()
+        },
+    )
+    .expect("the scripts load");
+    (server, client, map)
+}
+
+/// A place under water on `map`, with a player's feet, middle and eyes all in it.
+fn under_water(map: &Map) -> Vec3 {
+    let wet = |point: Vec3| {
+        map.tree
+            .leaf(map.tree.leaf_at(point))
+            .is_some_and(|leaf| leaf.contents == Contents::Water)
+    };
+    for face in &map.faces {
+        let texture = usize::try_from(face.texture).ok();
+        let is_water = texture
+            .and_then(|texture| map.textures.get(texture))
+            .is_some_and(|texture| texture.name.starts_with("*water"));
+        if !is_water {
+            continue;
+        }
+        let first = usize::try_from(face.first_point).expect("small");
+        let count = usize::try_from(face.point_count).expect("small");
+        let points = &map.points[first..first + count];
+        #[expect(clippy::cast_precision_loss, reason = "a few points")]
+        let share = 1.0 / points.len() as f32;
+        let middle = points.iter().fold(Vec3::ZERO, |sum, point| sum + *point) * share;
+        let place = middle - Vec3::new(0.0, 0.0, 40.0);
+        let reach = [-23.0, 0.0, 22.0].map(|height| place + Vec3::new(0.0, 0.0, height));
+        if reach.iter().all(|point| wet(*point)) {
+            return place;
+        }
+    }
+    panic!("no water deep enough");
+}
+
+/// How many bubbles are about after a player at `place` is hurt, then killed.
+fn bubbles_at(server: &mut Server, client: &mut Loopback, place: Vec3) -> (u32, u32) {
+    let move_on = |server: &mut Server, client: &mut Loopback, ticks: u32, from: u32| {
+        for tick in 0..ticks {
+            let command = UserCommand {
+                sequence: from + tick,
+                seconds: 1.0 / 72.0,
+                ..UserCommand::default()
+            };
+            client.send(ClientMessage::Move(vec![command], 0).encode());
+            server.tick();
+        }
+    };
+    let count = |server: &mut Server, client: &mut Loopback| {
+        while client.receive().is_some() {}
+        server
+            .exec(r#"engine.print("bubbles " .. #find_all("classname", "bubble"))"#)
+            .expect("it runs");
+        server.tick();
+        let mut bubbles = 0;
+        while let Some(bytes) = client.receive() {
+            if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
+                && let Some(number) = text.strip_prefix("bubbles ")
+            {
+                bubbles = number.trim().parse().expect("a number");
+            }
+        }
+        bubbles
+    };
+    move_on(server, client, 5, 1);
+    server
+        .exec(&format!(
+            r#"
+            local player = find_all("classname", "player")[1]
+            setorigin(player, vector.create({}, {}, {}))
+            "#,
+            place.x, place.y, place.z
+        ))
+        .expect("it runs");
+    move_on(server, client, 5, 10);
+    server
+        .exec(
+            r#"
+            local player = find_all("classname", "player")[1]
+            T_Damage(player, world, world, 20)
+            "#,
+        )
+        .expect("it runs");
+    move_on(server, client, 20, 20);
+    let hurt = count(server, client);
+    server
+        .exec(
+            r#"
+            local player = find_all("classname", "player")[1]
+            T_Damage(player, world, world, 90)
+            "#,
+        )
+        .expect("it runs");
+    move_on(server, client, 72, 50);
+    (hurt, count(server, client))
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn bubbles_rise_from_someone_hurt_under_water_and_nowhere_else() {
+    let base = base();
+    let (mut server, mut client, map) = start(&base, "e1m1");
+    let place = under_water(&map);
+    let (hurt, dead) = bubbles_at(&mut server, &mut client, place);
+    println!("under water: {hurt} when hurt, {dead} after dying");
+    assert!(hurt >= 1, "drowning pain lets one go");
+    assert!(
+        dead > hurt,
+        "and dying lets more go, until the body leaves the water"
+    );
+    let (mut server, mut client, map) = start(&base, "e1m1");
+    let dry = spawn_point(&map).origin;
+    assert_eq!(bubbles_at(&mut server, &mut client, dry), (0, 0), "on land");
+}
+
+/// How high a jump goes on `name`, and the gravity the client was told of.
+fn jump_on(base: &Path, name: &str) -> (f32, Option<f32>) {
+    let (mut server, mut client, _map) = start(base, name);
+    let (mut lowest, mut highest, mut told) = (f32::INFINITY, f32::NEG_INFINITY, None);
+    for tick in 0..720_u32 {
+        let command = UserCommand {
+            sequence: tick + 1,
+            seconds: 1.0 / 72.0,
+            jump: tick == 100,
+            ..UserCommand::default()
+        };
+        client.send(ClientMessage::Move(vec![command], 0).encode());
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            match ServerMessage::decode(&bytes) {
+                Some(ServerMessage::Gravity(gravity)) => told = Some(gravity),
+                Some(ServerMessage::Snapshot(snapshot)) if tick >= 90 => {
+                    lowest = lowest.min(snapshot.player.origin.z);
+                    highest = highest.max(snapshot.player.origin.z);
+                }
+                _ => {}
+            }
+        }
+    }
+    (highest - lowest, told)
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn e1m8_has_its_low_gravity_and_nowhere_else_does() {
+    let base = base();
+    let (height, told) = jump_on(&base, "e1m8");
+    println!("e1m8: a jump goes {height:.0} units");
+    assert_eq!(told, Some(100.0));
+    assert!(height > 150.0, "{height}");
+    let (height, told) = jump_on(&base, "e1m1");
+    println!("e1m1: a jump goes {height:.0} units");
+    assert_eq!(told, Some(800.0));
+    assert!((35.0..60.0).contains(&height), "{height}");
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_saved_game_keeps_its_gravity() {
+    let base = base();
+    let (server, _client, map) = start(&base, "e1m8");
+    let saved = server.save().expect("it saves");
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let (_client, server_end) = loopback();
+    let resumed = Server::resume(
+        Box::new(server_end),
+        world,
+        &map,
+        SCRIPTS,
+        1.0 / 72.0,
+        saved,
+    )
+    .expect("it resumes");
+    assert_eq!(resumed.gravity(), 100.0);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_trigger_with_health_can_be_shot() {
+    let base = base();
+    let filesystem = game(&base, "id1");
+    let mut total = 0;
+    for name in map_names(&filesystem) {
+        let (mut server, mut client, _map) = start(&base, &name);
+        for _ in 0..5 {
+            server.tick();
+        }
+        server
+            .exec(
+                r#"
+                local shootable = 0
+                local player = find_all("classname", "player")[1]
+                for _, class in { "trigger_multiple", "trigger_once" } do
+                    for _, trigger in find_all("classname", class) do
+                        if (trigger.max_health or 0) ~= 0 then
+                            assert(trigger.takedamage == DAMAGE_YES, class)
+                            assert(trigger.solid == SOLID_BBOX, class)
+                            assert(trigger.touch == nil or trigger.touch == SUB_Null, class)
+                            T_Damage(trigger, player, player, 1000)
+                            assert(trigger.takedamage == DAMAGE_NO, "it fired")
+                            shootable += 1
+                        end
+                    end
+                end
+                engine.print("shootable " .. shootable)
+                "#,
+            )
+            .expect("every one fires");
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
+                && let Some(count) = text.strip_prefix("shootable ")
+            {
+                total += count.trim().parse::<u32>().expect("a number");
+            }
+        }
+    }
+    println!("{total} shootable triggers fired");
+    assert_eq!(total, 29, "as many as the maps hold");
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn the_last_level_starts_with_shub_alive_and_her_teleporter_ready() {
+    let base = base();
+    let (mut server, mut client, _map) = start(&base, "end");
+    for _ in 0..30 {
+        server.tick();
+    }
+    while let Some(bytes) = client.receive() {
+        if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes) {
+            assert!(!text.contains("script error"), "{text}");
+        }
+    }
+    server
+        .exec(
+            r#"
+            local shub = find_all("classname", "monster_oldone")[1]
+            assert(shub ~= nil and shub.health > 39000, "she's alive")
+            assert(math.abs(shub.origin.y - 2032) < 1, "and where the map put her")
+            assert(intermission_running ~= 1, "and the game isn't over")
+            train = find_all("classname", "misc_teleporttrain")[1]
+            assert(train ~= nil, "it's on the level")
+            assert(train.model == "progs/teleport.mdl", tostring(train.model))
+            assert(train.target ~= "t32", "it found its first corner")
+            train_start = train.origin
+            train.use(train)
+            "#,
+        )
+        .expect("the level is as it should be");
+    for _ in 0..144 {
+        server.tick();
+    }
+    server
+        .exec(r#"assert(train.origin ~= train_start, "and it moves once it's used")"#)
+        .expect("it moves");
 }
 
 #[test]

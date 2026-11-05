@@ -79,6 +79,12 @@
     - [0058: secure connections](proposals/0058-secure-connections.md)
     - [0059: lasting identities](proposals/0059-lasting-identities.md)
     - [0060: incoming blasts](proposals/0060-incoming-blasts.md)
+  - Increment 10:
+    - [0061: shootable triggers](proposals/0061-shootable-triggers.md)
+    - [0062: level gravity](proposals/0062-level-gravity.md)
+    - [0063: the level clock](proposals/0063-the-level-clock.md)
+    - [0064: the rest of the player](proposals/0064-players-in-the-details.md)
+    - [0065: rules in play](proposals/0065-rules-in-play.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
@@ -92,6 +98,7 @@
   - [0010: increment 7](reviews/0010-increment-7.md)
   - [0011: increment 8](reviews/0011-increment-8.md)
   - [0012: increment 9](reviews/0012-increment-9.md)
+  - [0013: increment 10](reviews/0013-increment-10.md)
 - **Pre-research decisions:** [what we've decided to do](pre-research/README.md), recorded before the workflow was adopted. These are inputs to research, not research.
 - **Reference source:** id Software's GPL releases, as submodules.
   - `reference/quake`: the engine, QuakeWorld and QuakeWorld's QuakeC

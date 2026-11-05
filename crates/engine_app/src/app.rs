@@ -108,6 +108,9 @@ const LEVEL_SETTINGS: [&str; 19] = [
     "registered",
 ];
 
+/// Rules that change in play, rather than from the next level on.
+const LIVE_RULES: [&str; 4] = ["skill", "teamplay", "fraglimit", "timelimit"];
+
 /// How long a connection may take to open, in seconds.
 const CONNECT_SECONDS: f64 = 10.0;
 
@@ -260,6 +263,10 @@ pub(crate) struct World {
     pub(crate) identity: SeatInfo,
     /// When a shot of ours can next be shown.
     shot_clock: ShotClock,
+    /// The gravity last put in `sv_gravity`.
+    gravity_shown: f32,
+    /// What `sv_gravity` last said.
+    gravity_seen: f32,
     /// Whether shots show the boxes on this screen, from `sv_unlag_debug`.
     showing_boxes: bool,
     /// Bots playing here, each a client of its own.
@@ -889,6 +896,9 @@ impl World {
         drawn: &[DrawnEntity],
         player: EffectSource,
     ) -> Vec<LightDraw> {
+        if let Some(client) = &self.client {
+            self.effects.set_gravity(client.gravity());
+        }
         self.effects.update(time);
         let mut sources: Vec<EffectSource> = drawn
             .iter()
@@ -1194,6 +1204,12 @@ impl Engine {
         ] {
             console.register_cvar(name, value, server_rule);
         }
+        // Not saved, or leaving `e1m8` would carry its gravity into the next game.
+        let unsaved_rule = CvarFlags {
+            saved: false,
+            server: true,
+        };
+        console.register_cvar("sv_gravity", "800", unsaved_rule);
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
             console,
@@ -1254,6 +1270,8 @@ impl Engine {
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
                 shot_clock: ShotClock::default(),
+                gravity_shown: 800.0,
+                gravity_seen: 800.0,
                 showing_boxes: false,
                 bots: Vec::new(),
                 bots_made: 0,
@@ -1313,6 +1331,7 @@ impl Engine {
         if let Some(net_server) = &mut self.world.net_server {
             net_server.flush();
         }
+        self.follow_rules();
         let showing = self.console.cvar("sv_unlag_debug");
         self.world.showing_boxes = showing.is_some_and(|cvar| cvar.value() != "0");
         let (prints, level) = self.world.take_server_news();
@@ -1457,6 +1476,35 @@ impl Engine {
             {
                 server.half_tick();
             }
+        }
+    }
+
+    /// Keeps the game's rules with the console's, as `StartFrame` and
+    /// `cvar_set` do. A level's own gravity shows in `sv_gravity`, and the
+    /// console can then change it.
+    #[expect(clippy::cast_possible_truncation, reason = "a gravity fits f32")]
+    fn follow_rules(&mut self) {
+        let rules = LIVE_RULES.map(|name| (name, self.cvar_number(name)));
+        let wanted = self.cvar_number("sv_gravity") as f32;
+        let Some(server) = &mut self.world.server else {
+            return;
+        };
+        for (name, value) in rules {
+            let known = server.level().settings.iter().find(|rule| rule.0 == name);
+            if known.map(|rule| rule.1) != Some(value) {
+                server.set_setting(name, value);
+            }
+        }
+        // Someone changed the cvar, which might have been us, last time.
+        if wanted != self.world.gravity_seen {
+            self.world.gravity_seen = wanted;
+            server.set_gravity(wanted);
+            self.world.gravity_shown = wanted;
+        }
+        let gravity = server.gravity();
+        if gravity != self.world.gravity_shown {
+            self.world.gravity_shown = gravity;
+            self.console.add(&format!("sv_gravity {gravity}"));
         }
     }
 

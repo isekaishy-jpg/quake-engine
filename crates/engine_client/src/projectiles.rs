@@ -9,9 +9,6 @@ use engine_core::entity::{ModelInstance, Projectile};
 use engine_core::math::Vec3;
 use engine_physics::CollisionWorld;
 
-/// `sv_gravity`.
-const GRAVITY: f32 = 800.0;
-
 /// How long a path is worked out for, in seconds.
 const MAX_FLIGHT: f32 = 6.0;
 
@@ -64,6 +61,8 @@ pub struct Launch {
     pub strength: f32,
     /// Seconds until it blows up by itself, or 0 if it won't.
     pub fuse: f32,
+    /// `sv_gravity`, which what bounces falls by.
+    pub gravity: f32,
 }
 
 /// A blast on its way, as a flight's path has it.
@@ -115,7 +114,7 @@ impl Path {
         let mut flown = 0.0;
         while flown < MAX_FLIGHT {
             if launch.bounces {
-                velocity.z -= GRAVITY * STEP;
+                velocity.z -= launch.gravity * STEP;
             }
             // A point, not a player: `trace` would stop a player's box short.
             let end = position + velocity * STEP;
@@ -229,7 +228,7 @@ impl Flights {
         projectile: &Projectile,
         own: bool,
         fired_on: u32,
-        behind: f64,
+        (behind, gravity): (f64, f32),
         world: &CollisionWorld,
         instances: &[ModelInstance],
     ) {
@@ -242,6 +241,7 @@ impl Flights {
             blasts: projectile.blasts,
             strength: projectile.strength,
             fuse: projectile.fuse,
+            gravity,
         };
         let mut seen_at = behind;
         let mut blast_used = false;

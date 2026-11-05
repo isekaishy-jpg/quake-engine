@@ -256,6 +256,12 @@ impl Player {
     }
 }
 
+/// Game time when a level starts, from `SV_SpawnServer`. It isn't 0, because
+/// scripts tell a field that was never set from one that has passed by comparing
+/// it with the time: a teleport that's waiting to be used has 0 for its
+/// `nextthink`, and that has to be in the past (proposal 0063).
+const LEVEL_START_TIME: f64 = 1.0;
+
 /// What a saved game keeps of a simulation (proposal 0044).
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct SavedSimulation {
@@ -275,6 +281,14 @@ pub struct SavedSimulation {
     check_index: usize,
     /// The leaves that player can be seen from.
     player_view: Vec<bool>,
+    /// The level's gravity. Saves from before it was kept have the usual.
+    #[serde(default = "usual_gravity")]
+    gravity: f32,
+}
+
+/// `sv_gravity` for almost every level.
+fn usual_gravity() -> f32 {
+    MoveVars::default().gravity
 }
 
 /// The game's state.
@@ -287,7 +301,7 @@ pub struct Simulation {
     /// Every player. The first is the host's, and stays.
     players: Vec<Player>,
     /// The rules of movement.
-    vars: MoveVars,
+    pub(crate) vars: MoveVars,
     /// Game time in seconds.
     time: f64,
     /// The collision scripts' traces use.
@@ -331,7 +345,7 @@ impl Simulation {
             entities: SlotTable::new(),
             players: Vec::new(),
             vars: MoveVars::default(),
-            time: 0.0,
+            time: LEVEL_START_TIME,
             collision: None,
             shapes: Vec::new(),
             seed: 1,
@@ -400,7 +414,7 @@ impl Simulation {
             map: _,
             entities,
             players,
-            vars: _,
+            vars,
             time,
             collision: _,
             shapes,
@@ -422,6 +436,7 @@ impl Simulation {
             last_check: *last_check,
             check_index: *check_index,
             player_view: player_view.clone(),
+            gravity: vars.gravity,
         }
     }
 
@@ -437,7 +452,10 @@ impl Simulation {
             map,
             entities: saved.entities,
             players,
-            vars: MoveVars::default(),
+            vars: MoveVars {
+                gravity: saved.gravity,
+                ..MoveVars::default()
+            },
             time: saved.time,
             collision: None,
             shapes: saved.shapes,
@@ -832,6 +850,24 @@ impl Simulation {
             player.state.noclip = !player.state.noclip;
             player.state.noclip
         })
+    }
+
+    /// Sets `sv_gravity`.
+    pub fn set_gravity(&mut self, gravity: f32) {
+        self.vars.gravity = gravity;
+    }
+
+    /// `sv_gravity`.
+    #[must_use]
+    pub fn gravity(&self) -> f32 {
+        self.vars.gravity
+    }
+
+    /// Stops a player backing up for `seconds`.
+    pub fn set_no_backing(&mut self, id: EntityId, seconds: f32) {
+        if let Some(player) = self.slot_mut(id) {
+            player.state.no_backing = seconds;
+        }
     }
 
     /// Moves a player to `origin`, at rest.

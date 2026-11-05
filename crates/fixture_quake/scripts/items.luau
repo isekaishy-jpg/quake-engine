@@ -42,12 +42,12 @@ function SUB_regen(self)
 	setorigin(self, self.origin)
 end
 
--- Takes an item out of play, and fires what it targets. In deathmatch it comes
--- back after `seconds`, if it does.
-local function taken(self, other, seconds)
+-- Takes an item out of play, and fires what it targets. In deathmatch 1 it comes
+-- back after `seconds`, if it does, and with `always` in every deathmatch.
+local function taken(self, other, seconds, always)
 	self.model = ""
 	self.solid = SOLID_NOT
-	if seconds and deathmatch == 1 then
+	if seconds and (deathmatch == 1 or (always and deathmatch ~= 0)) then
 		self.nextthink = time() + seconds
 		self.think = SUB_regen
 	end
@@ -442,7 +442,7 @@ function powerup_touch(self, other)
 		other.super_damage_finished = time() + 30
 	end
 	local long = class == "item_artifact_invulnerability" or class == "item_artifact_invisibility"
-	taken(self, other, if long then 300 else 60)
+	taken(self, other, if long then 300 else 60, true)
 end
 
 local function powerup(sample, model, name, item)

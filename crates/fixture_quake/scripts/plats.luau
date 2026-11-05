@@ -253,8 +253,12 @@ function misc_teleporttrain(self)
 	self.movetype = MOVETYPE_PUSH
 	self.blocked = train_blocked
 	self.use = train_use
+	self.avelocity = vector.create(100, 200, 300)
 	self.noise = "misc/null.wav"
 	self.noise1 = "misc/null.wav"
+	setmodel(self, "progs/teleport.mdl")
+	setsize(self, self.mins, self.maxs)
+	setorigin(self, self.origin)
 
 	self.nextthink = self.ltime + 0.1
 	self.think = func_train_find

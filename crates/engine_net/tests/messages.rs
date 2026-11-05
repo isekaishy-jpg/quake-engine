@@ -35,6 +35,7 @@ fn snapshot() -> Snapshot {
             water_level: 2,
             liquid: Liquid::Slime,
             water_jump_time: 1.5,
+            no_backing: 0.25,
             jump_held: true,
             noclip: true,
             dead: true,
@@ -97,6 +98,7 @@ fn messages_survive_the_round_trip() {
             name: "ambience/fire1.wav".to_owned(),
         }),
         ServerMessage::Music(6),
+        ServerMessage::Gravity(100.0),
         ServerMessage::Effect(Effect::Temp {
             kind: 3,
             origin: Vec3::new(1.0, 2.0, 3.0),

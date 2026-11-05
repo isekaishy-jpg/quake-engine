@@ -23,7 +23,16 @@ local SILENT = 2
 found_secrets = 0
 total_secrets = 0
 
--- The trigger was just touched or used. self.enemy should be set to the
+-- A trigger that can be shot gets ready to be shot again.
+function multi_wait(self)
+	if (self.max_health or 0) ~= 0 then
+		self.health = self.max_health
+		self.takedamage = DAMAGE_YES
+		self.solid = SOLID_BBOX
+	end
+end
+
+-- The trigger was just touched, shot or used. self.enemy should be set to the
 -- activator, so it can be held through a delay.
 function multi_trigger(self)
 	if self.nextthink > time() then
@@ -41,11 +50,14 @@ function multi_trigger(self)
 		sound(self, CHAN_VOICE, self.noise, 1, ATTN_NORM)
 	end
 
+	-- Don't trigger again until reset.
+	self.takedamage = DAMAGE_NO
+
 	activator = self.enemy
 	SUB_UseTargets(self)
 
 	if self.wait > 0 then
-		self.think = SUB_Null
+		self.think = multi_wait
 		self.nextthink = time() + self.wait
 	else
 		-- We can't just remove it here, because this is a touch function.
@@ -53,6 +65,11 @@ function multi_trigger(self)
 		self.nextthink = time() + 0.1
 		self.think = SUB_Remove
 	end
+end
+
+function multi_killed(self)
+	self.enemy = damage_attacker
+	multi_trigger(self)
 end
 
 function multi_use(self, _other)
@@ -93,7 +110,17 @@ function trigger_multiple(self)
 
 	InitTrigger(self)
 
-	if bit32.band(self.spawnflags, SPAWNFLAG_NOTOUCH) == 0 then
+	local notouch = bit32.band(self.spawnflags, SPAWNFLAG_NOTOUCH) ~= 0
+	if (self.health or 0) ~= 0 then
+		if notouch then
+			objerror("health and notouch don't make sense")
+		end
+		self.max_health = self.health
+		self.th_die = multi_killed
+		self.takedamage = DAMAGE_YES
+		self.solid = SOLID_BBOX
+		setorigin(self, self.origin)
+	elseif not notouch then
 		self.touch = multi_touch
 	end
 end
@@ -255,6 +282,7 @@ function teleport_touch(self, other)
 	other.angles = mangle
 	if other.classname == "player" then
 		set_view(other, mangle.y, mangle.x)
+		engine.no_backing(rawget(other, "_id"), 0.7)
 		other.velocity = forward * 300
 	end
 	other.flags -= bit32.band(other.flags, FL_ONGROUND)
@@ -309,9 +337,14 @@ function trigger_onlyregistered_touch(self, other)
 		return
 	end
 	self.attack_finished = time() + 2
-	self.message = ""
-	SUB_UseTargets(self)
-	remove(self)
+	if cvar("registered") ~= 0 then
+		self.message = ""
+		SUB_UseTargets(self)
+		remove(self)
+	elseif has_text(self.message) then
+		centerprint(other, self.message)
+		sound(other, CHAN_BODY, "misc/talk.wav", 1, ATTN_NORM)
+	end
 end
 
 function trigger_onlyregistered(self)

@@ -581,6 +581,22 @@ impl Game {
         )?;
         Self::register_walking(lua, simulation, engine)?;
         let sim = Rc::clone(simulation);
+        engine.set(
+            "set_gravity",
+            lua.create_function(move |_, gravity: f32| {
+                sim.borrow_mut().set_gravity(gravity);
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "no_backing",
+            lua.create_function(move |_, (id, seconds): (f64, f32)| {
+                sim.borrow_mut().set_no_backing(id_from(id), seconds);
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
         let rewind_out = Rc::clone(outbox);
         engine.set(
             "rewind",
@@ -908,6 +924,28 @@ impl Game {
             .collect();
         match function {
             Ok(Some(function)) => self.report(function.call::<()>((name, settings, flags))),
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Takes a rule the host changed in play.
+    pub fn set_setting(&self, name: &str, value: f64) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("set_level_setting");
+        match function {
+            Ok(Some(function)) => self.report(function.call::<()>((name, value))),
+            Ok(None) => {}
+            Err(error) => self.report(Err(error)),
+        }
+    }
+
+    /// Runs the game's `StartFrame`, if it has one.
+    pub fn start_frame(&self) {
+        self.call_started.set(Instant::now());
+        let function: mlua::Result<Option<Function>> = self.lua.globals().get("StartFrame");
+        match function {
+            Ok(Some(function)) => self.report(function.call::<()>(())),
             Ok(None) => {}
             Err(error) => self.report(Err(error)),
         }
