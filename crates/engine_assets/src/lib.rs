@@ -10,10 +10,12 @@ mod archive;
 mod directory;
 mod error;
 mod filesystem;
+mod pack;
 mod path;
 
 pub use archive::Archive;
 pub use directory::DirectoryArchive;
 pub use error::AssetError;
 pub use filesystem::FileSystem;
+pub use pack::{PackArchive, write_pack};
 pub use path::normalize_path;

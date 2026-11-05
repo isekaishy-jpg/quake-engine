@@ -13,7 +13,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver};
 use std::time::Duration;
 
-use engine_assets::{AssetError, DirectoryArchive, FileSystem};
+use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Client, Effects, Look, LookScale, ShotClock,
@@ -477,8 +477,12 @@ impl Engine {
         }
         let user_directory = saves::user_directory(&options);
         let _created = std::fs::create_dir_all(&user_directory);
-        for directory in &options.content_directories {
-            filesystem.mount(Box::new(DirectoryArchive::new(directory)));
+        for content in &options.content_directories {
+            if content.is_file() {
+                filesystem.mount(Box::new(PackArchive::open(content)?));
+            } else {
+                filesystem.mount(Box::new(DirectoryArchive::new(content)));
+            }
         }
         filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
         let has_config = user_directory.join(CONFIG_NAME).is_file();
