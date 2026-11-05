@@ -133,6 +133,15 @@ impl Face {
     pub const NO_STYLE: u8 = 255;
 }
 
+/// A map's mega texture, as it's kept in a bake.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MegaImage {
+    /// A face and how far its coordinates moved, three numbers each.
+    pub faces: Vec<i32>,
+    /// Its pixels, in RGBA bytes.
+    pub rgba: Vec<u8>,
+}
+
 /// A group of faces: the world, or a brush model.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Model {
@@ -195,6 +204,8 @@ pub struct Map {
     pub light_edges: Vec<u8>,
     /// Baked lights that move between keyframes.
     pub light_tracks: Vec<LightTrack>,
+    /// The mega texture as baked, if there is one, to keep beside the map.
+    pub mega: Option<MegaImage>,
     /// Faces lit from elsewhere, with how far to lift their light samples, as
     /// stamped faces are, since they sit inside a solid.
     pub light_lifts: Vec<(u32, Vec3)>,

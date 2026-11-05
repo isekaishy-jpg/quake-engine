@@ -5,7 +5,10 @@ use std::sync::Arc;
 use engine_compile::{BakeInput, CompileError, bake_light, compile, placeholder_texture, read_map};
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{BOUNCE_STYLE, CRISP_STYLE, Face, Map, MipLevel, Texture, TextureKind};
+use engine_map::{
+    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, Map, Material, MaterialLayer, MipLevel, PAINT_MASK,
+    Texture, TextureKind,
+};
 
 /// A map baked with placeholder textures, plus `textures` by name.
 fn baked(text: &str, textures: &[Texture]) -> Map {
@@ -148,11 +151,11 @@ fn stained_glass_tints_what_passes_through() {
         height: 1,
         rgba: vec![255, 0, 0, 255],
     };
-    let material = engine_map::Material {
-        alpha: engine_map::AlphaMode::Blend,
+    let material = Material {
+        alpha: AlphaMode::Blend,
         slots: vec![Arc::new(vec![red.clone()])],
         tint: Some(1),
-        ..engine_map::Material::default()
+        ..Material::default()
     };
     let glass = Texture {
         name: "glass".to_owned(),
@@ -304,4 +307,128 @@ fn paint_follows_its_stroke() {
         weights.iter().all(|w| w[0] == 0 && w[2] == 0),
         "only its layer"
     );
+}
+
+/// A material marked `mega` with a painted layer.
+fn mega_texture() -> Texture {
+    let image = |color: [u8; 4]| {
+        vec![MipLevel {
+            width: 4,
+            height: 4,
+            rgba: color.repeat(16),
+        }]
+    };
+    Texture {
+        name: "floor".to_owned(),
+        kind: TextureKind::Solid,
+        mips: image([200, 0, 0, 255]),
+        animation: None,
+        alternate: None,
+        material: Some(Arc::new(Material {
+            mega: true,
+            slots: vec![Arc::new(image([0, 200, 0, 255]))],
+            layers: vec![MaterialLayer {
+                base: 1,
+                mask: PAINT_MASK,
+            }],
+            ..Material::default()
+        })),
+    }
+}
+
+/// A mega surface draws from one image with its paint mixed in, and its light
+/// stays where it was.
+#[test]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "texel coordinates are small and positive"
+)]
+fn a_mega_surface_holds_its_paint() {
+    let text = format!(
+        "{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 500 }}\n\
+         paint {{ layer = 0 radius = 40 points = -256 0 -256 256 0 -256 }}\n"
+    );
+    let map = baked(&text, &[mega_texture()]);
+    let mega = map
+        .textures
+        .iter()
+        .position(|t| t.name == "*mega")
+        .expect("the image");
+    let top = map
+        .faces
+        .iter()
+        .find(|face| {
+            face.texture as usize == mega
+                && map
+                    .face_points(face)
+                    .iter()
+                    .all(|p| (p.z + 256.0).abs() < 0.01)
+        })
+        .expect("the floor moved there");
+    let image = &map.textures[mega].mips[0];
+    let at = |point: Vec3| {
+        let (s, t) = (top.axes[0].project(point), top.axes[1].project(point));
+        let index = (t as usize * image.width as usize + s as usize) * 4;
+        [
+            image.rgba[index],
+            image.rgba[index + 1],
+            image.rgba[index + 2],
+        ]
+    };
+    let painted = at(Vec3::new(0.0, 0.0, -256.0));
+    let bare = at(Vec3::new(0.0, 200.0, -256.0));
+    assert!(painted[1] > 150 && painted[0] < 60, "{painted:?}");
+    assert!(bare[0] > 150 && bare[1] < 60, "{bare:?}");
+    let light = top.light.expect("still lit");
+    let s = top.axes[0].project(Vec3::new(0.0, 0.0, -256.0));
+    assert!(
+        s >= light.texel_origin[0] as f32,
+        "light moved with the coordinates"
+    );
+}
+
+/// What's not marked keeps its own texture.
+#[test]
+fn other_surfaces_stay_out_of_the_mega_texture() {
+    let text = format!("{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 500 }}\n");
+    let map = baked(&text, &[]);
+    assert!(map.mega.is_none());
+    assert!(map.textures.iter().all(|t| t.name != "*mega"));
+}
+
+/// Two coplanar faces meeting along an edge agree there, with no seam in light.
+#[test]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "sample positions are small and positive"
+)]
+fn coplanar_faces_agree_along_their_edge() {
+    let text = "format 1 map
+brush { material = left cuboid = -256 -128 -32 0 128 0 }
+brush { material = right cuboid = 0 -128 -32 256 128 0 }
+entity lamp { type = light origin = 0 0 96 intensity = 400 }
+";
+    let map = baked(text, &[]);
+    let near_edge = |material: &str, x: f32| {
+        let face = map
+            .faces
+            .iter()
+            .find(|face| {
+                let name = &map.textures[face.texture as usize].name;
+                name == material && map.face_points(face).iter().all(|p| p.z.abs() < 0.01)
+            })
+            .expect("a top");
+        let light = face.light.expect("lit");
+        let step = light.texels_per_sample as f32;
+        let column = ((x - light.texel_origin[0] as f32) / step).round() as usize;
+        let row = (light.height / 2) as usize;
+        let at = light.first_sample as usize + row * light.width as usize;
+        map.light[at + column.min(light.width as usize - 1)][0]
+    };
+    let left = near_edge("left", 0.0);
+    let right = near_edge("right", 0.0);
+    assert!(left > 0);
+    assert!(left.abs_diff(right) <= 2, "{left} {right}");
 }

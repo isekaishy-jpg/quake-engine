@@ -8,9 +8,10 @@ use engine_format::{Block, Document, Value, from_binary, to_binary};
 use engine_map::{Face, FaceLight, Map, ProbeGrid};
 
 use crate::error::CompileError;
+use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 4;
+const BAKE_VERSION: u64 = 5;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -59,6 +60,14 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     );
     block.set("edges", Value::Bytes(map.light_edges.clone()));
     block.set("paint", Value::Bytes(map.paint.as_flattened().to_vec()));
+    if let Some(mega) = &map.mega {
+        let mut places = Vec::with_capacity(mega.faces.len() * 4);
+        for number in &mega.faces {
+            places.extend_from_slice(&number.to_le_bytes());
+        }
+        block.set("mega_faces", Value::Bytes(places));
+        block.set("mega", Value::Bytes(mega.rgba.clone()));
+    }
     document.blocks.push(block);
     if let Some(probes) = &map.probes {
         let mut block = Block::new("probes");
@@ -214,6 +223,24 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     map.paint = paint.as_chunks::<4>().0.to_vec();
     for (face, light) in map.faces.iter_mut().zip(faces) {
         face.light = light;
+    }
+    if let (Some(rgba), Some(faces)) = (bytes_of(light, "mega"), bytes_of(light, "mega_faces")) {
+        let numbers: Vec<i32> = faces
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|bytes| i32::from_le_bytes(*bytes))
+            .collect();
+        let places: Vec<MegaPlace> = numbers
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .map(|[face, x, y]| MegaPlace {
+                face: face.cast_unsigned(),
+                shift: [*x, *y],
+            })
+            .collect();
+        apply_mega(map, &places, rgba.to_vec());
     }
     map.probes = document.blocks_of("probes").next().and_then(read_probes);
     map.lit = true;

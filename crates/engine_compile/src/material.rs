@@ -327,6 +327,7 @@ impl<'a> MaterialLibrary<'a> {
             flow_strength: number(block, "flow_strength", 0.1),
             flow_speed: number(block, "flow_speed", 0.5),
             reflect: number(block, "reflect", 0.0),
+            mega: block.get("mega").and_then(Value::flag) == Some(true),
             hotspots: hotspots_of(block),
             scroll: numbers(block, "scroll", [0.0; 2]),
             flipbook: numbers(block, "flipbook", [0.0; 3]),

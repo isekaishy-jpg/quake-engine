@@ -9,6 +9,7 @@ mod error;
 mod geometry;
 mod light;
 mod material;
+mod mega;
 mod mesh;
 mod source;
 mod stamp;

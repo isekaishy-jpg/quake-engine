@@ -8,12 +8,13 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, FaceLight, LightTrack, Map, Material, MipLevel,
-    ProbeGrid, TextureKind,
+    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, FaceLight, LightTrack, Map, Material, MegaImage,
+    MipLevel, ProbeGrid, TextureKind,
 };
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
+use crate::mega::bake_mega;
 use crate::mesh::PlacedMesh;
 use crate::source::{EntitySource, PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
@@ -1319,6 +1320,17 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     map.light_directions = directions;
     map.light_edges = edges;
     map.paint = paint;
+    let strokes = &working.paint;
+    let mega = bake_mega(map, strokes, &|point, strokes| {
+        paint_at(wide(point), strokes)
+    });
+    map.mega = mega.map(|(places, rgba)| {
+        let faces = places
+            .iter()
+            .flat_map(|place| [place.face.cast_signed(), place.shift[0], place.shift[1]])
+            .collect();
+        MegaImage { faces, rgba }
+    });
     map.probes = probes;
     map.lit = true;
     Ok(())

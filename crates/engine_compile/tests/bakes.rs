@@ -51,6 +51,7 @@ fn a_bake_restores_what_was_baked() {
     assert_eq!(map.light_directions, baked.light_directions);
     assert_eq!(map.light_edges, baked.light_edges);
     assert_eq!(map.paint, baked.paint);
+    assert_eq!(map.textures.len(), baked.textures.len());
     assert_eq!(map.probes, baked.probes);
     for (face, baked) in map.faces.iter().zip(&baked.faces) {
         assert_eq!(face.light, baked.light);
