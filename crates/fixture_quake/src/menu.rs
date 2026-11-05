@@ -280,8 +280,10 @@ pub struct Menu {
     address: String,
     /// The password to join with.
     join_password: String,
-    /// Whether the password is being typed, rather than the address.
-    on_join_password: bool,
+    /// The code the host gave out, if any.
+    join_code: String,
+    /// Which of the address, password and code is being typed.
+    join_field: usize,
     /// The password to host with.
     host_password: String,
     /// The rules of a game to host.
@@ -406,20 +408,25 @@ impl Menu {
             "ESCAPE" => self.open(Screen::Multiplayer, host),
             "ENTER" if !self.address.is_empty() => {
                 self.close();
+                let code = if self.join_code.is_empty() {
+                    String::new()
+                } else {
+                    format!(" \"{}\"", self.join_code)
+                };
                 host.run(&format!(
-                    "password \"{}\"; connect \"{}\"",
+                    "password \"{}\"; connect \"{}\"{code}",
                     self.join_password, self.address
                 ));
             }
             "UPARROW" | "DOWNARROW" | "TAB" => {
                 host.play("misc/menu1.wav");
-                self.on_join_password = !self.on_join_password;
+                self.join_field = step(self.join_field, 3, key != "UPARROW");
             }
             _ => {
-                let field = if self.on_join_password {
-                    &mut self.join_password
-                } else {
-                    &mut self.address
+                let field = match self.join_field {
+                    0 => &mut self.address,
+                    1 => &mut self.join_password,
+                    _ => &mut self.join_code,
                 };
                 type_into(field, key);
             }
@@ -764,9 +771,12 @@ impl Menu {
                 area.print(canvas, 64.0, 80.0, "Password, if there is one");
                 area.text_box(canvas, 56.0, 90.0, 26, 1);
                 canvas.text(area.x + 64.0, area.y + 98.0, self.join_password.as_bytes());
-                let row = if self.on_join_password { 98.0 } else { 58.0 };
+                area.print(canvas, 64.0, 120.0, "Host code, if you have it");
+                area.text_box(canvas, 56.0, 130.0, 26, 1);
+                canvas.text(area.x + 64.0, area.y + 138.0, self.join_code.as_bytes());
+                let row = [58.0, 98.0, 138.0][self.join_field];
                 area.print(canvas, 48.0, row, ">");
-                area.print(canvas, 64.0, 120.0, "Enter to connect");
+                area.print(canvas, 64.0, 160.0, "Enter to connect");
             }
             Screen::Host => self.draw_host(canvas, &area),
             Screen::Setup => self.draw_setup(canvas, &area, host),

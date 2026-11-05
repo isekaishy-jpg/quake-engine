@@ -123,6 +123,10 @@ impl Transport for Conditioned {
         self.inner.refusal()
     }
 
+    fn peer_identity(&self) -> Option<[u8; 32]> {
+        self.inner.peer_identity()
+    }
+
     fn is_ready(&self) -> bool {
         self.inner.is_ready()
     }

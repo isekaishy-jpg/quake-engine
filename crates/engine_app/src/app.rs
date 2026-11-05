@@ -40,6 +40,7 @@ use fixture_quake::{
 };
 
 use crate::commands;
+use crate::keys::Keys;
 use crate::models::{DrawLists, Lighting, ModelBank};
 use crate::options::Options;
 use crate::saves;
@@ -249,6 +250,10 @@ pub(crate) struct World {
     pub(crate) net_server: Option<NetServer>,
     /// A connection being opened.
     pub(crate) connecting: Option<Box<dyn Transport>>,
+    /// The address it's to, for remembering who's there.
+    pub(crate) joining: Option<String>,
+    /// Who this player and host are, and who they know.
+    pub(crate) keys: Keys,
     /// How long that's been going, in seconds.
     connect_time: f64,
     /// Who this player is.
@@ -470,6 +475,10 @@ impl World {
                     server.add_seat(Seat::new(transport, SeatInfo::default()));
                 }
             }
+            if net_server.take_identity_changed() {
+                self.keys.host = net_server.identity();
+                self.keys.save_host();
+            }
         }
         if let Some(client) = &mut self.client {
             client.update_network(elapsed);
@@ -502,6 +511,9 @@ impl World {
                 },
             );
         if let Some(level) = level {
+            if let (Some(address), Some(key)) = (self.joining.take(), transport.peer_identity()) {
+                self.keys.remember_host(address, key);
+            }
             if let Err(error) = self.join_level(&level, transport) {
                 console.print(format!("couldn't load {level}: {error}"));
                 self.leave_game();
@@ -1117,6 +1129,7 @@ impl Engine {
         let _created = std::fs::create_dir_all(&user_directory);
         filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
         let has_config = user_directory.join(CONFIG_NAME).is_file();
+        let keys = Keys::load(&user_directory);
         let mut console = Console::new();
         commands::register(&mut console);
         console.register_cvar("show_input", "0", CvarFlags::default());
@@ -1235,6 +1248,8 @@ impl Engine {
                 user_directory,
                 net_server: None,
                 connecting: None,
+                joining: None,
+                keys,
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
                 shot_clock: ShotClock::default(),

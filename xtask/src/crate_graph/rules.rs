@@ -240,6 +240,10 @@ pub const BACKEND_RULES: &[BackendRule] = &[
         owner: "engine_net",
     },
     BackendRule {
+        dependency: "ed25519-dalek",
+        owner: "engine_net",
+    },
+    BackendRule {
         dependency: "qbsp",
         owner: "fixture_quake",
     },

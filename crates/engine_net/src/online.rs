@@ -1,7 +1,8 @@
-//! Connections over the network, through `renet` (proposals 0046 and 0058).
+//! Connections over the network, through `renet` (proposals 0046, 0058 and
+//! 0059).
 
 use std::cell::RefCell;
-use std::collections::VecDeque;
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::fmt;
 use std::io;
 use std::net::{SocketAddr, ToSocketAddrs, UdpSocket};
@@ -15,14 +16,15 @@ use renet_netcode::{
     ClientAuthentication, ConnectToken, NETCODE_KEY_BYTES, NetcodeClientTransport,
     ServerAuthentication, ServerConfig, generate_random_bytes,
 };
-use renetcode::{NETCODE_MAX_PACKET_BYTES, NetcodeServer, ServerResult};
+use renetcode::{NETCODE_MAX_PACKET_BYTES, NETCODE_USER_DATA_BYTES, NetcodeServer, ServerResult};
 
-use crate::handshake::{Asker, Doorman, Heard, is_request};
+use crate::handshake::{Asker, Doorman, Expected, Heard, is_request};
+use crate::identity::{HostIdentity, PlayerIdentity, PublicKey, tidy_code};
 use crate::transport::Transport;
 
 /// Tells this game apart from others on the same port. It changes when the
 /// messages do.
-const PROTOCOL_ID: u64 = 0x5155_414B_4531_0002;
+const PROTOCOL_ID: u64 = 0x5155_414B_4531_0003;
 
 /// The port used when none is given, from `DEFAULTnet_hostport`.
 pub const DEFAULT_PORT: u16 = 26000;
@@ -74,6 +76,63 @@ impl From<io::Error> for NetError {
     }
 }
 
+/// How a game is hosted.
+pub struct HostOptions {
+    /// What joining takes, or nothing for an open game.
+    pub password: String,
+    /// Who the host is.
+    pub identity: HostIdentity,
+    /// Players who aren't let in.
+    pub banned: BTreeSet<PublicKey>,
+}
+
+impl HostOptions {
+    /// A game with `password`, under a new identity.
+    #[must_use]
+    pub fn new(password: &str) -> Self {
+        Self {
+            password: password.to_owned(),
+            identity: HostIdentity::generate(),
+            banned: BTreeSet::new(),
+        }
+    }
+}
+
+/// How a game is joined.
+pub struct JoinOptions {
+    /// The password, if the host wants one.
+    pub password: String,
+    /// Who this player is.
+    pub identity: PlayerIdentity,
+    /// The key this host had last time, if it's been met.
+    pub known_host: Option<PublicKey>,
+    /// The code the host gave out, if any.
+    pub code: Option<String>,
+}
+
+impl JoinOptions {
+    /// A first visit with `password`, under a new identity.
+    #[must_use]
+    pub fn new(password: &str) -> Self {
+        Self {
+            password: password.to_owned(),
+            identity: PlayerIdentity::generate(),
+            known_host: None,
+            code: None,
+        }
+    }
+}
+
+/// `address`, with the default port if it has none.
+#[must_use]
+pub fn full_address(address: &str) -> String {
+    if address.contains(':') {
+        address.to_owned()
+    } else {
+        format!("{address}:{DEFAULT_PORT}")
+    }
+}
+
 /// The two channels, each way.
 fn connection_config() -> ConnectionConfig {
     let channels = vec![
@@ -118,12 +177,22 @@ struct ServerEnd {
     private_key: [u8; NETCODE_KEY_BYTES],
     /// Where this says it's listening, inside each token.
     address: SocketAddr,
+    /// Who each client is, as their token says.
+    people: HashMap<ClientId, PublicKey>,
+    /// Whether the identity has changed since it was last kept.
+    identity_changed: bool,
 }
 
 impl ServerEnd {
-    /// A new connect token, as bytes.
-    fn mint(private_key: &[u8; NETCODE_KEY_BYTES], address: SocketAddr) -> Option<Vec<u8>> {
+    /// A new connect token for `player`, as bytes.
+    fn mint(
+        private_key: &[u8; NETCODE_KEY_BYTES],
+        address: SocketAddr,
+        player: PublicKey,
+    ) -> Option<Vec<u8>> {
         let client_id = u64::from_le_bytes(generate_random_bytes());
+        let mut user_data = [0; NETCODE_USER_DATA_BYTES];
+        user_data[..32].copy_from_slice(&player);
         let token = ConnectToken::generate(
             now(),
             PROTOCOL_ID,
@@ -131,7 +200,7 @@ impl ServerEnd {
             client_id,
             TIMEOUT_SECONDS,
             vec![address],
-            None,
+            Some(&user_data),
             private_key,
         )
         .ok()?;
@@ -149,15 +218,15 @@ impl ServerEnd {
                     let packet = &mut buffer[..length];
                     if is_request(packet) {
                         let (key, address) = (self.private_key, self.address);
-                        let answer = self
-                            .doorman
-                            .answer(packet, from, now(), || Self::mint(&key, address));
+                        let answer = self.doorman.answer(packet, from, now(), |player| {
+                            Self::mint(&key, address, player)
+                        });
                         if let Some(answer) = answer {
                             let _sent = self.socket.send_to(&answer, from);
                         }
                     } else {
                         let result = self.netcode.process_packet(from, packet);
-                        take_result(result, &self.socket, &mut self.server);
+                        take_result(result, &self.socket, &mut self.server, &mut self.people);
                     }
                 }
                 // A client that's gone can show up here on some systems.
@@ -174,11 +243,11 @@ impl ServerEnd {
         self.read_socket();
         for client in self.netcode.clients_id() {
             let result = self.netcode.update_client(client);
-            take_result(result, &self.socket, &mut self.server);
+            take_result(result, &self.socket, &mut self.server, &mut self.people);
         }
         for client in self.server.disconnections_id() {
             let result = self.netcode.disconnect(client);
-            take_result(result, &self.socket, &mut self.server);
+            take_result(result, &self.socket, &mut self.server, &mut self.people);
         }
     }
 
@@ -202,13 +271,18 @@ impl ServerEnd {
     fn disconnect_all(&mut self) {
         for client in self.netcode.clients_id() {
             let result = self.netcode.disconnect(client);
-            take_result(result, &self.socket, &mut self.server);
+            take_result(result, &self.socket, &mut self.server, &mut self.people);
         }
     }
 }
 
 /// Acts on what `netcode` made of something.
-fn take_result(result: ServerResult<'_, '_>, socket: &UdpSocket, server: &mut RenetServer) {
+fn take_result(
+    result: ServerResult<'_, '_>,
+    socket: &UdpSocket,
+    server: &mut RenetServer,
+    people: &mut HashMap<ClientId, PublicKey>,
+) {
     match result {
         ServerResult::None => {}
         ServerResult::PacketToSend { payload, addr } => {
@@ -221,8 +295,11 @@ fn take_result(result: ServerResult<'_, '_>, socket: &UdpSocket, server: &mut Re
             client_id,
             addr,
             payload,
-            ..
+            user_data,
         } => {
+            if let Ok(player) = PublicKey::try_from(&user_data[..32]) {
+                let _new = people.insert(client_id, player);
+            }
             server.add_connection(client_id);
             let _sent = socket.send_to(payload, addr);
         }
@@ -232,6 +309,7 @@ fn take_result(result: ServerResult<'_, '_>, socket: &UdpSocket, server: &mut Re
             payload,
         } => {
             server.remove_connection(client_id);
+            let _gone = people.remove(&client_id);
             if let Some(payload) = payload {
                 let _sent = socket.send_to(payload, addr);
             }
@@ -250,13 +328,13 @@ pub struct NetServer {
 }
 
 impl NetServer {
-    /// Listens on `port`, for up to `max_clients` who know `password`. Anyone
-    /// can join if it's empty. Either way, all traffic is encrypted.
+    /// Listens on `port`, for up to `max_clients`. Anyone can join if there's
+    /// no password. Either way, all traffic is encrypted.
     ///
     /// # Errors
     ///
     /// Returns [`NetError`] if the port can't be used.
-    pub fn bind(port: u16, max_clients: usize, password: &str) -> Result<Self, NetError> {
+    pub fn bind(port: u16, max_clients: usize, options: HostOptions) -> Result<Self, NetError> {
         let socket = UdpSocket::bind(SocketAddr::from(([0, 0, 0, 0], port)))?;
         socket.set_nonblocking(true)?;
         let address = socket.local_addr()?;
@@ -273,9 +351,11 @@ impl NetServer {
                 server: RenetServer::new(connection_config()),
                 netcode: NetcodeServer::new(config),
                 socket,
-                doorman: Doorman::new(password),
+                doorman: Doorman::new(&options.password, options.identity, options.banned),
                 private_key,
                 address,
+                people: HashMap::new(),
+                identity_changed: false,
             })),
             arrived: VecDeque::new(),
             gone: Rc::new(RefCell::new(Vec::new())),
@@ -307,14 +387,51 @@ impl NetServer {
         self.end.borrow_mut().send_packets();
     }
 
-    /// Takes a client that has just connected.
+    /// Takes a client that has just connected. Having got this far, they've
+    /// been told of any change of the host's key.
     pub fn take_arrival(&mut self) -> Option<Box<dyn Transport>> {
         let id = self.arrived.pop_front()?;
+        {
+            let mut end = self.end.borrow_mut();
+            let player = end.people.get(&id).copied();
+            if let Some(player) = player {
+                let changed = end.doorman.identity.note_player(player);
+                end.identity_changed |= changed;
+            }
+        }
         Some(Box::new(ServerSide {
             end: Rc::clone(&self.end),
             gone: Rc::clone(&self.gone),
             id,
         }))
+    }
+
+    /// Who the host is now.
+    #[must_use]
+    pub fn identity(&self) -> HostIdentity {
+        self.end.borrow().doorman.identity.clone()
+    }
+
+    /// Changes the host's key, telling players as they come back.
+    pub fn rotate_identity(&mut self) {
+        let mut end = self.end.borrow_mut();
+        end.doorman.identity.rotate();
+        end.identity_changed = true;
+    }
+
+    /// Whether the identity has changed since this was last asked.
+    pub fn take_identity_changed(&mut self) -> bool {
+        std::mem::take(&mut self.end.borrow_mut().identity_changed)
+    }
+
+    /// Stops `player` from getting in.
+    pub fn ban(&mut self, player: PublicKey) {
+        let _new = self.end.borrow_mut().doorman.banned.insert(player);
+    }
+
+    /// Lets `player` in again.
+    pub fn unban(&mut self, player: &PublicKey) {
+        let _was = self.end.borrow_mut().doorman.banned.remove(player);
     }
 
     /// Tells everyone it's over, and sends that now.
@@ -359,6 +476,10 @@ impl Transport for ServerSide {
     fn is_connected(&self) -> bool {
         !self.gone.borrow().contains(&self.id)
     }
+
+    fn peer_identity(&self) -> Option<[u8; 32]> {
+        self.end.borrow().people.get(&self.id).copied()
+    }
 }
 
 impl Drop for ServerSide {
@@ -390,6 +511,8 @@ enum Stage {
         client: Box<RenetClient>,
         /// The socket and the encryption.
         transport: Box<NetcodeClientTransport>,
+        /// Who the host proved to be.
+        host: PublicKey,
     },
     /// Turned down, and why.
     Refused(String),
@@ -402,19 +525,13 @@ pub struct NetClient {
 }
 
 impl NetClient {
-    /// Starts connecting to `address`, with the default port if it has none,
-    /// and with `password` if the host wants one.
+    /// Starts connecting to `address`, with the default port if it has none.
     ///
     /// # Errors
     ///
     /// Returns [`NetError`] if the address can't be found.
-    pub fn connect(address: &str, password: &str) -> Result<Self, NetError> {
-        let with_port = if address.contains(':') {
-            address.to_owned()
-        } else {
-            format!("{address}:{DEFAULT_PORT}")
-        };
-        let server = with_port
+    pub fn connect(address: &str, options: JoinOptions) -> Result<Self, NetError> {
+        let server = full_address(address)
             .to_socket_addrs()?
             .find(SocketAddr::is_ipv4)
             .ok_or_else(|| NetError(format!("can't find {address}")))?;
@@ -422,7 +539,12 @@ impl NetClient {
         socket.set_nonblocking(true)?;
         Ok(Self {
             stage: Stage::Asking {
-                asker: Box::new(Asker::new(password)),
+                asker: Box::new(Asker::new(Expected {
+                    password: options.password,
+                    identity: options.identity,
+                    known_host: options.known_host,
+                    code: options.code.as_deref().map(tidy_code),
+                })),
                 socket,
                 server,
                 waited: Duration::ZERO,
@@ -433,7 +555,7 @@ impl NetClient {
     }
 
     /// Opens the connection `token` allows, to `server`.
-    fn open(token: ConnectToken, socket: UdpSocket, server: SocketAddr) -> Stage {
+    fn open(token: ConnectToken, host: PublicKey, socket: UdpSocket, server: SocketAddr) -> Stage {
         // The host can't know what it's called from out here.
         let mut connect_token = token;
         connect_token.server_addresses = [None; 32];
@@ -443,6 +565,7 @@ impl NetClient {
             Ok(transport) => Stage::Open {
                 client: Box::new(RenetClient::new(connection_config())),
                 transport: Box::new(transport),
+                host,
             },
             Err(error) => Stage::Refused(error.to_string()),
         }
@@ -468,8 +591,8 @@ impl NetClient {
             }
             match asker.hear(&buffer[..length]) {
                 Heard::Nothing => {}
-                Heard::Token(token) => return Self::open(*token, socket, server),
-                Heard::Refused => return Stage::Refused("wrong password".to_owned()),
+                Heard::Token(token, host) => return Self::open(*token, host, socket, server),
+                Heard::Refused(reason) => return Stage::Refused(reason),
             }
         }
         let (waited, mut since_asking) = (waited + elapsed, since_asking + elapsed);
@@ -530,8 +653,18 @@ impl Transport for NetClient {
         }
     }
 
+    fn peer_identity(&self) -> Option<[u8; 32]> {
+        match &self.stage {
+            Stage::Open { host, .. } => Some(*host),
+            _ => None,
+        }
+    }
+
     fn update(&mut self, elapsed: Duration) {
-        if let Stage::Open { client, transport } = &mut self.stage {
+        if let Stage::Open {
+            client, transport, ..
+        } = &mut self.stage
+        {
             client.update(elapsed);
             let _lost_packets = transport.update(elapsed, client);
             return;
@@ -541,7 +674,9 @@ impl Transport for NetClient {
     }
 
     fn flush(&mut self) {
-        if let Stage::Open { client, transport } = &mut self.stage
+        if let Stage::Open {
+            client, transport, ..
+        } = &mut self.stage
             && client.is_connected()
         {
             let _lost_packets = transport.send_packets(client);

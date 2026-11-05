@@ -508,6 +508,15 @@ fn a_password_can_be_typed_to_join_with() {
 }
 
 #[test]
+fn a_host_code_can_be_typed_to_be_sure_of_the_host() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Join, &mut host);
+    press(&mut menu, &mut host, &["1", "UPARROW", "A", "2", "ENTER"]);
+    assert_eq!(host.commands, ["password \"\"; connect \"1\" \"a2\""]);
+}
+
+#[test]
 fn a_game_can_be_hosted_with_a_password() {
     let mut menu = Menu::new();
     let mut host = Host::default();

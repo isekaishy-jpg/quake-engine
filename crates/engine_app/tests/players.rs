@@ -213,6 +213,25 @@ fn nothing_said_can_pass_for_something_else() {
 }
 
 #[test]
+fn a_guest_can_be_put_out_but_the_host_cant() {
+    let (mut server, mut host, mut guest) = two_players();
+    assert_eq!(server.kick("nobody", "why"), None);
+    assert_eq!(server.kick("player", "why"), None, "the host stays");
+    assert!(server.kick("guest", "out you go").is_some());
+    for _ in 0..36 {
+        server.tick();
+        host.read();
+        guest.read();
+    }
+    assert!(
+        guest.prints.iter().any(|text| text == "out you go"),
+        "{:?}",
+        guest.prints
+    );
+    assert_eq!(server.report().len(), 1, "and they've gone");
+}
+
+#[test]
 fn a_guest_gets_a_player_only_once_ready() {
     let map = room();
     let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));

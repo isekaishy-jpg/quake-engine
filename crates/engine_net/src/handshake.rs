@@ -9,10 +9,14 @@
 //! without the password can't open the token, and can't try passwords against
 //! a recording either: each guess needs a live exchange, and those are limited.
 //!
+//! Each side also signs what was said, with its lasting key (proposal 0059).
+//! Anyone in the middle has to change what's said to read anything, and then
+//! the signatures don't match.
+//!
 //! A request is always bigger than its answer, so this can't be used to aim
 //! more traffic at someone else than they could send themselves.
 
-use std::collections::{HashMap, VecDeque};
+use std::collections::{BTreeSet, HashMap, VecDeque};
 use std::io::Cursor;
 use std::net::{IpAddr, SocketAddr};
 use std::time::Duration;
@@ -22,11 +26,25 @@ use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
 use renet_netcode::ConnectToken;
 use spake2::{Ed25519Group, Identity, Password, Spake2};
 
+use crate::identity::{
+    HostIdentity, LINK_BYTES, Link, PlayerIdentity, PublicKey, SIGNATURE_BYTES, follows, host_code,
+    links_from_wire, verify,
+};
+
 /// What a request starts with.
 const REQUEST_MAGIC: &[u8; 8] = b"QEKEYREQ";
 
 /// What an answer starts with.
 const ANSWER_MAGIC: &[u8; 8] = b"QEKEYANS";
+
+/// What a refusal to someone who's banned starts with.
+const BANNED_MAGIC: &[u8; 8] = b"QEKEYBAN";
+
+/// What a player's signature starts with.
+const PLAYER_CONTEXT: &[u8] = b"quake-engine player handshake";
+
+/// What a host's signature starts with.
+const HOST_CONTEXT: &[u8] = b"quake-engine host handshake";
 
 /// The length of a SPAKE2 message.
 const MESSAGE_BYTES: usize = 33;
@@ -67,6 +85,26 @@ fn cipher(key: &[u8]) -> Option<ChaCha20Poly1305> {
     (key.len() == 32).then(|| ChaCha20Poly1305::new(Key::from_slice(key)))
 }
 
+/// What a host signs: everything said on both sides.
+fn host_message(
+    asked: &[u8; MESSAGE_BYTES],
+    answer: &[u8; MESSAGE_BYTES],
+    player: &PublicKey,
+) -> Vec<u8> {
+    [
+        HOST_CONTEXT,
+        asked.as_slice(),
+        answer.as_slice(),
+        player.as_slice(),
+    ]
+    .concat()
+}
+
+/// What a player signs.
+fn player_message(asked: &[u8; MESSAGE_BYTES]) -> Vec<u8> {
+    [PLAYER_CONTEXT, asked.as_slice()].concat()
+}
+
 /// One exchange a host has answered.
 struct Exchange {
     /// What the client said.
@@ -99,6 +137,10 @@ impl Exchange {
 pub(crate) struct Doorman {
     /// The password, empty for an open game.
     password: String,
+    /// Who this host is.
+    pub(crate) identity: HostIdentity,
+    /// Players who aren't let in.
+    pub(crate) banned: BTreeSet<PublicKey>,
     /// Exchanges still remembered.
     exchanges: HashMap<SocketAddr, Exchange>,
     /// When recent exchanges started.
@@ -113,10 +155,12 @@ pub(crate) fn is_request(packet: &[u8]) -> bool {
 }
 
 impl Doorman {
-    /// A doorman for a game with `password`.
-    pub(crate) fn new(password: &str) -> Self {
+    /// A doorman for a game with `password`, run by `identity`.
+    pub(crate) fn new(password: &str, identity: HostIdentity, banned: BTreeSet<PublicKey>) -> Self {
         Self {
             password: password.to_owned(),
+            identity,
+            banned,
             exchanges: HashMap::new(),
             starts: VecDeque::new(),
             addresses: HashMap::new(),
@@ -145,13 +189,14 @@ impl Doorman {
             && !self.addresses.contains_key(&from.ip())
     }
 
-    /// Starts an exchange with what the client `asked`, sealing the token that
-    /// `mint` makes.
+    /// Starts an exchange with what `player` asked, sealing the token that
+    /// `mint` makes along with who this host is.
     fn start(
         &self,
         asked: [u8; MESSAGE_BYTES],
+        player: PublicKey,
         now: Duration,
-        mint: impl FnOnce() -> Option<Vec<u8>>,
+        mint: impl FnOnce(PublicKey) -> Option<Vec<u8>>,
     ) -> Option<Exchange> {
         let (state, answer) = Spake2::<Ed25519Group>::start_b(
             &Password::new(self.password.as_bytes()),
@@ -159,9 +204,14 @@ impl Doorman {
             &Identity::new(HOST_NAME),
         );
         let key = state.finish(&asked).ok()?;
-        let token = mint()?;
+        let answer: [u8; MESSAGE_BYTES] = answer.try_into().ok()?;
+        let mut sealing = self.identity.public().to_vec();
+        sealing.extend_from_slice(&self.identity.sign(&host_message(&asked, &answer, &player)));
+        sealing.push(u8::try_from(self.identity.link_count()).ok()?);
+        sealing.extend_from_slice(&self.identity.links_to_wire());
+        sealing.extend_from_slice(&mint(player)?);
         let payload = Payload {
-            msg: &token,
+            msg: &sealing,
             aad: REQUEST_MAGIC,
         };
         let sealed = cipher(&key)?
@@ -169,7 +219,7 @@ impl Doorman {
             .ok()?;
         Some(Exchange {
             asked,
-            answer: answer.try_into().ok()?,
+            answer,
             sealed,
             started: now,
         })
@@ -181,7 +231,7 @@ impl Doorman {
         request: &[u8],
         from: SocketAddr,
         now: Duration,
-        mint: impl FnOnce() -> Option<Vec<u8>>,
+        mint: impl FnOnce(PublicKey) -> Option<Vec<u8>>,
     ) -> Option<Vec<u8>> {
         if request.len() != REQUEST_BYTES || !is_request(request) {
             return None;
@@ -202,7 +252,16 @@ impl Doorman {
         // Anything that gets this far has cost a little work, and counts.
         self.starts.push_back(now);
         let _last = self.addresses.insert(from.ip(), now);
-        let exchange = self.start(asked, now, mint)?;
+        let keys = first + MESSAGE_BYTES;
+        let player: PublicKey = request.get(keys..keys + 32)?.try_into().ok()?;
+        let signature = request.get(keys + 32..keys + 32 + SIGNATURE_BYTES)?;
+        if !verify(&player, &player_message(&asked), signature) {
+            return None;
+        }
+        if self.banned.contains(&player) {
+            return Some([BANNED_MAGIC.as_slice(), &asked[..ECHO_BYTES]].concat());
+        }
+        let exchange = self.start(asked, player, now, mint)?;
         let answer = exchange.part(part);
         let _replaced = self.exchanges.insert(from, exchange);
         answer
@@ -213,10 +272,22 @@ impl Doorman {
 pub(crate) enum Heard {
     /// Nothing yet.
     Nothing,
-    /// The token.
-    Token(Box<ConnectToken>),
-    /// The token couldn't be opened, so the passwords differ.
-    Refused,
+    /// The token, from the host with this key.
+    Token(Box<ConnectToken>, PublicKey),
+    /// Turned down, and why.
+    Refused(String),
+}
+
+/// What a client expects of a host, and who it is.
+pub(crate) struct Expected {
+    /// The password.
+    pub(crate) password: String,
+    /// Who this player is.
+    pub(crate) identity: PlayerIdentity,
+    /// The key this host had last time.
+    pub(crate) known_host: Option<PublicKey>,
+    /// The code the host gave out.
+    pub(crate) code: Option<String>,
 }
 
 /// The client's side.
@@ -229,13 +300,15 @@ pub(crate) struct Asker {
     answer: Option<[u8; MESSAGE_BYTES]>,
     /// The parts of the sealed token.
     parts: Vec<Option<Vec<u8>>>,
+    /// What's expected of the host.
+    expected: Expected,
 }
 
 impl Asker {
-    /// Starts asking, with `password`.
-    pub(crate) fn new(password: &str) -> Self {
+    /// Starts asking.
+    pub(crate) fn new(expected: Expected) -> Self {
         let (state, asked) = Spake2::<Ed25519Group>::start_a(
-            &Password::new(password.as_bytes()),
+            &Password::new(expected.password.as_bytes()),
             &Identity::new(CLIENT_NAME),
             &Identity::new(HOST_NAME),
         );
@@ -246,7 +319,24 @@ impl Asker {
             asked: message,
             answer: None,
             parts: Vec::new(),
+            expected,
         }
+    }
+
+    /// Why `host` isn't who it should be, given its `links`, if it isn't.
+    fn doubt(&self, host: &PublicKey, links: &[Link]) -> Option<String> {
+        if let Some(code) = &self.expected.code {
+            // A code from before a change of key is still good.
+            let keys = links.iter().map(|link| &link.old).chain([host]);
+            let vouched = keys
+                .filter(|key| host_code(key) == *code)
+                .any(|key| follows(key, links, host));
+            return (!vouched).then(|| "that isn't the host this code belongs to".to_owned());
+        }
+        let known = self.expected.known_host?;
+        (!follows(&known, links, host)).then(|| {
+            "this host isn't who it was last time: join with its code to be sure".to_owned()
+        })
     }
 
     /// A request for `part`.
@@ -255,6 +345,8 @@ impl Asker {
         out.extend_from_slice(REQUEST_MAGIC);
         out.push(part);
         out.extend_from_slice(&self.asked);
+        out.extend_from_slice(&self.expected.identity.public());
+        out.extend_from_slice(&self.expected.identity.sign(&player_message(&self.asked)));
         out.resize(REQUEST_BYTES, 0);
         out
     }
@@ -273,26 +365,56 @@ impl Asker {
 
     /// Opens the token, with everything here.
     fn open(&mut self) -> Heard {
+        let wrong = || Heard::Refused("wrong password".to_owned());
         let (Some(state), Some(answer)) = (self.state.take(), self.answer) else {
-            return Heard::Refused;
+            return wrong();
         };
         let sealed: Vec<u8> = self.parts.iter().flatten().flatten().copied().collect();
         let Some(key) = state.finish(&answer).ok() else {
-            return Heard::Refused;
+            return wrong();
         };
         let payload = Payload {
             msg: &sealed,
             aad: REQUEST_MAGIC,
         };
-        let token = cipher(&key).and_then(|cipher| {
-            let bytes = cipher.decrypt(Nonce::from_slice(&[0; 12]), payload).ok()?;
-            ConnectToken::read(&mut Cursor::new(bytes)).ok()
-        });
-        token.map_or(Heard::Refused, |token| Heard::Token(Box::new(token)))
+        let opened = cipher(&key)
+            .and_then(|cipher| cipher.decrypt(Nonce::from_slice(&[0; 12]), payload).ok());
+        let Some(opened) = opened else {
+            return wrong();
+        };
+        self.check(&opened, &answer)
+            .unwrap_or_else(|| Heard::Refused("the host's answer made no sense".to_owned()))
+    }
+
+    /// Checks who's sent `opened`, in answer to `answer`.
+    fn check(&self, opened: &[u8], answer: &[u8; MESSAGE_BYTES]) -> Option<Heard> {
+        let host: PublicKey = opened.get(..32)?.try_into().ok()?;
+        let signature = opened.get(32..32 + SIGNATURE_BYTES)?;
+        let links_at = 32 + SIGNATURE_BYTES + 1;
+        let count = usize::from(*opened.get(links_at - 1)?);
+        let token_at = links_at + count * LINK_BYTES;
+        let links = links_from_wire(opened.get(links_at..token_at)?, count)?;
+        let player = self.expected.identity.public();
+        if !verify(
+            &host,
+            &host_message(&self.asked, answer, &player),
+            signature,
+        ) {
+            return Some(Heard::Refused("the host's answer isn't its own".to_owned()));
+        }
+        if let Some(doubt) = self.doubt(&host, &links) {
+            return Some(Heard::Refused(doubt));
+        }
+        let token = ConnectToken::read(&mut Cursor::new(opened.get(token_at..)?)).ok()?;
+        Some(Heard::Token(Box::new(token), host))
     }
 
     /// Takes in a `packet` from the host.
     pub(crate) fn hear(&mut self, packet: &[u8]) -> Heard {
+        let refusal = [BANNED_MAGIC.as_slice(), &self.asked[..ECHO_BYTES]].concat();
+        if packet == refusal.as_slice() {
+            return Heard::Refused("you're banned from this server".to_owned());
+        }
         let header = ANSWER_MAGIC.len() + ECHO_BYTES + 2 + MESSAGE_BYTES;
         if packet.len() <= header
             || !packet.starts_with(ANSWER_MAGIC)

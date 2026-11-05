@@ -22,9 +22,9 @@ Status: accepted, 2026-11-04, increment 9. It replaces the unsecured mode of [pr
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** with no password, someone who can change traffic in the middle can pose as the host, because nothing says who the host is. Watching isn't enough: that takes an active attacker. With a password they can't, so it's the safe way to play over the internet. `spake2` is unaudited. A password guessed online costs a second a try.
+- **Tradeoffs:** on its own this says nothing about who the host is, which [proposal 0059](0059-lasting-identities.md) adds. `spake2` is unaudited. A password guessed online costs a second a try.
 - **Acceptance criteria:** the right password gets in, and a wrong one is refused with a reason, in tests and between real processes. A client with no token never gets in. Nothing readable crosses the wire, a changed packet is dropped and sent again, an answer is never bigger than its request, and 40 guesses in under a second get one answer. All of it holds through a lossy link.
-- **Future extension:** a host identity that clients remember, for open games, and tokens from a real backend with the later server work.
+- **Future extension:** tokens from a real backend, with the later server work.
 
 ## Review
 

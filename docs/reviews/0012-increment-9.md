@@ -1,6 +1,6 @@
 # Review 0012: increment 9
 
-Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0058, and the changes to `engine_net`, `engine_sim`, `engine_script`, `engine_server`, `engine_client`, `engine_app`, `fixture_quake` and the tests.
+Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0059, and the changes to `engine_net`, `engine_sim`, `engine_script`, `engine_server`, `engine_client`, `engine_app`, `fixture_quake` and the tests.
 
 | # | Finding | Handling |
 |---|---|---|
@@ -29,6 +29,8 @@ Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0058, and the cha
 | 23 | The first version of the plain text test couldn't tell the new encryption from the old all-zero keys, because both scramble packets | A client with the old zero-key way in is now tested as refused |
 | 24 | Clicking to respawn would have shown a shot | The dead and the intermission show none |
 | 25 | A stale expected sound would have silenced a later real one | Expected sounds give up after a round trip |
+| 26 | The human asked why players and servers had no lasting identity of their own, which left open games unable to tell a host from an impostor | Both now have key pairs, with the human's design for changing them |
+| 27 | Someone kicked never heard why, because their seat went before the message left | They have a quarter of a second to hear it |
 
 ## Verified
 
@@ -57,6 +59,8 @@ These ran against the Steam data, read in place. Captures used throwaway user fo
 | Nails at your feet with blast prediction on | 0.0 units, so no false knock |
 | Passwords between two real processes | The right one joined, chatted and changed level. A wrong one was told `wrong password` |
 | Secure connections over real sockets | No token, no way in. Nothing readable on the wire, spoiled packets dropped and sent again, answers never bigger than requests, 40 fast guesses got one answer |
+| Identities over real sockets | A different host at a known address and a wrong code are refused, a changed request gets no answer, a forged link counts for nothing, and a link stays until the last known player has it |
+| The life of an identity, in real processes with real files | Same code after a restart, a rotated key followed, a different host refused, `forget_host` clearing that, and a ban lasting through a restart and lifted by `unban` |
 
 | Ping (ms) | Jitter (ms) | Loss | Hits with rewind | Hits without |
 |---|---|---|---|---|
@@ -83,7 +87,8 @@ A running target gives about 50 ms of give before a shot misses by a box, which 
 
 ## Limitations
 
-- With no password, someone who can change traffic in the middle could pose as the host. `sv_password` closes that, and keeps strangers out.
+- A first visit to a host with no code is taken on trust.
+- A banned player can get back in by deleting their key. A password keeps a game private.
 - `spake2` has never had an independent audit.
 - The fair play zone's numbers, projectile easing and the rest of this are starting points until real players try them.
 - Other players' rockets aren't predicted, since nothing says when they were fired.

@@ -22,6 +22,11 @@ pub trait Transport {
         true
     }
 
+    /// Who's at the other end, once that's been proved.
+    fn peer_identity(&self) -> Option<[u8; 32]> {
+        None
+    }
+
     /// Why the other end turned this connection down, if it did.
     fn refusal(&self) -> Option<String> {
         None

@@ -3,6 +3,7 @@
 
 mod app;
 mod commands;
+mod keys;
 mod models;
 mod options;
 mod saves;

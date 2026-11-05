@@ -10,6 +10,7 @@ publish.workspace = true
 [dependencies]
 engine_core.workspace = true
 chacha20poly1305.workspace = true
+ed25519-dalek.workspace = true
 renet.workspace = true
 renet_netcode.workspace = true
 renetcode.workspace = true

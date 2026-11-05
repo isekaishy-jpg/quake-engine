@@ -7,11 +7,15 @@ use std::time::Duration;
 
 use engine_assets::AssetError;
 use engine_console::{Args, Console};
-use engine_net::{Conditioned, Conditions, DEFAULT_PORT, NetClient, NetServer, Transport};
+use engine_net::{
+    Conditioned, Conditions, DEFAULT_PORT, HostOptions, JoinOptions, NetClient, NetServer,
+    Transport, full_address,
+};
 use engine_render::Capture;
 use fixture_quake::Screen;
 
 use crate::app::{MOVE_BINDINGS, World};
+use crate::keys::{short_id, to_hex};
 use crate::saves;
 use crate::screen::MenuActions;
 
@@ -79,6 +83,13 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("host", host);
     console.register("connect", connect);
     console.register("disconnect", disconnect);
+    console.register("hostcode", hostcode);
+    console.register("rotate_host_key", rotate_host_key);
+    console.register("forget_host", forget_host);
+    console.register("kick", kick);
+    console.register("ban", ban);
+    console.register("unban", unban);
+    console.register("bans", bans);
     console.register("addbot", add_bot);
     console.register("removebots", remove_bots);
     console.register("say", say);
@@ -337,7 +348,12 @@ fn host(console: &mut Console<World>, world: &mut World, args: &Args) {
         .cvar("sv_password")
         .map_or("", engine_console::Cvar::value);
     let guarded = !password.is_empty();
-    match NetServer::bind(port, players, password) {
+    let options = HostOptions {
+        password: password.to_owned(),
+        identity: world.keys.host.clone(),
+        banned: world.keys.banned.clone(),
+    };
+    match NetServer::bind(port, players, options) {
         Ok(server) => {
             let entry = if guarded {
                 "with a password"
@@ -345,6 +361,7 @@ fn host(console: &mut Console<World>, world: &mut World, args: &Args) {
                 "open to anyone"
             };
             console.print(format!("hosting on port {}, {entry}", server.port()));
+            console.print(format!("host code {}", world.keys.host.code()));
             world.net_server = Some(server);
         }
         Err(error) => console.print(format!("couldn't host: {error}")),
@@ -381,14 +398,23 @@ fn fake_network(console: &Console<World>) -> Option<Conditions> {
     })
 }
 
-/// `connect address`: joins a game, through the `net_fake` settings if any are
+/// `connect address [code]`: joins a game, checking the host against its code
+/// if it's given, or else against who was there last time, through the `net_fake` settings if any are
 /// set: `net_fake_latency` and `net_fake_jitter` in milliseconds, and
 /// `net_fake_loss` in percent, of what's sent.
 fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
     let password = console
         .cvar("password")
         .map_or("", engine_console::Cvar::value);
-    match NetClient::connect(args.get(1), password) {
+    let address = full_address(args.get(1));
+    let code = args.get(2);
+    let options = JoinOptions {
+        password: password.to_owned(),
+        identity: world.keys.player.clone(),
+        known_host: world.keys.known_host(&address),
+        code: (!code.is_empty()).then(|| code.to_owned()),
+    };
+    match NetClient::connect(args.get(1), options) {
         Ok(client) => {
             console.print(format!("connecting to {}", args.get(1)));
             let transport: Box<dyn Transport> = match fake_network(console) {
@@ -396,6 +422,7 @@ fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
                 None => Box::new(client),
             };
             world.begin_connection(transport);
+            world.joining = Some(address);
         }
         Err(error) => console.print(format!("couldn't connect: {error}")),
     }
@@ -404,6 +431,99 @@ fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
 /// `disconnect`: leaves the game.
 fn disconnect(_console: &mut Console<World>, world: &mut World, _args: &Args) {
     world.leave_game();
+}
+
+/// `hostcode`: shows the code that goes with this host's address.
+fn hostcode(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    console.print(format!("host code {}", world.keys.host.code()));
+}
+
+/// `rotate_host_key`: changes this host's key. Players who know the old one are
+/// told as they come back, and until they all have been, the old one still
+/// leads to the new.
+fn rotate_host_key(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if let Some(net_server) = &mut world.net_server {
+        net_server.rotate_identity();
+        world.keys.host = net_server.identity();
+    } else {
+        world.keys.host.rotate();
+    }
+    world.keys.save_host();
+    console.print(format!(
+        "new host code {}, with {} change to pass on",
+        world.keys.host.code(),
+        world.keys.host.link_count()
+    ));
+}
+
+/// `forget_host address`: forgets who's at an address, for when it's someone
+/// else's now.
+fn forget_host(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let address = full_address(args.get(1));
+    if world.keys.forget_host(&address) {
+        console.print(format!("forgot {address}"));
+    } else {
+        console.print(format!("{address} isn't known"));
+    }
+}
+
+/// `kick name`: puts a guest out.
+fn kick(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let found = world
+        .server
+        .as_mut()
+        .and_then(|server| server.kick(args.get(1), "you've been kicked"));
+    if found.is_none() {
+        console.print(format!("nobody here is called {}", args.get(1)));
+    }
+}
+
+/// `ban name`: puts a guest out, and keeps them out.
+fn ban(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let found = world
+        .server
+        .as_mut()
+        .and_then(|server| server.kick(args.get(1), "you've been banned"));
+    match found {
+        Some(Some(key)) => {
+            let _new = world.keys.banned.insert(key);
+            world.keys.save_bans();
+            if let Some(net_server) = &mut world.net_server {
+                net_server.ban(key);
+            }
+            console.print(format!("banned {}: {}", args.get(1), short_id(&key)));
+        }
+        Some(None) => console.print("kicked them, but they've no key to ban"),
+        None => console.print(format!("nobody here is called {}", args.get(1))),
+    }
+}
+
+/// `unban id`: lets someone back, by the start of their key.
+fn unban(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let found = world
+        .keys
+        .banned
+        .iter()
+        .find(|key| !args.get(1).is_empty() && to_hex(key).starts_with(args.get(1)))
+        .copied();
+    if let Some(key) = found {
+        let _was = world.keys.banned.remove(&key);
+        world.keys.save_bans();
+        if let Some(net_server) = &mut world.net_server {
+            net_server.unban(&key);
+        }
+        console.print(format!("unbanned {}", short_id(&key)));
+    } else {
+        console.print(format!("nobody banned starts {}", args.get(1)));
+    }
+}
+
+/// `bans`: lists who's banned.
+fn bans(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    for key in &world.keys.banned {
+        console.print(short_id(key));
+    }
+    console.print(format!("{} banned", world.keys.banned.len()));
 }
 
 /// `say text`: tells everyone.

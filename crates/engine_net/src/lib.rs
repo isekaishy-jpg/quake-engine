@@ -8,12 +8,16 @@
 mod conditioned;
 mod delta;
 mod handshake;
+mod identity;
 mod message;
 mod online;
 mod transport;
 
 pub use conditioned::{Conditioned, Conditions};
 pub use delta::{apply_delta, delta_baseline, delta_from};
+pub use identity::{HostIdentity, PlayerIdentity, PublicKey, host_code, tidy_code};
 pub use message::{ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot};
-pub use online::{DEFAULT_PORT, NetClient, NetError, NetServer};
+pub use online::{
+    DEFAULT_PORT, HostOptions, JoinOptions, NetClient, NetError, NetServer, full_address,
+};
 pub use transport::{Loopback, Transport, loopback};

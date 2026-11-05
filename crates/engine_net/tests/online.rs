@@ -4,7 +4,10 @@ use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use engine_net::{NetClient, NetServer, Transport};
+use engine_net::{
+    HostIdentity, HostOptions, JoinOptions, NetClient, NetServer, PlayerIdentity, PublicKey,
+    Transport, host_code,
+};
 use renet::{ConnectionConfig, RenetClient};
 use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 
@@ -147,26 +150,27 @@ fn connect(
 /// runs until it's connected or refused. Returns the client, and whether the
 /// server ever saw it.
 fn try_password(wanted: &str, given: &str) -> (NetClient, bool) {
-    let mut server = NetServer::bind(0, 4, wanted).expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new(wanted)).expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address, given).expect("an address");
-    let mut arrived = false;
+    let mut client = NetClient::connect(&address, JoinOptions::new(given)).expect("an address");
+    // Letting go of this end would put the client out again.
+    let mut seat = None;
     run_until(
         &mut server,
         &mut client,
         &mut None,
         &mut |server, client| {
-            arrived |= server.take_arrival().is_some();
-            (arrived && client.is_ready()) || !client.is_connected()
+            seat = seat.take().or_else(|| server.take_arrival());
+            (seat.is_some() && client.is_ready()) || !client.is_connected()
         },
     );
-    (client, arrived)
+    (client, seat.is_some())
 }
 
 #[test]
 fn the_right_password_gets_in() {
     let (client, arrived) = try_password("rocket", "rocket");
-    assert!(client.is_ready() && arrived);
+    assert!(client.is_ready() && arrived, "{:?}", client.refusal());
     assert_eq!(client.refusal(), None);
 }
 
@@ -188,11 +192,11 @@ fn a_password_isnt_needed_in_an_open_game_but_has_to_match() {
 
 #[test]
 fn nobody_watching_can_read_what_goes_past() {
-    let mut server = NetServer::bind(0, 4, "rocket").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("rocket")).expect("a port");
     let backend = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let mut proxy = Some(LossyProxy::new(backend, u32::MAX));
     let address = proxy.as_ref().expect("a proxy").address().to_string();
-    let mut client = NetClient::connect(&address, "rocket").expect("an address");
+    let mut client = NetClient::connect(&address, JoinOptions::new("rocket")).expect("an address");
     let mut seat = connect(&mut server, &mut client, &mut proxy);
     let (down, up) = (
         b"a secret going down".to_vec(),
@@ -229,11 +233,11 @@ fn nobody_watching_can_read_what_goes_past() {
 #[test]
 fn a_client_with_no_token_never_gets_in() {
     // The old way in, whose keys are all zeros, so anyone could read it.
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let server_addr = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let socket = UdpSocket::bind("127.0.0.1:0").expect("a socket");
     let authentication = ClientAuthentication::Unsecure {
-        protocol_id: 0x5155_414B_4531_0002,
+        protocol_id: 0x5155_414B_4531_0003,
         client_id: 1,
         server_addr,
         user_data: None,
@@ -258,12 +262,12 @@ fn a_client_with_no_token_never_gets_in() {
 
 #[test]
 fn a_spoiled_packet_is_dropped_and_sent_again() {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let backend = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let lossy = LossyProxy::new(backend, u32::MAX);
     let address = lossy.address().to_string();
     let mut proxy = Some(lossy);
-    let mut client = NetClient::connect(&address, "").expect("an address");
+    let mut client = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let mut seat = connect(&mut server, &mut client, &mut proxy);
     if let Some(proxy) = &mut proxy {
         proxy.spoil_every = Some(3);
@@ -285,9 +289,28 @@ fn a_spoiled_packet_is_dropped_and_sent_again() {
     assert_eq!(heard, expected, "all of it, unchanged, in order");
 }
 
-/// How many answers `requests` get, and the largest of them.
+/// How many answers `requests` get from a new open game, and the largest.
 fn answers_to(requests: &[Vec<u8>]) -> (usize, usize) {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    answers_with(HostOptions::new(""), requests)
+}
+
+/// A real client's first packet.
+fn first_request() -> Vec<u8> {
+    let server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
+    let backend = SocketAddr::from(([127, 0, 0, 1], server.port()));
+    let mut lossy = LossyProxy::new(backend, u32::MAX);
+    let address = lossy.address().to_string();
+    let mut client = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
+    client.update(TICK);
+    std::thread::sleep(Duration::from_millis(5));
+    lossy.pump();
+    lossy.seen.first().expect("a request").clone()
+}
+
+/// How many answers `requests` get from a game run by `options`, and the
+/// largest of them.
+fn answers_with(options: HostOptions, requests: &[Vec<u8>]) -> (usize, usize) {
+    let mut server = NetServer::bind(0, 4, options).expect("a port");
     let target = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let socket = UdpSocket::bind("127.0.0.1:0").expect("a socket");
     socket.set_nonblocking(true).expect("nonblocking");
@@ -310,16 +333,7 @@ fn answers_to(requests: &[Vec<u8>]) -> (usize, usize) {
 
 #[test]
 fn an_answer_is_never_bigger_than_its_request() {
-    // A valid curve point, taken from a real client's first packet.
-    let proxy_server = NetServer::bind(0, 4, "").expect("a port");
-    let backend = SocketAddr::from(([127, 0, 0, 1], proxy_server.port()));
-    let mut lossy = LossyProxy::new(backend, u32::MAX);
-    let address = lossy.address().to_string();
-    let mut client = NetClient::connect(&address, "").expect("an address");
-    client.update(TICK);
-    std::thread::sleep(Duration::from_millis(5));
-    lossy.pump();
-    let real = lossy.seen.first().expect("a request").clone();
+    let real = first_request();
     assert_eq!(real.len(), 1200);
     let (count, largest) = answers_to(std::slice::from_ref(&real));
     assert_eq!(count, 1, "a request of the right size is answered");
@@ -331,7 +345,7 @@ fn an_answer_is_never_bigger_than_its_request() {
 #[test]
 fn someone_guessing_passwords_is_slowed_right_down() {
     // Different messages from one address, as fast as they can be sent.
-    let mut server = NetServer::bind(0, 4, "rocket").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("rocket")).expect("a port");
     let port = server.port();
     let started = Instant::now();
     let mut answered = 0;
@@ -340,7 +354,8 @@ fn someone_guessing_passwords_is_slowed_right_down() {
     for _ in 0..40 {
         let mut lossy = LossyProxy::new(SocketAddr::from(([127, 0, 0, 1], port)), u32::MAX);
         let address = lossy.address().to_string();
-        let mut client = NetClient::connect(&address, "guess").expect("an address");
+        let mut client =
+            NetClient::connect(&address, JoinOptions::new("guess")).expect("an address");
         client.update(TICK);
         std::thread::sleep(Duration::from_millis(1));
         lossy.pump();
@@ -358,11 +373,223 @@ fn someone_guessing_passwords_is_slowed_right_down() {
     assert!(answered <= 1, "one guess a second, not {answered}");
 }
 
+/// How a join with `join` went against a game run by `host`: the identity of
+/// the host, or why not, with the server for looking at afterwards.
+fn try_join(host: HostOptions, join: JoinOptions) -> (Result<PublicKey, String>, NetServer) {
+    let mut server = NetServer::bind(0, 4, host).expect("a port");
+    let address = format!("127.0.0.1:{}", server.port());
+    let mut client = NetClient::connect(&address, join).expect("an address");
+    let mut arrival = None;
+    run_until(
+        &mut server,
+        &mut client,
+        &mut None,
+        &mut |server, client| {
+            arrival = arrival.take().or_else(|| server.take_arrival());
+            (arrival.is_some() && client.is_ready()) || !client.is_connected()
+        },
+    );
+    let outcome = client
+        .peer_identity()
+        .filter(|_| client.is_ready())
+        .ok_or_else(|| client.refusal().unwrap_or_default());
+    (outcome, server)
+}
+
+/// Options for a game run by `identity`.
+fn hosted_by(identity: &HostIdentity) -> HostOptions {
+    HostOptions {
+        identity: identity.clone(),
+        ..HostOptions::new("")
+    }
+}
+
+/// Options for someone who remembers `key`.
+fn remembering(key: PublicKey) -> JoinOptions {
+    JoinOptions {
+        known_host: Some(key),
+        ..JoinOptions::new("")
+    }
+}
+
+/// Options for someone who's been given `code`.
+fn with_code(code: &str) -> JoinOptions {
+    JoinOptions {
+        code: Some(code.to_owned()),
+        ..JoinOptions::new("")
+    }
+}
+
+#[test]
+fn a_first_visit_learns_who_the_host_is() {
+    let host = HostIdentity::generate();
+    let (outcome, _server) = try_join(hosted_by(&host), JoinOptions::new(""));
+    assert_eq!(outcome, Ok(host.public()));
+}
+
+#[test]
+fn someone_else_at_the_hosts_address_is_refused() {
+    let (real, impostor) = (HostIdentity::generate(), HostIdentity::generate());
+    let (control, _server) = try_join(hosted_by(&real), remembering(real.public()));
+    assert_eq!(control, Ok(real.public()), "the real host is fine");
+    let (outcome, _server) = try_join(hosted_by(&impostor), remembering(real.public()));
+    let reason = outcome.expect_err("it mustn't get through");
+    assert!(reason.contains("isn't who it was"), "{reason}");
+}
+
+#[test]
+fn a_host_code_is_checked_on_a_first_visit() {
+    let (real, impostor) = (HostIdentity::generate(), HostIdentity::generate());
+    let (control, _server) = try_join(hosted_by(&real), with_code(&real.code()));
+    assert_eq!(control, Ok(real.public()));
+    let (outcome, _server) = try_join(hosted_by(&impostor), with_code(&real.code()));
+    let reason = outcome.expect_err("it mustn't get through");
+    assert!(reason.contains("code"), "{reason}");
+}
+
+#[test]
+fn a_code_can_be_typed_any_old_way() {
+    let host = HostIdentity::generate();
+    let typed = host.code().replace('-', "").to_lowercase();
+    let (outcome, _server) = try_join(hosted_by(&host), with_code(&typed));
+    assert_eq!(outcome, Ok(host.public()));
+}
+
+#[test]
+fn a_changed_key_is_followed_through_every_link() {
+    let mut host = HostIdentity::generate();
+    let player = PlayerIdentity::generate();
+    assert!(host.note_player(player.public()));
+    let first = host.public();
+    host.rotate();
+    host.rotate();
+    assert_ne!(host.public(), first);
+    assert_eq!(host.link_count(), 2);
+    let (outcome, _server) = try_join(hosted_by(&host), remembering(first));
+    assert_eq!(outcome, Ok(host.public()));
+    let (outcome, _server) = try_join(hosted_by(&host), with_code(&host_code(&first)));
+    assert_eq!(outcome, Ok(host.public()), "an old code still works");
+}
+
+#[test]
+fn a_link_that_wasnt_signed_by_the_old_key_counts_for_nothing() {
+    let mut host = HostIdentity::generate();
+    assert!(host.note_player(PlayerIdentity::generate().public()));
+    let first = host.public();
+    host.rotate();
+    // The last of the link's signature, ahead of who's waiting for it: a
+    // magic, the key, the players and their count, the link count, two keys.
+    let mut bytes = host.encode();
+    let signature = 8 + 32 + (4 + 32) + 4 + 32 + 32;
+    bytes[signature] ^= 1;
+    let forged = HostIdentity::decode(&bytes).expect("it still reads");
+    let (outcome, _server) = try_join(hosted_by(&forged), remembering(first));
+    let reason = outcome.expect_err("it mustn't get through");
+    assert!(reason.contains("isn't who it was"), "{reason}");
+}
+
+#[test]
+fn links_go_out_until_nobody_is_left_to_tell() {
+    let mut host = HostIdentity::generate();
+    let (one, two) = (PlayerIdentity::generate(), PlayerIdentity::generate());
+    assert!(host.note_player(one.public()));
+    assert!(host.note_player(two.public()));
+    let first = host.public();
+    host.rotate();
+    assert_eq!(host.link_count(), 1);
+    let join = |identity: &PlayerIdentity| JoinOptions {
+        identity: identity.clone(),
+        known_host: Some(first),
+        ..JoinOptions::new("")
+    };
+    let (outcome, server) = try_join(hosted_by(&host), join(&one));
+    assert_eq!(outcome, Ok(host.public()));
+    let host = server.identity();
+    assert_eq!(host.link_count(), 1, "someone hasn't heard yet");
+    let (outcome, server) = try_join(hosted_by(&host), join(&two));
+    assert_eq!(outcome, Ok(host.public()));
+    let host = server.identity();
+    assert_eq!(host.link_count(), 0, "and now everyone has");
+    let (outcome, _server) = try_join(hosted_by(&host), remembering(first));
+    assert!(outcome.is_err(), "so the old key leads nowhere");
+}
+
+#[test]
+fn a_rotation_with_nobody_to_tell_needs_no_link() {
+    let mut host = HostIdentity::generate();
+    host.rotate();
+    assert_eq!(host.link_count(), 0);
+}
+
+#[test]
+fn an_identity_survives_being_kept() {
+    let mut host = HostIdentity::generate();
+    assert!(host.note_player(PlayerIdentity::generate().public()));
+    host.rotate();
+    let kept = HostIdentity::decode(&host.encode()).expect("it reads");
+    assert_eq!(kept.public(), host.public());
+    assert_eq!(kept.link_count(), 1);
+    assert_eq!(kept.encode(), host.encode());
+    assert!(HostIdentity::decode(&host.encode()[..40]).is_none());
+    let player = PlayerIdentity::generate();
+    let again = PlayerIdentity::from_secret(&player.secret());
+    assert_eq!(again.public(), player.public());
+}
+
+#[test]
+fn the_host_knows_who_a_player_is() {
+    let player = PlayerIdentity::generate();
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
+    let address = format!("127.0.0.1:{}", server.port());
+    let join = JoinOptions {
+        identity: player.clone(),
+        ..JoinOptions::new("")
+    };
+    let mut client = NetClient::connect(&address, join).expect("an address");
+    let seat = connect(&mut server, &mut client, &mut None);
+    assert_eq!(seat.peer_identity(), Some(player.public()));
+}
+
+#[test]
+fn someone_banned_is_told_so_and_can_be_let_back() {
+    let player = PlayerIdentity::generate();
+    let join = || JoinOptions {
+        identity: player.clone(),
+        ..JoinOptions::new("")
+    };
+    let mut options = HostOptions::new("");
+    let _new = options.banned.insert(player.public());
+    let (outcome, _server) = try_join(options, join());
+    let reason = outcome.expect_err("they're banned");
+    assert!(reason.contains("banned"), "{reason}");
+    let (control, _server) = try_join(HostOptions::new(""), join());
+    assert!(control.is_ok(), "and that's why");
+}
+
+#[test]
+fn nobody_can_change_a_request_on_its_way() {
+    let host = HostOptions::new("");
+    let real = first_request();
+    assert_eq!(
+        answers_with(host, std::slice::from_ref(&real)).0,
+        1,
+        "a real one is fine"
+    );
+    // The exchange's message, which someone in the middle would have to swap.
+    let mut swapped = real.clone();
+    swapped[20] ^= 1;
+    assert_eq!(answers_to(&[swapped]).0, 0, "its signature no longer fits");
+    // A key of their own, with the signature left as it was.
+    let mut other_player = real;
+    other_player[50] ^= 1;
+    assert_eq!(answers_to(&[other_player]).0, 0);
+}
+
 #[test]
 fn messages_cross_real_sockets_both_ways() {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address, "").expect("an address");
+    let mut client = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let mut none = None;
     let mut seat = connect(&mut server, &mut client, &mut none);
     seat.send(vec![1, 2, 3]);
@@ -386,9 +613,9 @@ fn messages_cross_real_sockets_both_ways() {
 
 #[test]
 fn a_large_message_arrives_whole() {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address, "").expect("an address");
+    let mut client = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let mut none = None;
     let mut seat = connect(&mut server, &mut client, &mut none);
     let big: Vec<u8> = (0..60_000_u32)
@@ -411,10 +638,11 @@ fn a_large_message_arrives_whole() {
 /// Sends 100 reliable messages through a proxy losing one packet in
 /// `drop_every`, each way, and checks they all arrive in order.
 fn reliable_messages_survive(drop_every: u32) {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let target = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let proxy = LossyProxy::new(target, drop_every);
-    let mut client = NetClient::connect(&proxy.address().to_string(), "").expect("an address");
+    let mut client =
+        NetClient::connect(&proxy.address().to_string(), JoinOptions::new("")).expect("an address");
     let mut proxy = Some(proxy);
     let mut seat = connect(&mut server, &mut client, &mut proxy);
     for number in 0..100_u8 {
@@ -454,9 +682,9 @@ fn reliable_messages_still_arrive_on_a_very_bad_connection() {
 
 #[test]
 fn a_client_going_away_is_noticed() {
-    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let mut server = NetServer::bind(0, 4, HostOptions::new("")).expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address, "").expect("an address");
+    let mut client = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let mut none = None;
     let seat = connect(&mut server, &mut client, &mut none);
     assert!(seat.is_connected());
@@ -471,12 +699,12 @@ fn a_client_going_away_is_noticed() {
 
 #[test]
 fn a_server_full_of_clients_turns_more_away() {
-    let mut server = NetServer::bind(0, 1, "").expect("a port");
+    let mut server = NetServer::bind(0, 1, HostOptions::new("")).expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut first = NetClient::connect(&address, "").expect("an address");
+    let mut first = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let mut none = None;
     let _seat = connect(&mut server, &mut first, &mut none);
-    let mut second = NetClient::connect(&address, "").expect("an address");
+    let mut second = NetClient::connect(&address, JoinOptions::new("")).expect("an address");
     let started = Instant::now();
     while second.is_connected() {
         assert!(started.elapsed() < PATIENCE, "it was never refused");
@@ -493,5 +721,5 @@ fn a_server_full_of_clients_turns_more_away() {
 
 #[test]
 fn a_bad_address_is_an_error() {
-    assert!(NetClient::connect("not a real host name!", "").is_err());
+    assert!(NetClient::connect("not a real host name!", JoinOptions::new("")).is_err());
 }

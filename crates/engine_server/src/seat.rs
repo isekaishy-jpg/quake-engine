@@ -21,6 +21,9 @@ const SNAPSHOT_HISTORY: usize = 64;
 /// How much each sample moves a measured ping, so short spikes don't count.
 const PING_SMOOTHING: f64 = 0.02;
 
+/// How long someone put out gets to hear why, in seconds.
+const KICK_SECONDS: f64 = 0.25;
+
 /// How many answers a level's first measure of ping takes. The lowest counts,
 /// since a client that's just finished loading can stall for a while, and
 /// that's no measure of its network.
@@ -55,6 +58,10 @@ pub struct Seat {
     pub(crate) player: Option<EntityId>,
     /// Who they are.
     pub(crate) info: SeatInfo,
+    /// The key they've proved they hold, if they came over the network.
+    pub(crate) identity: Option<[u8; 32]>,
+    /// Seconds left before they're put out, so they get to hear why.
+    kicked: Option<f64>,
     /// What they carry to the next level.
     pub(crate) parms: Option<Vec<f64>>,
     /// How many model names they've heard.
@@ -98,10 +105,13 @@ impl Seat {
     /// Someone reached by `transport`.
     #[must_use]
     pub fn new(transport: Box<dyn Transport>, info: SeatInfo) -> Self {
+        let identity = transport.peer_identity();
         Self {
             transport,
             player: None,
             info,
+            identity,
+            kicked: None,
             parms: None,
             shapes_told: 0,
             allowance: MAX_ALLOWANCE,
@@ -208,6 +218,11 @@ impl Seat {
         commands
     }
 
+    /// Puts them out, once they've had time to hear why.
+    pub(crate) fn kick(&mut self) {
+        self.kicked = self.kicked.or(Some(KICK_SECONDS));
+    }
+
     /// Whether their ping has been measured yet.
     pub(crate) fn has_ping(&self) -> bool {
         self.ping.is_some()
@@ -275,6 +290,9 @@ impl Seat {
     )]
     pub(crate) fn add_allowance(&mut self, seconds: f64) {
         self.allowance = (self.allowance + seconds as f32).min(MAX_ALLOWANCE);
+        if let Some(left) = &mut self.kicked {
+            *left -= seconds;
+        }
         self.quiet += seconds;
         self.clock += seconds;
         self.transport.update(Duration::from_secs_f64(seconds));
@@ -294,6 +312,8 @@ impl Seat {
 
     /// Whether they've left, or gone quiet for too long.
     pub(crate) fn is_lost(&self) -> bool {
-        !self.transport.is_connected() || self.quiet > TIMEOUT_SECONDS
+        self.kicked.is_some_and(|left| left <= 0.0)
+            || !self.transport.is_connected()
+            || self.quiet > TIMEOUT_SECONDS
     }
 }

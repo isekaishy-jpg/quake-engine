@@ -128,6 +128,8 @@ pub struct SeatReport {
     pub compensated: f64,
     /// Whether they're over the ceiling, and get no help.
     pub over_ceiling: bool,
+    /// The key they've proved they hold, if they came over the network.
+    pub identity: Option<[u8; 32]>,
 }
 
 /// How fast added delay and compensation move towards their targets, in
@@ -490,6 +492,7 @@ impl Server {
             .iter()
             .map(|seat| SeatReport {
                 name: seat.info.name.clone(),
+                identity: seat.identity,
                 ping: seat.ping(),
                 added: seat.added,
                 compensated: seat.compensated,
@@ -517,6 +520,19 @@ impl Server {
         self.game
             .connect_player(player, &self.level.name, saved.as_deref(), &name);
         self.retell(index);
+    }
+
+    /// Puts out the guest called `name`, telling them why. Says whether anyone
+    /// was found, and who they've proved to be if they have.
+    pub fn kick(&mut self, name: &str, why: &str) -> Option<Option<[u8; 32]>> {
+        let seat = self
+            .seats
+            .iter_mut()
+            .skip(1)
+            .find(|seat| seat.info.name == name)?;
+        seat.send(&ServerMessage::Print(why.to_owned()));
+        seat.kick();
+        Some(seat.identity)
     }
 
     /// Lets go of anyone who's left, or gone quiet.
@@ -805,8 +821,12 @@ impl Server {
             } else {
                 format!("{:.0} ms made up for", seat.compensated)
             };
+            let id = seat.identity.map_or_else(String::new, |key| {
+                let start: String = key[..4].iter().map(|byte| format!("{byte:02x}")).collect();
+                format!(" [{start}]")
+            });
             lines.push(format!(
-                "{}: {:.0} ms, {:.0} ms added, {help}",
+                "{}{id}: {:.0} ms, {:.0} ms added, {help}",
                 seat.name, seat.ping, seat.added
             ));
         }
