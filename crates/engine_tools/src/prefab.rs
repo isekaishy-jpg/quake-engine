@@ -28,7 +28,8 @@ pub fn prefab_names(content: &Path) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            name.strip_suffix(".luau").map(str::to_owned)
+            let stem = name.strip_suffix(".luau")?;
+            (!stem.starts_with('_')).then(|| stem.to_owned())
         })
         .collect();
     names.sort();
@@ -96,6 +97,15 @@ fn script_from_json(json: &Json) -> ScriptValue {
     }
 }
 
+/// `source` with the shapes prefabs share in `prefabs/_kit.luau` in front of it,
+/// as `kit`, if there are any (proposal 0097).
+fn with_kit(content: &Path, source: String) -> String {
+    match std::fs::read_to_string(content.join("prefabs").join("_kit.luau")) {
+        Ok(kit) => format!("local kit = (function()\n{kit}\nend)()\n{source}"),
+        Err(_) => source,
+    }
+}
+
 /// Runs the prefab `name` with `params` as JSON, placing it at `at`.
 ///
 /// # Errors
@@ -111,8 +121,10 @@ pub fn build_prefab(
         return Err(format!("bad prefab name {name}"));
     }
     let path = content.join("prefabs").join(format!("{name}.luau"));
-    let source =
-        std::fs::read_to_string(&path).map_err(|error| format!("prefab {name}: {error}"))?;
+    let source = with_kit(
+        content,
+        std::fs::read_to_string(&path).map_err(|error| format!("prefab {name}: {error}"))?,
+    );
     let made = run_builder(name, &source, &script_from_json(params))?;
     let ScriptValue::List(items) = made else {
         return Err(format!("prefab {name} must return a list of blocks"));

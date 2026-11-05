@@ -1,0 +1,10 @@
+format 1 material
+
+surface {
+    base = textures/uc01_blight_sewers_trim_carved.png
+    shading = lit
+    alpha = opaque
+    kind = solid
+    specular_strength = 0.12
+    gloss = 12
+}

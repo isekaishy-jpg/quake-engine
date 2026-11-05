@@ -1,0 +1,12 @@
+format 1 material
+
+surface {
+    base = textures/uc02_royal_necropolis_liquid.png
+    shading = lit
+    alpha = opaque
+    kind = liquid
+    specular_strength = 0
+    emissive = textures/uc02_royal_necropolis_liquid.png
+    emissive_strength = 0.35
+    scroll = 0.015 0.008
+}

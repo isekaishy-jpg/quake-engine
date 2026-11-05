@@ -613,3 +613,28 @@ brush { material = wall cuboid = -64 64 -16 64 80 112 }
         "the floor is solid"
     );
 }
+
+/// A brush only cuts the faces it touches. Its planes run on for ever, and they
+/// used to slice every face they crossed, right across a map.
+#[test]
+fn a_brush_leaves_faces_it_does_not_touch_whole() {
+    let faces = |extra: &str| {
+        let text = format!(
+            "format 1 map\n\
+             brush {{ material = wall cuboid = -1024 -1024 -32 1024 1024 0 }}\n{extra}"
+        );
+        let working = read_map_text(&text).expect("reads");
+        let mut source = |name: &str| placeholder_texture(name);
+        compile(&working, &mut source)
+            .expect("compiles")
+            .faces
+            .len()
+    };
+    let floor = faces("");
+    // A box standing on the floor cuts one hole in it.
+    let standing = faces("brush { material = wall cuboid = 0 0 0 64 64 64 }\n");
+    // Up in the air, with planes crossing the floor's sides, it cuts nothing.
+    let floating = faces("brush { material = wall cuboid = 0 0 200 64 64 264 }\n");
+    assert_eq!(floating, floor + 6, "only its own faces");
+    assert!(standing <= floor + 5 + 8, "{standing}");
+}

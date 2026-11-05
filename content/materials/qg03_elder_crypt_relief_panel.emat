@@ -1,0 +1,10 @@
+format 1 material
+
+surface {
+    base = textures/qg03_elder_crypt_relief_panel.png
+    shading = lit
+    alpha = opaque
+    kind = solid
+    specular_strength = 0
+    hotspots = 0 0 1 1
+}

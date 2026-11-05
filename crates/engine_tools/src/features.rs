@@ -185,7 +185,8 @@ fn names_in(session: &Session, folder: &str, extension: &str) -> Vec<String> {
         .flatten()
         .filter_map(|entry| {
             let name = entry.file_name().into_string().ok()?;
-            name.strip_suffix(extension).map(str::to_owned)
+            let stem = name.strip_suffix(extension)?;
+            (!stem.starts_with('_')).then(|| stem.to_owned())
         })
         .collect();
     names.sort();

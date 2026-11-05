@@ -1,0 +1,9 @@
+format 1 material
+
+surface {
+    base = textures/qg02_iron_cathedral_rock.png
+    shading = lit
+    alpha = opaque
+    kind = solid
+    specular_strength = 0
+}

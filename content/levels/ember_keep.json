@@ -1,0 +1,749 @@
+[
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stone_bridge",
+"at": [
+1408,
+-1216,
+0
+],
+"params": {
+"length": 896,
+"width": 256,
+"rise": 0,
+"depth": 256,
+"material": "qg01_ashen_abbey_floor_flags",
+"parapet": "qg01_ashen_abbey_wall_blocks",
+"segments": 4
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1360,
+-200,
+112
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1712,
+-200,
+112
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+652,
+256,
+-32
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+884,
+256,
+-32
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+416,
+704,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+416,
+960,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+672,
+704,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+672,
+960,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+928,
+704,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+928,
+960,
+-128
+],
+"params": {
+"radius": 26,
+"height": 288,
+"sides": 8,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+268,
+832,
+-32
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1344,
+416,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1728,
+416,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1344,
+672,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1728,
+672,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1344,
+928,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1728,
+928,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1344,
+1184,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1728,
+1184,
+0
+],
+"params": {
+"radius": 34,
+"height": 576,
+"sides": 10,
+"material": "qg01_ashen_abbey_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_carved"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1228,
+544,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1228,
+1088,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1844,
+544,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "torch",
+"at": [
+1844,
+1088,
+96
+],
+"params": {
+"intensity": 240,
+"style": 1
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lift",
+"at": [
+2624,
+1120,
+0
+],
+"params": {
+"size": 160,
+"height": 256,
+"name": "forge_lift",
+"material": "qg02_iron_cathedral_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+2240,
+1160,
+256
+],
+"params": {
+"length": 384,
+"width": 80,
+"deck": "qg01_ashen_abbey_wood_planks",
+"rail": "qg01_ashen_abbey_trim_metal",
+"post": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+2240,
+240,
+256
+],
+"params": {
+"length": 80,
+"width": 920,
+"deck": "qg01_ashen_abbey_wood_planks",
+"rail": "qg01_ashen_abbey_trim_metal",
+"post": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+2320,
+240,
+256
+],
+"params": {
+"length": 592,
+"width": 80,
+"deck": "qg01_ashen_abbey_wood_planks",
+"rail": "qg01_ashen_abbey_trim_metal",
+"post": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+272,
+1400,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+688,
+1400,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+272,
+1656,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+688,
+1656,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+272,
+1912,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+688,
+1912,
+-320
+],
+"params": {
+"radius": 30,
+"height": 512,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lift",
+"at": [
+896,
+2100,
+-192
+],
+"params": {
+"size": 128,
+"height": 464,
+"name": "crypt_lift",
+"material": "qg01_ashen_abbey_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1152,
+1760,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1920,
+1760,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1152,
+2000,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1920,
+2000,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1152,
+2240,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1920,
+2240,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1152,
+2480,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1920,
+2480,
+0
+],
+"params": {
+"radius": 32,
+"height": 704,
+"sides": 10,
+"material": "qg02_iron_cathedral_wall_blocks",
+"trim": "qg01_ashen_abbey_trim_metal"
+}
+}
+}
+]

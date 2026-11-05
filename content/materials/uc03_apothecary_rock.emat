@@ -1,0 +1,9 @@
+format 1 material
+
+surface {
+    base = textures/uc03_apothecary_rock.png
+    shading = lit
+    alpha = opaque
+    kind = solid
+    specular_strength = 0
+}

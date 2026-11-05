@@ -319,13 +319,12 @@ fn uv_axes(points: &[Point; 3], across: [f64; 3], down: [f64; 3]) -> Option<[Tex
 /// coplanar faces the first stays.
 fn outside(polygon: Polygon, face_plane: &Plane3, other: &Brush, after: bool) -> Vec<Polygon> {
     let mut kept = Vec::new();
-    let mut rest = polygon;
+    let mut rest = polygon.clone();
     for plane in other.planes() {
         match split(&rest, &plane) {
-            Split::Front => {
-                kept.push(rest);
-                return kept;
-            }
+            // Nothing's inside `other`, so its planes have no business cutting
+            // this: they'd shatter faces right across a map.
+            Split::Front => return vec![polygon],
             Split::Back => {}
             Split::On => {
                 let same = plane.normal.iter().zip(face_plane.normal).all(|(a, b)| {
@@ -333,8 +332,7 @@ fn outside(polygon: Polygon, face_plane: &Plane3, other: &Brush, after: bool) ->
                     (a - b).abs() < 1e-9
                 });
                 if same && after {
-                    kept.push(rest);
-                    return kept;
+                    return vec![polygon];
                 }
             }
             Split::Both(front, back) => {

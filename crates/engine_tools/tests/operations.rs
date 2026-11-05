@@ -3,7 +3,7 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use engine_tools::{Session, run};
+use engine_tools::{Session, build_prefab, prefab_names, run};
 use serde_json::{Value, json};
 
 /// A fresh content folder with a prefab.
@@ -423,4 +423,19 @@ fn the_content_can_be_listed() {
     let listed = ok(&mut session, "list", json!({}));
     assert_eq!(listed["prefabs"], json!(["stairs"]));
     assert_eq!(listed["meshes"], json!([]));
+}
+
+/// Every prefab that ships builds with what it assumes, and what's shared isn't
+/// listed as one.
+#[test]
+fn every_prefab_builds() {
+    let content = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let names = prefab_names(&content);
+    assert!(names.len() > 40, "{names:?}");
+    assert!(!names.iter().any(|name| name.starts_with('_')), "{names:?}");
+    for name in names {
+        let built = build_prefab(&content, &name, &json!({}), [0.0; 3]);
+        let built = built.unwrap_or_else(|error| panic!("{name}: {error}"));
+        assert!(!built.blocks.is_empty(), "{name}");
+    }
 }

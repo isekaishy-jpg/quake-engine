@@ -1,0 +1,10 @@
+format 1 material
+
+surface {
+    base = textures/uc03_apothecary_trim_metal.png
+    shading = lit
+    alpha = opaque
+    kind = solid
+    specular_strength = 0.12
+    gloss = 12
+}

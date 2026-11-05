@@ -1,0 +1,23 @@
+format 1 map
+
+# Apothecary Foundry: every material is used, so validation loads every PNG.
+brush { material = uc03_apothecary_floor_flags cuboid = -800 -800 -32 800 800 0 }
+brush { material = uc03_apothecary_wall_blocks cuboid = -800 720 0 800 752 320 }
+brush { material = uc03_apothecary_wall_blocks cuboid = -640 -360 0 -432 -232 128 }
+brush { material = uc03_apothecary_wall_brick cuboid = -320 -360 0 -112 -232 128 }
+brush { material = uc03_apothecary_wall_damp cuboid = 0 -360 0 208 -232 128 }
+brush { material = uc03_apothecary_arch_panel cuboid = 320 -360 0 528 -232 128 }
+brush { material = uc03_apothecary_floor_flags cuboid = -640 -120 0 -432 8 128 }
+brush { material = uc03_apothecary_floor_tiles cuboid = -320 -120 0 -112 8 128 }
+brush { material = uc03_apothecary_rock cuboid = 0 -120 0 208 8 128 }
+brush { material = uc03_apothecary_ceiling_coffer cuboid = 320 -120 0 528 8 128 }
+brush { material = uc03_apothecary_trim_carved cuboid = -640 120 0 -432 248 128 }
+brush { material = uc03_apothecary_trim_metal cuboid = -320 120 0 -112 248 128 }
+brush { material = uc03_apothecary_door cuboid = 0 120 0 208 248 128 }
+brush { material = uc03_apothecary_grille_opaque cuboid = 320 120 0 528 248 128 }
+brush { material = uc03_apothecary_metal_plate cuboid = -640 360 0 -432 488 128 }
+brush { material = uc03_apothecary_relief_panel cuboid = -320 360 0 -112 488 128 }
+brush { material = uc03_apothecary_wood_planks cuboid = 0 360 0 208 488 128 }
+brush { material = uc03_apothecary_liquid cuboid = 320 360 0 528 488 128 }
+entity start { type = info_player_start origin = 0 -640 24 angle = 90 }
+entity sun { type = light origin = 0 -200 640 light = 600 color = 1 0.92 0.8 }
