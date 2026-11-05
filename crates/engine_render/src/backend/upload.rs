@@ -308,6 +308,7 @@ fn post_values(
     out[28] = f32::from(u8::from(post.edge_smoothing));
     out[29] = post.outline_width;
     out[30] = post.outline_fade;
+    out[31] = post.rounded_edges;
     out
 }
 

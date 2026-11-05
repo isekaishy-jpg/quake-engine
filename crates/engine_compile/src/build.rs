@@ -12,11 +12,11 @@ use engine_map::{
 
 use crate::error::CompileError;
 use crate::geometry::{
-    Plane3, Point, Polygon, Split, add_scaled, clip_behind, dot, plane_polygon, solid_corners,
-    split,
+    Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
+    solid_corners, split,
 };
 use crate::mesh::{PlacedMesh, PlacedTriangle};
-use crate::source::{Brush, BrushFace, WorkingMap, read_map};
+use crate::source::{Brush, BrushFace, DecalSource, WorkingMap, read_map};
 use crate::stencil::{build_flames, build_stencil};
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
@@ -155,6 +155,127 @@ fn texel_axes(face: &BrushFace) -> [TexelAxis; 2] {
     ]
 }
 
+/// The texture axes that fit a face to the best of its material's hotspots: the
+/// area nearest its shape, so trim and panels fall right with no aligning.
+fn hotspot_axes(polygon: &[Point], face: &BrushFace, texture: &Texture) -> Option<[TexelAxis; 2]> {
+    let hotspots = &texture.material.as_ref()?.hotspots;
+    let mip = texture.mips.first()?;
+    let (u, v) = base_axes(face.plane.normal);
+    let extent = |axis: Point| {
+        polygon
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(low, high), point| {
+                let value = dot(*point, axis);
+                (low.min(value), high.max(value))
+            })
+    };
+    let (low_u, high_u) = extent(u);
+    let (low_v, high_v) = extent(v);
+    let (width, height) = (high_u - low_u, high_v - low_v);
+    if width <= 0.0 || height <= 0.0 {
+        return None;
+    }
+    let misfit = |area: &[f32; 4]| {
+        let shape = f64::from(area[2] - area[0]) / f64::from((area[3] - area[1]).max(0.001));
+        ((width / height) / shape.max(0.001)).ln().abs()
+    };
+    let best = hotspots
+        .iter()
+        .min_by(|a, b| misfit(a).total_cmp(&misfit(b)))?;
+    let fit = |axis: Point, low: f64, size: f64, start: f32, end: f32, texels: u32| {
+        let from = f64::from(start) * f64::from(texels);
+        let span = f64::from(end - start) * f64::from(texels);
+        let scale = span / size;
+        #[expect(clippy::cast_possible_truncation, reason = "faces store f32")]
+        TexelAxis {
+            axis: vec3(axis.map(|part| part * scale)),
+            offset: (from - low * scale) as f32,
+        }
+    };
+    Some([
+        fit(u, low_u, width, best[0], best[2], mip.width),
+        fit(v, low_v, height, best[1], best[3], mip.height),
+    ])
+}
+
+/// A piece of a brush's face that can be seen.
+struct VisibleFace<'a> {
+    /// The piece.
+    polygon: Polygon,
+    /// The whole of the face it's from, which brushes in front of it have cut.
+    whole: Arc<Polygon>,
+    /// The face.
+    face: &'a BrushFace,
+    /// What's behind it.
+    contents: Contents,
+}
+
+/// How far a decal sits off its surface.
+const DECAL_LIFT: f64 = 0.2;
+
+/// The triangles of a decal, clipped to the world's faces under it.
+fn decal_triangles(decal: &DecalSource, faces: &[VisibleFace<'_>]) -> Vec<PlacedTriangle> {
+    let mut out = Vec::new();
+    let Some(normal) = normalized(decal.normal) else {
+        return out;
+    };
+    let reference = if normal[2].abs() > 0.9 {
+        [0.0, 1.0, 0.0]
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    let Some(side) = normalized(cross(reference, normal)) else {
+        return out;
+    };
+    let up = cross(normal, side);
+    let (sin, cos) = decal.angle.to_radians().sin_cos();
+    let across = add_scaled(side.map(|part| part * cos), up, sin);
+    let upward = add_scaled(up.map(|part| part * cos), side, -sin);
+    let [width, height] = decal.size;
+    let wall = |direction: Point, reach: f64| Plane3 {
+        normal: direction,
+        distance: dot(direction, decal.origin) + reach,
+    };
+    let flipped = |direction: Point| direction.map(|part| -part);
+    let bounds = [
+        wall(across, width * 0.5),
+        wall(flipped(across), width * 0.5),
+        wall(upward, height * 0.5),
+        wall(flipped(upward), height * 0.5),
+        wall(normal, decal.depth),
+        wall(flipped(normal), decal.depth),
+    ];
+    for visible in faces {
+        let face = visible.face;
+        if visible.contents != Contents::Solid || dot(face.plane.normal, normal) < 0.25 {
+            continue;
+        }
+        let Some(kept) = clip_behind(visible.polygon.clone(), &bounds, None) else {
+            continue;
+        };
+        let lifted: Vec<Point> = kept
+            .iter()
+            .map(|point| add_scaled(*point, face.plane.normal, DECAL_LIFT))
+            .collect();
+        let uv = |point: Point| {
+            let offset = add_scaled(point, decal.origin, -1.0);
+            [
+                dot(offset, across) / width + 0.5,
+                0.5 - dot(offset, upward) / height,
+            ]
+        };
+        for pair in lifted[1..].windows(2) {
+            let points = [lifted[0], pair[0], pair[1]];
+            out.push(PlacedTriangle {
+                points,
+                uvs: points.map(uv),
+                material: decal.material.clone(),
+            });
+        }
+    }
+    out
+}
+
 /// The texture axes that put `across` and `down` texels at a triangle's
 /// corners, or `None` for a triangle with no area.
 fn uv_axes(points: &[Point; 3], across: [f64; 3], down: [f64; 3]) -> Option<[TexelAxis; 2]> {
@@ -220,7 +341,7 @@ fn outside(polygon: Polygon, face_plane: &Plane3, other: &Brush, after: bool) ->
 }
 
 /// The visible polygons of `brushes`, each with the face it came from.
-fn visible_faces(brushes: &[Brush]) -> Vec<(Polygon, &BrushFace, Contents)> {
+fn visible_faces(brushes: &[Brush]) -> Vec<VisibleFace<'_>> {
     let mut out = Vec::new();
     for (index, brush) in brushes.iter().enumerate() {
         let planes = brush.planes();
@@ -228,6 +349,7 @@ fn visible_faces(brushes: &[Brush]) -> Vec<(Polygon, &BrushFace, Contents)> {
             let Some(polygon) = clip_behind(plane_polygon(&face.plane), &planes, Some(at)) else {
                 continue;
             };
+            let whole = Arc::new(polygon.clone());
             let mut pieces = vec![polygon];
             for (other_index, other) in brushes.iter().enumerate() {
                 if other_index == index || other.contents != Contents::Solid {
@@ -240,7 +362,12 @@ fn visible_faces(brushes: &[Brush]) -> Vec<(Polygon, &BrushFace, Contents)> {
                     .collect();
             }
             for piece in pieces.into_iter().filter(|piece| piece.len() >= 3) {
-                out.push((piece, face, brush.contents));
+                out.push(VisibleFace {
+                    polygon: piece,
+                    whole: Arc::clone(&whole),
+                    face,
+                    contents: brush.contents,
+                });
             }
         }
     }
@@ -330,15 +457,17 @@ impl Builder<'_> {
     }
 
     /// Adds one polygon as a face, and returns its bounds.
-    fn add_face(&mut self, polygon: &[Point], face: &BrushFace) -> Option<()> {
+    fn add_face(&mut self, polygon: &[Point], whole: &[Point], face: &BrushFace) -> Option<()> {
         let first_point = u32::try_from(self.map.points.len()).ok()?;
         self.map.points.extend(polygon.iter().map(|p| vec3(*p)));
         let texture = self.texture_of(&face.material);
+        let found = self.map.textures.get(texture as usize)?;
+        let axes = hotspot_axes(whole, face, found).unwrap_or_else(|| texel_axes(face));
         self.map.faces.push(Face {
             first_point,
             point_count: u32::try_from(polygon.len()).ok()?,
             texture,
-            axes: texel_axes(face),
+            axes,
             light: None,
         });
         Some(())
@@ -379,18 +508,24 @@ impl Builder<'_> {
         let too_big = || CompileError::Bad("the map is too big".to_owned());
         let first_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
         let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
-        for (polygon, face, contents) in visible_faces(brushes) {
-            for point in &polygon {
+        for visible in visible_faces(brushes) {
+            let VisibleFace {
+                polygon,
+                whole,
+                face,
+                contents,
+            } = &visible;
+            for point in polygon {
                 for axis in 0..3 {
                     low[axis] = low[axis].min(point[axis]);
                     high[axis] = high[axis].max(point[axis]);
                 }
             }
-            self.add_face(&polygon, face).ok_or_else(too_big)?;
-            if contents != Contents::Solid {
+            self.add_face(polygon, whole, face).ok_or_else(too_big)?;
+            if *contents != Contents::Solid {
                 // Liquids are seen from both sides.
                 let flipped: Vec<Point> = polygon.iter().rev().copied().collect();
-                self.add_face(&flipped, face).ok_or_else(too_big)?;
+                self.add_face(&flipped, whole, face).ok_or_else(too_big)?;
             }
         }
         for triangle in meshes.iter().flat_map(|mesh| &mesh.triangles) {
@@ -520,8 +655,18 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
     };
     let flames = working.entities.iter().filter(|e| e.kind == "flame");
     let (flame_faces, emitters) = build_flames(flames);
+    let surfaces = visible_faces(&working.brushes);
+    let decals = PlacedMesh {
+        triangles: working
+            .decals
+            .iter()
+            .flat_map(|decal| decal_triangles(decal, &surfaces))
+            .collect(),
+        ..PlacedMesh::default()
+    };
     let mut world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
     world_meshes.push(&flame_faces);
+    world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes)?;
     builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);

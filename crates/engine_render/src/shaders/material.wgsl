@@ -18,6 +18,9 @@ struct MaterialParams {
     values: vec4<f32>,
     // x detail scale, y emissive strength, z alpha cutoff.
     more: vec4<f32>,
+    // x how much it mirrors, y how far flow moves it, z flow cycles a second,
+    // w the slot of its flow map, or -1.
+    extra: vec4<f32>,
 }
 
 @group(1) @binding(2) var slot1: texture_2d<f32>;
@@ -172,6 +175,19 @@ fn cel_bands(amount: f32, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
     return vec3<f32>(floor(level * 3.0 + 0.5) / 3.0 * 2.0);
 }
 
+// The base colour moved along a flow map. Two phases half a cycle apart hide
+// each other's restart.
+fn flowing(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let flow = read_slot(i32(material.extra.w), uv, dx, dy).xy * 2.0 - vec2<f32>(1.0);
+    let cycle = frame.params.x * material.extra.z;
+    let first = fract(cycle);
+    let second = fract(cycle + 0.5);
+    let strength = material.extra.y;
+    let one = read_slot(0, uv + flow * first * strength, dx, dy);
+    let two = read_slot(0, uv + flow * second * strength, dx, dy);
+    return mix(one, two, abs(first * 2.0 - 1.0));
+}
+
 fn material_color(in: VertexOut) -> vec4<f32> {
     let uv0 = moved_uv(in.uv);
     let dx = dpdx(in.uv);
@@ -193,6 +209,8 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         base = (along_x * weights.x + along_y * weights.y + along_z * weights.z) / total;
     } else if (features & 2) != 0 {
         base = read_hex(0, uv, dx, dy);
+    } else if material.extra.w >= 0.0 {
+        base = flowing(uv, dx, dy);
     } else {
         base = read_slot(0, uv, dx, dy);
     }
@@ -282,7 +300,8 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         color = color + read_slot(material.slots_a.z, uv, dx, dy).rgb * material.more.y;
     }
 
-    var alpha = 1.0;
+    // An opaque surface's alpha says how much the final pass mirrors it.
+    var alpha = 1.0 - material.extra.x;
     if material.flags.y == 2 {
         alpha = base.a;
     }

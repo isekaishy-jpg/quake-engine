@@ -485,10 +485,10 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             srcColorBlendFactor: VkBlendFactor::BLEND_FACTOR_SRC_ALPHA,
             dstColorBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
             colorBlendOp: VkBlendOp::BLEND_OP_ADD,
-            srcAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE,
+            srcAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ZERO,
             // Source-over must preserve the destination's coverage. Copying
             // source alpha erased opaque scene coverage under transparent fog/UI.
-            dstAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+            dstAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE,
             alphaBlendOp: VkBlendOp::BLEND_OP_ADD,
             // VK_COLOR_COMPONENT_R_BIT | G | B | A = 0xF
             colorWriteMask: 0xF,

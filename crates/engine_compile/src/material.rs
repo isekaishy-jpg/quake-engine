@@ -77,6 +77,20 @@ fn numbers<const N: usize>(block: &Block, key: &str, default: [f32; N]) -> [f32;
     out
 }
 
+/// A material's hotspot areas.
+#[expect(clippy::cast_possible_truncation, reason = "materials store f32")]
+fn hotspots_of(block: &Block) -> Vec<[f32; 4]> {
+    let numbers = block
+        .get("hotspots")
+        .and_then(Value::numbers)
+        .unwrap_or_default();
+    let (areas, _) = numbers.as_chunks::<4>();
+    areas
+        .iter()
+        .map(|area| area.map(|part| part as f32))
+        .collect()
+}
+
 /// A document from its bytes, in text or binary.
 fn document_of(bytes: &[u8]) -> Result<Document, CompileError> {
     match std::str::from_utf8(bytes) {
@@ -250,6 +264,10 @@ impl<'a> MaterialLibrary<'a> {
             detail_scale: number(block, "detail_scale", 8.0),
             emissive_strength: number(block, "emissive_strength", 1.0),
             cutoff: number(block, "cutoff", 0.5),
+            flow_strength: number(block, "flow_strength", 0.1),
+            flow_speed: number(block, "flow_speed", 0.5),
+            reflect: number(block, "reflect", 0.0),
+            hotspots: hotspots_of(block),
             scroll: numbers(block, "scroll", [0.0; 2]),
             flipbook: numbers(block, "flipbook", [0.0; 3]),
             triplanar: block
@@ -282,6 +300,7 @@ impl<'a> MaterialLibrary<'a> {
         material.matcap = filler.field(block, "matcap")?;
         material.ramp = filler.field(block, "ramp")?;
         material.detail = filler.field(block, "detail")?;
+        material.flow = filler.field(block, "flow")?;
         for layer in block.children_of("layer") {
             if material.layers.len() == MAX_LAYERS {
                 return Err(CompileError::Bad(format!(

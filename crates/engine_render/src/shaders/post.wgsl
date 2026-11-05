@@ -167,6 +167,105 @@ fn grid_fogged(color: vec3<f32>, ray: vec3<f32>, jitter: f32) -> vec3<f32> {
     return color * left + gathered;
 }
 
+// Where a world point falls on the screen, with its depth.
+fn on_screen(point: vec3<f32>) -> vec3<f32> {
+    let clip = frame.view_projection * vec4<f32>(point, 1.0);
+    let ndc = clip.xyz / clip.w;
+    return vec3<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5, ndc.z);
+}
+
+// What's seen along `direction` from `start`, by walking it across the screen.
+// Past the picture's edge it can only be sky, if there is one.
+fn mirrored(start: vec3<f32>, direction: vec3<f32>, fallback: vec3<f32>, jitter: f32) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    var reach = 24.0;
+    var point = start + direction * reach * jitter;
+    for (var step = 0; step < 20; step = step + 1) {
+        point = point + direction * reach;
+        reach = reach * 1.18;
+        let place = on_screen(point);
+        if place.x < 0.0 || place.x > 1.0 || place.y < 0.0 || place.y > 1.0 || place.z > 1.0 {
+            break;
+        }
+        let at = vec2<i32>(place.xy * size);
+        let surface = load_depth(at);
+        if surface < place.z && surface < 1.0 {
+            let found = world_at(place.xy, surface);
+            if length(found - point) < reach * 2.0 {
+                // Fading out by the picture's edges hides where it runs out.
+                let margin = min(min(place.x, 1.0 - place.x), min(place.y, 1.0 - place.y));
+                return mix(fallback, load_color(at), smoothstep(0.0, 0.12, margin));
+            }
+        }
+    }
+    return fallback;
+}
+
+// What a mirror sees past everything: the sky, or nothing indoors.
+fn sky_towards(direction: vec3<f32>, indoors: vec3<f32>) -> vec3<f32> {
+    if frame.sky_zenith.w <= 0.0 && dot(frame.sky_zenith.rgb, vec3<f32>(1.0)) <= 0.0 {
+        return indoors;
+    }
+    let up = clamp(direction.z, 0.0, 1.0);
+    return mix(frame.sky_horizon.rgb, frame.sky_zenith.rgb, sqrt(up));
+}
+
+// A surface mirroring what's around it, by `strength`, more at a glance.
+fn reflected(
+    color: vec3<f32>,
+    point: vec3<f32>,
+    normal: vec3<f32>,
+    strength: f32,
+    jitter: f32,
+) -> vec3<f32> {
+    let view = normalize(point - frame.eye.xyz);
+    let bounce = reflect(view, normal);
+    let glance = pow(1.0 - clamp(-dot(view, normal), 0.0, 1.0), 3.0);
+    let amount = strength * (0.25 + 0.75 * glance);
+    let seen = mirrored(point + normal * 0.5, bounce, sky_towards(bounce, color), jitter);
+    return mix(color, seen, amount);
+}
+
+// Lightens outer edges and darkens inner ones, as if corners were rounded and
+// caught the light.
+fn rounded_edges(color: vec3<f32>, at: vec2<i32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
+    let reach = frame.post_params.w;
+    if reach < 0.5 || depth >= 1.0 {
+        return color;
+    }
+    let size = vec2<f32>(textureDimensions(scene));
+    let span = i32(reach);
+    let normal = pixel_normal(at, uv, depth, size);
+    let here = world_at(uv, depth);
+    var bend = 0.0;
+    for (var index = 0; index < 4; index = index + 1) {
+        var offset = vec2<i32>(span, 0);
+        if index == 1 {
+            offset = vec2<i32>(-span, 0);
+        } else if index == 2 {
+            offset = vec2<i32>(0, span);
+        } else if index == 3 {
+            offset = vec2<i32>(0, -span);
+        }
+        let other_at = at + offset;
+        let other_uv = (vec2<f32>(other_at) + vec2<f32>(0.5)) / size;
+        let other_depth = load_depth(other_at);
+        if other_depth >= 1.0 {
+            continue;
+        }
+        let other = pixel_normal(other_at, other_uv, other_depth, size);
+        let gap = world_at(other_uv, other_depth) - here;
+        let apart = length(gap);
+        // Near surfaces only: a gap in depth is a silhouette, not a corner.
+        if apart > 16.0 * reach || apart < 0.001 {
+            continue;
+        }
+        // A neighbour turning away from us over the gap is an outer edge.
+        bend = bend + dot(other - normal, gap / apart);
+    }
+    return color * (1.0 + clamp(-bend, -1.0, 1.0) * 0.7);
+}
+
 // Where a ray crosses a box, as shares of it, from its start at most.
 fn box_span(ray: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> vec2<f32> {
     let eye = frame.eye.xyz;
@@ -260,6 +359,13 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f3
             continue;
         }
         let path = (leave - enter) * length(ray);
+        // A view from above meets the surface first, which mirrors the sky.
+        let entry = eye + ray * enter;
+        if eye.z > high.z && abs(entry.z - high.z) < 1.0 {
+            let ripple = caustic(entry.xy * 0.5) * 0.04;
+            let normal = normalize(vec3<f32>(ripple, ripple * 0.5, 1.0));
+            color = reflected(color, entry, normal, 0.6, jitter);
+        }
         let inside = all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0));
         if inside && depth < 1.0 && high.w > 0.0 {
             let below = high.z - far.z;
@@ -424,10 +530,17 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     if frame.post_params.x > 0.5 {
         color = smoothed(at, in.uv);
     }
-    let edge = outline_strength(at, in.uv, depth);
-    color = mix(color, frame.outline.rgb, edge);
+    color = rounded_edges(color, at, in.uv, depth);
     // Interleaved gradient noise: an even dither, not grain.
     let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let shine = 1.0 - textureLoad(scene, at, 0).a;
+    if shine > 0.02 && depth < 1.0 {
+        let size = vec2<f32>(textureDimensions(scene));
+        let normal = pixel_normal(at, in.uv, depth, size);
+        color = reflected(color, world_at(in.uv, depth), -normal, shine, noise);
+    }
+    let edge = outline_strength(at, in.uv, depth);
+    color = mix(color, frame.outline.rgb, edge);
     color = in_pools(color, in.uv, depth, noise);
     color = fogged(color, in.uv, depth, noise);
     let count = i32(frame.stencil_params.x);

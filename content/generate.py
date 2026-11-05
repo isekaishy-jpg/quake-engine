@@ -158,6 +158,36 @@ def glass_color(x, y):
     return (r, g, b, 170)
 
 
+def panel_sheet(x, y):
+    """A hotspot sheet: a wide trim over two square panels."""
+    border = 6
+    if y < 64:
+        edge = y < border or y >= 64 - border or x < border or x >= SIZE - border
+        return (150, 130, 90, 255) if edge else (110, 90, 60, 255)
+    half = x // 128
+    local_x = x - half * 128
+    local_y = y - 64
+    edge = local_x < border or local_x >= 128 - border or local_y < border or local_y >= 192 - border
+    if edge:
+        return (70, 74, 84, 255)
+    return (120, 124, 140, 255) if half == 0 else (90, 110, 120, 255)
+
+
+def lettering(x, y):
+    """A decal: a black stencilled X in a ring, on nothing."""
+    dx, dy = x - SIZE / 2, y - SIZE / 2
+    radius = math.hypot(dx, dy)
+    ring = 96 < radius < 116
+    cross_mark = radius < 96 and (abs(dx - dy) < 14 or abs(dx + dy) < 14)
+    return (15, 15, 18, 235) if ring or cross_mark else (0, 0, 0, 0)
+
+
+def flow_swirl(x, y):
+    """A flow map turning around the image's middle."""
+    dx, dy = (x - SIZE / 2) / (SIZE / 2), (y - SIZE / 2) / (SIZE / 2)
+    return (clamp(128 - dy * 120), clamp(128 + dx * 120), 128, 255)
+
+
 def glass_rays(x, y):
     """The window's stencil: a few chunky panes, with wide frames to cut them."""
     colors = [(255, 70, 50), (70, 110, 255), (255, 210, 60), (70, 220, 120)]
@@ -222,6 +252,9 @@ def flame_sheet(x, y):
 
 IMAGES = {
     'glass_marks': glass_marks,
+    'panel_sheet': panel_sheet,
+    'lettering': lettering,
+    'flow_swirl': flow_swirl,
     'glass_rays': glass_rays,
     'brick': brick_base,
     'brick_normal': height_normal(brick_height),
@@ -260,6 +293,10 @@ MATERIALS_TEXT = {
     'conveyor': 'base = textures/metal.png\n    scroll = 0 0.5',
     'torch_flame': 'base = textures/flame.png\n    alpha = blend\n    shading = unlit\n    flipbook = 2 2 10',
     'glass_marks': 'base = textures/glass_marks.png',
+    'lettering': 'base = textures/lettering.png\n    alpha = blend',
+    'polished': 'base = textures/metal.png\n    reflect = 0.7',
+    'swirl': 'base = textures/lava.png\n    flow = textures/flow_swirl.png\n    flow_strength = 0.2\n    shading = unlit',
+    'panel_sheet': 'base = textures/panel_sheet.png\n    hotspots = 0 0 1 0.25  0 0.25 0.5 1  0.5 0.25 1 1',
     'glass_rays': 'base = textures/glass_rays.png',
     'hidden': 'base = textures/grate.png\n    kind = hidden',
     'slime': 'base = textures/water.png\n    kind = liquid',

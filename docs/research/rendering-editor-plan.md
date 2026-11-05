@@ -34,18 +34,18 @@ Status is one of todo, doing or done.
 | 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
 | 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | doing |
 | 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
-| 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | doing |
+| 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | done |
 | 14 | Atmosphere | Height fog, fog grid, stencil rays with boxes and collision occlusion, water light | done |
-| 15 | Small lights | Torch shader, flipbooks, particles | todo |
+| 15 | Small lights | Torch shader, flipbooks, particles | done |
 | 16 | Stylised | Cel shading, matcap, outlines by hull and post-process, semi-outlines | doing |
-| 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | doing |
+| 17 | Surface extras | Decals, hotspots, hex tiling, triplanar, flow maps, reflections, rounded edges | done |
 | 18 | Stamping | Relief, carving, inpainting new surfaces, seam filling, mega texture | todo |
 | 19 | Visibility | Our own compiler, and entity culling from the plan | todo |
 | 20 | Tiles | Grid, manifest, streaming, coordinates, the unloaded tile rule, sleeping entities | todo |
 | 21 | Pathing | Waypoint splines, navmesh, doorway baseline | todo |
 | 22 | Platform | Shell, operations layer, command line, MCP, viewport, editor tools, prefabs | doing |
 | 23 | Test maps | Maps exercising every feature, with prefabs and prefab entities | doing |
-| 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | doing |
+| 25 | Meshes | Own mesh files, placed in the world or as an entity's model, hulls, baked shadows | done |
 | 24 | Reviews | Circular quality and bug passes until none are left | todo |
 
 ## Log
@@ -59,3 +59,4 @@ Newest last. A line is added when a stage's state changes.
 - Stage 22 has the core, command line, MCP and editor. Stage 23 has the feature tour.
 - The final pass is in, with edge smoothing, post-process outlines and height fog.
 - Stage 14 is done: stencil rays with boxes, light in water and the fog grid. Stage 13 has capsules and owes sidecars and per-part detail.
+- Meshes were missing from the stages, so stage 25 added them. Stages 13, 15, 17 and 25 are done.

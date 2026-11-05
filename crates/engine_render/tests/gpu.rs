@@ -10,8 +10,8 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, Map, Material, MipLevel,
-    Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
-    TextureKind,
+    Pool, PoolLook, ProbeGrid, RayStencil, Shading, Sky, Sprite, SpriteFacing, SpriteFrame,
+    SpriteImage, TextureKind,
 };
 use engine_render::{
     CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
@@ -806,4 +806,103 @@ fn the_fog_grid_shows_baked_light() {
         plain[1] > 200,
         "fog with no grid has its own colour: {plain:?}"
     );
+}
+
+/// An image of `size` pixels square, all from `color`.
+fn image_of(size: u32, color: impl Fn(u32, u32) -> [u8; 4]) -> Vec<MipLevel> {
+    let mut rgba = Vec::new();
+    for y in 0..size {
+        for x in 0..size {
+            rgba.extend_from_slice(&color(x, y));
+        }
+    }
+    vec![MipLevel {
+        width: size,
+        height: size,
+        rgba,
+    }]
+}
+
+/// A mirror looking up at the sky takes on some of its colour.
+#[test]
+fn a_polished_surface_mirrors_the_sky() {
+    let mut built = map(1);
+    built.textures[0].mips = image_of(8, |_, _| [40, 40, 40, 255]);
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Unlit,
+        reflect: 1.0,
+        ..Material::default()
+    }));
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 1.0],
+        horizon: [0.0, 0.0, 1.0],
+        ..Sky::default()
+    });
+    let mirrored = post_centre(built, PostSettings::default());
+    let Some(mirrored) = mirrored else {
+        return;
+    };
+    // Straight on is when a mirror shows least: a quarter of the sky.
+    assert!(mirrored[2] > 80, "the sky shows: {mirrored:?}");
+    assert!(
+        mirrored[0] < 40,
+        "it replaces some of the surface: {mirrored:?}"
+    );
+}
+
+/// A surface with no shine is left as it is, even under a blend.
+#[test]
+fn a_plain_surface_mirrors_nothing() {
+    let mut built = map(1);
+    built.textures[0].mips = image_of(8, |_, _| [40, 40, 40, 255]);
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 1.0],
+        horizon: [0.0, 0.0, 1.0],
+        ..Sky::default()
+    });
+    if let Some(plain) = post_centre(built, PostSettings::default()) {
+        assert!(plain[2] < 60, "no sky in it: {plain:?}");
+    }
+}
+
+/// A flow map moves a surface along it as time passes.
+#[test]
+fn a_flow_map_moves_its_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.textures[0].mips = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        }
+    });
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Unlit,
+        slots: vec![Arc::new(image_of(2, |_, _| [255, 128, 0, 255]))],
+        flow: Some(1),
+        flow_strength: 0.5,
+        flow_speed: 0.2,
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let at = |time: f32, renderer: &mut Renderer| {
+        let view = View {
+            time,
+            ..view_from_above()
+        };
+        let capture = renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture");
+        centre(&capture)
+    };
+    let first = at(0.0, &mut renderer);
+    let later = at(1.25, &mut renderer);
+    assert_ne!(first, later);
 }

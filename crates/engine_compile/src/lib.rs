@@ -26,6 +26,7 @@ pub use mesh::{
     read_occlusion, resolve_meshes, write_occlusion,
 };
 pub use source::{
-    Brush, BrushFace, EntitySource, MeshPlacement, SkySource, WaterSource, WorkingMap, read_map,
+    Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, SkySource, WaterSource, WorkingMap,
+    read_map,
 };
 pub use texture::placeholder_texture;

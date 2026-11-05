@@ -1,0 +1,36 @@
+format 1 map
+
+# Surface extras: decals over corners, hotspot trim, a flow map, a polished
+# floor, and rounded edges.
+entity world {
+    type = worldspawn
+    sun_intensity = 120
+    ambient = 40
+    light_spacing = 16
+}
+sky {
+    zenith = 0.2 0.38 0.65
+    horizon = 0.85 0.82 0.75
+    sun_direction = 0.3 0.5 0.8
+}
+brush { material = polished cuboid = -512 -384 -32 512 384 0 }
+brush { material = brick cuboid = -544 -416 -32 -512 416 320 }
+brush { material = brick cuboid = 512 -416 -32 544 416 320 }
+brush { material = brick cuboid = -512 -416 -32 512 -384 320 }
+brush { material = brick cuboid = -512 384 -32 512 416 320 }
+brush { contents = sky material = sky cuboid = -544 -416 320 544 416 352 }
+
+# Pillars to mirror, and a wide and a square of hotspot sheet.
+brush { material = stone cuboid = -96 -32 0 -32 32 256 }
+brush { material = cel_stone cuboid = 96 -96 0 160 -32 256 }
+brush { material = panel_sheet cuboid = -256 352 96 256 384 160 }
+brush { material = panel_sheet cuboid = -448 352 64 -320 384 192 }
+
+# The flow map, on a slab.
+brush { material = swirl cuboid = 256 128 0 448 320 16 }
+
+# A decal across a pillar's corner, and one on the floor.
+decal { material = lettering origin = -96 -32 128 normal = -0.7 -0.7 0 size = 96 depth = 48 }
+decal { material = lettering origin = -280 -160 0 normal = 0 0 1 size = 160 angle = 20 }
+
+entity start { type = info_player_start origin = -360 -260 24 angle = 35 }

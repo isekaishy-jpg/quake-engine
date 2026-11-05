@@ -3,7 +3,7 @@
 use engine_map::{AlphaMode, Material, Shading};
 
 /// The bytes of one material's parameters, matching `MaterialParams`.
-pub const MATERIAL_PARAMS_BYTES: usize = 144;
+pub const MATERIAL_PARAMS_BYTES: usize = 160;
 
 /// How far apart parameters sit in their buffer, the widest alignment Vulkan
 /// allows for a uniform buffer offset.
@@ -65,6 +65,10 @@ pub fn material_params(material: &Material) -> [u8; MATERIAL_PARAMS_BYTES] {
         material.emissive_strength,
         material.cutoff,
         0.0,
+        material.reflect,
+        material.flow_strength,
+        material.flow_speed,
+        material.flow.map_or(-1.0, f32::from),
     ];
     for (chunk, float) in out[96..].as_chunks_mut::<4>().0.iter_mut().zip(floats) {
         *chunk = float.to_le_bytes();

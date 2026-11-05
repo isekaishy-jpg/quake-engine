@@ -31,7 +31,8 @@ struct Frame {
     fog_params: vec4<f32>,
     // Colour, then w is 0 off, 1 full, 2 semi.
     outline: vec4<f32>,
-    // x edge smoothing on, y outline width, z outline fade distance.
+    // x edge smoothing on, y outline width, z outline fade distance, w how
+    // wide rounded edges are, in pixels.
     post_params: vec4<f32>,
     // Per stencil: a corner and strength, the two edges with reach in `down`,
     // and the light with w 1 for a sun.

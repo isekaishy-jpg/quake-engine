@@ -515,6 +515,7 @@ impl Engine {
         console.register_cvar("r_outline_width", "1", saved);
         console.register_cvar("r_outline_fade", "1500", saved);
         console.register_cvar("r_rays", "3", saved);
+        console.register_cvar("r_edges", "0", saved);
         console.register_cvar("r_fog_grid", "0", saved);
         console.register_cvar("r_anisotropy", "8", saved);
         console.register_cvar("volume", "0.7", saved);
@@ -670,6 +671,7 @@ impl Engine {
             outline_fade: self.cvar_number("r_outline_fade") as f32,
             outline_color: [0.0; 3],
             rays: self.cvar_number("r_rays").clamp(0.0, 3.0) as u8,
+            rounded_edges: self.cvar_number("r_edges").clamp(0.0, 8.0) as f32,
             fog_grid: self.cvar_number("r_fog_grid") != 0.0,
         };
         if let Some(renderer) = &mut self.world.renderer {

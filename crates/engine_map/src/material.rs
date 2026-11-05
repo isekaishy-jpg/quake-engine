@@ -97,6 +97,17 @@ pub struct Material {
     pub emissive_strength: f32,
     /// Below this alpha, a masked pixel goes.
     pub cutoff: f32,
+    /// The slot of its flow map, with direction in red and green.
+    pub flow: Option<u8>,
+    /// How far a flow map moves its texture, as a share of a repeat.
+    pub flow_strength: f32,
+    /// How many flow cycles a second.
+    pub flow_speed: f32,
+    /// How much it mirrors what's around it, from 0 to 1.
+    pub reflect: f32,
+    /// Areas of its image that faces fit themselves to, as left, top, right
+    /// and bottom from 0 to 1.
+    pub hotspots: Vec<[f32; 4]>,
 }
 
 impl Material {

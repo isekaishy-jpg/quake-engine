@@ -79,6 +79,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Images laid over the world's surfaces.
+    pub decals: Vec<DecalSource>,
     /// Meshes in the world.
     pub meshes: Vec<MeshPlacement>,
     /// Those meshes, once placed.
@@ -102,6 +104,23 @@ pub struct SkySource {
 fn point_of(value: &Value) -> Option<Point> {
     let numbers = value.numbers()?;
     (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// An image laid over surfaces, as a box pressed against them.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecalSource {
+    /// Its material.
+    pub material: String,
+    /// Its middle.
+    pub origin: Point,
+    /// The way out of the surface it's pressed against.
+    pub normal: Point,
+    /// Its width and height.
+    pub size: [f64; 2],
+    /// How far it turns on the surface, in degrees.
+    pub angle: f64,
+    /// How far in front of and behind its middle it reaches.
+    pub depth: f64,
 }
 
 /// A map's own look for its liquids.
@@ -247,6 +266,40 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     })
 }
 
+/// A decal, from its block.
+fn read_decal(block: &Block) -> Result<DecalSource, CompileError> {
+    let missing = |what: &str| CompileError::Bad(format!("a decal needs {what}"));
+    let number =
+        |key: &str, default: f64| block.get(key).and_then(Value::number).unwrap_or(default);
+    let size = block
+        .get("size")
+        .and_then(Value::numbers)
+        .unwrap_or_default();
+    let size = match size.as_slice() {
+        [width, height] => [*width, *height],
+        [both] => [*both, *both],
+        _ => [number("size", 64.0); 2],
+    };
+    Ok(DecalSource {
+        material: block
+            .get("material")
+            .and_then(Value::text)
+            .ok_or_else(|| missing("a material"))?
+            .to_owned(),
+        origin: block
+            .get("origin")
+            .and_then(point_of)
+            .ok_or_else(|| missing("an origin"))?,
+        normal: block
+            .get("normal")
+            .and_then(point_of)
+            .ok_or_else(|| missing("a normal"))?,
+        size,
+        angle: number("angle", 0.0),
+        depth: number("depth", 8.0),
+    })
+}
+
 /// Where `block` puts the mesh its `key` names.
 fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileError> {
     let source = block
@@ -368,6 +421,10 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        decals: document
+            .blocks_of("decal")
+            .map(read_decal)
+            .collect::<Result<Vec<_>, _>>()?,
         meshes: document
             .blocks_of("mesh")
             .map(|block| read_placement(block, "source"))

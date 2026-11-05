@@ -1,0 +1,8 @@
+format 1 material
+
+surface {
+    base = textures/lava.png
+    flow = textures/flow_swirl.png
+    flow_strength = 0.2
+    shading = unlit
+}

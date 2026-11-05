@@ -8,7 +8,7 @@ use engine_compile::{
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{Contents, Face, Map, NodeChild, PoolLook};
+use engine_map::{Contents, Face, Map, Material, NodeChild, PoolLook};
 use engine_physics::CollisionWorld;
 
 /// A closed room from -256 to 256 with 32 unit walls, and a pillar.
@@ -344,4 +344,121 @@ fn a_flame_has_faces_and_an_emitter() {
     assert!((emitter.light_radius - 192.0).abs() < 0.01);
     let world = CollisionWorld::new(Arc::clone(&map));
     assert!(!world.in_solid(emitter.origin), "nothing to walk into");
+}
+
+/// A decal is pieces of the faces under it, just off them, and it stops at
+/// its edges.
+#[test]
+fn a_decal_clips_to_the_faces_under_it() {
+    let plain = room();
+    let text = format!(
+        "{ROOM}\ndecal {{ material = mark origin = -128 -128 -256 normal = 0 0 1 size = 64 }}\n"
+    );
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(&text, &mut source).expect("compiles");
+    assert!(map.faces.len() > plain.faces.len(), "the decal has faces");
+    let world = &map.models[0];
+    let face = &map.faces[(world.first_face + world.face_count - 1) as usize];
+    let first = face.first_point as usize;
+    for point in &map.points[first..first + face.point_count as usize] {
+        assert!(
+            (point.z + 255.8).abs() < 0.01,
+            "just off the floor: {point:?}"
+        );
+        assert!(point.x >= -160.01 && point.x <= -95.99, "{point:?}");
+    }
+}
+
+/// A decal turned away from a face leaves it alone.
+#[test]
+fn a_decal_only_lands_on_what_it_faces() {
+    let plain = room();
+    let text = format!(
+        "{ROOM}\ndecal {{ material = mark origin = -128 -128 -256 normal = 0 0 -1 size = 64 }}\n"
+    );
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(&text, &mut source).expect("compiles");
+    assert_eq!(map.faces.len(), plain.faces.len());
+}
+
+/// A face fits itself to the hotspot nearest its shape.
+#[test]
+fn a_face_fits_the_hotspot_of_its_shape() {
+    let text = "format 1 map\nbrush { material = sheet cuboid = 0 0 0 256 64 16 }\n";
+    let mut source = |name: &str| {
+        let mut texture = placeholder_texture(name);
+        texture.material = Some(Arc::new(Material {
+            hotspots: vec![[0.0, 0.0, 1.0, 0.25], [0.0, 0.25, 0.5, 1.0]],
+            ..Material::default()
+        }));
+        texture
+    };
+    let map = compile_text(text, &mut source).expect("compiles");
+    let top = map
+        .faces
+        .iter()
+        .find(|face| {
+            let first = face.first_point as usize;
+            map.points[first..first + face.point_count as usize]
+                .iter()
+                .all(|point| (point.z - 16.0).abs() < 0.01)
+        })
+        .expect("the top");
+    let width = map.textures[top.texture as usize].mips[0].width as f32;
+    let height = map.textures[top.texture as usize].mips[0].height as f32;
+    let first = top.first_point as usize;
+    let corners = &map.points[first..first + top.point_count as usize];
+    let along: Vec<f32> = corners
+        .iter()
+        .map(|p| top.axes[0].project(*p) / width)
+        .collect();
+    let down: Vec<f32> = corners
+        .iter()
+        .map(|p| top.axes[1].project(*p) / height)
+        .collect();
+    let range = |values: &[f32]| {
+        let low = values.iter().copied().fold(f32::MAX, f32::min);
+        let high = values.iter().copied().fold(f32::MIN, f32::max);
+        (low, high)
+    };
+    let (low, high) = range(&along);
+    assert!(low.abs() < 0.01 && (high - 1.0).abs() < 0.01, "{along:?}");
+    let (low, high) = range(&down);
+    assert!(low.abs() < 0.01 && (high - 0.25).abs() < 0.01, "{down:?}");
+}
+
+/// Pieces of a face that another brush has cut still fit as one, by the whole
+/// of it.
+#[test]
+fn a_cut_face_fits_a_hotspot_as_a_whole() {
+    let text = "format 1 map
+        brush { material = sheet cuboid = 0 0 0 256 64 16 }
+        brush { material = plain cuboid = 96 16 16 160 48 48 }
+";
+    let mut source = |name: &str| {
+        let mut texture = placeholder_texture(name);
+        if name == "sheet" {
+            texture.material = Some(Arc::new(Material {
+                hotspots: vec![[0.0, 0.0, 1.0, 0.25], [0.0, 0.25, 0.5, 1.0]],
+                ..Material::default()
+            }));
+        }
+        texture
+    };
+    let map = compile_text(text, &mut source).expect("compiles");
+    let tops: Vec<&Face> = map
+        .faces
+        .iter()
+        .filter(|face| {
+            let first = face.first_point as usize;
+            map.textures[face.texture as usize].name == "sheet"
+                && map.points[first..first + face.point_count as usize]
+                    .iter()
+                    .all(|point| (point.z - 16.0).abs() < 0.01)
+        })
+        .collect();
+    assert!(tops.len() > 1, "the top is cut into pieces");
+    for piece in &tops {
+        assert_eq!(piece.axes, tops[0].axes, "one fit for all of them");
+    }
 }
