@@ -513,7 +513,8 @@ impl ServerMessage {
             }
             Self::Music(track) => out.extend_from_slice(&[TAG_MUSIC, *track]),
             Self::Effect(Effect::Launch(launch)) => {
-                out.extend_from_slice(&[TAG_LAUNCH, u8::from(launch.bounces)]);
+                let flags = u8::from(launch.bounces) | u8::from(launch.blasts) << 1;
+                out.extend_from_slice(&[TAG_LAUNCH, flags]);
                 out.extend_from_slice(&launch.entity.to_le_bytes());
                 out.extend_from_slice(&launch.owner.to_le_bytes());
                 put_vec3(&mut out, launch.origin);
@@ -622,14 +623,15 @@ impl ServerMessage {
             }
             TAG_LAUNCH => {
                 let mut reader = Reader { bytes: rest };
-                let bounces = reader.flag()?;
+                let flags = reader.byte()?;
                 let launch = Projectile {
                     entity: u64::from_le_bytes(reader.take()?),
                     owner: u64::from_le_bytes(reader.take()?),
                     origin: reader.vec3()?,
                     velocity: reader.vec3()?,
                     time: reader.f64()?,
-                    bounces,
+                    bounces: flags & 1 != 0,
+                    blasts: flags & 2 != 0,
                 };
                 reader
                     .finished()

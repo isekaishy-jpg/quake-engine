@@ -75,6 +75,8 @@
     - [0054: chat](proposals/0054-chat.md)
     - [0055: scores beside the bar](proposals/0055-scores-beside-the-bar.md)
     - [0056: seeing what a shot was judged against](proposals/0056-seeing-a-shots-boxes.md)
+    - [0057: the feel of a shot](proposals/0057-the-feel-of-a-shot.md)
+    - [0058: secure connections](proposals/0058-secure-connections.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

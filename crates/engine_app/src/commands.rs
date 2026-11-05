@@ -333,9 +333,18 @@ fn host(console: &mut Console<World>, world: &mut World, args: &Args) {
         reason = "a few players"
     )]
     let players = players.clamp(1.0, 16.0) as usize;
-    match NetServer::bind(port, players) {
+    let password = console
+        .cvar("sv_password")
+        .map_or("", engine_console::Cvar::value);
+    let guarded = !password.is_empty();
+    match NetServer::bind(port, players, password) {
         Ok(server) => {
-            console.print(format!("hosting on port {}", server.port()));
+            let entry = if guarded {
+                "with a password"
+            } else {
+                "open to anyone"
+            };
+            console.print(format!("hosting on port {}, {entry}", server.port()));
             world.net_server = Some(server);
         }
         Err(error) => console.print(format!("couldn't host: {error}")),
@@ -376,7 +385,10 @@ fn fake_network(console: &Console<World>) -> Option<Conditions> {
 /// set: `net_fake_latency` and `net_fake_jitter` in milliseconds, and
 /// `net_fake_loss` in percent, of what's sent.
 fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
-    match NetClient::connect(args.get(1)) {
+    let password = console
+        .cvar("password")
+        .map_or("", engine_console::Cvar::value);
+    match NetClient::connect(args.get(1), password) {
         Ok(client) => {
             console.print(format!("connecting to {}", args.get(1)));
             let transport: Box<dyn Transport> = match fake_network(console) {

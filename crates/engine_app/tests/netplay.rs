@@ -9,15 +9,17 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use engine_assets::FileSystem;
-use engine_client::{Bot, BotSkill, Client, Path};
-use engine_core::entity::Effect;
+use engine_client::{Bot, BotSkill, Client, Path, ShotClock};
+use engine_core::entity::{BlastRule, Effect};
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_map::Map;
 use engine_net::{Conditioned, Conditions, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Seat, SeatInfo, Server};
-use fixture_quake::{Palette, ROCKET_BLAST, SCRIPTS, import_map, mount_game, spawn_point};
+use fixture_quake::{
+    Palette, ROCKET_BLAST, SCRIPTS, import_map, mount_game, spawn_point, weapon_rule,
+};
 
 /// A tick.
 const TICK: f64 = 1.0 / 72.0;
@@ -754,16 +756,68 @@ fn a_clients_path_matches_the_servers_projectile() {
     assert!(grenade.0 < 16.0, "a grenade stays close");
 }
 
-/// A rocket jump at `ping`: fires at the floor, and returns the worst gap
-/// between where the client thinks it is and where the server says, over the
-/// jump, with and without predicting the knock.
-fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
+/// A shot at the floor under a player's feet.
+#[derive(Clone, Copy)]
+struct PointBlank {
+    /// Their ping.
+    ping: u64,
+    /// How blasts are predicted.
+    blast: Option<BlastRule>,
+    /// Whether shots are guessed, as a click and a held button both do.
+    guessing: bool,
+    /// How many ticks the button is held.
+    held: u32,
+    /// Lua that sets them up, after they've got a rocket launcher.
+    setup: &'static str,
+}
+
+impl PointBlank {
+    /// One rocket at `ping`, with nothing predicted.
+    fn rocket(ping: u64) -> Self {
+        Self {
+            ping,
+            blast: None,
+            guessing: false,
+            held: 2,
+            setup: "",
+        }
+    }
+
+    /// The same, with the game's own rule.
+    fn predicted(ping: u64) -> Self {
+        Self {
+            blast: Some(ROCKET_BLAST),
+            guessing: true,
+            ..Self::rocket(ping)
+        }
+    }
+}
+
+/// Lua for a player with the quad.
+const WITH_THE_QUAD: &str = r#"
+    local bot = find_all("netname", "bot1")[1]
+    bot.super_damage_finished = time() + 60
+    bot.items = bit32.bor(bot.items, IT_QUAD)
+"#;
+
+/// Lua for a player with a nailgun.
+const WITH_A_NAILGUN: &str = r#"
+    local bot = find_all("netname", "bot1")[1]
+    bot.ammo_nails = 100
+    bot.items = bit32.bor(bot.items, IT_NAILGUN)
+    bot.weapon = IT_NAILGUN
+    W_SetCurrentAmmo(bot)
+"#;
+
+/// Fires at the floor, and returns the worst gap between where the client
+/// thinks it is and where the server says.
+fn point_blank_error(shot: PointBlank) -> f32 {
     let map = load("dm3");
     let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
     let mut bots = vec![add_bot(
         &mut server,
         &world,
-        network(ping, 0, 0.0),
+        network(shot.ping, 0, 0.0),
         BotSkill {
             moves: false,
             shoots: false,
@@ -771,9 +825,7 @@ fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
         },
         1,
     )];
-    bots[0]
-        .client_mut()
-        .set_blast(predicting.then_some(ROCKET_BLAST));
+    bots[0].client_mut().set_blast(shot.blast);
     run(&mut server, &mut host, &mut bots, &world, 1.0);
     server
         .exec(
@@ -791,6 +843,7 @@ fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
             "#,
         )
         .expect("it runs");
+    server.exec(shot.setup).expect("it runs");
     run(&mut server, &mut host, &mut bots, &world, 1.0);
     #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
     let tick = TICK as f32;
@@ -798,20 +851,24 @@ fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
     // what the server says that command really did.
     let mut worst = 0.0_f32;
     let mut predictions = std::collections::HashMap::new();
-    for tick_number in 0..144 {
+    let mut clock = ShotClock::default();
+    for tick_number in 0..200 {
+        let attack = tick_number < shot.held;
         let command = UserCommand {
             pitch: 89.0,
-            attack: tick_number < 2,
+            attack,
             ..UserCommand::default()
         };
         let client = bots[0].client_mut();
         client.update_network(Duration::from_secs_f32(tick));
         client.receive();
-        if clicked && tick_number == 0 {
-            // As a click does, before the server has heard of it.
-            let start = client.predicted().origin + Vec3::new(0.14, 0.0, 8.0);
+        let time = f64::from(tick_number) * TICK;
+        if shot.guessing && attack && clock.take(time, 0.8).is_some() {
+            // As a click or a held button does, before the server has heard.
             let down = Vec3::new(0.017, 0.0, -1.0);
-            client.guess_launch("progs/missile.mdl", start, down * 1000.0, false);
+            let start = client.predicted().origin + Vec3::new(0.14, 0.0, 8.0);
+            let flags = (false, true);
+            client.guess_launch("progs/missile.mdl", start, down * 1000.0, flags);
         }
         let sequence = client.next_sequence();
         client.send_command(command, tick);
@@ -833,8 +890,8 @@ fn rocket_jump_error(ping: u64, predicting: bool, clicked: bool) -> f32 {
 #[ignore = "needs game data"]
 fn predicting_a_rocket_jump_keeps_the_client_with_the_server() {
     for ping in [40, 80] {
-        let with = rocket_jump_error(ping, true, true);
-        let without = rocket_jump_error(ping, false, true);
+        let with = point_blank_error(PointBlank::predicted(ping));
+        let without = point_blank_error(PointBlank::rocket(ping));
         println!("{ping} ms: {with:.1} units with prediction, {without:.1} without");
         assert!(with * 2.0 < without, "it has to make a real difference");
     }
@@ -842,11 +899,239 @@ fn predicting_a_rocket_jump_keeps_the_client_with_the_server() {
 
 #[test]
 #[ignore = "needs game data"]
-fn a_rocket_with_no_click_behind_it_is_never_knocked_twice() {
-    // Held fire, and a host's own rockets, are only known from the server.
+fn a_quad_rocket_jump_is_predicted_at_its_full_strength() {
+    let quad = PointBlank {
+        setup: WITH_THE_QUAD,
+        ..PointBlank::predicted(60)
+    };
+    let weak = PointBlank {
+        blast: Some(BlastRule {
+            boost: 1.0,
+            ..ROCKET_BLAST
+        }),
+        ..quad
+    };
+    let (with, ignored) = (point_blank_error(quad), point_blank_error(weak));
+    println!("{with:.1} units with the quad's strength, {ignored:.1} without");
+    assert!(with < 1.0, "the knock has to be right");
+    assert!(
+        ignored > with + 10.0,
+        "and leaving the quad out has to show"
+    );
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn held_rockets_are_predicted_as_clicked_ones_are() {
+    let held = |blast, guessing| {
+        point_blank_error(PointBlank {
+            blast,
+            guessing,
+            held: 120,
+            ..PointBlank::rocket(80)
+        })
+    };
+    let with = held(Some(ROCKET_BLAST), true);
+    let unknown = held(Some(ROCKET_BLAST), false);
+    let without = held(None, false);
+    println!("{with:.1} guessed, {unknown:.1} from the server alone, {without:.1} not predicted");
+    assert!(with * 2.0 < without, "it has to make a real difference");
+    assert!(with < unknown, "and guessing has to be what does it");
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn nails_at_your_feet_dont_knock_you() {
+    let nails = PointBlank {
+        guessing: false,
+        held: 72,
+        setup: WITH_A_NAILGUN,
+        ..PointBlank::predicted(60)
+    };
+    let error = point_blank_error(nails);
+    println!("{error:.1} units");
+    assert!(error < 1.0, "only what blows up knocks you");
+}
+
+/// What a shot looks like, tick by tick, from a client on `ping`.
+#[derive(Debug, Default)]
+struct FeltShot {
+    /// The kick in degrees.
+    kicks: Vec<f32>,
+    /// The weapon's frames.
+    frames: Vec<u16>,
+    /// How many times the muzzle flashed.
+    flashes: u32,
+}
+
+/// Fires a shotgun, or only shows that it did if `refused`, for a second.
+fn feel_of_a_shot(ping: u64, showing: bool, refused: bool) -> FeltShot {
+    let map = load("dm3");
+    let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
+    let skill = BotSkill {
+        moves: false,
+        shoots: false,
+        ..BotSkill::default()
+    };
+    let mut bots = vec![add_bot(
+        &mut server,
+        &world,
+        network(ping, 0, 0.0),
+        skill,
+        1,
+    )];
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    let rule = weapon_rule(1, 25).expect("the shotgun");
+    let mut felt = FeltShot::default();
+    for tick_number in 0..72 {
+        let client = bots[0].client_mut();
+        client.update_network(Duration::from_secs_f32(tick));
+        client.receive();
+        if showing && tick_number == 0 {
+            client.show_shot(rule.feel);
+        }
+        let command = UserCommand {
+            attack: tick_number == 0 && !refused,
+            ..UserCommand::default()
+        };
+        felt.kicks.push(-client.punch(1.0).x);
+        felt.frames.push(client.weapon().1);
+        felt.flashes += u32::from(client.player_effects() & 2 != 0);
+        client.send_command(command, tick);
+        client.flush_network();
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    }
+    felt
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_shot_kicks_at_once_and_only_once() {
+    let felt = feel_of_a_shot(80, true, false);
+    assert!(
+        felt.kicks[0] > 1.5,
+        "it kicks on the click: {:?}",
+        felt.kicks
+    );
+    assert_eq!(felt.frames[0], 1, "and the weapon moves");
+    assert_eq!(felt.flashes, 1, "and it flashes the once");
+    for pair in felt.kicks.windows(2) {
+        assert!(
+            pair[1] <= pair[0],
+            "the server's kick isn't added: {:?}",
+            felt.kicks
+        );
+    }
+    for pair in felt.frames.windows(2) {
+        let forwards = pair[1] >= pair[0] || pair[1] == 0;
+        assert!(forwards, "the frames run through once: {:?}", felt.frames);
+    }
+    assert_eq!(felt.kicks.last(), Some(&0.0), "and it all settles");
+    assert_eq!(felt.frames.last(), Some(&0));
+
+    // With nothing shown, the same shot has to wait for the round trip.
+    let late = feel_of_a_shot(80, false, false);
+    let first = late.kicks.iter().position(|kick| *kick > 0.0);
+    println!("the kick took {first:?} ticks without showing it");
+    assert!(first.expect("a kick") >= 5, "or there's nothing to fix");
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_shot_the_server_never_fires_stops_being_shown() {
+    let felt = feel_of_a_shot(80, true, true);
+    assert!(felt.kicks[0] > 1.5, "it's shown");
+    assert_eq!(felt.frames.last(), Some(&0), "and gives up");
+    assert_eq!(felt.kicks.last(), Some(&0.0));
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn every_weapon_rule_matches_what_its_script_does() {
+    let map = load("dm3");
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    for weapon in [4096, 1, 2, 4, 8, 16, 32, 64] {
+        let (mut server, mut host, _world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
+        host.send_ready();
+        for _ in 0..72 {
+            host.send_command(UserCommand::default(), tick);
+            server.tick();
+            host.receive();
+        }
+        server
+            .exec(&format!(
+                r#"
+                local host = find_all("netname", "player")[1]
+                host.ammo_shells = 100
+                host.ammo_nails = 100
+                host.ammo_rockets = 100
+                host.ammo_cells = 100
+                host.health = 100000
+                host.items = bit32.bor(host.items, {weapon})
+                host.weapon = {weapon}
+                W_SetCurrentAmmo(host)
+                "#
+            ))
+            .expect("it runs");
+        let rule = weapon_rule(weapon, 100).expect("a rule");
+        let mut sounds = 0;
+        let (mut kick, mut frame, mut flashed) = (0.0_f32, 0, false);
+        for _ in 0..216 {
+            let command = UserCommand {
+                attack: true,
+                ..UserCommand::default()
+            };
+            host.send_command(command, tick);
+            server.tick();
+            host.receive();
+            sounds += host
+                .take_sounds()
+                .iter()
+                .filter(|sound| sound.name == rule.sound)
+                .count();
+            kick = kick.max(-host.punch(1.0).x);
+            if frame == 0 {
+                frame = host.weapon().1;
+            }
+            flashed |= host.player_effects() & 2 != 0;
+        }
+        println!("{weapon}: {sounds} sounds, {kick:.1} degrees, frame {frame}, flash {flashed}");
+        assert!(sounds > 0, "{weapon} sounds as its rule says");
+        if rule.sound_once {
+            assert_eq!(sounds, 1, "{weapon} starts once");
+        } else {
+            #[expect(clippy::cast_precision_loss, reason = "a few shots")]
+            let shots = sounds as f64;
+            let expected = 3.0 / rule.refire;
+            assert!(
+                (shots - expected).abs() <= 1.5,
+                "{weapon}: {shots} of {expected}"
+            );
+        }
+        assert!((kick - rule.feel.recoil).abs() < 0.2, "{weapon}: {kick}");
+        assert_eq!(flashed, rule.feel.flash, "{weapon}'s flash");
+        if let Some((first, _last)) = rule.feel.frames {
+            assert_eq!(frame, first, "{weapon}'s first frame");
+        }
+    }
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_rocket_with_no_guess_behind_it_is_never_knocked_twice() {
+    // A host's own rockets are only known from the server.
     for ping in [0, 20, 40, 80] {
-        let with = rocket_jump_error(ping, true, false);
-        let without = rocket_jump_error(ping, false, false);
+        let known = PointBlank {
+            blast: Some(ROCKET_BLAST),
+            ..PointBlank::rocket(ping)
+        };
+        let with = point_blank_error(known);
+        let without = point_blank_error(PointBlank::rocket(ping));
         println!("{ping} ms: {with:.1} units with prediction, {without:.1} without");
         assert!(with <= without + 0.1, "it mustn't make it worse");
     }

@@ -12,6 +12,7 @@ mod lightstyle;
 mod look;
 mod particles;
 mod projectiles;
+mod shown_shot;
 mod view;
 mod view_clock;
 
@@ -25,5 +26,6 @@ pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};
 pub use particles::{Particle, Particles, Trail};
 pub use projectiles::{Flights, Launch, Path};
+pub use shown_shot::ShotClock;
 pub use view::{StepSmoother, VIEW_HEIGHT, ViewKick, dead_roll, view_bob, view_idle, view_roll};
 pub use view_clock::ViewClock;

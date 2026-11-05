@@ -228,6 +228,18 @@ pub const BACKEND_RULES: &[BackendRule] = &[
         owner: "engine_net",
     },
     BackendRule {
+        dependency: "renetcode",
+        owner: "engine_net",
+    },
+    BackendRule {
+        dependency: "spake2",
+        owner: "engine_net",
+    },
+    BackendRule {
+        dependency: "chacha20poly1305",
+        owner: "engine_net",
+    },
+    BackendRule {
         dependency: "qbsp",
         owner: "fixture_quake",
     },

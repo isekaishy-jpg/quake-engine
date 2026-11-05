@@ -2,9 +2,11 @@
 
 use std::collections::HashMap;
 use std::net::{SocketAddr, UdpSocket};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use engine_net::{NetClient, NetServer, Transport};
+use renet::{ConnectionConfig, RenetClient};
+use renet_netcode::{ClientAuthentication, NetcodeClientTransport};
 
 /// A tick.
 const TICK: Duration = Duration::from_micros(13_889);
@@ -24,6 +26,10 @@ struct LossyProxy {
     count: u32,
     /// One packet in this many is lost, each way.
     drop_every: u32,
+    /// Every packet that's gone through.
+    seen: Vec<Vec<u8>>,
+    /// One packet in this many has a byte changed on the way, if any.
+    spoil_every: Option<u32>,
 }
 
 impl LossyProxy {
@@ -37,7 +43,22 @@ impl LossyProxy {
             backs: HashMap::new(),
             count: 0,
             drop_every,
+            seen: Vec::new(),
+            spoil_every: None,
         }
+    }
+
+    /// What goes on, after noting it, and perhaps spoiling it.
+    fn pass(&mut self, packet: Vec<u8>) -> Vec<u8> {
+        self.seen.push(packet.clone());
+        let mut packet = packet;
+        if let Some(every) = self.spoil_every
+            && self.count.is_multiple_of(every)
+            && let Some(last) = packet.last_mut()
+        {
+            *last ^= 0x55;
+        }
+        packet
     }
 
     /// The address clients use.
@@ -65,10 +86,11 @@ impl LossyProxy {
             sends.push((from, packet));
         }
         for (from, packet) in sends {
-            if !self.lost()
-                && let Some(back) = self.backs.get(&from)
-            {
-                let _sent = back.send_to(&packet, self.server);
+            if !self.lost() {
+                let packet = self.pass(packet);
+                if let Some(back) = self.backs.get(&from) {
+                    let _sent = back.send_to(&packet, self.server);
+                }
             }
         }
         let mut replies = Vec::new();
@@ -79,6 +101,7 @@ impl LossyProxy {
         }
         for (client, packet) in replies {
             if !self.lost() {
+                let packet = self.pass(packet);
                 let _sent = self.front.send_to(&packet, client);
             }
         }
@@ -120,11 +143,226 @@ fn connect(
     arrival.expect("a client")
 }
 
+/// A connection to a game with `wanted` for a password, using `given`, which
+/// runs until it's connected or refused. Returns the client, and whether the
+/// server ever saw it.
+fn try_password(wanted: &str, given: &str) -> (NetClient, bool) {
+    let mut server = NetServer::bind(0, 4, wanted).expect("a port");
+    let address = format!("127.0.0.1:{}", server.port());
+    let mut client = NetClient::connect(&address, given).expect("an address");
+    let mut arrived = false;
+    run_until(
+        &mut server,
+        &mut client,
+        &mut None,
+        &mut |server, client| {
+            arrived |= server.take_arrival().is_some();
+            (arrived && client.is_ready()) || !client.is_connected()
+        },
+    );
+    (client, arrived)
+}
+
+#[test]
+fn the_right_password_gets_in() {
+    let (client, arrived) = try_password("rocket", "rocket");
+    assert!(client.is_ready() && arrived);
+    assert_eq!(client.refusal(), None);
+}
+
+#[test]
+fn the_wrong_password_is_refused() {
+    for given in ["rockets", "", "ROCKET"] {
+        let (client, arrived) = try_password("rocket", given);
+        assert!(!arrived, "{given:?} got in");
+        assert!(!client.is_connected());
+        assert_eq!(client.refusal().as_deref(), Some("wrong password"));
+    }
+}
+
+#[test]
+fn a_password_isnt_needed_in_an_open_game_but_has_to_match() {
+    assert!(try_password("", "").1);
+    assert!(!try_password("", "something").1);
+}
+
+#[test]
+fn nobody_watching_can_read_what_goes_past() {
+    let mut server = NetServer::bind(0, 4, "rocket").expect("a port");
+    let backend = SocketAddr::from(([127, 0, 0, 1], server.port()));
+    let mut proxy = Some(LossyProxy::new(backend, u32::MAX));
+    let address = proxy.as_ref().expect("a proxy").address().to_string();
+    let mut client = NetClient::connect(&address, "rocket").expect("an address");
+    let mut seat = connect(&mut server, &mut client, &mut proxy);
+    let (down, up) = (
+        b"a secret going down".to_vec(),
+        b"a secret going up".to_vec(),
+    );
+    seat.send(down.clone());
+    client.send(up.clone());
+    let (mut heard_down, mut heard_up) = (None, None);
+    run_until(
+        &mut server,
+        &mut client,
+        &mut proxy,
+        &mut |_server, client| {
+            heard_down = heard_down.take().or_else(|| client.receive());
+            heard_up = heard_up.take().or_else(|| seat.receive());
+            heard_down.is_some() && heard_up.is_some()
+        },
+    );
+    assert_eq!(heard_down.as_ref(), Some(&down), "it did go through");
+    assert_eq!(heard_up.as_ref(), Some(&up));
+    let seen = proxy.expect("a proxy").seen;
+    assert!(seen.len() > 4, "and the proxy saw it go");
+    let shows =
+        |packet: &[u8], words: &[u8]| packet.windows(words.len()).any(|window| window == words);
+    for packet in &seen {
+        assert!(
+            !shows(packet, &down) && !shows(packet, &up),
+            "it's in plain text"
+        );
+        assert!(!shows(packet, b"rocket"), "and so is the password");
+    }
+}
+
+#[test]
+fn a_client_with_no_token_never_gets_in() {
+    // The old way in, whose keys are all zeros, so anyone could read it.
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let server_addr = SocketAddr::from(([127, 0, 0, 1], server.port()));
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("a socket");
+    let authentication = ClientAuthentication::Unsecure {
+        protocol_id: 0x5155_414B_4531_0002,
+        client_id: 1,
+        server_addr,
+        user_data: None,
+    };
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .expect("a time");
+    let mut transport =
+        NetcodeClientTransport::new(time, authentication, socket).expect("a transport");
+    let mut client = RenetClient::new(ConnectionConfig::default());
+    let started = Instant::now();
+    while started.elapsed() < Duration::from_millis(300) {
+        client.update(TICK);
+        let _result = transport.update(TICK, &mut client);
+        server.update(TICK);
+        server.flush();
+        assert!(server.take_arrival().is_none(), "it got in");
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    assert!(!client.is_connected());
+}
+
+#[test]
+fn a_spoiled_packet_is_dropped_and_sent_again() {
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let backend = SocketAddr::from(([127, 0, 0, 1], server.port()));
+    let lossy = LossyProxy::new(backend, u32::MAX);
+    let address = lossy.address().to_string();
+    let mut proxy = Some(lossy);
+    let mut client = NetClient::connect(&address, "").expect("an address");
+    let mut seat = connect(&mut server, &mut client, &mut proxy);
+    if let Some(proxy) = &mut proxy {
+        proxy.spoil_every = Some(3);
+    }
+    for number in 0..50u8 {
+        seat.send(vec![number; 40]);
+    }
+    let mut heard = Vec::new();
+    run_until(
+        &mut server,
+        &mut client,
+        &mut proxy,
+        &mut |_server, client| {
+            heard.extend(std::iter::from_fn(|| client.receive()));
+            heard.len() >= 50
+        },
+    );
+    let expected: Vec<Vec<u8>> = (0..50u8).map(|number| vec![number; 40]).collect();
+    assert_eq!(heard, expected, "all of it, unchanged, in order");
+}
+
+/// How many answers `requests` get, and the largest of them.
+fn answers_to(requests: &[Vec<u8>]) -> (usize, usize) {
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
+    let target = SocketAddr::from(([127, 0, 0, 1], server.port()));
+    let socket = UdpSocket::bind("127.0.0.1:0").expect("a socket");
+    socket.set_nonblocking(true).expect("nonblocking");
+    for request in requests {
+        let _sent = socket.send_to(request, target).expect("it goes");
+    }
+    let started = Instant::now();
+    let (mut count, mut largest) = (0, 0);
+    let mut buffer = [0; 2048];
+    while started.elapsed() < Duration::from_millis(200) {
+        server.update(TICK);
+        while let Ok((length, _from)) = socket.recv_from(&mut buffer) {
+            count += 1;
+            largest = largest.max(length);
+        }
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    (count, largest)
+}
+
+#[test]
+fn an_answer_is_never_bigger_than_its_request() {
+    // A valid curve point, taken from a real client's first packet.
+    let proxy_server = NetServer::bind(0, 4, "").expect("a port");
+    let backend = SocketAddr::from(([127, 0, 0, 1], proxy_server.port()));
+    let mut lossy = LossyProxy::new(backend, u32::MAX);
+    let address = lossy.address().to_string();
+    let mut client = NetClient::connect(&address, "").expect("an address");
+    client.update(TICK);
+    std::thread::sleep(Duration::from_millis(5));
+    lossy.pump();
+    let real = lossy.seen.first().expect("a request").clone();
+    assert_eq!(real.len(), 1200);
+    let (count, largest) = answers_to(std::slice::from_ref(&real));
+    assert_eq!(count, 1, "a request of the right size is answered");
+    assert!(largest <= real.len(), "{largest}");
+    let short = real[..600].to_vec();
+    assert_eq!(answers_to(&[short]).0, 0, "and one that's cut short isn't");
+}
+
+#[test]
+fn someone_guessing_passwords_is_slowed_right_down() {
+    // Different messages from one address, as fast as they can be sent.
+    let mut server = NetServer::bind(0, 4, "rocket").expect("a port");
+    let port = server.port();
+    let started = Instant::now();
+    let mut answered = 0;
+    let target = format!("127.0.0.1:{port}");
+    let mut proxy_seen = Vec::new();
+    for _ in 0..40 {
+        let mut lossy = LossyProxy::new(SocketAddr::from(([127, 0, 0, 1], port)), u32::MAX);
+        let address = lossy.address().to_string();
+        let mut client = NetClient::connect(&address, "guess").expect("an address");
+        client.update(TICK);
+        std::thread::sleep(Duration::from_millis(1));
+        lossy.pump();
+        proxy_seen.append(&mut lossy.seen);
+        server.update(TICK);
+        std::thread::sleep(Duration::from_millis(1));
+        lossy.pump();
+        answered += lossy.seen.len();
+    }
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{target} took too long"
+    );
+    assert_eq!(proxy_seen.len(), 40, "they all asked");
+    assert!(answered <= 1, "one guess a second, not {answered}");
+}
+
 #[test]
 fn messages_cross_real_sockets_both_ways() {
-    let mut server = NetServer::bind(0, 4).expect("a port");
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address).expect("an address");
+    let mut client = NetClient::connect(&address, "").expect("an address");
     let mut none = None;
     let mut seat = connect(&mut server, &mut client, &mut none);
     seat.send(vec![1, 2, 3]);
@@ -148,9 +386,9 @@ fn messages_cross_real_sockets_both_ways() {
 
 #[test]
 fn a_large_message_arrives_whole() {
-    let mut server = NetServer::bind(0, 4).expect("a port");
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address).expect("an address");
+    let mut client = NetClient::connect(&address, "").expect("an address");
     let mut none = None;
     let mut seat = connect(&mut server, &mut client, &mut none);
     let big: Vec<u8> = (0..60_000_u32)
@@ -173,10 +411,10 @@ fn a_large_message_arrives_whole() {
 /// Sends 100 reliable messages through a proxy losing one packet in
 /// `drop_every`, each way, and checks they all arrive in order.
 fn reliable_messages_survive(drop_every: u32) {
-    let mut server = NetServer::bind(0, 4).expect("a port");
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
     let target = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let proxy = LossyProxy::new(target, drop_every);
-    let mut client = NetClient::connect(&proxy.address().to_string()).expect("an address");
+    let mut client = NetClient::connect(&proxy.address().to_string(), "").expect("an address");
     let mut proxy = Some(proxy);
     let mut seat = connect(&mut server, &mut client, &mut proxy);
     for number in 0..100_u8 {
@@ -216,9 +454,9 @@ fn reliable_messages_still_arrive_on_a_very_bad_connection() {
 
 #[test]
 fn a_client_going_away_is_noticed() {
-    let mut server = NetServer::bind(0, 4).expect("a port");
+    let mut server = NetServer::bind(0, 4, "").expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut client = NetClient::connect(&address).expect("an address");
+    let mut client = NetClient::connect(&address, "").expect("an address");
     let mut none = None;
     let seat = connect(&mut server, &mut client, &mut none);
     assert!(seat.is_connected());
@@ -233,12 +471,12 @@ fn a_client_going_away_is_noticed() {
 
 #[test]
 fn a_server_full_of_clients_turns_more_away() {
-    let mut server = NetServer::bind(0, 1).expect("a port");
+    let mut server = NetServer::bind(0, 1, "").expect("a port");
     let address = format!("127.0.0.1:{}", server.port());
-    let mut first = NetClient::connect(&address).expect("an address");
+    let mut first = NetClient::connect(&address, "").expect("an address");
     let mut none = None;
     let _seat = connect(&mut server, &mut first, &mut none);
-    let mut second = NetClient::connect(&address).expect("an address");
+    let mut second = NetClient::connect(&address, "").expect("an address");
     let started = Instant::now();
     while second.is_connected() {
         assert!(started.elapsed() < PATIENCE, "it was never refused");
@@ -255,5 +493,5 @@ fn a_server_full_of_clients_turns_more_away() {
 
 #[test]
 fn a_bad_address_is_an_error() {
-    assert!(NetClient::connect("not a real host name!").is_err());
+    assert!(NetClient::connect("not a real host name!", "").is_err());
 }

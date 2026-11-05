@@ -51,6 +51,22 @@ pub struct Projectile {
     pub time: f64,
     /// Whether it falls and bounces, rather than flying straight.
     pub bounces: bool,
+    /// Whether it blows up when it first hits something.
+    pub blasts: bool,
+}
+
+/// How a shot feels to the one firing it, which a game supplies so that it can
+/// be shown at once (proposal 0057).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ShotFeel {
+    /// How far the view kicks up, in degrees.
+    pub recoil: f32,
+    /// Whether the muzzle flashes.
+    pub flash: bool,
+    /// The first and last frames of the weapon, a tenth of a second each.
+    pub frames: Option<(u16, u16)>,
+    /// Whether those go round for as long as it's held.
+    pub repeats: bool,
 }
 
 /// How a blast knocks the one who set it off, for predicting it (proposal
@@ -67,6 +83,12 @@ pub struct BlastRule {
     pub own_share: f32,
     /// How much speed a point of damage gives.
     pub knock_per_damage: f32,
+    /// The stat that says what the player is carrying.
+    pub carried_stat: usize,
+    /// The bits of that stat that make blasts stronger.
+    pub boost_bits: i32,
+    /// How many times stronger.
+    pub boost: f32,
 }
 
 /// A short-lived effect, which only the client knows about after it's sent.

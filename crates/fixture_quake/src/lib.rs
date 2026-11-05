@@ -34,4 +34,4 @@ pub use spr::parse_spr;
 pub use texture::{Palette, texture_kind};
 pub use wad::{Wad, load_picture, parse_picture};
 pub use wav::parse_wav;
-pub use weapon_rules::{ROCKET_BLAST, WeaponRule, shot_launch, weapon_rule};
+pub use weapon_rules::{ROCKET_BLAST, ShotModel, WeaponRule, shot_launch, weapon_rule};

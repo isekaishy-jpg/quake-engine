@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::time::Duration;
 
-use engine_core::entity::{BlastRule, Effect, EntityState, ModelInstance};
+use engine_core::entity::{BlastRule, Effect, EntityState, ModelInstance, ShotFeel};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -15,8 +15,10 @@ use engine_net::{
 };
 use engine_physics::CollisionWorld;
 
+use crate::effects::EFFECT_MUZZLE_FLASH;
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 use crate::projectiles::{Flights, Launch, Timeline};
+use crate::shown_shot::ShownShot;
 use crate::view_clock::ViewClock;
 
 /// Further than this in a tick is a teleport, and isn't blended.
@@ -164,8 +166,10 @@ pub struct Client {
     knocks: Vec<(u32, Vec3)>,
     /// How our own blasts knock us, if that's to be predicted.
     blast: Option<BlastRule>,
-    /// Sounds already played for our own shots.
-    expected_sounds: Vec<String>,
+    /// Sounds already played for our own shots, and when to stop waiting.
+    expected_sounds: Vec<(String, f64)>,
+    /// Our own shot as it's shown before the server answers.
+    shown: ShownShot,
     /// Scratch space for what a move hit, which only the server acts on.
     touched: Vec<u32>,
 }
@@ -216,6 +220,7 @@ impl Client {
             knocks: Vec::new(),
             blast: None,
             expected_sounds: Vec::new(),
+            shown: ShownShot::default(),
             touched: Vec::new(),
         }
     }
@@ -393,7 +398,7 @@ impl Client {
     /// The player's weapon model and frame.
     #[must_use]
     pub fn weapon(&self) -> (u16, u16) {
-        self.weapon
+        (self.weapon.0, self.shown.frame().unwrap_or(self.weapon.1))
     }
 
     /// The player's entity.
@@ -404,14 +409,24 @@ impl Client {
 
     /// The player's effect bits.
     #[must_use]
-    pub fn player_effects(&self) -> u8 {
-        self.player_effects
+    pub fn player_effects(&mut self) -> u8 {
+        let mut effects = self.player_effects;
+        if self.shown.is_active() {
+            effects &= !EFFECT_MUZZLE_FLASH;
+        }
+        if self.shown.take_flash() {
+            effects |= EFFECT_MUZZLE_FLASH;
+        }
+        effects
     }
 
     /// How far the view is knocked, in degrees, `fraction` of the way from the
     /// last snapshot but one to the last.
     #[must_use]
     pub fn punch(&self, fraction: f32) -> Vec3 {
+        if self.shown.is_active() {
+            return Vec3::new(-self.shown.recoil(fraction), 0.0, 0.0);
+        }
         self.previous_punch.lerp(self.punch, fraction)
     }
 
@@ -491,6 +506,8 @@ impl Client {
         command.seconds = seconds;
         command.view_time = self.clock.time();
         self.next_sequence = self.next_sequence.wrapping_add(1);
+        let busy = self.punch != Vec3::ZERO || self.weapon.1 != 0;
+        self.shown.advance(seconds, busy);
         self.follow_flights();
         let mut predicted = self.predicted;
         self.run_on(&mut predicted, &command);
@@ -557,17 +574,37 @@ impl Client {
     /// Notes that `sound` has already been played for a shot, so the server's
     /// won't play over it.
     pub fn expect_own_sound(&mut self, sound: &str) {
-        self.expected_sounds.push(sound.to_owned());
+        let give_up = self.clock.time() + self.round_trip() + GUESS_PATIENCE;
+        self.expected_sounds.push((sound.to_owned(), give_up));
+    }
+
+    /// Shows the feel of our own shot, without waiting for the server.
+    pub fn show_shot(&mut self, feel: ShotFeel) {
+        #[expect(clippy::cast_possible_truncation, reason = "a fraction of a second")]
+        let patience = (self.round_trip() + GUESS_PATIENCE) as f32;
+        self.shown.start(feel, patience);
+    }
+
+    /// Notes that the button is up, so a held weapon's frames stop going round.
+    pub fn let_go_of_fire(&mut self) {
+        self.shown.let_go();
     }
 
     /// Draws our own shot before the server has confirmed it.
-    pub fn guess_launch(&mut self, model: &str, origin: Vec3, velocity: Vec3, bounces: bool) {
+    pub fn guess_launch(
+        &mut self,
+        model: &str,
+        origin: Vec3,
+        velocity: Vec3,
+        (bounces, blasts): (bool, bool),
+    ) {
         if let Some(model) = self.model_numbers.get(model).copied() {
             let launch = Launch {
                 origin,
                 velocity,
                 time: self.own_time(),
                 bounces,
+                blasts,
             };
             let behind = self.clock.time();
             let fired_on = self.next_sequence;
@@ -590,6 +627,8 @@ impl Client {
         let give_up = self.round_trip() + GUESS_PATIENCE;
         self.flights
             .retain(|id| ids.contains(&id), self.clock.time(), give_up);
+        let now = self.clock.time();
+        self.expected_sounds.retain(|(_, by)| *by > now);
         let blasts = self.flights.take_blasts(self.next_sequence);
         let Some(rule) = self.blast else {
             return;
@@ -605,7 +644,13 @@ impl Client {
             if distance > rule.reach {
                 continue;
             }
-            let points = (rule.damage - distance * rule.falloff) * rule.own_share;
+            let carried = self.stats.get(rule.carried_stat).copied().unwrap_or(0);
+            let boost = if carried & rule.boost_bits != 0 {
+                rule.boost
+            } else {
+                1.0
+            };
+            let points = (rule.damage - distance * rule.falloff) * rule.own_share * boost;
             let collision = self.world.with(&self.instances);
             let clear = collision
                 .move_box(blast, Vec3::ZERO, Vec3::ZERO, middle)
@@ -822,7 +867,7 @@ impl Client {
                         .then(|| {
                             self.expected_sounds
                                 .iter()
-                                .position(|name| *name == sound.name)
+                                .position(|(name, _)| *name == sound.name)
                         })
                         .flatten();
                     match played {

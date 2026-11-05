@@ -119,6 +119,10 @@ impl Transport for Conditioned {
         self.inner.is_connected()
     }
 
+    fn refusal(&self) -> Option<String> {
+        self.inner.refusal()
+    }
+
     fn is_ready(&self) -> bool {
         self.inner.is_ready()
     }

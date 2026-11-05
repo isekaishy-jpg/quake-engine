@@ -46,8 +46,8 @@ const MOVE_TYPE_NUMBERS: [(MoveType, f64); 9] = [
 ];
 
 /// What `engine.launch` takes: an entity, its owner, its origin and velocity,
-/// the time, and whether it bounces.
-type LaunchArguments = (f64, f64, Vector, Vector, f64, bool);
+/// the time, whether it bounces, and whether it blows up on what it hits.
+type LaunchArguments = (f64, f64, Vector, Vector, f64, bool, bool);
 
 /// A script that couldn't load.
 #[derive(Debug)]
@@ -721,7 +721,7 @@ impl Game {
         engine.set(
             "launch",
             lua.create_function(
-                move |_, (id, owner, origin, velocity, time, bounces): LaunchArguments| {
+                move |_, (id, owner, origin, velocity, time, bounces, blasts): LaunchArguments| {
                     out.borrow_mut().effects.push(Effect::Launch(Projectile {
                         entity: id_from(id).to_bits(),
                         owner: id_from(owner).to_bits(),
@@ -729,6 +729,7 @@ impl Game {
                         velocity: to_vec3(velocity),
                         time,
                         bounces,
+                        blasts,
                     }));
                     Ok(())
                 },

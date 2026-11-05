@@ -58,6 +58,8 @@ pub struct Launch {
     pub time: f64,
     /// Whether it falls and bounces, rather than flying straight.
     pub bounces: bool,
+    /// Whether it blows up when it first hits something.
+    pub blasts: bool,
 }
 
 /// One path through the map.
@@ -207,12 +209,16 @@ impl Flights {
             velocity: projectile.velocity,
             time: projectile.time,
             bounces: projectile.bounces,
+            blasts: projectile.blasts,
         };
         let mut seen_at = behind;
         let mut blast_used = false;
         if own {
             let guess = self.flights.iter().position(|flight| {
-                flight.entity.is_none() && flight.path.launch.bounces == launch.bounces
+                let same = &flight.path.launch;
+                flight.entity.is_none()
+                    && same.bounces == launch.bounces
+                    && same.blasts == launch.blasts
             });
             if let Some(guess) = guess {
                 let guess = self.flights.remove(guess);
@@ -303,7 +309,7 @@ impl Flights {
                 reason = "a few hundred ticks at most"
             )]
             let lands_on = flight.fired_on + flown.round() as u32;
-            let mine = flight.own && !flight.path.launch.bounces;
+            let mine = flight.own && flight.path.launch.blasts;
             if mine && !flight.blast_used && lands_on <= command {
                 flight.blast_used = true;
                 blasts.push((lands_on, place));

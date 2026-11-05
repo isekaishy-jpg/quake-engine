@@ -491,7 +491,35 @@ fn an_address_can_be_typed_and_joined() {
     ];
     press(&mut menu, &mut host, &keys);
     press(&mut menu, &mut host, &["BACKSPACE", "ENTER"]);
-    assert_eq!(host.commands, ["connect \"10.0.0.99:2\""]);
+    assert_eq!(host.commands, ["password \"\"; connect \"10.0.0.99:2\""]);
+}
+
+#[test]
+fn a_password_can_be_typed_to_join_with() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Join, &mut host);
+    press(
+        &mut menu,
+        &mut host,
+        &["1", "DOWNARROW", "A", "B", "BACKSPACE", "ENTER"],
+    );
+    assert_eq!(host.commands, ["password \"a\"; connect \"1\""]);
+}
+
+#[test]
+fn a_game_can_be_hosted_with_a_password() {
+    let mut menu = Menu::new();
+    let mut host = Host::default();
+    menu.open(Screen::Host, &mut host);
+    press(
+        &mut menu,
+        &mut host,
+        &["UPARROW", "UPARROW", "X", "Y", "DOWNARROW", "ENTER"],
+    );
+    let command = host.commands.last().expect("a command");
+    assert!(command.contains("sv_password \"xy\""), "{command}");
+    assert!(command.ends_with("host"), "{command}");
 }
 
 #[test]
@@ -509,7 +537,7 @@ fn hosting_sets_the_rules_then_starts() {
     press(
         &mut menu,
         &mut host,
-        &["DOWNARROW", "DOWNARROW", "DOWNARROW", "ENTER"],
+        &["DOWNARROW", "DOWNARROW", "DOWNARROW", "DOWNARROW", "ENTER"],
     );
     let command = &host.commands[0];
     assert!(command.contains("deathmatch 1"), "{command}");

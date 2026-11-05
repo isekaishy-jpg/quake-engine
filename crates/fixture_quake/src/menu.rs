@@ -23,10 +23,13 @@ const SINGLE_ROWS: usize = 3;
 const MULTIPLAYER_ROWS: usize = 3;
 
 /// How many rows hosting a game has.
-const HOST_ROWS: usize = 7;
+const HOST_ROWS: usize = 8;
 
 /// The row that starts it.
-const HOST_BEGIN_ROW: usize = 6;
+const HOST_BEGIN_ROW: usize = 7;
+
+/// The row of the password.
+const HOST_PASSWORD_ROW: usize = 6;
 
 /// The longest address or name that can be typed.
 const MAX_TYPED: usize = 32;
@@ -275,6 +278,12 @@ pub struct Menu {
     multiplayer_cursor: usize,
     /// The address being typed.
     address: String,
+    /// The password to join with.
+    join_password: String,
+    /// Whether the password is being typed, rather than the address.
+    on_join_password: bool,
+    /// The password to host with.
+    host_password: String,
     /// The rules of a game to host.
     rules: HostRules,
     /// The host menu's cursor.
@@ -283,6 +292,15 @@ pub struct Menu {
     name: String,
     /// The setup menu's cursor.
     setup_cursor: usize,
+}
+
+/// Takes `key` into `field`, for backspacing and typing.
+fn type_into(field: &mut String, key: &str) {
+    if key == "BACKSPACE" {
+        let _last = field.pop();
+    } else if let Some(character) = typed(key).filter(|_| field.len() < MAX_TYPED) {
+        field.push(character);
+    }
 }
 
 /// One step through `count` rows, wrapping round.
@@ -388,15 +406,22 @@ impl Menu {
             "ESCAPE" => self.open(Screen::Multiplayer, host),
             "ENTER" if !self.address.is_empty() => {
                 self.close();
-                host.run(&format!("connect \"{}\"", self.address));
+                host.run(&format!(
+                    "password \"{}\"; connect \"{}\"",
+                    self.join_password, self.address
+                ));
             }
-            "BACKSPACE" => {
-                let _last = self.address.pop();
+            "UPARROW" | "DOWNARROW" | "TAB" => {
+                host.play("misc/menu1.wav");
+                self.on_join_password = !self.on_join_password;
             }
             _ => {
-                if let Some(character) = typed(key).filter(|_| self.address.len() < MAX_TYPED) {
-                    self.address.push(character);
-                }
+                let field = if self.on_join_password {
+                    &mut self.join_password
+                } else {
+                    &mut self.address
+                };
+                type_into(field, key);
             }
         }
     }
@@ -421,8 +446,9 @@ impl Menu {
         let rules = self.rules;
         self.close();
         host.run(&format!(
-            "disconnect; coop {}; deathmatch {}; teamplay {}; skill {}; fraglimit {}; \
-             timelimit {}; map {}; host",
+            "disconnect; sv_password \"{}\"; coop {}; deathmatch {}; teamplay {}; skill {}; \
+             fraglimit {}; timelimit {}; map {}; host",
+            self.host_password,
             u8::from(rules.coop),
             u8::from(!rules.coop),
             rules.teamplay,
@@ -447,6 +473,9 @@ impl Menu {
             }
             "ENTER" if self.host_cursor == HOST_BEGIN_ROW => self.begin_host(host),
             "ENTER" => self.change_rule(true),
+            _ if self.host_cursor == HOST_PASSWORD_ROW => {
+                type_into(&mut self.host_password, key);
+            }
             _ => {}
         }
     }
@@ -732,7 +761,12 @@ impl Menu {
                 area.print(canvas, 64.0, 40.0, "Address to join");
                 area.text_box(canvas, 56.0, 50.0, 26, 1);
                 canvas.text(area.x + 64.0, area.y + 58.0, self.address.as_bytes());
-                area.print(canvas, 64.0, 80.0, "Enter to connect");
+                area.print(canvas, 64.0, 80.0, "Password, if there is one");
+                area.text_box(canvas, 56.0, 90.0, 26, 1);
+                canvas.text(area.x + 64.0, area.y + 98.0, self.join_password.as_bytes());
+                let row = if self.on_join_password { 98.0 } else { 58.0 };
+                area.print(canvas, 48.0, row, ">");
+                area.print(canvas, 64.0, 120.0, "Enter to connect");
             }
             Screen::Host => self.draw_host(canvas, &area),
             Screen::Setup => self.draw_setup(canvas, &area, host),
@@ -774,6 +808,7 @@ impl Menu {
             ("       Frag Limit", limit(rules.frag_tens * 10, "frags")),
             ("       Time Limit", limit(rules.time_fives * 5, "minutes")),
             ("            Level", HOST_LEVELS[rules.level].to_owned()),
+            ("         Password", self.host_password.clone()),
             ("       Begin Game", String::new()),
         ];
         for (index, (name, value)) in (0u8..).zip(rows) {

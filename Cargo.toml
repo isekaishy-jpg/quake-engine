@@ -66,6 +66,10 @@ kira = { version = "=0.12.6", default-features = false, features = ["cpal", "cpa
 # Proposal 0046: the network, private to `engine_net`.
 renet = { version = "=2.0.1", default-features = false }
 renet_netcode = { version = "=2.0.1" }
+# Proposal 0058: the host hands out its own connect tokens.
+renetcode = { version = "=2.0.0" }
+chacha20poly1305 = { version = "=0.10.1" }
+spake2 = { version = "=0.4.0" }
 # Proposal 0025: Luau, private to `engine_script`.
 mlua = { version = "=0.12.2", features = ["luau", "vendored"] }
 # Proposal 0022: collision, private to `engine_physics`.

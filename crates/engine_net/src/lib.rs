@@ -7,6 +7,7 @@
 
 mod conditioned;
 mod delta;
+mod handshake;
 mod message;
 mod online;
 mod transport;

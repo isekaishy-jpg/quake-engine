@@ -14,5 +14,5 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | Should the rerelease's coloured `.lit` light be read? | The human's decision. Every original level has one in the rerelease pak | Importer, renderer |
 | Should the status bar and menus become scripts? | The human's decision. They're Rust in the fixture today, and only a canvas reaches the engine | UI |
 | How do online play's numbers feel on a real network? | Play over the internet. Interpolation delay, the rewind limit and the 5% loss design limit are starting points | Replication, lag compensation |
-| Should connections be encrypted, and who issues tokens? | The human's decision, with the later server work. Direct play is unsecured for now | Transport |
+| Should open games get a host identity that clients remember? | The human's decision. Traffic is encrypted, but with no password an active attacker could pose as the host | Transport |
 | What's the product's real name? | The human's decision | Packaging |

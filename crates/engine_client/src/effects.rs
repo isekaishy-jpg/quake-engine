@@ -28,7 +28,7 @@ const BEAM_SECONDS: f32 = 0.2;
 const BEAM_PIECE_LENGTH: f32 = 30.0;
 
 /// The entity effect bit for a muzzle flash.
-const EFFECT_MUZZLE_FLASH: u8 = 2;
+pub(crate) const EFFECT_MUZZLE_FLASH: u8 = 2;
 
 /// The entity effect bit for a bright light.
 const EFFECT_BRIGHT_LIGHT: u8 = 4;

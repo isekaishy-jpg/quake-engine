@@ -1,6 +1,6 @@
 # Review 0012: increment 9
 
-Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0056, and the changes to `engine_net`, `engine_sim`, `engine_script`, `engine_server`, `engine_client`, `engine_app`, `fixture_quake` and the tests.
+Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0058, and the changes to `engine_net`, `engine_sim`, `engine_script`, `engine_server`, `engine_client`, `engine_app`, `fixture_quake` and the tests.
 
 | # | Finding | Handling |
 |---|---|---|
@@ -25,6 +25,10 @@ Status: review record, 2026-11-04. Reviewed: proposals 0045 to 0056, and the cha
 | 19 | Exact weapon timing locked every shot to the target's 0.5 s patrol, always at the turn, which made the shot tests pass or fail for the wrong reason | The patrol is 0.61 s, and only shots at a target at full speed count |
 | 20 | A guest on a good connection was told their ping was over the limit as they joined, because a stall after loading was the first measure | The first measure is the lowest of eight. Without that, a test's 20 ms client read 583 ms |
 | 21 | Anything typed could pass as talk, or as a second line, once the server marked talk | The server drops control characters |
+| 22 | The blast check took every own straight flyer for a rocket, so a nail at a nearby wall predicted a rocket's knock | The launch event says whether a thing blows up |
+| 23 | The first version of the plain text test couldn't tell the new encryption from the old all-zero keys, because both scramble packets | A client with the old zero-key way in is now tested as refused |
+| 24 | Clicking to respawn would have shown a shot | The dead and the intermission show none |
+| 25 | A stale expected sound would have silenced a later real one | Expected sounds give up after a round trip |
 
 ## Verified
 
@@ -46,6 +50,13 @@ These ran against the Steam data, read in place. Captures used throwaway user fo
 | A predicted rocket jump | 0.0 units from the server at 40 and 80 ms, against 11.3 and 32.1 without prediction |
 | Fire rates | Nails reach ten a second |
 | Two real processes with bots and a simulated 50 ms, 5 ms jitter and 2% loss | Joined, chatted, team talk, a level change with a guest and a bot, no false ping warning. Captured chat and the scores beside the bar |
+| A shot's feel at 80 ms | Kick, weapon and flash on the click, once. Without showing it, the kick takes 7 ticks |
+| Each of the eight weapons against its script | Sound, pace, kick, flash and first frame all match |
+| Rocket jumps with the quad, at 60 ms | 0.1 units from the server, against 58.0 leaving the quad out |
+| Held rockets at 80 ms | 0.0 units with shots guessed, against 22.0 known from the server alone and 32.1 not predicted |
+| Nails at your feet with blast prediction on | 0.0 units, so no false knock |
+| Passwords between two real processes | The right one joined, chatted and changed level. A wrong one was told `wrong password` |
+| Secure connections over real sockets | No token, no way in. Nothing readable on the wire, spoiled packets dropped and sent again, answers never bigger than requests, 40 fast guesses got one answer |
 
 | Ping (ms) | Jitter (ms) | Loss | Hits with rewind | Hits without |
 |---|---|---|---|---|
@@ -64,14 +75,15 @@ A running target gives about 50 ms of give before a shot misses by a box, which 
 
 - Nobody has played this. Everything ran on one machine, against bots and simulated networks, so there's been no real latency, jitter or loss.
 - The red and green boxes of `sv_unlag_debug` are measured, but haven't been looked at in a live fight.
-- A click's sound and projectile are shown at once, but how that feels hasn't been tried, and neither has the shot switch on `e1m2`.
+- How a shot's feel plays hasn't been tried, and neither has the shot switch on `e1m2`.
+- Encryption has been tested on this machine, not against a real attacker or across a real network.
 - The rewind and the view clock are tested, but how they feel can't be, and their numbers are starting points.
 - The Multiplayer menus were only walked with a pretend host.
 - Connecting through a router hasn't been tried. Hosts may need to forward UDP port 26000.
 
 ## Limitations
 
-- Traffic isn't encrypted and anyone who can reach the port can join, which is fine for direct play between friends and not for open servers.
+- With no password, someone who can change traffic in the middle could pose as the host. `sv_password` closes that, and keeps strangers out.
+- `spake2` has never had an independent audit.
 - The fair play zone's numbers, projectile easing and the rest of this are starting points until real players try them.
-- Predicted rocket jumps leave out quad damage, and other players' rockets aren't predicted.
-- A muzzle flash and recoil still wait for the server. A shot's sound and projectile don't.
+- Other players' rockets aren't predicted, since nothing says when they were fired.

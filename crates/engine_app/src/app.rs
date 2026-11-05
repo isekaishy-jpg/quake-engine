@@ -13,8 +13,8 @@ use engine_assets::{AssetError, FileSystem};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, BotSkill, Buttons, Client, DrawnEntity, EffectSource, Effects,
-    Look, LookScale, ScreenEvent, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key, dead_roll,
-    view_bob, view_idle, view_roll,
+    Look, LookScale, ScreenEvent, ShotClock, StepSmoother, VIEW_HEIGHT, ViewKick, canonical_key,
+    dead_roll, view_bob, view_idle, view_roll,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::{Quad, TALK_MARK};
@@ -35,8 +35,8 @@ use engine_render::{
 use engine_server::{Level, Seat, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
-    Hud, Intermission, Menu, Palette, ROCKET_BLAST, SCRIPTS, Score, import_map, mount_game,
-    mount_music, shot_launch, spawn_point, weapon_rule,
+    Hud, Intermission, Menu, Palette, ROCKET_BLAST, SCRIPTS, Score, WeaponRule, import_map,
+    mount_game, mount_music, shot_launch, spawn_point, weapon_rule,
 };
 
 use crate::commands;
@@ -253,8 +253,10 @@ pub(crate) struct World {
     connect_time: f64,
     /// Who this player is.
     pub(crate) identity: SeatInfo,
-    /// When a held weapon's next shot can be drawn.
-    next_guess: f64,
+    /// When a shot of ours can next be shown.
+    shot_clock: ShotClock,
+    /// Whether shots show the boxes on this screen, from `sv_unlag_debug`.
+    showing_boxes: bool,
     /// Bots playing here, each a client of its own.
     pub(crate) bots: Vec<Bot>,
     /// How many bots have been made, for names and seeds.
@@ -505,7 +507,9 @@ impl World {
                 self.leave_game();
             }
         } else if !transport.is_connected() || self.connect_time > CONNECT_SECONDS {
-            console.print("couldn't connect");
+            let reason = transport.refusal();
+            let reason = reason.as_deref().unwrap_or("no answer");
+            console.print(format!("couldn't connect: {reason}"));
         } else {
             self.connecting = Some(transport);
         }
@@ -540,6 +544,7 @@ impl World {
         map: &Arc<Map>,
         palette: Palette,
     ) -> Result<(), Box<dyn std::error::Error>> {
+        self.shot_clock.reset();
         let map = Arc::clone(map);
         self.map_time = 0.0;
         self.hud = Hud::new();
@@ -583,22 +588,27 @@ impl World {
         }
     }
 
-    /// Shows a shot of the player's before the server answers: its projectile
-    /// and sound. Nothing here decides a result (proposal 0052).
+    /// The rule of a shot that can go now, moving the time of the next one on.
+    /// The second part says whether this carries on from the last shot.
+    fn next_shot(&mut self) -> Option<(WeaponRule, bool)> {
+        let ammo = self.hud.ammo();
+        let rule = weapon_rule(self.hud.active_weapon(), ammo)?;
+        // A click from the dead is a wish to come back, not a shot.
+        let idle = self.hud.is_dead() || self.hud.intermission() != Intermission::None;
+        if self.server.is_some() || ammo < rule.ammo || idle {
+            return None;
+        }
+        let carrying_on = self.shot_clock.take(self.map_time, rule.refire)?;
+        Some((rule, carrying_on))
+    }
+
+    /// Shows a shot of the player's before the server answers. Nothing here
+    /// decides a result (proposals 0052 and 0057).
     #[expect(
         clippy::cast_possible_truncation,
         reason = "f32 keeps angles to a few thousandths of a degree"
     )]
-    fn guess_shot(&mut self, seed: u16) {
-        let Some(rule) = weapon_rule(self.hud.active_weapon()) else {
-            return;
-        };
-        let remote = self.server.is_none();
-        let time = self.map_time;
-        if !remote || self.hud.ammo() < 1 || time < self.next_guess {
-            return;
-        }
-        self.next_guess = time + rule.refire;
+    fn guess_shot(&mut self, rule: &WeaponRule, carrying_on: bool, seed: u16) {
         let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
         let (yaw_sin, yaw_cos) = yaw.to_radians().sin_cos();
         let (pitch_sin, pitch_cos) = pitch.to_radians().sin_cos();
@@ -607,13 +617,42 @@ impl World {
             Vec3::new(yaw_sin, -yaw_cos, 0.0),
             Vec3::new(yaw_cos * pitch_sin, yaw_sin * pitch_sin, pitch_cos),
         ];
+        let sounds = !(rule.sound_once && carrying_on);
         if let Some(client) = &mut self.client {
-            let origin = client.predicted().origin;
-            let (start, velocity) = shot_launch(&rule, origin, axes, pitch, seed);
-            client.guess_launch(rule.model, start, velocity, rule.bounces);
-            client.expect_own_sound(rule.sound);
+            if let Some(shot) = &rule.shot {
+                let origin = client.predicted().origin;
+                let (start, velocity) = shot_launch(shot, origin, axes, pitch, seed);
+                client.guess_launch(shot.model, start, velocity, (shot.bounces, shot.blasts));
+            }
+            client.show_shot(rule.feel);
+            if sounds {
+                client.expect_own_sound(rule.sound);
+            }
         }
-        self.play_local(rule.sound);
+        if sounds {
+            self.play_local(rule.sound);
+        }
+    }
+
+    /// Keeps a held weapon going. What goes round on its own needs no more
+    /// shots sent, and the rest go out as a click's would, with their seeds.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "f32 keeps angles to a few thousandths of a degree"
+    )]
+    fn hold_fire(&mut self) {
+        let Some((rule, carrying_on)) = self.next_shot() else {
+            return;
+        };
+        let (yaw, pitch) = (self.look.yaw() as f32, self.look.pitch() as f32);
+        let seed = match &mut self.client {
+            Some(client) if !rule.feel.repeats => client.send_fire(yaw, pitch, 0),
+            _ => 0,
+        };
+        self.guess_shot(&rule, carrying_on, seed);
+        if self.showing_boxes {
+            self.show_seen_boxes();
+        }
     }
 
     /// Shows the other players' boxes as they are on this screen.
@@ -669,7 +708,9 @@ impl World {
         }
         // A held weapon keeps firing with no click to send.
         if self.buttons.attack && self.is_playing_screen() {
-            self.guess_shot(0);
+            self.hold_fire();
+        } else if let Some(client) = &mut self.client {
+            client.let_go_of_fire();
         }
         self.play_sounds();
         if bots_due {
@@ -1084,6 +1125,8 @@ impl Engine {
             server: false,
         };
         console.register_cvar("m_capture", "1", CvarFlags::default());
+        console.register_cvar("password", "", CvarFlags::default());
+        console.register_cvar("sv_password", "", CvarFlags::default());
         console.register_cvar("sensitivity", "3", saved);
         console.register_cvar("m_yaw", "0.022", saved);
         console.register_cvar("m_pitch", "0.022", saved);
@@ -1194,7 +1237,8 @@ impl Engine {
                 connecting: None,
                 connect_time: 0.0,
                 identity: SeatInfo::default(),
-                next_guess: 0.0,
+                shot_clock: ShotClock::default(),
+                showing_boxes: false,
                 bots: Vec::new(),
                 bots_made: 0,
                 collision: None,
@@ -1253,6 +1297,8 @@ impl Engine {
         if let Some(net_server) = &mut self.world.net_server {
             net_server.flush();
         }
+        let showing = self.console.cvar("sv_unlag_debug");
+        self.world.showing_boxes = showing.is_some_and(|cvar| cvar.value() != "0");
         let (prints, level) = self.world.take_server_news();
         for text in prints {
             if text.starts_with(TALK_MARK) {
@@ -1377,10 +1423,11 @@ impl Engine {
         let (yaw, pitch) = (self.world.look.yaw() as f32, self.world.look.pitch() as f32);
         if let Some(client) = &mut self.world.client {
             let seed = client.send_fire(yaw, pitch, offset);
-            self.world.guess_shot(seed);
+            if let Some((rule, carrying_on)) = self.world.next_shot() {
+                self.world.guess_shot(&rule, carrying_on, seed);
+            }
         }
-        let showing = self.console.cvar("sv_unlag_debug");
-        if showing.is_some_and(|cvar| cvar.value() != "0") {
+        if self.world.showing_boxes {
             self.world.show_seen_boxes();
         }
     }

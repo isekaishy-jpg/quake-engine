@@ -22,6 +22,11 @@ pub trait Transport {
         true
     }
 
+    /// Why the other end turned this connection down, if it did.
+    fn refusal(&self) -> Option<String> {
+        None
+    }
+
     /// Whether messages can flow yet, since a connection takes time to open.
     fn is_ready(&self) -> bool {
         true

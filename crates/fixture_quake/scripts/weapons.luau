@@ -233,9 +233,10 @@ function T_MissileTouch(self, other)
 end
 
 -- Tells clients a path, so they can work it out for themselves.
-function announce_launch(missile, owner, bounces)
+function announce_launch(missile, owner, bounces, blasts)
 	local id = rawget(missile, "_id")
-	engine.launch(id, rawget(owner, "_id"), missile.origin, missile.velocity, time(), bounces)
+	local velocity = missile.velocity
+	engine.launch(id, rawget(owner, "_id"), missile.origin, velocity, time(), bounces, blasts)
 end
 
 -- The spread of a grenade from a shot's seed, the same as the client works it
@@ -267,7 +268,7 @@ function W_FireRocket(self)
 	setmodel(missile, "progs/missile.mdl")
 	setsize(missile, vector.zero, vector.zero)
 	setorigin(missile, self.origin + v_forward * 8 + vector.create(0, 0, 16))
-	announce_launch(missile, self, false)
+	announce_launch(missile, self, false, true)
 end
 
 function LightningDamage(self, p1, p2, from, damage)
@@ -368,7 +369,7 @@ function W_FireGrenade(self)
 	setmodel(missile, "progs/grenade.mdl")
 	setsize(missile, vector.zero, vector.zero)
 	setorigin(missile, self.origin)
-	announce_launch(missile, self, true)
+	announce_launch(missile, self, true, false)
 end
 
 -- Used for both the player and the ogre.
@@ -387,7 +388,7 @@ function launch_spike(self, org, dir)
 	setorigin(spike, org)
 	spike.velocity = dir * 1000
 	newmis = spike
-	announce_launch(spike, self, false)
+	announce_launch(spike, self, false, false)
 	return spike
 end
 
