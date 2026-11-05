@@ -21,6 +21,19 @@ pub struct Clouds {
     pub image: Option<SlotImage>,
 }
 
+/// Fog through a map, thinning with height.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Fog {
+    /// Its colour.
+    pub color: [f32; 3],
+    /// How thick it is at its base.
+    pub density: f32,
+    /// How high its base is.
+    pub height: f32,
+    /// How fast it thins going up.
+    pub falloff: f32,
+}
+
 /// A sky.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sky {

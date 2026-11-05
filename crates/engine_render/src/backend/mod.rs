@@ -1,6 +1,7 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
 mod pipelines;
+mod post;
 mod record;
 mod upload;
 
@@ -26,7 +27,7 @@ use vulkane::safe::{
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::RenderError;
-use crate::renderer::{Capture, Drawables, Target, TextureFilter, View};
+use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
 use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, WorldMesh};
@@ -48,7 +49,10 @@ const INDEX_TYPE_U32: u32 = 1;
 
 /// Bytes in the frame uniforms: a matrix, two vectors, 64 styles, and each
 /// light's vector and least light.
-const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20 + SKY_BYTES;
+const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20 + SKY_BYTES + POST_BYTES;
+
+/// Bytes of final pass values in the frame uniforms.
+const POST_BYTES: usize = 128;
 
 /// Bytes of sky values in the frame uniforms.
 const SKY_BYTES: usize = 112;
@@ -70,6 +74,7 @@ const MATERIAL_MAX_LOD: f32 = 16.0;
 
 /// The world shader.
 const WORLD_SHADER: &str = concat!(
+    include_str!("../shaders/frame.wgsl"),
     include_str!("../shaders/world.wgsl"),
     include_str!("../shaders/material.wgsl"),
     include_str!("../shaders/sky.wgsl"),
@@ -80,6 +85,12 @@ const ALIAS_SHADER: &str = include_str!("../shaders/alias.wgsl");
 
 /// The shader of sprites and particles.
 const SPRITE_SHADER: &str = include_str!("../shaders/sprite.wgsl");
+
+/// The final pass's shader.
+const POST_SHADER: &str = concat!(
+    include_str!("../shaders/frame.wgsl"),
+    include_str!("../shaders/post.wgsl"),
+);
 
 /// The canvas's shader.
 const CANVAS_SHADER: &str = include_str!("../shaders/canvas.wgsl");
@@ -313,6 +324,18 @@ pub(crate) struct Backend {
     present_pass: RenderPass,
     /// The pass ending ready to read back.
     capture_pass: RenderPass,
+    /// The pass a scene is drawn in.
+    scene_pass: RenderPass,
+    /// Where the scene is drawn.
+    scene_target: Option<post::SceneTarget>,
+    /// The layout of the final pass's set.
+    post_set_layout: DescriptorSetLayout,
+    /// The final pass's layout.
+    post_layout: PipelineLayout,
+    /// The final pass.
+    post_pipeline: GraphicsPipeline,
+    /// The final pass's settings.
+    post: PostSettings,
     /// The texture sampler.
     texture_sampler: Sampler,
     /// The material sampler.
@@ -474,6 +497,21 @@ impl Backend {
                 image_binding(9, DescriptorType::UNIFORM_BUFFER),
             ],
         )?;
+        let post_set_layout = DescriptorSetLayout::new(
+            &device,
+            &[
+                DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: DescriptorType::UNIFORM_BUFFER,
+                    descriptor_count: 1,
+                    stage_flags: ShaderStageFlags::FRAGMENT,
+                },
+                image_binding(1, DescriptorType::SAMPLED_IMAGE),
+                image_binding(2, DescriptorType::SAMPLED_IMAGE),
+                image_binding(3, DescriptorType::SAMPLER),
+            ],
+        )?;
+        let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
         let textured_layout = |size| {
             PipelineLayout::with_push_constants(
                 &device,
@@ -536,6 +574,8 @@ impl Backend {
         let command_pool = CommandPool::new(&device, queue_family)?;
         let frame_done = Fence::new(&device)?;
         let available = Semaphore::binary(&device)?;
+        let post_pipeline = Self::make_post_pipeline(&device, &post_layout, &present_pass)?;
+        let scene_pass = post::make_scene_pass(&device)?;
         let mut backend = Self {
             surface,
             window: None,
@@ -553,6 +593,12 @@ impl Backend {
             pipelines,
             present_pass,
             capture_pass,
+            scene_pass,
+            scene_target: None,
+            post_pipeline,
+            post_set_layout,
+            post_layout,
+            post: PostSettings::default(),
             texture_sampler,
             material_sampler,
             filter: None,
@@ -743,6 +789,62 @@ impl Backend {
         }
     }
 
+    /// Sets the final pass's settings.
+    pub(crate) fn set_post(&mut self, post: PostSettings) {
+        self.post = post;
+    }
+
+    /// Records the scene into its target.
+    fn record_scene(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: Option<&Scene<'_>>,
+        view: &View,
+        size: (u32, u32),
+    ) {
+        let Some(target) = &self.scene_target else {
+            return;
+        };
+        rec.begin_render_pass_ext(
+            &self.scene_pass,
+            &target.framebuffer,
+            &[
+                ClearValue::Color(CLEAR_COLOR),
+                ClearValue::DepthStencil {
+                    depth: 1.0,
+                    stencil: 0,
+                },
+            ],
+        );
+        if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
+            recorder.record(rec, scene, view, size);
+        }
+        rec.end_render_pass();
+        // The final pass reads what this wrote.
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::FRAGMENT_SHADER,
+            AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ,
+        );
+    }
+
+    /// Records the final pass.
+    fn record_post(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>, size: (u32, u32)) {
+        let Some(target) = &self.scene_target else {
+            return;
+        };
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&self.post_pipeline);
+        rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+        rec.draw(3, 1, 0, 0);
+    }
+
     /// Notes the window's new size.
     pub(crate) fn resize(&mut self, width: u32, height: u32) {
         self.wanted_size = (width, height);
@@ -778,6 +880,7 @@ impl Backend {
         let aspect = extent.0 as f32 / extent.1 as f32;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, extent)?;
+        self.ensure_scene_target(extent)?;
         let Some(window) = &self.window else {
             return Ok(());
         };
@@ -785,6 +888,7 @@ impl Backend {
         let mut commands = self.command_pool.allocate_primary()?;
         {
             let mut rec = commands.begin()?;
+            self.record_scene(&mut rec, scene, view, extent);
             rec.begin_render_pass_ext(
                 &self.present_pass,
                 &window.framebuffers[at],
@@ -796,9 +900,7 @@ impl Backend {
                     },
                 ],
             );
-            if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
-                recorder.record(&mut rec, scene, view, extent);
-            }
+            self.record_post(&mut rec, extent);
             Self::record_canvas(&mut rec, self.canvas.as_ref(), extent);
             rec.end_render_pass();
             rec.end()?;
@@ -870,8 +972,10 @@ impl Backend {
         let aspect = width as f32 / height as f32;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, (width, height))?;
+        self.ensure_scene_target((width, height))?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
+                self.record_scene(rec, scene, view, (width, height));
                 rec.begin_render_pass_ext(
                     &self.capture_pass,
                     &attachments.framebuffer,
@@ -883,9 +987,7 @@ impl Backend {
                         },
                     ],
                 );
-                if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
-                    recorder.record(rec, scene, view, (width, height));
-                }
+                self.record_post(rec, (width, height));
                 Self::record_canvas(rec, self.canvas.as_ref(), (width, height));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(

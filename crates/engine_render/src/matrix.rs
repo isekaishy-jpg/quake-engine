@@ -53,3 +53,46 @@ pub fn view_projection(origin: Vec3, angles: [f32; 3], fov: f32, aspect: f32) ->
         w[3],
     ]
 }
+
+/// The inverse of a column-major 4 by 4 matrix, if it has one.
+#[must_use]
+pub(crate) fn inverse(m: &[f32; 16]) -> Option<[f32; 16]> {
+    let wide = m.map(f64::from);
+    let mut work = [[0.0_f64; 8]; 4];
+    for row in 0..4 {
+        for column in 0..4 {
+            work[row][column] = wide[column * 4 + row];
+        }
+        work[row][4 + row] = 1.0;
+    }
+    for column in 0..4 {
+        let pivot =
+            (column..4).max_by(|a, b| work[*a][column].abs().total_cmp(&work[*b][column].abs()))?;
+        if work[pivot][column].abs() < 1e-12 {
+            return None;
+        }
+        work.swap(column, pivot);
+        let scale = work[column][column];
+        for value in &mut work[column] {
+            *value /= scale;
+        }
+        for row in 0..4 {
+            if row != column {
+                let factor = work[row][column];
+                let source = work[column];
+                for (value, from) in work[row].iter_mut().zip(source) {
+                    *value -= factor * from;
+                }
+            }
+        }
+    }
+    let mut out = [0.0; 16];
+    for row in 0..4 {
+        for column in 0..4 {
+            #[expect(clippy::cast_possible_truncation, reason = "shaders use f32")]
+            let value = work[row][4 + column] as f32;
+            out[column * 4 + row] = value;
+        }
+    }
+    Some(out)
+}

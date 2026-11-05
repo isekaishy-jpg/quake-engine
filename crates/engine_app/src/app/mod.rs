@@ -30,7 +30,7 @@ use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{Renderer, Target, TextureFilter};
+use engine_render::{PostSettings, Renderer, Target, TextureFilter};
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_ui::ConsoleView;
 use fixture_quake::{
@@ -501,6 +501,10 @@ impl Engine {
         console.register_cvar("show_fps", "1", saved);
         console.register_cvar("vid_vsync", "0", saved);
         console.register_cvar("r_filter", "0", saved);
+        console.register_cvar("r_aa", "0", saved);
+        console.register_cvar("r_outline", "0", saved);
+        console.register_cvar("r_outline_width", "1", saved);
+        console.register_cvar("r_outline_fade", "1500", saved);
         console.register_cvar("r_anisotropy", "8", saved);
         console.register_cvar("volume", "0.7", saved);
         console.register_cvar("bgmvolume", "1", saved);
@@ -640,6 +644,21 @@ impl Engine {
             && let Err(error) = renderer.set_filter(filter)
         {
             self.console.print(format!("filter: {error}"));
+        }
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "small settings"
+        )]
+        let post = PostSettings {
+            edge_smoothing: self.cvar_number("r_aa") != 0.0,
+            outline: self.cvar_number("r_outline").clamp(0.0, 2.0) as u8,
+            outline_width: self.cvar_number("r_outline_width") as f32,
+            outline_fade: self.cvar_number("r_outline_fade") as f32,
+            outline_color: [0.0; 3],
+        };
+        if let Some(renderer) = &mut self.world.renderer {
+            renderer.set_post(post);
         }
         let vsync = self.cvar_number("vid_vsync") != 0.0;
         if let Some(renderer) = &mut self.world.renderer {

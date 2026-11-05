@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_map::{AliasModel, BOUNCE_STYLE, Map, Sky, Sprite, Texture, TextureKind};
+use engine_map::{AliasModel, BOUNCE_STYLE, Fog, Map, Sky, Sprite, Texture, TextureKind};
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType, Device, DeviceMemory,
@@ -13,7 +13,7 @@ use vulkane::safe::{
 
 use super::{
     Backend, DEPTH_FORMAT, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap, GpuPicture,
-    GpuSprite, SKY_BYTES, Scene,
+    GpuSprite, POST_BYTES, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
@@ -21,8 +21,8 @@ use crate::error::RenderError;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
 };
-use crate::matrix::view_projection;
-use crate::renderer::View;
+use crate::matrix::{inverse, view_projection};
+use crate::renderer::{PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::world::{Vertex, WorldMesh};
 
@@ -106,6 +106,8 @@ pub(super) fn frame_bytes(
     aspect: f32,
     lights: &[LightDraw],
     sky: Option<&Sky>,
+    fog: Option<&Fog>,
+    post: &PostSettings,
 ) -> Vec<u8> {
     let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
     let matrix = view_projection(
@@ -139,9 +141,32 @@ pub(super) fn frame_bytes(
         .chain(&positions)
         .chain(&cuts)
         .chain(&sky_values(sky))
+        .chain(&post_values(&matrix, post, fog))
     {
         out.extend_from_slice(&value.to_le_bytes());
     }
+    out
+}
+
+/// The final pass's part of the frame uniforms.
+fn post_values(
+    matrix: &[f32; 16],
+    post: &PostSettings,
+    fog: Option<&Fog>,
+) -> [f32; POST_BYTES / 4] {
+    let mut out = [0.0; POST_BYTES / 4];
+    out[..16].copy_from_slice(&inverse(matrix).unwrap_or([0.0; 16]));
+    if let Some(fog) = fog {
+        out[16..19].copy_from_slice(&fog.color);
+        out[19] = fog.density;
+        out[20] = fog.height;
+        out[21] = fog.falloff;
+    }
+    out[24..27].copy_from_slice(&post.outline_color);
+    out[27] = f32::from(post.outline);
+    out[28] = f32::from(u8::from(post.edge_smoothing));
+    out[29] = post.outline_width;
+    out[30] = post.outline_fade;
     out
 }
 
@@ -617,7 +642,8 @@ impl Backend {
     ) -> Result<(), RenderError> {
         let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
         let sky = scene.and_then(|scene| scene.map.sky.as_ref());
-        let bytes = frame_bytes(view, aspect, lights, sky);
+        let fog = scene.and_then(|scene| scene.map.fog.as_ref());
+        let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene
             && !scene.drawables.particles.is_empty()

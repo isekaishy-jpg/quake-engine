@@ -6,7 +6,7 @@ use engine_core::math::Vec3;
 
 use crate::material::Material;
 use crate::probes::ProbeGrid;
-use crate::sky::Sky;
+use crate::sky::{Fog, Sky};
 
 use crate::tree::{ClipChild, NodeChild, Tree};
 
@@ -186,6 +186,8 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// Fog, if the map has any.
+    pub fog: Option<Fog>,
     /// Where each sample's light comes from, as bytes. Empty unless the map
     /// was baked with directions.
     pub light_directions: Vec<[u8; 3]>,

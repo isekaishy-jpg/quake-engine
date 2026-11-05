@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Sky};
+use engine_map::{Clouds, Contents, Fog, Sky};
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
@@ -61,6 +61,8 @@ pub struct WorkingMap {
     pub entities: Vec<EntitySource>,
     /// The sky, if it has one.
     pub sky: Option<SkySource>,
+    /// Fog, if it has any.
+    pub fog: Option<Fog>,
 }
 
 /// A map's sky, as written.
@@ -250,6 +252,23 @@ fn read_sky(block: &Block) -> SkySource {
     }
 }
 
+/// Reads a `fog` block.
+fn read_fog(block: &Block) -> Fog {
+    #[expect(clippy::cast_possible_truncation, reason = "fog stores f32")]
+    let number = |key: &str, default: f32| {
+        block
+            .get(key)
+            .and_then(Value::number)
+            .map_or(default, |value| value as f32)
+    };
+    Fog {
+        color: color_of(block, "color", [0.6, 0.65, 0.7]),
+        density: number("density", 0.001),
+        height: number("height", 0.0),
+        falloff: number("falloff", 0.004),
+    }
+}
+
 /// Reads a map document.
 ///
 /// # Errors
@@ -269,5 +288,6 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .map(read_entity)
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
+        fog: document.blocks_of("fog").next().map(read_fog),
     })
 }

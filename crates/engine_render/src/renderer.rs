@@ -98,6 +98,21 @@ struct LoadedMap {
     visible: VisibleSet,
 }
 
+/// What the final pass does (proposal 0075).
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PostSettings {
+    /// Whether hard edges are smoothed.
+    pub edge_smoothing: bool,
+    /// Outlines: 0 for none, 1 for full, 2 for semi.
+    pub outline: u8,
+    /// How wide outlines are, in pixels.
+    pub outline_width: f32,
+    /// How far away semi-outlines fade out.
+    pub outline_fade: f32,
+    /// Their colour.
+    pub outline_color: [f32; 3],
+}
+
 /// How surfaces are filtered.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TextureFilter {
@@ -196,6 +211,11 @@ impl Renderer {
     /// Returns an error if the device refuses a new sampler.
     pub fn set_filter(&mut self, filter: TextureFilter) -> Result<(), RenderError> {
         self.backend.set_filter(filter)
+    }
+
+    /// Sets what the final pass does.
+    pub fn set_post(&mut self, post: PostSettings) {
+        self.backend.set_post(post);
     }
 
     /// Sets the UI to draw over the next frames.

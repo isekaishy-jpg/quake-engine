@@ -437,6 +437,7 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     builder.map.entities = entities;
+    builder.map.fog = working.fog;
     if let Some(sky) = &working.sky {
         let mut built = sky.sky.clone();
         if let (Some(clouds), Some(image)) = (&mut built.clouds, &sky.cloud_image) {
