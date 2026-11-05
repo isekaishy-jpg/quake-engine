@@ -30,12 +30,16 @@ fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
     let rgba = match info.color_type {
         png::ColorType::Rgba => pixels,
         png::ColorType::Rgb => pixels
-            .chunks_exact(3)
-            .flat_map(|p| [p[0], p[1], p[2], 255])
+            .as_chunks::<3>()
+            .0
+            .iter()
+            .flat_map(|[red, green, blue]| [*red, *green, *blue, 255])
             .collect(),
         png::ColorType::GrayscaleAlpha => pixels
-            .chunks_exact(2)
-            .flat_map(|p| [p[0], p[0], p[0], p[1]])
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .flat_map(|[grey, alpha]| [*grey, *grey, *grey, *alpha])
             .collect(),
         png::ColorType::Grayscale => pixels.iter().flat_map(|p| [*p, *p, *p, 255]).collect(),
         png::ColorType::Indexed => {
