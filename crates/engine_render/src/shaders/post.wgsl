@@ -10,6 +10,7 @@
 @group(0) @binding(6) var stencil2: texture_2d<f32>;
 @group(0) @binding(7) var stencil3: texture_2d<f32>;
 @group(0) @binding(8) var probe_slices: texture_2d<f32>;
+@group(0) @binding(9) var smaa_weights: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -80,67 +81,36 @@ fn smoothed(at: vec2<i32>, uv: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(scene, scene_sampler, uv + towards * share, 0.0).rgb;
 }
 
-// Smooths edges by finding how far each runs, so a long shallow stair blends
-// along its length and the texture beside it stays sharp.
-fn searched(at: vec2<i32>, uv: vec2<f32>) -> vec3<f32> {
-    let centre = load_color(at);
-    let middle = luma(centre);
-    let north = luma(load_color(at + vec2<i32>(0, -1)));
-    let south = luma(load_color(at + vec2<i32>(0, 1)));
-    let east = luma(load_color(at + vec2<i32>(1, 0)));
-    let west = luma(load_color(at + vec2<i32>(-1, 0)));
-    let highest = max(middle, max(max(north, south), max(east, west)));
-    let lowest = min(middle, min(min(north, south), min(east, west)));
-    if highest - lowest < max(0.05, highest * 0.12) {
-        return centre;
+// What SMAA's weights say at `at`, which may be off the image's edge.
+fn weights_at(at: vec2<i32>) -> vec4<f32> {
+    let last = vec2<i32>(textureDimensions(smaa_weights)) - vec2<i32>(1);
+    return textureLoad(smaa_weights, clamp(at, vec2<i32>(0), last), 0);
+}
+
+// SMAA's last step: a pixel takes what its edges' weights say from each side.
+// The sampler does the mixing, by reading part way into the neighbour.
+fn smaa_blended(at: vec2<i32>) -> vec3<f32> {
+    let own = weights_at(at);
+    let from_right = weights_at(at + vec2<i32>(1, 0)).a;
+    let from_below = weights_at(at + vec2<i32>(0, 1)).g;
+    let from_left = own.b;
+    let from_above = own.r;
+    if from_right + from_below + from_left + from_above < 0.00001 {
+        return load_color(at);
     }
-    let size = vec2<f32>(textureDimensions(scene));
-    let across_rows = abs(north + south - 2.0 * middle) >= abs(east + west - 2.0 * middle);
-    var along = vec2<i32>(1, 0);
-    var towards = vec2<i32>(0, -1);
-    var first = north;
-    var second = south;
-    if !across_rows {
-        along = vec2<i32>(0, 1);
-        towards = vec2<i32>(-1, 0);
-        first = west;
-        second = east;
+    let pixel = 1.0 / vec2<f32>(textureDimensions(scene));
+    let middle = (vec2<f32>(at) + vec2<f32>(0.5)) * pixel;
+    var first = vec2<f32>(0.0, from_below * pixel.y);
+    var second = vec2<f32>(0.0, -from_above * pixel.y);
+    var shares = vec2<f32>(from_below, from_above);
+    if max(from_right, from_left) > max(from_below, from_above) {
+        first = vec2<f32>(from_right * pixel.x, 0.0);
+        second = vec2<f32>(-from_left * pixel.x, 0.0);
+        shares = vec2<f32>(from_right, from_left);
     }
-    var other = first;
-    if abs(second - middle) > abs(first - middle) {
-        towards = -towards;
-        other = second;
-    }
-    let edge = (middle + other) * 0.5;
-    let step_size = abs(other - middle) * 0.25;
-    // Walks both ways along the edge until it stops being one.
-    var ahead = 12;
-    var behind = 12;
-    for (var step = 1; step <= 12; step = step + 1) {
-        let forward = at + along * step;
-        let level = (luma(load_color(forward)) + luma(load_color(forward + towards))) * 0.5;
-        if abs(level - edge) >= step_size {
-            ahead = step;
-            break;
-        }
-    }
-    for (var step = 1; step <= 12; step = step + 1) {
-        let backward = at - along * step;
-        let level = (luma(load_color(backward)) + luma(load_color(backward + towards))) * 0.5;
-        if abs(level - edge) >= step_size {
-            behind = step;
-            break;
-        }
-    }
-    let nearest = f32(min(ahead, behind));
-    let span = f32(ahead + behind);
-    // Near an end of its run a pixel takes in more of what's across the edge.
-    let share = 0.5 - nearest / span;
-    if share <= 0.0 {
-        return centre;
-    }
-    let offset = vec2<f32>(towards) * share / size;
-    return textureSampleLevel(scene, scene_sampler, uv + offset, 0.0).rgb;
+    shares = shares / (shares.x + shares.y);
+    return textureSampleLevel(scene, scene_sampler, middle + first, 0.0).rgb * shares.x
+        + textureSampleLevel(scene, scene_sampler, middle + second, 0.0).rgb * shares.y;
 }
 
 // How strongly a pixel is on an outline, from 0 to 1.
@@ -596,7 +566,7 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let depth = load_depth(at);
     var color = load_color(at);
     if frame.post_params.x > 1.5 {
-        color = searched(at, in.uv);
+        color = smaa_blended(at);
     } else if frame.post_params.x > 0.5 {
         color = smoothed(at, in.uv);
     }

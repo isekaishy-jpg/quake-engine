@@ -4,6 +4,7 @@ mod pipelines;
 mod post;
 mod record;
 mod shadow;
+mod smaa;
 mod upload;
 
 use std::sync::Arc;
@@ -43,6 +44,9 @@ const DEPTH_FORMAT: Format = Format::D32_SFLOAT;
 
 /// The colour behind everything, seen with no map loaded.
 const CLEAR_COLOR: [f32; 4] = [0.02, 0.02, 0.03, 1.0];
+
+/// The `r_aa` setting that's SMAA.
+const SMAA_SETTING: u8 = 2;
 
 /// The size of the push constant holding a model's position.
 const MODEL_OFFSET_SIZE: u32 = 16;
@@ -373,6 +377,8 @@ pub(crate) struct Backend {
     post_pipeline: GraphicsPipeline,
     /// The final pass's settings.
     post: PostSettings,
+    /// SMAA's passes.
+    smaa: smaa::Smaa,
     /// A picture for unused stencils.
     blank_stencil: Option<GpuImage>,
     /// The stencils' pictures.
@@ -561,6 +567,7 @@ impl Backend {
                 image_binding(6, DescriptorType::SAMPLED_IMAGE),
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
+                image_binding(9, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -639,6 +646,7 @@ impl Backend {
         let frame_done = Fence::new(&device)?;
         let available = Semaphore::binary(&device)?;
         let post_pipeline = Self::make_post_pipeline(&device, &post_layout, &present_pass, 1)?;
+        let smaa = smaa::Smaa::new(&device)?;
         let mut backend = Self {
             surface,
             window: None,
@@ -664,6 +672,7 @@ impl Backend {
             shadow_sampler,
             scene_target: None,
             post_pipeline,
+            smaa,
             post_set_layout,
             post_layout,
             post: PostSettings::default(),
@@ -942,6 +951,8 @@ impl Backend {
             AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             AccessFlags::SHADER_READ,
         );
+        let wanted = self.post.edge_smoothing >= SMAA_SETTING;
+        self.smaa.record(rec, &target.smaa, target.size, wanted);
     }
 
     /// What a shadow map draws: the world's opaque faces, then moving models',

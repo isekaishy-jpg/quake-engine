@@ -994,9 +994,16 @@ fn blended_faces_draw_far_to_near() {
     assert!(centre(&capture)[0] > 100);
 }
 
-/// Searching along edges changes pixels on one, and leaves flat ones alone.
+/// How many different colours a capture has.
+fn shades(capture: &Capture) -> usize {
+    let (pixels, _) = capture.rgba.as_chunks::<4>();
+    let found: std::collections::HashSet<[u8; 4]> = pixels.iter().copied().collect();
+    found.len()
+}
+
+/// SMAA leaves flat pixels alone and puts steps between an edge's two sides.
 #[test]
-fn edge_search_only_touches_edges() {
+fn smaa_grades_edges_and_leaves_the_rest() {
     let Some(mut renderer) = renderer() else {
         return;
     };
@@ -1013,7 +1020,20 @@ fn edge_search_only_touches_edges() {
         .capture(&view, Drawables::default(), 96, 96)
         .expect("capture");
     assert_eq!(centre(&plain), centre(&soft), "flat pixels stay");
-    assert_ne!(plain.rgba, soft.rgba, "edges change");
+    assert!(
+        shades(&soft) > shades(&plain) + 4,
+        "{} {}",
+        shades(&plain),
+        shades(&soft)
+    );
+    renderer.set_post(PostSettings::default());
+    let again = renderer
+        .capture(&view, Drawables::default(), 96, 96)
+        .expect("capture");
+    assert_eq!(
+        plain.rgba, again.rgba,
+        "turning it off leaves nothing behind"
+    );
 }
 
 /// A light over the surface, in blue, which it has room to show.

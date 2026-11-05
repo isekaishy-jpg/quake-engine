@@ -10,6 +10,7 @@ use vulkane::safe::{
 
 use engine_map::{Map, ProbeGrid};
 
+use super::smaa::SmaaTarget;
 use super::upload::device_image;
 use super::{Backend, COLOR_FORMAT, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER};
 use crate::error::RenderError;
@@ -28,6 +29,8 @@ pub(super) struct SceneTarget {
     _depth: GpuImage,
     /// Kept alive for the framebuffer, with several samples a pixel.
     _resolved: Option<GpuImage>,
+    /// What SMAA draws.
+    pub(super) smaa: SmaaTarget,
     /// Its size.
     pub(super) size: (u32, u32),
 }
@@ -250,7 +253,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 7,
+                    descriptor_count: 8,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -270,6 +273,14 @@ impl Backend {
         set.write_sampled_image(1, &shown.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampler(3, &self.light_sampler);
+        let smaa = self
+            .smaa
+            .target(&self.device, &self.physical, size, shown)?;
+        set.write_sampled_image(
+            9,
+            &smaa.weights().view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             set,
@@ -278,6 +289,7 @@ impl Backend {
             _color: color,
             _depth: depth,
             _resolved: resolved,
+            smaa,
             size,
         });
         Ok(())

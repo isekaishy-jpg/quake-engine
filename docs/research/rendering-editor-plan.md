@@ -61,7 +61,7 @@ Newest last. A line is added when a stage's state changes.
 - The final pass is in, with edge smoothing, post-process outlines and height fog.
 - Stage 14 is done: stencil rays with boxes, light in water and the fog grid. Stage 13 has capsules and owes sidecars and per-part detail.
 - Meshes were missing from the stages, so stage 25 added them. Stages 13, 15, 17 and 25 are done.
-- Stages 8, 9 and 16 are done. `r_aa 2` is an edge search in place of SMAA's tables, chosen after a side by side.
+- Stages 8, 9 and 16 are done. `r_aa 2` began as an edge search, which [proposal 0093](../proposals/0093-what-increment-11-left.md) replaced with SMAA.
 - Stage 11 is done, with crisp shadows and light tracks.
 - Stage 12 is done.
 - Stage 7 is done.
