@@ -213,7 +213,7 @@ fn visible_faces(brushes: &[Brush]) -> Vec<(Polygon, &BrushFace, Contents)> {
 }
 
 /// Inserts `brushes` into a tree, each grown by `size` if it has one.
-fn build_tree(
+pub(crate) fn build_tree(
     brushes: &[Brush],
     size: Option<(Point, Point)>,
     set: &mut PlaneSet,
@@ -389,6 +389,7 @@ fn field_text(value: &Value) -> String {
         Value::Number(number) => number.to_string(),
         Value::Text(text) => text.clone(),
         Value::Flag(flag) => u8::from(*flag).to_string(),
+        Value::Bytes(_) => String::new(),
         Value::List(values) => values.iter().map(field_text).collect::<Vec<_>>().join(" "),
     }
 }

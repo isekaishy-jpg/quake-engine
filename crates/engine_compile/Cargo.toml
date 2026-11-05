@@ -7,6 +7,10 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[[bin]]
+name = "engine-compile"
+path = "src/bin/engine-compile.rs"
+
 [dependencies]
 engine_assets.workspace = true
 engine_core.workspace = true

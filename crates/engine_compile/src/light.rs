@@ -1,0 +1,935 @@
+//! The light compiler: fixed lights baked into the map (proposal 0072).
+//!
+//! Direct and bounced light stay on separate layers, so moving things can
+//! block one without the other. Each sample also records where its light
+//! came from, for specular and normal maps under baked light.
+
+use std::sync::Arc;
+
+use engine_core::math::Vec3;
+use engine_map::{
+    AlphaMode, BOUNCE_STYLE, Face, FaceLight, Map, Material, MipLevel, ProbeGrid, TextureKind,
+};
+
+use crate::error::CompileError;
+use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
+use crate::source::{EntitySource, WorkingMap};
+use crate::tree::{Child, PlaneSet, TreeBuilder};
+
+/// World units between light samples, unless a map says otherwise.
+const DEFAULT_SPACING: f64 = 16.0;
+
+/// How far a sample sits off its face, so it doesn't shadow itself.
+const SURFACE_OFFSET: f64 = 0.5;
+
+/// A sun's rays start this far away.
+const SUN_DISTANCE: f64 = 16_384.0;
+
+/// The most layers a face can have, as the renderer reads them.
+const MAX_LAYERS: usize = 4;
+
+/// The most surface samples bounced light gathers from.
+const MAX_BOUNCE_SOURCES: usize = 1024;
+
+/// How many probes apart a grid sits, in world units.
+const PROBE_SPACING: f64 = 128.0;
+
+/// Reads an image by path.
+pub type ImageReader<'a> = dyn FnMut(&str) -> Result<Arc<Vec<MipLevel>>, CompileError> + 'a;
+
+/// A fixed light.
+#[derive(Clone, Debug)]
+struct BakeLight {
+    /// Where it is.
+    origin: Point,
+    /// Its colour, from 0 to 1.
+    color: [f64; 3],
+    /// How far it reaches, and how bright it is at its centre.
+    intensity: f64,
+    /// Its light style.
+    style: u8,
+    /// How wide it is, for soft shadows, or 0 for a point.
+    size: f64,
+    /// Which way a spot points.
+    direction: Option<Point>,
+    /// A spot's half angle, as a cosine.
+    cone: f64,
+    /// A picture it projects.
+    cookie: Option<Arc<Vec<MipLevel>>>,
+    /// A falloff by angle, from its axis, as evenly spaced brightnesses.
+    profile: Vec<f64>,
+    /// Whether it's the sun, shining from infinitely far along `direction`.
+    sun: bool,
+}
+
+/// A see-through surface that colours light passing through it.
+struct Glass {
+    /// Its plane.
+    plane: Plane3,
+    /// Its corners.
+    points: Vec<Point>,
+    /// Its texture axes.
+    axes: [(Point, f64); 2],
+    /// The picture of what it lets through.
+    image: Arc<Vec<MipLevel>>,
+}
+
+/// What light can hit.
+struct Scene<'a> {
+    /// Solid brushes, as a tree.
+    tree: TreeBuilder,
+    /// The tree's root.
+    root: Child,
+    /// Its planes.
+    planes: PlaneSet,
+    /// See-through surfaces.
+    glass: Vec<Glass>,
+    /// The fixed lights.
+    lights: &'a [BakeLight],
+}
+
+/// Whether `child` has solid anywhere between `a` and `b`.
+fn blocked(scene: &Scene<'_>, child: Child, a: Point, b: Point) -> bool {
+    let Child::Node(index) = child else {
+        return child == Child::Leaf(engine_map::Contents::Solid);
+    };
+    let node = scene.tree.nodes[index as usize];
+    let plane = scene.planes.planes[node.plane as usize];
+    let (front, back) = (plane.side(a), plane.side(b));
+    if front >= 0.0 && back >= 0.0 {
+        return blocked(scene, node.front, a, b);
+    }
+    if front < 0.0 && back < 0.0 {
+        return blocked(scene, node.back, a, b);
+    }
+    let share = front / (front - back);
+    let middle = [
+        a[0] + (b[0] - a[0]) * share,
+        a[1] + (b[1] - a[1]) * share,
+        a[2] + (b[2] - a[2]) * share,
+    ];
+    let (near, far) = if front >= 0.0 {
+        (node.front, node.back)
+    } else {
+        (node.back, node.front)
+    };
+    blocked(scene, near, a, middle) || blocked(scene, far, middle, b)
+}
+
+/// A texel of `image`, as colour and alpha from 0 to 1, wrapping.
+fn texel(image: &[MipLevel], u: f64, v: f64) -> [f64; 4] {
+    let Some(mip) = image.first() else {
+        return [1.0; 4];
+    };
+    let wrap = |value: f64, size: u32| {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "wrapped into the image first"
+        )]
+        let at = (value.rem_euclid(1.0) * f64::from(size)) as usize;
+        at.min(size.saturating_sub(1) as usize)
+    };
+    let at = (wrap(v, mip.height) * mip.width as usize + wrap(u, mip.width)) * 4;
+    let part = |offset: usize| {
+        mip.rgba
+            .get(at + offset)
+            .map_or(1.0, |byte| f64::from(*byte) / 255.0)
+    };
+    [part(0), part(1), part(2), part(3)]
+}
+
+/// How much of a ray from `a` to `b` gets through the glass in its way, as
+/// colour. Dark lead between the panes stops it, as any solid would.
+fn through_glass(scene: &Scene<'_>, a: Point, b: Point) -> [f64; 3] {
+    let mut out = [1.0; 3];
+    for glass in &scene.glass {
+        let (front, back) = (glass.plane.side(a), glass.plane.side(b));
+        if (front > 0.0) == (back > 0.0) {
+            continue;
+        }
+        let share = front / (front - back);
+        let hit = [
+            a[0] + (b[0] - a[0]) * share,
+            a[1] + (b[1] - a[1]) * share,
+            a[2] + (b[2] - a[2]) * share,
+        ];
+        let inside = (0..glass.points.len()).all(|index| {
+            let from = glass.points[index];
+            let to = glass.points[(index + 1) % glass.points.len()];
+            let edge = [to[0] - from[0], to[1] - from[1], to[2] - from[2]];
+            let reach = [hit[0] - from[0], hit[1] - from[1], hit[2] - from[2]];
+            dot(cross(edge, reach), glass.plane.normal) >= -1e-6
+        });
+        if !inside {
+            continue;
+        }
+        let size = glass.image.first().map_or([1.0, 1.0], |mip| {
+            [f64::from(mip.width), f64::from(mip.height)]
+        });
+        let u = (dot(hit, glass.axes[0].0) + glass.axes[0].1) / size[0];
+        let v = (dot(hit, glass.axes[1].0) + glass.axes[1].1) / size[1];
+        let color = texel(&glass.image, u, v);
+        for (part, tint) in out.iter_mut().zip(color) {
+            *part *= tint;
+        }
+    }
+    out
+}
+
+/// A sequence of fixed offsets on a disc, so a soft light stays repeatable.
+const DISC: [[f64; 2]; 8] = [
+    [0.0, 0.0],
+    [0.7, 0.1],
+    [-0.5, 0.5],
+    [-0.1, -0.7],
+    [0.4, -0.45],
+    [-0.75, -0.2],
+    [0.2, 0.75],
+    [0.85, -0.35],
+];
+
+/// The light `light` puts on a point with `normal`, and the direction it comes
+/// from.
+fn light_on(
+    scene: &Scene<'_>,
+    light: &BakeLight,
+    point: Point,
+    normal: Point,
+) -> ([f64; 3], Point) {
+    let none = ([0.0; 3], [0.0; 3]);
+    let to_light = if light.sun {
+        light.direction.unwrap_or([0.0, 0.0, 1.0])
+    } else {
+        [
+            light.origin[0] - point[0],
+            light.origin[1] - point[1],
+            light.origin[2] - point[2],
+        ]
+    };
+    let distance = dot(to_light, to_light).sqrt();
+    let Some(direction) = normalized(to_light) else {
+        return none;
+    };
+    let facing = dot(direction, normal);
+    if facing <= 0.0 {
+        return none;
+    }
+    let mut strength = if light.sun {
+        light.intensity
+    } else {
+        light.intensity - distance
+    };
+    if strength <= 0.0 {
+        return none;
+    }
+    strength *= facing;
+    if let (Some(axis), false) = (light.direction, light.sun) {
+        let along = -dot(direction, axis);
+        if along < light.cone {
+            return none;
+        }
+        let edge = ((along - light.cone) / (1.0 - light.cone).max(1e-6)).clamp(0.0, 1.0);
+        strength *= edge.sqrt();
+        if !light.profile.is_empty() {
+            let angle = along.clamp(-1.0, 1.0).acos() / std::f64::consts::PI;
+            #[expect(clippy::cast_precision_loss, reason = "a short list")]
+            let at = angle * (light.profile.len() - 1) as f64;
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "angle is between 0 and 1"
+            )]
+            let index = (at as usize).min(light.profile.len() - 1);
+            strength *= light.profile[index];
+        }
+    }
+    let mut color = light.color;
+    if let (Some(cookie), Some(axis)) = (&light.cookie, light.direction) {
+        let side = normalized(cross(axis, [0.0, 0.0, 1.0])).unwrap_or([1.0, 0.0, 0.0]);
+        let up = cross(side, axis);
+        let along = (-dot(direction, axis)).max(1e-3);
+        let spread = (1.0 - light.cone * light.cone).max(1e-6).sqrt() / light.cone.max(1e-3);
+        let u = dot(direction, side) / along / spread * 0.5 + 0.5;
+        let v = dot(direction, up) / along / spread * 0.5 + 0.5;
+        let sample = texel(cookie, u, v);
+        for (part, tint) in color.iter_mut().zip(sample) {
+            *part *= tint;
+        }
+    }
+    let samples = if light.size > 0.0 { DISC.len() } else { 1 };
+    let side = normalized(cross(direction, [0.3, 0.2, 0.9])).unwrap_or([1.0, 0.0, 0.0]);
+    let up = cross(side, direction);
+    let start = add_scaled(point, normal, SURFACE_OFFSET);
+    let mut seen = [0.0; 3];
+    for offset in DISC.iter().take(samples) {
+        let source = if light.sun {
+            add_scaled(start, direction, SUN_DISTANCE)
+        } else {
+            light.origin
+        };
+        let target = add_scaled(
+            add_scaled(source, side, offset[0] * light.size),
+            up,
+            offset[1] * light.size,
+        );
+        if !blocked(scene, scene.root, start, target) {
+            let tint = through_glass(scene, start, target);
+            for (part, value) in seen.iter_mut().zip(tint) {
+                *part += value;
+            }
+        }
+    }
+    #[expect(clippy::cast_precision_loss, reason = "eight at most")]
+    let share = strength / samples as f64;
+    (
+        [
+            seen[0] * color[0] * share,
+            seen[1] * color[1] * share,
+            seen[2] * color[2] * share,
+        ],
+        direction,
+    )
+}
+
+/// A field's number.
+fn number(entity: &EntitySource, key: &str) -> Option<f64> {
+    let (_, value) = entity.fields.iter().find(|(name, _)| name == key)?;
+    value.number().or_else(|| value.text()?.parse().ok())
+}
+
+/// A field's three numbers.
+fn point_of(entity: &EntitySource, key: &str) -> Option<Point> {
+    let (_, value) = entity.fields.iter().find(|(name, _)| name == key)?;
+    let numbers = value.numbers()?;
+    (numbers.len() == 3).then(|| [numbers[0], numbers[1], numbers[2]])
+}
+
+/// A field's text.
+fn text_of<'a>(entity: &'a EntitySource, key: &str) -> Option<&'a str> {
+    entity
+        .fields
+        .iter()
+        .find(|(name, _)| name == key)
+        .and_then(|(_, value)| value.text())
+}
+
+/// The next style free for keyframes, after the scripts' switchable range.
+const FIRST_KEYFRAME_STYLE: u8 = 48;
+
+/// Reads the fixed lights. A light with `keyframes` gives one baked light at
+/// each, each on its own style, so its motion can be blended at runtime.
+fn read_lights(
+    working: &WorkingMap,
+    images: &mut ImageReader<'_>,
+) -> Result<Vec<BakeLight>, CompileError> {
+    let mut lights = Vec::new();
+    let mut next_style = FIRST_KEYFRAME_STYLE;
+    for entity in working
+        .entities
+        .iter()
+        .filter(|e| e.kind.starts_with("light"))
+    {
+        let origin = point_of(entity, "origin").unwrap_or([0.0; 3]);
+        let cone_degrees = number(entity, "spot_angle").unwrap_or(0.0);
+        let cookie = text_of(entity, "cookie").map(&mut *images).transpose()?;
+        let profile = entity
+            .fields
+            .iter()
+            .find(|(name, _)| name == "profile")
+            .and_then(|(_, value)| value.numbers())
+            .unwrap_or_default();
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "styles are small numbers"
+        )]
+        let style = number(entity, "style").unwrap_or(0.0).clamp(0.0, 62.0) as u8;
+        let base = BakeLight {
+            origin,
+            color: point_of(entity, "color").unwrap_or([1.0, 1.0, 1.0]),
+            intensity: number(entity, "intensity")
+                .or_else(|| number(entity, "light"))
+                .unwrap_or(300.0),
+            style,
+            size: number(entity, "size").unwrap_or(0.0),
+            direction: point_of(entity, "spot_direction").and_then(normalized),
+            cone: cone_degrees.to_radians().cos(),
+            cookie,
+            profile,
+            sun: false,
+        };
+        let keyframes = entity
+            .fields
+            .iter()
+            .find(|(name, _)| name == "keyframes")
+            .and_then(|(_, value)| value.numbers());
+        if let Some(keyframes) = keyframes {
+            for key in keyframes.as_chunks::<3>().0 {
+                let mut light = base.clone();
+                light.origin = *key;
+                light.style = next_style;
+                next_style = next_style.saturating_add(1).min(BOUNCE_STYLE - 1);
+                lights.push(light);
+            }
+        } else {
+            lights.push(base);
+        }
+    }
+    Ok(lights)
+}
+
+/// The world position of texture coordinates on a face.
+struct FaceSpace {
+    /// The face's plane.
+    plane: Plane3,
+    /// How texture coordinates relate to the world.
+    rows: [[f64; 4]; 3],
+}
+
+/// The inverse of a 3 by 3 system, solved for `rhs`.
+fn solve(rows: &[[f64; 4]; 3], rhs: [f64; 3]) -> Option<Point> {
+    let a = [rows[0][0], rows[0][1], rows[0][2]];
+    let b = [rows[1][0], rows[1][1], rows[1][2]];
+    let c = [rows[2][0], rows[2][1], rows[2][2]];
+    let det = dot(a, cross(b, c));
+    if det.abs() < 1e-12 {
+        return None;
+    }
+    let bc = cross(b, c);
+    let ca = cross(c, a);
+    let ab = cross(a, b);
+    Some([
+        (rhs[0] * bc[0] + rhs[1] * ca[0] + rhs[2] * ab[0]) / det,
+        (rhs[0] * bc[1] + rhs[1] * ca[1] + rhs[2] * ab[1]) / det,
+        (rhs[0] * bc[2] + rhs[1] * ca[2] + rhs[2] * ab[2]) / det,
+    ])
+}
+
+/// A point from a map's narrower type.
+fn wide(point: Vec3) -> Point {
+    [f64::from(point.x), f64::from(point.y), f64::from(point.z)]
+}
+
+/// A face's plane and texture space.
+fn face_space(map: &Map, face: &Face) -> Option<FaceSpace> {
+    let first = face.first_point as usize;
+    let points = map.points.get(first..first + face.point_count as usize)?;
+    let a = wide(*points.first()?);
+    let mut normal = None;
+    for index in 1..points.len().saturating_sub(1) {
+        let b = wide(points[index]);
+        let c = wide(points[index + 1]);
+        let edge = [b[0] - a[0], b[1] - a[1], b[2] - a[2]];
+        let next = [c[0] - b[0], c[1] - b[1], c[2] - b[2]];
+        if let Some(found) = normalized(cross(edge, next)) {
+            normal = Some(found);
+            break;
+        }
+    }
+    let normal = normal?;
+    let row = |axis: usize| {
+        let texel = face.axes[axis];
+        [
+            f64::from(texel.axis.x),
+            f64::from(texel.axis.y),
+            f64::from(texel.axis.z),
+            f64::from(texel.offset),
+        ]
+    };
+    Some(FaceSpace {
+        plane: Plane3 {
+            normal,
+            distance: dot(normal, a),
+        },
+        rows: [row(0), row(1), [normal[0], normal[1], normal[2], 0.0]],
+    })
+}
+
+/// One face's samples before they're laid out.
+struct FaceBake {
+    /// Its layers: a style and each sample's colour.
+    layers: Vec<(u8, Vec<[f64; 3]>)>,
+    /// Where its strongest light comes from, per sample.
+    directions: Vec<Point>,
+    /// Where it sits.
+    light: FaceLight,
+    /// Each sample's position.
+    points: Vec<Point>,
+    /// The face's normal.
+    normal: Point,
+    /// The face's average colour, for what it bounces.
+    albedo: [f64; 3],
+}
+
+/// The extents of a face in texels, spaced by `spacing`.
+fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Point>)> {
+    let space = face_space(map, face)?;
+    let first = face.first_point as usize;
+    let points = map.points.get(first..first + face.point_count as usize)?;
+    let mut low = [f64::INFINITY; 2];
+    let mut high = [f64::NEG_INFINITY; 2];
+    for point in points {
+        for axis in 0..2 {
+            let value = f64::from(face.axes[axis].project(*point));
+            low[axis] = low[axis].min(value);
+            high[axis] = high[axis].max(value);
+        }
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "face sizes are small and whole"
+    )]
+    let count = |axis: usize| ((high[axis] - low[axis]) / spacing).ceil() as u32 + 2;
+    #[expect(clippy::cast_possible_truncation, reason = "texels fit i32")]
+    let origin = [
+        (low[0] / spacing).floor() as i32 * spacing as i32,
+        (low[1] / spacing).floor() as i32 * spacing as i32,
+    ];
+    let (width, height) = (count(0), count(1));
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "small"
+    )]
+    let texels_per_sample = spacing as u32;
+    let mut positions = Vec::with_capacity((width * height) as usize);
+    for y in 0..height {
+        for x in 0..width {
+            let s = f64::from(origin[0]) + f64::from(x) * spacing;
+            let t = f64::from(origin[1]) + f64::from(y) * spacing;
+            let rhs = [
+                s - space.rows[0][3],
+                t - space.rows[1][3],
+                space.plane.distance,
+            ];
+            positions.push(solve(&space.rows, rhs)?);
+        }
+    }
+    Some((
+        FaceLight {
+            first_sample: 0,
+            width,
+            height,
+            texel_origin: origin,
+            texels_per_sample,
+            styles: [Face::NO_STYLE; 4],
+        },
+        positions,
+    ))
+}
+
+/// The average colour of the texture of `face`.
+fn albedo_of(map: &Map, face: &Face) -> [f64; 3] {
+    let Some(texture) = map.textures.get(face.texture as usize) else {
+        return [0.5; 3];
+    };
+    let Some(mip) = texture.mips.last() else {
+        return [0.5; 3];
+    };
+    let mut total = [0.0; 3];
+    let pixels = mip.rgba.as_chunks::<4>().0;
+    for pixel in pixels {
+        for (part, byte) in total.iter_mut().zip(pixel) {
+            *part += f64::from(*byte) / 255.0;
+        }
+    }
+    #[expect(clippy::cast_precision_loss, reason = "image sizes are small")]
+    let count = pixels.len().max(1) as f64;
+    total.map(|part| part / count)
+}
+
+/// Lights one face.
+fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<FaceBake> {
+    let texture = map.textures.get(face.texture as usize)?;
+    if !matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout) {
+        return None;
+    }
+    let space = face_space(map, face)?;
+    let normal = space.plane.normal;
+    let (light, points) = light_grid(map, face, spacing)?;
+    let count = points.len();
+    let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
+    let mut directions = vec![[0.0; 3]; count];
+    for source in scene.lights {
+        let at = match layers.iter().position(|(style, _)| *style == source.style) {
+            Some(at) => at,
+            None if layers.len() + 1 < MAX_LAYERS => {
+                layers.push((source.style, vec![[0.0; 3]; count]));
+                layers.len() - 1
+            }
+            None => continue,
+        };
+        for (index, point) in points.iter().enumerate() {
+            let (color, direction) = light_on(scene, source, *point, normal);
+            let energy = color[0] + color[1] + color[2];
+            if energy > 0.0 {
+                let sample = &mut layers[at].1[index];
+                for part in 0..3 {
+                    sample[part] += color[part];
+                }
+                directions[index] = add_scaled(directions[index], direction, energy);
+            }
+        }
+    }
+    Some(FaceBake {
+        layers,
+        directions,
+        light,
+        points,
+        normal,
+        albedo: albedo_of(map, face),
+    })
+}
+
+/// A patch of lit surface that bounces light on.
+#[derive(Clone, Copy)]
+struct BounceSource {
+    /// Where it is.
+    point: Point,
+    /// Which way it faces.
+    normal: Point,
+    /// What it sends out.
+    color: [f64; 3],
+}
+
+/// Picks evenly from what's lit.
+fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource> {
+    let mut sources = Vec::new();
+    for bake in bakes.iter().flatten() {
+        for (index, point) in bake.points.iter().enumerate() {
+            let mut lit = [0.0; 3];
+            for (_, samples) in &bake.layers {
+                for part in 0..3 {
+                    lit[part] += samples[index][part];
+                }
+            }
+            if lit[0] + lit[1] + lit[2] > 1.0 {
+                sources.push(BounceSource {
+                    point: *point,
+                    normal: bake.normal,
+                    color: [
+                        lit[0] * bake.albedo[0],
+                        lit[1] * bake.albedo[1],
+                        lit[2] * bake.albedo[2],
+                    ],
+                });
+            }
+        }
+    }
+    let step = (sources.len() / MAX_BOUNCE_SOURCES).max(1);
+    #[expect(clippy::cast_precision_loss, reason = "counts are small")]
+    let weight = (step as f64) * spacing * spacing;
+    let mut picked: Vec<BounceSource> = sources.into_iter().step_by(step).collect();
+    for source in &mut picked {
+        source.color = source.color.map(|part| part * weight);
+    }
+    picked
+}
+
+/// The light bounced onto a point.
+fn bounced_at(
+    scene: &Scene<'_>,
+    sources: &[BounceSource],
+    point: Point,
+    normal: Point,
+    gain: f64,
+) -> [f64; 3] {
+    let mut total = [0.0; 3];
+    let start = add_scaled(point, normal, SURFACE_OFFSET);
+    for source in sources {
+        let offset = [
+            source.point[0] - start[0],
+            source.point[1] - start[1],
+            source.point[2] - start[2],
+        ];
+        let squared = dot(offset, offset).max(256.0);
+        let Some(direction) = normalized(offset) else {
+            continue;
+        };
+        let here = dot(direction, normal);
+        let there = -dot(direction, source.normal);
+        if here <= 0.0 || there <= 0.0 {
+            continue;
+        }
+        let end = add_scaled(source.point, source.normal, SURFACE_OFFSET);
+        if blocked(scene, scene.root, start, end) {
+            continue;
+        }
+        let share = here * there / squared * gain;
+        for (part, color) in total.iter_mut().zip(source.color) {
+            *part += color * share;
+        }
+    }
+    total
+}
+
+/// A colour on the lightmap's scale, from 0 to 255.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to a byte"
+)]
+fn to_bytes(color: [f64; 3]) -> [u8; 3] {
+    color.map(|part| part.clamp(0.0, 255.0) as u8)
+}
+
+/// A direction as bytes.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "clamped to a byte"
+)]
+fn direction_bytes(direction: Point) -> [u8; 3] {
+    let unit = normalized(direction).unwrap_or([0.0, 0.0, 0.0]);
+    unit.map(|part| ((part * 0.5 + 0.5) * 255.0).clamp(0.0, 255.0) as u8)
+}
+
+/// Runs `work` over `items` on every core, in order.
+fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
+    let threads = std::thread::available_parallelism().map_or(1, usize::from);
+    let size = items.len().div_ceil(threads.max(1)).max(1);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = items
+            .chunks(size)
+            .map(|chunk| scope.spawn(|| chunk.iter().map(&work).collect::<Vec<R>>()))
+            .collect();
+        handles
+            .into_iter()
+            .flat_map(|handle| handle.join().unwrap_or_default())
+            .collect()
+    })
+}
+
+/// Bakes `probes` over the world's bounds, for moving things.
+fn bake_probes(
+    scene: &Scene<'_>,
+    map: &Map,
+    sources: &[BounceSource],
+    gain: f64,
+) -> Option<ProbeGrid> {
+    let model = map.models.first()?;
+    let (low, high) = (wide(model.mins), wide(model.maxs));
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "world sizes are small"
+    )]
+    let count = |axis: usize| ((high[axis] - low[axis]) / PROBE_SPACING).ceil() as u32 + 1;
+    let size = [count(0), count(1), count(2)];
+    let mut positions = Vec::new();
+    for z in 0..size[2] {
+        for y in 0..size[1] {
+            for x in 0..size[0] {
+                positions.push([
+                    low[0] + f64::from(x) * PROBE_SPACING,
+                    low[1] + f64::from(y) * PROBE_SPACING,
+                    low[2] + f64::from(z) * PROBE_SPACING,
+                ]);
+            }
+        }
+    }
+    const SIDES: [Point; 6] = [
+        [1.0, 0.0, 0.0],
+        [-1.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [0.0, -1.0, 0.0],
+        [0.0, 0.0, 1.0],
+        [0.0, 0.0, -1.0],
+    ];
+    let baked = in_parallel(&positions, |point| {
+        let mut colors = [[0_u8; 3]; 6];
+        let mut direction = [0.0; 3];
+        for (side, normal) in SIDES.iter().enumerate() {
+            let mut light = bounced_at(scene, sources, *point, *normal, gain);
+            for source in scene.lights {
+                let (color, from) = light_on(scene, source, *point, *normal);
+                let energy = color[0] + color[1] + color[2];
+                direction = add_scaled(direction, from, energy);
+                for part in 0..3 {
+                    light[part] += color[part];
+                }
+            }
+            colors[side] = to_bytes(light);
+        }
+        (colors, direction_bytes(direction))
+    });
+    #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+    let origin = Vec3::new(low[0] as f32, low[1] as f32, low[2] as f32);
+    #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+    let spacing = PROBE_SPACING as f32;
+    Some(ProbeGrid {
+        origin,
+        spacing,
+        size,
+        colors: baked.iter().map(|(colors, _)| *colors).collect(),
+        directions: baked.iter().map(|(_, direction)| *direction).collect(),
+    })
+}
+
+/// What a bake needs beyond the map.
+pub struct BakeInput<'a> {
+    /// The map as written.
+    pub working: &'a WorkingMap,
+    /// Reads an image by path.
+    pub images: &'a mut ImageReader<'a>,
+}
+
+/// The material of `face`, if it has one.
+fn material_of<'a>(map: &'a Map, face: &Face) -> Option<&'a Material> {
+    map.textures.get(face.texture as usize)?.material.as_deref()
+}
+
+/// Bakes the light of `map`.
+///
+/// # Errors
+///
+/// Returns an error if a light's image can't be read.
+pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), CompileError> {
+    let working = input.working;
+    let mut lights = read_lights(working, input.images)?;
+    let world = working
+        .entities
+        .iter()
+        .find(|entity| entity.kind == "worldspawn");
+    let spacing = world
+        .and_then(|world| number(world, "light_spacing"))
+        .unwrap_or(DEFAULT_SPACING)
+        .max(1.0);
+    let ambient = world
+        .and_then(|world| number(world, "ambient"))
+        .unwrap_or(0.0);
+    let bounce_gain = world
+        .and_then(|world| number(world, "bounce"))
+        .unwrap_or(1.0)
+        * 0.25;
+    if let Some(sky) = &map.sky {
+        let direction = sky.sun_direction;
+        let intensity = world
+            .and_then(|world| number(world, "sun_intensity"))
+            .unwrap_or(0.0);
+        if intensity > 0.0 {
+            lights.push(BakeLight {
+                origin: [0.0; 3],
+                color: sky.sun_color.map(f64::from),
+                intensity,
+                style: 0,
+                size: world.and_then(|w| number(w, "sun_size")).unwrap_or(0.0),
+                direction: Some(wide(direction)),
+                cone: -1.0,
+                cookie: None,
+                profile: Vec::new(),
+                sun: true,
+            });
+        }
+    }
+
+    // Light passes what's see-through, so those brushes aren't in its tree.
+    let see_through = |name: &str| {
+        map.textures
+            .iter()
+            .find(|texture| texture.name == name)
+            .and_then(|texture| texture.material.as_ref())
+            .is_some_and(|material| material.alpha == AlphaMode::Blend)
+    };
+    let solid: Vec<_> = working
+        .brushes
+        .iter()
+        .filter(|brush| {
+            brush.contents == engine_map::Contents::Solid
+                && !brush.faces.iter().any(|face| see_through(&face.material))
+        })
+        .cloned()
+        .collect();
+    let mut planes = PlaneSet::default();
+    let (tree, root) = crate::build::build_tree(&solid, None, &mut planes);
+    let mut glass = Vec::new();
+    let model_faces = map.models.first().map_or(0, |model| model.face_count) as usize;
+    for face in map.faces.iter().take(model_faces) {
+        let Some(material) = material_of(map, face) else {
+            continue;
+        };
+        if material.alpha != AlphaMode::Blend {
+            continue;
+        }
+        let image = material
+            .tint
+            .and_then(|slot| material.slots.get(usize::from(slot).saturating_sub(1)))
+            .cloned();
+        let (Some(image), Some(space)) = (image, face_space(map, face)) else {
+            continue;
+        };
+        let first = face.first_point as usize;
+        let Some(points) = map.points.get(first..first + face.point_count as usize) else {
+            continue;
+        };
+        glass.push(Glass {
+            plane: space.plane,
+            points: points.iter().map(|point| wide(*point)).collect(),
+            axes: [
+                (
+                    [space.rows[0][0], space.rows[0][1], space.rows[0][2]],
+                    space.rows[0][3],
+                ),
+                (
+                    [space.rows[1][0], space.rows[1][1], space.rows[1][2]],
+                    space.rows[1][3],
+                ),
+            ],
+            image,
+        });
+    }
+    let scene = Scene {
+        tree,
+        root,
+        planes,
+        glass,
+        lights: &lights,
+    };
+
+    let faces: Vec<Face> = map.faces.clone();
+    let shared: &Map = map;
+    let bakes: Vec<Option<FaceBake>> =
+        in_parallel(&faces, |face| bake_face(&scene, shared, face, spacing));
+    let sources = bounce_sources(&bakes, spacing);
+    let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
+        bake.as_ref().map(|bake| {
+            bake.points
+                .iter()
+                .map(|point| {
+                    let light = bounced_at(&scene, &sources, *point, bake.normal, bounce_gain);
+                    light.map(|part| part + ambient)
+                })
+                .collect()
+        })
+    });
+    let probes = bake_probes(&scene, shared, &sources, bounce_gain);
+
+    let mut samples = Vec::new();
+    let mut directions = Vec::new();
+    let mut lit_faces = Vec::with_capacity(faces.len());
+    for (bake, bounce) in bakes.into_iter().zip(bounced) {
+        let (Some(mut bake), Some(bounce)) = (bake, bounce) else {
+            lit_faces.push(None);
+            continue;
+        };
+        bake.layers.push((BOUNCE_STYLE, bounce));
+        let mut light = bake.light;
+        light.first_sample = u32::try_from(samples.len()).unwrap_or(u32::MAX);
+        for (index, (style, layer)) in bake.layers.iter().enumerate().take(MAX_LAYERS) {
+            light.styles[index] = *style;
+            samples.extend(layer.iter().map(|color| to_bytes(*color)));
+            directions.extend(bake.directions.iter().map(|d| direction_bytes(*d)));
+        }
+        lit_faces.push(Some(light));
+    }
+    for (face, light) in map.faces.iter_mut().zip(lit_faces) {
+        face.light = light;
+    }
+    map.light = samples;
+    map.light_directions = directions;
+    map.probes = probes;
+    map.lit = true;
+    Ok(())
+}

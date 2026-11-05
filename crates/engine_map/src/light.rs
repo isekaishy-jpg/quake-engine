@@ -13,6 +13,9 @@ impl Map {
     /// style at the brightness in `styles`.
     #[must_use]
     pub fn light_at(&self, point: Vec3, styles: &[f32]) -> f32 {
+        if let Some(sample) = self.probes.as_ref().and_then(|probes| probes.sample(point)) {
+            return sample.brightness;
+        }
         if self.light.is_empty() {
             return 255.0;
         }

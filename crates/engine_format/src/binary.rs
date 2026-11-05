@@ -18,6 +18,8 @@ const TAG_TEXT: u8 = 1;
 const TAG_FLAG: u8 = 2;
 /// Marks a list.
 const TAG_LIST: u8 = 3;
+/// Marks raw data.
+const TAG_BYTES: u8 = 4;
 
 /// Writes a length.
 fn put_length(out: &mut Vec<u8>, length: usize) {
@@ -45,6 +47,11 @@ fn put_value(out: &mut Vec<u8>, value: &Value) {
         Value::Flag(flag) => {
             out.push(TAG_FLAG);
             out.push(u8::from(*flag));
+        }
+        Value::Bytes(bytes) => {
+            out.push(TAG_BYTES);
+            put_length(out, bytes.len());
+            out.extend_from_slice(bytes);
         }
         Value::List(values) => {
             out.push(TAG_LIST);
@@ -159,6 +166,10 @@ impl Reader<'_> {
                 1 => Ok(Value::Flag(true)),
                 _ => Err(Self::bad("a flag that's neither")),
             },
+            TAG_BYTES => {
+                let length = self.count(1)?;
+                Ok(Value::Bytes(self.take(length)?.to_vec()))
+            }
             TAG_LIST => {
                 let count = self.count(2)?;
                 let mut values = Vec::with_capacity(count);

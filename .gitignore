@@ -2,3 +2,6 @@
 
 # Quake game data is copyrighted and must never be committed.
 *.pak
+
+# Compiled output.
+*.ebake

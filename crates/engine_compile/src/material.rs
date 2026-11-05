@@ -159,6 +159,16 @@ impl<'a> MaterialLibrary<'a> {
         Ok(image)
     }
 
+    /// The image at `path`, for what isn't a material, such as a light's
+    /// cookie.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be read.
+    pub fn image_at(&mut self, path: &str) -> Result<SlotImage, CompileError> {
+        self.image(path)
+    }
+
     /// Reads a material document into a texture.
     ///
     /// # Errors

@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_map::{AliasModel, Map, Sky, Sprite, Texture, TextureKind};
+use engine_map::{AliasModel, BOUNCE_STYLE, Map, Sky, Sprite, Texture, TextureKind};
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType, Device, DeviceMemory,
@@ -126,12 +126,16 @@ pub(super) fn frame_bytes(
         *position = [light.origin.x, light.origin.y, light.origin.z, light.radius];
         *cut = light.min_light;
     }
+    let mut styles = view.styles;
+    if let Some(bounce) = styles.get_mut(usize::from(BOUNCE_STYLE)) {
+        *bounce = 1.0;
+    }
     let mut out = Vec::with_capacity(FRAME_SIZE);
     for value in matrix
         .iter()
         .chain(&eye)
         .chain(&params)
-        .chain(&view.styles)
+        .chain(&styles)
         .chain(&positions)
         .chain(&cuts)
         .chain(&sky_values(sky))
@@ -349,6 +353,14 @@ impl Backend {
             &[(mesh.atlas_size, mesh.atlas_size, mesh.atlas.as_slice())],
             Format::R8G8B8A8_UNORM,
         )?;
+        let direction_atlas = self.upload_image(
+            &[(
+                mesh.atlas_size,
+                mesh.atlas_size,
+                mesh.direction_atlas.as_slice(),
+            )],
+            Format::R8G8B8A8_UNORM,
+        )?;
         let frame_set = pool.allocate(&self.frame_layout)?;
         frame_set.write_buffer(
             0,
@@ -359,6 +371,11 @@ impl Backend {
         );
         frame_set.write_sampled_image(1, &atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         frame_set.write_sampler(2, &self.light_sampler);
+        frame_set.write_sampled_image(
+            3,
+            &direction_atlas.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
 
         let blank =
             self.upload_image(&[(1, 1, &[128, 128, 255, 255][..])], Format::R8G8B8A8_UNORM)?;
@@ -474,6 +491,7 @@ impl Backend {
             _pool: pool,
             frame_set,
             _atlas: atlas,
+            _direction_atlas: direction_atlas,
         });
         Ok(())
     }

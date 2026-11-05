@@ -22,16 +22,16 @@ Status is one of todo, doing or done.
 
 | # | Stage | Contents | Status |
 |---|---|---|---|
-| 1 | Format | Text and binary documents, versioning, `engine_format` | todo |
-| 2 | Compile | Brushes to faces, tree and clip hulls, and the working map loading and playing | todo |
-| 3 | Containers | Reusable items by name, layered, as folders and packs | todo |
-| 4 | Materials | One image type, materials, shading models, 8 slots, the Quake importer's mapping | todo |
-| 5 | Sampling | Filter modes, anisotropy, generated mips | todo |
+| 1 | Format | Text and binary documents, versioning, `engine_format` | done |
+| 2 | Compile | Brushes to faces, tree and clip hulls, and the working map loading and playing | done |
+| 3 | Containers | Reusable items by name, layered, as folders and packs | done |
+| 4 | Materials | One image type, materials, shading models, 8 slots, the Quake importer's mapping | done |
+| 5 | Sampling | Filter modes, anisotropy, generated mips | done |
 | 6 | Surface maps | Specular, normal, emissive, height, parallax, tint, detail | todo |
 | 7 | Layers | Blended layers with painted masks, height blending, flattening on compile | todo |
 | 8 | Alpha | Modes, sorting, alpha to coverage | todo |
 | 9 | Anti-aliasing | MSAA and SMAA as settings | todo |
-| 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | todo |
+| 10 | Sky | Sphere, gradient horizon, cloud layer, premade or procedural | done |
 | 11 | Light compiler | Fixed lights, direct and bounced apart, direction, probes, crisp shadows, glass tint, keyframes, cookies, IES, area lights | todo |
 | 12 | Live lights | Clustered lists, shadow maps with caching, budgets | todo |
 | 13 | Object shadows | Capsules, occlusion sidecars, per-part detail | todo |

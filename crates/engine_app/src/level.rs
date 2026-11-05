@@ -4,7 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{MaterialLibrary, compile_text};
+use engine_compile::{MaterialLibrary, apply_bake, compile_text, source_hash};
 use engine_map::Texture;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
@@ -31,9 +31,12 @@ pub(crate) fn load_level(
             Texture::default()
         })
     };
-    let map = compile_text(text, &mut textures)?;
+    let mut map = compile_text(text, &mut textures)?;
     if let Some(error) = failure {
         return Err(error.into());
+    }
+    if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
+        apply_bake(&mut map, &baked, source_hash(text))?;
     }
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;

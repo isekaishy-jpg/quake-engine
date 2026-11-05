@@ -10,6 +10,27 @@ use crate::error::FormatError;
 /// The deepest blocks may nest, so a bad file can't exhaust the stack.
 const MAX_DEPTH: usize = 64;
 
+/// What raw data starts with in text.
+const HEX_PREFIX: &str = "hex:";
+
+/// Bytes from pairs of hex digits.
+fn from_hex(text: &str) -> Option<Vec<u8>> {
+    let digits = text.as_bytes();
+    if !digits.len().is_multiple_of(2) {
+        return None;
+    }
+    digits
+        .as_chunks::<2>()
+        .0
+        .iter()
+        .map(|[high, low]| {
+            let high = char::from(*high).to_digit(16)?;
+            let low = char::from(*low).to_digit(16)?;
+            u8::try_from(high * 16 + low).ok()
+        })
+        .collect()
+}
+
 /// One piece of text.
 #[derive(Clone, Debug, PartialEq)]
 enum Token {
@@ -184,7 +205,10 @@ impl Parser {
             Some(Token::Word(word)) => match word.as_str() {
                 "true" => Ok(Value::Flag(true)),
                 "false" => Ok(Value::Flag(false)),
-                _ => Ok(Value::Text(word)),
+                _ => match word.strip_prefix(HEX_PREFIX).and_then(from_hex) {
+                    Some(bytes) => Ok(Value::Bytes(bytes)),
+                    None => Ok(Value::Text(word)),
+                },
             },
             Some(Token::ListOpen) => {
                 if depth >= MAX_DEPTH {
@@ -400,6 +424,12 @@ fn write_value(out: &mut String, value: &Value) {
         Value::Number(number) => write_number(out, *number),
         Value::Text(text) => write_quoted(out, text),
         Value::Flag(flag) => out.push_str(if *flag { "true" } else { "false" }),
+        Value::Bytes(bytes) => {
+            out.push_str(HEX_PREFIX);
+            for byte in bytes {
+                let _ = write!(out, "{byte:02x}");
+            }
+        }
         Value::List(values) => {
             out.push('[');
             for (index, value) in values.iter().enumerate() {

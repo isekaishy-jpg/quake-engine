@@ -27,6 +27,7 @@ fn sample() -> Document {
             Value::Flag(false),
         ]),
     );
+    entity.set("data", Value::Bytes(vec![0, 1, 254, 255]));
     entity.children.push(Block::new("part"));
     let mut document = Document::new("map");
     document.blocks.push(entity);

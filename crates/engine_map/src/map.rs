@@ -5,6 +5,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 
 use crate::material::Material;
+use crate::probes::ProbeGrid;
 use crate::sky::Sky;
 
 use crate::tree::{ClipChild, NodeChild, Tree};
@@ -185,6 +186,11 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// Where each sample's light comes from, as bytes. Empty unless the map
+    /// was baked with directions.
+    pub light_directions: Vec<[u8; 3]>,
+    /// Light through the map's space, if it was baked.
+    pub probes: Option<ProbeGrid>,
 }
 
 impl Model {

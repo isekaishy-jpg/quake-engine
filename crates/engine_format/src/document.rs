@@ -14,6 +14,8 @@ pub enum Value {
     Flag(bool),
     /// Several values.
     List(Vec<Self>),
+    /// Raw data, for what a compile writes.
+    Bytes(Vec<u8>),
 }
 
 impl Value {
@@ -49,6 +51,15 @@ impl Value {
     pub fn list(&self) -> Option<&[Self]> {
         match self {
             Self::List(values) => Some(values),
+            _ => None,
+        }
+    }
+
+    /// The data, if this is data.
+    #[must_use]
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes),
             _ => None,
         }
     }

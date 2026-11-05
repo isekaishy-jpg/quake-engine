@@ -558,6 +558,6 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
         light,
         tree: import_tree(&bsp, &sky),
         entities,
-        sky: None,
+        ..Map::default()
     })
 }

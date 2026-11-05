@@ -229,10 +229,24 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         );
     }
 
+    // Where baked light comes from, so bumps and shine answer it too.
+    let stored = textureSampleLevel(light_direction, lightmap_sampler, in.light_uv, 0.0);
+    var baked_from = vec3<f32>(0.0);
+    if stored.a > 0.5 {
+        baked_from = stored.xyz * 2.0 - vec3<f32>(1.0);
+    }
+    let has_direction = dot(baked_from, baked_from) > 0.01;
+
     var color = base.rgb;
     let shading = material.flags.x;
     if shading != 3 {
-        let lit = light(in);
+        var lit = light(in);
+        if has_direction {
+            let toward = normalize(baked_from);
+            let flat_response = max(dot(surface_at.normal, toward), 0.1);
+            let bumped = max(dot(normal, toward), 0.0);
+            lit = lit * mix(1.0, bumped / flat_response, 0.8);
+        }
         if shading == 1 {
             let amount = dot(lit, vec3<f32>(0.3, 0.59, 0.11));
             color = base.rgb * cel_bands(amount, dx, dy) * (lit / max(amount, 0.001)) * 0.5 + base.rgb * 0.0;
@@ -244,7 +258,13 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     if material.slots_a.y >= 0 {
         let specular = read_slot(material.slots_a.y, uv, dx, dy);
         let gloss = material.values.y * max(specular.a, 0.05);
-        let shine = specular_light(in.world, normal, to_eye, gloss);
+        var shine = specular_light(in.world, normal, to_eye, gloss);
+        if has_direction {
+            // A highlight from baked light, which slides as the eye moves.
+            let half_vector = normalize(normalize(baked_from) + to_eye);
+            let strength = dot(light(in), vec3<f32>(0.333));
+            shine = shine + pow(max(dot(normal, half_vector), 0.0), gloss) * strength;
+        }
         color = color + specular.rgb * shine * material.values.x;
     }
 

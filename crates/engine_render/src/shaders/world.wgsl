@@ -28,6 +28,7 @@ struct Frame {
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var lightmap: texture_2d<f32>;
 @group(0) @binding(2) var lightmap_sampler: sampler;
+@group(0) @binding(3) var light_direction: texture_2d<f32>;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 

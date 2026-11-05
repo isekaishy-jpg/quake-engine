@@ -1,0 +1,47 @@
+format 1 map
+
+# A hall for looking at baked light: colour, shadow, bounce, a spot, and
+# stained glass with a sun behind it.
+entity world {
+    type = worldspawn
+    sun_intensity = 260
+    sun_size = 24
+    ambient = 6
+    light_spacing = 8
+}
+sky {
+    zenith = 0.14 0.3 0.6
+    horizon = 0.85 0.8 0.72
+    sun_direction = -0.75 0.1 0.65
+    clouds { coverage = 0.45 }
+}
+brush { material = stone cuboid = -640 -384 -32 640 384 0 }
+brush { material = metal cuboid = -640 -384 384 640 416 416 }
+brush { material = brick cuboid = -640 -416 0 640 -384 384 }
+brush { material = brick cuboid = -640 384 0 640 416 384 }
+brush { material = brick cuboid = 608 -384 0 640 384 384 }
+
+# The west wall, around a window.
+brush { material = brick cuboid = -640 -384 0 -608 -128 384 }
+brush { material = brick cuboid = -640 128 0 -608 384 384 }
+brush { material = brick cuboid = -640 -128 0 -608 128 64 }
+brush { material = brick cuboid = -640 -128 320 -608 128 384 }
+brush { material = stained_glass cuboid = -632 -128 64 -616 128 320 }
+
+# Pillars.
+brush { material = metal cuboid = -160 -224 0 -96 -160 384 }
+brush { material = metal cuboid = -160 160 0 -96 224 384 }
+brush { material = cel_stone cuboid = 160 -224 0 224 -160 384 }
+brush { material = shiny cuboid = 160 160 0 224 224 384 }
+
+entity start { type = info_player_start origin = 320 0 24 angle = 180 }
+entity warm { type = light origin = 400 -300 300 intensity = 420 color = 1 0.75 0.45 size = 12 }
+entity cool { type = light origin = 400 300 300 intensity = 420 color = 0.45 0.6 1 size = 12 }
+entity spot {
+    type = light
+    origin = 0 0 370
+    intensity = 700
+    color = 1 1 0.85
+    spot_direction = 0 0 -1
+    spot_angle = 22
+}
