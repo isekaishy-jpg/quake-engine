@@ -820,11 +820,9 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
     let edges =
         crisp_light.map(|source| crisp_edges(scene, source, map, face, normal, &grid, &light));
     for source in scene.lights {
-        let style = if source.crisp {
-            CRISP_STYLE
-        } else {
-            source.style
-        };
+        // A sample has one edge, so only the first crisp light can use it.
+        let crisp = crisp_light.is_some_and(|first| std::ptr::eq(first, source));
+        let style = if crisp { CRISP_STYLE } else { source.style };
         let at = match layers.iter().position(|(known, _)| *known == style) {
             Some(at) => at,
             None if layers.len() + 1 < MAX_LAYERS => {
@@ -834,7 +832,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
             None => continue,
         };
         for (index, point) in lifted.iter().enumerate() {
-            let (color, direction) = light_on(scene, source, *point, normal, !source.crisp);
+            let (color, direction) = light_on(scene, source, *point, normal, !crisp);
             let energy = color[0] + color[1] + color[2];
             if energy > 0.0 {
                 let sample = &mut layers[at].1[index];

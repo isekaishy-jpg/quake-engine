@@ -588,3 +588,28 @@ fn a_stamp_leaves_collision_and_the_rest_alone() {
     assert!(covers(-200.0, -200.0), "the floor beyond it");
     assert!(!covers(-128.0, -128.0), "no flat floor over the cut");
 }
+
+/// A map small enough for one cell still finds its leaves from node 0, which is
+/// where lookups start.
+#[test]
+fn a_tiny_map_has_a_tree_that_works() {
+    let text = "format 1 map
+brush { material = floor cuboid = -64 -64 -16 64 64 0 }
+brush { material = roof cuboid = -64 -64 96 64 64 112 }
+brush { material = wall cuboid = -80 -64 -16 -64 64 112 }
+brush { material = wall cuboid = 64 -64 -16 80 64 112 }
+brush { material = wall cuboid = -64 -80 -16 64 -64 112 }
+brush { material = wall cuboid = -64 64 -16 64 80 112 }
+";
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(text, &mut source).expect("compiles");
+    let inside = map.tree.leaf_at(Vec3::new(0.0, 0.0, 48.0));
+    let leaf = map.tree.leaf(inside).expect("a leaf");
+    assert_eq!(leaf.contents, Contents::Empty);
+    assert!(leaf.face_count > 0, "it lists faces to draw");
+    assert_eq!(
+        map.tree.leaf_at(Vec3::new(0.0, 0.0, -8.0)),
+        0,
+        "the floor is solid"
+    );
+}

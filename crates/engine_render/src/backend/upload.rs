@@ -869,7 +869,10 @@ impl Backend {
                 self.shadows
                     .plan(live, scene.drawables.instances, scene.map, view.origin)
             }
-            None => vec![None; live.len()],
+            None => {
+                self.shadows.rest();
+                vec![None; live.len()]
+            }
         };
         let size = self.scene_size();
         let bytes = live_bytes(view, aspect, size, live, &slots);

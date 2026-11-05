@@ -1288,3 +1288,30 @@ fn an_odd_sample_count_rounds_down() {
         assert_eq!(centre(&plain), centre(&capture), "with {samples}");
     }
 }
+
+/// With shadows turned off, nothing goes on being redrawn.
+#[test]
+fn turning_shadows_off_stops_redraws() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let lights = [blue_light(Vec3::new(64.0, 64.0, 60.0), true)];
+    let drawables = || Drawables {
+        live_lights: &lights,
+        ..Drawables::default()
+    };
+    renderer
+        .capture(&view_from_above(), drawables(), 16, 16)
+        .expect("capture");
+    assert_eq!(renderer.shadow_redraws(), 1);
+    renderer.set_post(PostSettings::default());
+    renderer
+        .capture(&view_from_above(), drawables(), 16, 16)
+        .expect("capture");
+    assert_eq!(renderer.shadow_redraws(), 0);
+}

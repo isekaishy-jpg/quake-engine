@@ -143,12 +143,13 @@ impl Cutter<'_> {
 
     /// Splits `area` along its longest side until it's a cell, then copies the
     /// tree in. `root` is the old root.
-    fn split(&mut self, root: NodeChild, area: Cell) -> NodeChild {
+    fn split(&mut self, root: NodeChild, area: Cell, first: bool) -> NodeChild {
         let sizes = [0, 1, 2].map(|axis| area.high[axis] - area.low[axis]);
         let axis = (0..3)
             .max_by(|a, b| sizes[*a].total_cmp(&sizes[*b]))
             .unwrap_or(0);
-        if sizes[axis] <= self.size * 1.001 {
+        // The first cut always happens, as the tree starts at node 0.
+        if sizes[axis] <= self.size * 1.001 && !first {
             let before = self.made.len();
             let child = self.copy(root, &area);
             let leaves: Vec<u32> = self
@@ -182,8 +183,8 @@ impl Cutter<'_> {
         let mut low = area;
         low.high[axis] = cut;
         let reserved = self.push(plane, NodeChild::Leaf(0), NodeChild::Leaf(0));
-        let front = self.split(root, high);
-        let back = self.split(root, low);
+        let front = self.split(root, high, false);
+        let back = self.split(root, low, false);
         if let NodeChild::Node(index) = reserved {
             self.nodes[index as usize].children = [front, back];
         }
@@ -217,7 +218,7 @@ pub(crate) fn cut_cells(map: &mut Map, planes: &mut PlaneSet, size: f64) {
         cells: 0,
         found: Vec::new(),
     };
-    let new_root = cutter.split(root, Cell { low, high });
+    let new_root = cutter.split(root, Cell { low, high }, true);
     let Cutter {
         mut nodes,
         leaves,

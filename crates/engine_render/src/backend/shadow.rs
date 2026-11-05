@@ -173,6 +173,11 @@ impl Shadows {
         })
     }
 
+    /// Redraws nothing this frame, for when shadows are off.
+    pub(super) fn rest(&mut self) {
+        self.redraw.clear();
+    }
+
     /// How many lights' shadows this frame redraws.
     pub(super) fn redraws(&self) -> usize {
         self.redraw.len()

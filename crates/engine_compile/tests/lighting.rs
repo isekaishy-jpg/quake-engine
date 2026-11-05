@@ -623,3 +623,25 @@ fn probes_hold_ambient_light() {
     let sample = probes.sample(Vec3::new(0.0, 0.0, 0.0)).expect("a sample");
     assert!(sample.brightness > 30.0, "{}", sample.brightness);
 }
+
+/// With two crisp lights, the second bakes with its own shadows, and isn't cut
+/// by the first's edge.
+#[test]
+fn only_one_light_is_crisp_on_a_face() {
+    let one = format!(
+        "{ROOM}\nbrush {{ material = pillar cuboid = -32 -32 -256 32 32 256 }}\n\
+         entity lamp {{ type = light origin = -200 0 0 intensity = 900 crisp = true }}\n"
+    );
+    let two = format!(
+        "{one}entity other {{ type = light origin = 200 0 0 intensity = 900 crisp = true }}\n"
+    );
+    let plain = baked(&one, &[]);
+    let both = baked(&two, &[]);
+    let usual = |map: &Map| {
+        let floor = face_of(map, "floor");
+        let light = floor.light.expect("lit");
+        light.styles.iter().filter(|style| **style == 0).count()
+    };
+    assert_eq!(usual(&plain), 0, "one crisp light has no usual layer");
+    assert_eq!(usual(&both), 1, "the second has one");
+}

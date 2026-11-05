@@ -907,7 +907,8 @@ impl Backend {
         let Some(target) = &self.scene_target else {
             return;
         };
-        let ranges = scene.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
+        let wanted = scene.filter(|_| self.shadows.redraws() > 0);
+        let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
         self.shadows.record(rec, self.map.as_ref(), &ranges);
         // The scene reads what shadows wrote.
         rec.memory_barrier(

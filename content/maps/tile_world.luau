@@ -1,4 +1,20 @@
--- The showcase's own entity types, which its prefabs place.
+-- The showcase's own entity types, which its prefabs place. What an entity
+-- keeps in a field is saved by its global name, so these are named functions.
+
+-- Moves a guard along its route.
+function patrol_walker_think(self)
+	self.share = (self.share + 0.004) % 1
+	local place = engine.spline_point(self.route, self.share)
+	if place then
+		setorigin(self, place)
+	end
+	self.nextthink = time() + 0.05
+end
+
+-- Asleep it didn't move, so it catches up by how long that was.
+function patrol_walker_wake(self)
+	self.share = (self.share + engine.slept * 0.08) % 1
+end
 
 -- A guard that walks a closed spline, by how far round it is.
 function patrol_walker(self)
@@ -6,18 +22,21 @@ function patrol_walker(self)
 	self.share = engine.seeded(self, 0)
 	setmodel(self, "progs/soldier.mdl")
 	self.nextthink = time() + 0.1
-	self.think = function(me)
-		me.share = (me.share + 0.004) % 1
-		local place = engine.spline_point(me.route, me.share)
-		if place then
-			setorigin(me, place)
+	self.think = patrol_walker_think
+	self.wake = patrol_walker_wake
+end
+
+-- Takes a seeker a step along its way.
+function seeker_think(self)
+	local path = engine.find_path(self.origin, self.goal)
+	if path and path[2] then
+		local step = path[2] - self.origin
+		local length = vector.magnitude(step)
+		if length > 1 then
+			setorigin(self, self.origin + step * math.min(4 / length, 1))
 		end
-		me.nextthink = time() + 0.05
 	end
-	-- Asleep it didn't move, so it catches up by how long that was.
-	self.wake = function(me)
-		me.share = (me.share + engine.slept * 0.08) % 1
-	end
+	self.nextthink = time() + 0.05
 end
 
 -- Walks to a goal round whatever's in the way.
@@ -26,16 +45,14 @@ function seeker(self)
 	setmodel(self, "progs/dog.mdl")
 	self.goal = engine.parse_vector(self.goal)
 	self.nextthink = time() + 0.1
-	self.think = function(me)
-		local path = engine.find_path(me.origin, me.goal)
-		if path and path[2] then
-			local step = path[2] - me.origin
-			local length = vector.magnitude(step)
-			if length > 1 then
-				setorigin(me, me.origin + step * math.min(4 / length, 1))
-			end
-		end
-		me.nextthink = time() + 0.05
+	self.think = seeker_think
+end
+
+-- Says its message the first time a player touches it.
+function tell_tale_touch(self, other)
+	if other.classname == "player" and not self.told then
+		self.told = true
+		engine.print(self.message)
 	end
 end
 
@@ -43,10 +60,5 @@ end
 function tell_tale(self)
 	self.solid = SOLID_TRIGGER
 	setsize(self, vector.create(-16, -16, -16), vector.create(16, 16, 16))
-	self.touch = function(me, other)
-		if other.classname == "player" and not me.told then
-			me.told = true
-			engine.print(me.message)
-		end
-	end
+	self.touch = tell_tale_touch
 end
