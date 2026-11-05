@@ -6,7 +6,7 @@ use std::sync::Arc;
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
     BakeInput, CompileError, MaterialLibrary, apply_bake, attach_side_files, bake_folder,
-    bake_light, compile, placeholder_texture, read_map, side_files, write_bake,
+    bake_light, compile, map_hash, placeholder_texture, read_map, side_files, write_bake,
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
@@ -787,6 +787,85 @@ fn a_tiled_map_reads_its_light_from_beside_its_bake() {
         tiles.hold(tile, None);
     }
     assert_eq!(map.light_at(point, &styles), far, "let go again");
+}
+
+/// A path across `tile_world`, from its real bake and the files beside it, which
+/// goes through the gaps between yards, past where one chunk ends.
+#[test]
+#[ignore = "needs tile_world baked"]
+fn a_path_crosses_the_real_tile_world() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let mut filesystem = FileSystem::new();
+    filesystem.mount(Box::new(DirectoryArchive::new(&root)));
+    let text = std::fs::read_to_string(root.join("maps/tile_world.emap")).expect("the map");
+    let document = from_text(&text).expect("parses");
+    let mut working = read_map(&document).expect("reads");
+    let mut library = MaterialLibrary::new(&filesystem);
+    let used = library.prepare(&mut working).expect("prepares");
+    let mut source = |name: &str| library.load(name).expect("loads");
+    let mut map = compile(&working, &mut source).expect("compiles");
+    let bake = std::fs::read(root.join("maps/tile_world.ebake")).expect("baked");
+    assert!(apply_bake(&mut map, &bake, map_hash(&document, &used)).expect("reads"));
+    let folder = root.clone();
+    let files: SideFiles = Arc::new(move |path| std::fs::read(folder.join(path)).ok());
+    attach_side_files(&mut map, "tile_world", &files);
+    let (from, to) = (
+        Vec3::new(1024.0, 400.0, 24.0),
+        Vec3::new(5000.0, 5000.0, 24.0),
+    );
+    let path = map.find_path(32.0, from, to).expect("a way");
+    assert!(path.len() > 2, "it goes round walls: {path:?}");
+    let last = *path.last().expect("a point");
+    assert!((last - to).length() < 96.0, "{last:?}");
+}
+
+/// A room's bounced light doesn't depend on how many tiles a map has, as it would
+/// if they all shared a budget.
+#[test]
+fn far_tiles_do_not_change_bounced_light() {
+    let room = |x: i32| {
+        format!(
+            "brush {{ material = wall cuboid = {} -512 -32 {} 512 0 }}\n\
+             brush {{ material = wall cuboid = {} -512 256 {} 512 288 }}\n\
+             brush {{ material = wall cuboid = {} -512 0 {} -480 256 }}\n\
+             brush {{ material = wall cuboid = {} 480 0 {} 512 256 }}\n\
+             brush {{ material = wall cuboid = {} -512 0 {} 512 256 }}\n\
+             brush {{ material = wall cuboid = {} -512 0 {} 512 256 }}\n\
+             entity {{ type = light origin = {} 0 200 intensity = 500 }}\n",
+            x,
+            x + 1024,
+            x,
+            x + 1024,
+            x,
+            x + 1024,
+            x,
+            x + 1024,
+            x,
+            x + 32,
+            x + 992,
+            x + 1024,
+            x + 512,
+        )
+    };
+    // Only the bounced layer, as direct light would hide any difference.
+    let mut styles = [0.0; 64];
+    styles[usize::from(BOUNCE_STYLE)] = 1.0;
+    let bounced = |count: i32| {
+        let rooms: String = (0..count).map(|index| room(index * 1024)).collect();
+        let text = format!(
+            "format 1 map
+entity world {{ type = worldspawn ambient = 0 bounce = 1              light_spacing = 16 }}
+tile_grid {{ size = 1024 }}
+{rooms}"
+        );
+        let map = baked(&text, &[]);
+        [300.0, 700.0].map(|x| map.light_at(Vec3::new(2048.0 + x, -300.0, 24.0), &styles))
+    };
+    let (few, many) = (bounced(5), bounced(32));
+    for (few, many) in few.iter().zip(&many) {
+        assert!(*few > 1.0, "it's lit");
+        assert!((few - many).abs() < few * 0.05, "{few} {many}");
+    }
 }
 
 /// A bake keeps its walkable grid.

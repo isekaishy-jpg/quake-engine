@@ -37,6 +37,10 @@ const MAX_LAYERS: usize = 4;
 /// The most surface samples bounced light gathers from.
 const MAX_BOUNCE_SOURCES: usize = 1024;
 
+/// The most a tile keeps for that. A point gathers from nine tiles, so this is
+/// about as many as a map without tiles has, however many tiles there are.
+const MAX_TILE_BOUNCE_SOURCES: usize = 128;
+
 /// How many probes apart a grid sits, in world units.
 const PROBE_SPACING: f64 = 128.0;
 
@@ -929,8 +933,57 @@ struct BounceSource {
     color: [f64; 3],
 }
 
-/// Picks evenly from what's lit.
-fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource> {
+/// What bounces light, by tile, so a point looks at what's near it however big
+/// the map is. Without tiles it's all in one.
+struct BounceField {
+    /// How wide a tile is, or 0 for no tiles.
+    tile_size: f64,
+    /// What's in each tile.
+    tiles: HashMap<[i64; 2], Vec<BounceSource>>,
+}
+
+impl BounceField {
+    /// The tile `point` is in.
+    #[expect(clippy::cast_possible_truncation, reason = "grid places are small")]
+    fn tile_of(&self, point: Point) -> [i64; 2] {
+        if self.tile_size <= 0.0 {
+            return [0, 0];
+        }
+        [
+            (point[0] / self.tile_size).floor() as i64,
+            (point[1] / self.tile_size).floor() as i64,
+        ]
+    }
+
+    /// What's near `point`: its own tile and those round it.
+    fn near(&self, point: Point) -> impl Iterator<Item = &BounceSource> {
+        let [x, y] = self.tile_of(point);
+        let reach = i64::from(self.tile_size > 0.0);
+        (-reach..=reach)
+            .flat_map(move |dy| (-reach..=reach).map(move |dx| [x + dx, y + dy]))
+            .filter_map(|tile| self.tiles.get(&tile))
+            .flatten()
+    }
+}
+
+/// Keeps `most` of `sources`, evenly, each standing for those left out.
+fn thinned(sources: Vec<BounceSource>, most: usize) -> Vec<BounceSource> {
+    let step = (sources.len() / most).max(1);
+    #[expect(clippy::cast_precision_loss, reason = "counts are small")]
+    let weight = step as f64;
+    let mut picked: Vec<BounceSource> = sources.into_iter().step_by(step).collect();
+    for source in &mut picked {
+        source.color = source.color.map(|part| part * weight);
+    }
+    picked
+}
+
+/// Picks evenly from what's lit, tile by tile.
+fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64, tile_size: f64) -> BounceField {
+    let mut field = BounceField {
+        tile_size,
+        tiles: HashMap::new(),
+    };
     let mut sources = Vec::new();
     for bake in bakes.iter().flatten() {
         for (index, point) in bake.points.iter().enumerate() {
@@ -963,27 +1016,36 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64) -> Vec<BounceSource>
             }
         }
     }
-    let step = (sources.len() / MAX_BOUNCE_SOURCES).max(1);
-    #[expect(clippy::cast_precision_loss, reason = "counts are small")]
-    let weight = step as f64;
-    let mut picked: Vec<BounceSource> = sources.into_iter().step_by(step).collect();
-    for source in &mut picked {
-        source.color = source.color.map(|part| part * weight);
+    let mut tiles: HashMap<[i64; 2], Vec<BounceSource>> = HashMap::new();
+    for source in sources {
+        tiles
+            .entry(field.tile_of(source.point))
+            .or_default()
+            .push(source);
     }
-    picked
+    let most = if tile_size > 0.0 {
+        MAX_TILE_BOUNCE_SOURCES
+    } else {
+        MAX_BOUNCE_SOURCES
+    };
+    field.tiles = tiles
+        .into_iter()
+        .map(|(tile, sources)| (tile, thinned(sources, most)))
+        .collect();
+    field
 }
 
 /// The light bounced onto a point.
 fn bounced_at(
     scene: &Scene<'_>,
-    sources: &[BounceSource],
+    sources: &BounceField,
     point: Point,
     normal: Point,
     gain: f64,
 ) -> [f64; 3] {
     let mut total = [0.0; 3];
     let start = add_scaled(point, normal, SURFACE_OFFSET);
-    for source in sources {
+    for source in sources.near(point) {
         let offset = [
             source.point[0] - start[0],
             source.point[1] - start[1],
@@ -1052,7 +1114,7 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
 fn bake_probes(
     scene: &Scene<'_>,
     map: &Map,
-    sources: &[BounceSource],
+    sources: &BounceField,
     gain: f64,
     ambient: f64,
 ) -> Option<ProbeGrid> {
@@ -1255,7 +1317,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let shared: &Map = map;
     let bakes: Vec<Option<FaceBake>> =
         in_parallel(&faces, |face| bake_face(&scene, shared, face, spacing));
-    let sources = bounce_sources(&bakes, spacing);
+    let sources = bounce_sources(&bakes, spacing, f64::from(shared.tile_size));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
             bake.points
