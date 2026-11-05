@@ -10,7 +10,7 @@ The human asked for every rendering feature and the editor to go through the wor
 - GPU tests for each rendering feature, with a real device, and a capture of each in a real map.
 - Real map and netplay suites at each point that could touch them.
 - Two test maps built through the tools, and every map loaded, played and, for `showcase`, saved and loaded.
-- Four passes of reading the work back, after the stages were done.
+- Five passes after the stages were done: reading the work back, loading every map, and testing visibility from every place a player can reach.
 
 Tests that pass say little about how something looks, so captures were read too. That found more than once what tests couldn't.
 
@@ -42,6 +42,7 @@ Tests that pass say little about how something looks, so captures were read too.
 | 22 | A crack between sky faces drew an outline with MSAA | A one pixel hole isn't a silhouette |
 | 23 | Widening visible sets took time by the cube of the leaves | Neighbours are found once |
 | 24 | Meshes were decided on, and no stage had them | Stage 25 |
+| 25 | A thin space could pass through a cell between its fixed samples, so visible sets could hide it | Cells sample just off their faces, and a test on `showcase` holds that nothing a player can reach hides a surface they can see |
 
 ## Process
 

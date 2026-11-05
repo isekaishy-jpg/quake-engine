@@ -18,22 +18,74 @@ const SAMPLE_PLACES: [[f32; 3]; 9] = [
     [0.85, 0.85, 0.85],
 ];
 
+/// Points just off the faces a leaf lists, inside it. A thin space can pass
+/// through a cell between fixed points, but it has surfaces, and they're what
+/// there is to see.
+fn face_points(map: &Map, leaf: usize, low: Vec3, high: Vec3) -> Vec<Vec3> {
+    let Some(found) = map.tree.leaves.get(leaf) else {
+        return Vec::new();
+    };
+    let first = found.first_face as usize;
+    let listed = map
+        .tree
+        .leaf_faces
+        .get(first..first + found.face_count as usize)
+        .unwrap_or_default();
+    let step = (listed.len() / MAX_FACE_SAMPLES).max(1);
+    let mut out = Vec::new();
+    for face in listed.iter().step_by(step) {
+        let Some(face) = map.faces.get(*face as usize) else {
+            continue;
+        };
+        let points = map.face_points(face);
+        let [a, b, c, ..] = points else {
+            continue;
+        };
+        let normal = Vec3::new(
+            (b.y - a.y) * (c.z - a.z) - (b.z - a.z) * (c.y - a.y),
+            (b.z - a.z) * (c.x - a.x) - (b.x - a.x) * (c.z - a.z),
+            (b.x - a.x) * (c.y - a.y) - (b.y - a.y) * (c.x - a.x),
+        )
+        .normalized();
+        #[expect(clippy::cast_precision_loss, reason = "faces have few corners")]
+        let share = 1.0 / points.len() as f32;
+        let middle = points.iter().fold(Vec3::ZERO, |sum, at| sum + *at * share);
+        let inside = Vec3::new(
+            middle.x.clamp(low.x, high.x),
+            middle.y.clamp(low.y, high.y),
+            middle.z.clamp(low.z, high.z),
+        );
+        out.push(inside + normal * FACE_LIFT);
+        out.push(inside - normal * FACE_LIFT);
+    }
+    out
+}
+
 /// A leaf's sample points that aren't in anything solid.
 fn sample_points(map: &Map, leaf: usize) -> Vec<Vec3> {
     let Some((low, high)) = map.tree.leaf_boxes.get(leaf).copied() else {
         return Vec::new();
     };
     let size = high - low;
-    SAMPLE_PLACES
+    let open = |point: &Vec3| {
+        map.tree
+            .leaf(map.tree.leaf_at(*point))
+            .is_some_and(|found| found.contents != Contents::Solid)
+    };
+    let fixed = SAMPLE_PLACES
         .iter()
-        .map(|[x, y, z]| low + Vec3::new(size.x * x, size.y * y, size.z * z))
-        .filter(|point| {
-            map.tree
-                .leaf(map.tree.leaf_at(*point))
-                .is_some_and(|found| found.contents != Contents::Solid)
-        })
+        .map(|[x, y, z]| low + Vec3::new(size.x * x, size.y * y, size.z * z));
+    fixed
+        .chain(face_points(map, leaf, low, high))
+        .filter(open)
         .collect()
 }
+
+/// How many of a leaf's faces are sampled.
+const MAX_FACE_SAMPLES: usize = 12;
+
+/// How far off a face its sample sits.
+const FACE_LIFT: f32 = 12.0;
 
 /// Whether two boxes touch or overlap.
 fn neighbours(a: (Vec3, Vec3), b: (Vec3, Vec3)) -> bool {

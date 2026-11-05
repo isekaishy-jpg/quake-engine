@@ -2,9 +2,10 @@
 
 use std::sync::Arc;
 
+use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, apply_bake, bake_light, compile, placeholder_texture, read_map,
-    write_bake,
+    BakeInput, CompileError, MaterialLibrary, apply_bake, bake_light, compile, placeholder_texture,
+    read_map, write_bake,
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
@@ -644,4 +645,139 @@ fn only_one_light_is_crisp_on_a_face() {
     };
     assert_eq!(usual(&plain), 0, "one crisp light has no usual layer");
     assert_eq!(usual(&both), 1, "the second has one");
+}
+
+/// Whether every pair of `points` with a clear line between them is in each
+/// other's visible sets, which is what keeps anything from vanishing.
+fn sets_hold_every_line(map: &Arc<Map>, eyes: &[Vec3], points: &[Vec3]) -> Result<usize, String> {
+    let world = CollisionWorld::new(Arc::clone(map));
+    let collision = world.with(&[]);
+    let mut lines = 0;
+    for from in eyes {
+        let mut seen = vec![false; map.tree.leaves.len()];
+        map.tree.mark_visible(map.tree.leaf_at(*from), &mut seen);
+        for to in points {
+            let leaf = map.tree.leaf_at(*to) as usize;
+            // A point, not a player: what's near a wall is still in plain sight.
+            let line = collision.move_box(*from, Vec3::ZERO, Vec3::ZERO, *to);
+            if leaf == 0 || line.fraction < 1.0 {
+                continue;
+            }
+            lines += 1;
+            if !seen[leaf] {
+                return Err(format!("{from:?} sees {to:?}, which its set hides"));
+            }
+        }
+    }
+    Ok(lines)
+}
+
+/// Points spread through `low` to `high`, the same every time.
+fn scattered(low: Vec3, high: Vec3, count: u32) -> Vec<Vec3> {
+    let mut seed = 12345_u32;
+    let mut next = move || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        f32::from(u16::try_from(seed >> 16).unwrap_or(0)) / 65535.0
+    };
+    (0..count)
+        .map(|_| {
+            Vec3::new(
+                low.x + (high.x - low.x) * next(),
+                low.y + (high.y - low.y) * next(),
+                low.z + (high.z - low.z) * next(),
+            )
+        })
+        .collect()
+}
+
+/// Nothing a clear line reaches is hidden, through a doorway and a slit.
+#[test]
+fn visible_sets_never_hide_what_a_line_reaches() {
+    let map = Arc::new(walled(
+        "brush { material = wall cuboid = -32 -256 0 32 -64 256 }\n\
+         brush { material = wall cuboid = -32 64 0 32 256 256 }\n\
+         brush { material = wall cuboid = -32 -64 96 32 64 256 }\n\
+         brush { material = wall cuboid = 400 -256 0 432 -8 256 }\n\
+         brush { material = wall cuboid = 400 8 0 432 256 256 }\n",
+    ));
+    let points = scattered(
+        Vec3::new(-1000.0, -240.0, 24.0),
+        Vec3::new(1000.0, 240.0, 230.0),
+        300,
+    );
+    let lines = sets_hold_every_line(&map, &points, &points).expect("no line is hidden");
+    assert!(lines > 1000, "enough of them to mean something: {lines}");
+}
+
+/// The same on the showcase, which is too slow to bake with every test run.
+#[test]
+#[ignore = "bakes a whole map"]
+#[expect(clippy::cast_precision_loss, reason = "faces have few corners")]
+fn the_showcase_hides_nothing_a_line_reaches() {
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let mut filesystem = FileSystem::new();
+    filesystem.mount(Box::new(DirectoryArchive::new(&root)));
+    let text = std::fs::read_to_string(root.join("maps/showcase.emap")).expect("the map");
+    let mut working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    let mut library = MaterialLibrary::new(&filesystem);
+    library.prepare(&mut working).expect("prepares");
+    let mut source = |name: &str| library.load(name).expect("loads");
+    let mut map = compile(&working, &mut source).expect("compiles");
+    let mut images = MaterialLibrary::new(&filesystem);
+    let mut read = |path: &str| images.image_at(path);
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut read,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    let map = Arc::new(map);
+    // From where a player can stand, to just off every surface.
+    let nav = map.nav.as_ref().expect("a nav grid");
+    let start = nav
+        .nearest(Vec3::new(160.0, 384.0, 24.0))
+        .expect("the start");
+    let mut reached = vec![false; nav.places.len()];
+    reached[start as usize] = true;
+    let mut waiting = vec![start];
+    while let Some(place) = waiting.pop() {
+        for link in nav.places[place as usize].links {
+            if link != u32::MAX && !reached[link as usize] {
+                reached[link as usize] = true;
+                waiting.push(link);
+            }
+        }
+    }
+    let standing: Vec<Vec3> = nav
+        .places
+        .iter()
+        .zip(&reached)
+        .filter(|(_, reached)| **reached)
+        .map(|(place, _)| place.point + Vec3::new(0.0, 0.0, 22.0))
+        .collect();
+    let step = (standing.len() / 400).max(1);
+    let eyes: Vec<Vec3> = standing.iter().step_by(step).copied().collect();
+    assert!(eyes.len() > 100, "{}", eyes.len());
+    let world = &map.models[0];
+    let faces =
+        &map.faces[world.first_face as usize..(world.first_face + world.face_count) as usize];
+    let mut surfaces = Vec::new();
+    for face in faces {
+        let points = map.face_points(face);
+        let [a, b, c, ..] = points else {
+            continue;
+        };
+        let (u, v) = (*b - *a, *c - *a);
+        let normal = Vec3::new(
+            u.y * v.z - u.z * v.y,
+            u.z * v.x - u.x * v.z,
+            u.x * v.y - u.y * v.x,
+        )
+        .normalized();
+        let share = 1.0 / points.len() as f32;
+        let middle = points.iter().fold(Vec3::ZERO, |sum, at| sum + *at * share);
+        surfaces.push(middle + normal * 2.0);
+        surfaces.push(middle - normal * 2.0);
+    }
+    let lines = sets_hold_every_line(&map, &eyes, &surfaces).expect("no line is hidden");
+    assert!(lines > 1000, "{lines}");
 }
