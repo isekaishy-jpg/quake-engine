@@ -634,7 +634,8 @@ impl World {
             if let Some(shot) = &rule.shot {
                 let origin = client.predicted().origin;
                 let (start, velocity) = shot_launch(shot, origin, axes, pitch, seed);
-                client.guess_launch(shot.model, start, velocity, (shot.bounces, shot.blasts));
+                let kind = (shot.bounces, shot.blasts, shot.fuse);
+                client.guess_launch(shot.model, start, velocity, kind);
             }
             client.show_shot(rule.feel);
             if sounds {

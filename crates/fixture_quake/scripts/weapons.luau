@@ -233,10 +233,12 @@ function T_MissileTouch(self, other)
 end
 
 -- Tells clients a path, so they can work it out for themselves.
-function announce_launch(missile, owner, bounces, blasts)
+function announce_launch(missile, owner, bounces, blasts, fuse)
 	local id = rawget(missile, "_id")
-	local velocity = missile.velocity
-	engine.launch(id, rawget(owner, "_id"), missile.origin, velocity, time(), bounces, blasts)
+	local from = rawget(owner, "_id")
+	local strength = if (owner.super_damage_finished or 0) > time() then 4 else 1
+	local origin, velocity = missile.origin, missile.velocity
+	engine.launch(id, from, origin, velocity, time(), bounces, blasts, strength, fuse or 0)
 end
 
 -- The spread of a grenade from a shot's seed, the same as the client works it
@@ -369,7 +371,7 @@ function W_FireGrenade(self)
 	setmodel(missile, "progs/grenade.mdl")
 	setsize(missile, vector.zero, vector.zero)
 	setorigin(missile, self.origin)
-	announce_launch(missile, self, true, false)
+	announce_launch(missile, self, true, false, 2.5)
 end
 
 -- Used for both the player and the ogre.

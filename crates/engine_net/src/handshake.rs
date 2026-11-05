@@ -2,12 +2,16 @@
 //!
 //! `netcode` encrypts everything, with keys from a token that a backend would
 //! normally hand out. Direct play has no backend, so the host does it, over the
-//! game's own port. Both sides run SPAKE2 with the password, which is empty if
-//! the game is open, and the token goes across sealed under what comes out.
+//! game's own port. Both sides agree a key, and the token goes across sealed
+//! under it.
 //!
-//! Someone watching learns nothing, because the keys are new each time. Someone
-//! without the password can't open the token, and can't try passwords against
-//! a recording either: each guess needs a live exchange, and those are limited.
+//! An open game agrees it with plain X25519. A game with a password uses SPAKE2
+//! instead, which is only there for that: someone without the password can't
+//! open the token, and can't try passwords against a recording either, since
+//! each guess needs a live exchange, and those are limited.
+//!
+//! Someone watching learns nothing either way, because the keys are new each
+//! time.
 //!
 //! Each side also signs what was said, with its lasting key (proposal 0059).
 //! Anyone in the middle has to change what's said to read anything, and then
@@ -23,8 +27,10 @@ use std::time::Duration;
 
 use chacha20poly1305::aead::{Aead, KeyInit, Payload};
 use chacha20poly1305::{ChaCha20Poly1305, Key, Nonce};
-use renet_netcode::ConnectToken;
+use renet_netcode::{ConnectToken, generate_random_bytes};
+use sha2::{Digest, Sha256};
 use spake2::{Ed25519Group, Identity, Password, Spake2};
+use x25519_dalek::{PublicKey as AgreementKey, StaticSecret};
 
 use crate::identity::{
     HostIdentity, LINK_BYTES, Link, PlayerIdentity, PublicKey, SIGNATURE_BYTES, follows, host_code,
@@ -37,8 +43,27 @@ const REQUEST_MAGIC: &[u8; 8] = b"QEKEYREQ";
 /// What an answer starts with.
 const ANSWER_MAGIC: &[u8; 8] = b"QEKEYANS";
 
-/// What a refusal to someone who's banned starts with.
-const BANNED_MAGIC: &[u8; 8] = b"QEKEYBAN";
+/// What a refusal starts with.
+const REFUSAL_MAGIC: &[u8; 8] = b"QEKEYNOT";
+
+/// A request or refusal's word for someone who's banned.
+const REFUSED_BANNED: u8 = 0;
+
+/// A refusal's word for an open request to a game with a password.
+const REFUSED_NEEDS_PASSWORD: u8 = 1;
+
+/// A refusal's word for a password given to an open game. A client doesn't fall
+/// back to an open exchange, so nobody can talk it out of a password.
+const REFUSED_NO_PASSWORD: u8 = 2;
+
+/// A request's word for an open exchange.
+const KIND_OPEN: u8 = 0;
+
+/// A request's word for an exchange with a password.
+const KIND_PASSWORD: u8 = 1;
+
+/// What the key of an open exchange is made from, besides what's agreed.
+const OPEN_CONTEXT: &[u8] = b"quake-engine open exchange";
 
 /// What a player's signature starts with.
 const PLAYER_CONTEXT: &[u8] = b"quake-engine player handshake";
@@ -103,6 +128,43 @@ fn host_message(
 /// What a player signs.
 fn player_message(asked: &[u8; MESSAGE_BYTES]) -> Vec<u8> {
     [PLAYER_CONTEXT, asked.as_slice()].concat()
+}
+
+/// A key and a message for an open exchange, from a side's `secret`, what the
+/// other said, and everything said. Nothing agreed with a weak key counts.
+fn open_key(
+    secret: &StaticSecret,
+    theirs: &[u8; MESSAGE_BYTES],
+    asked: &[u8; MESSAGE_BYTES],
+    answer: &[u8; MESSAGE_BYTES],
+) -> Option<Vec<u8>> {
+    let mut key = [0; 32];
+    key.copy_from_slice(&theirs[..32]);
+    let shared = secret.diffie_hellman(&AgreementKey::from(key));
+    shared.was_contributory().then(|| {
+        Sha256::new()
+            .chain_update(OPEN_CONTEXT)
+            .chain_update(shared.as_bytes())
+            .chain_update(asked)
+            .chain_update(answer)
+            .finalize()
+            .to_vec()
+    })
+}
+
+/// An open exchange's message for `secret`. It's shorter than SPAKE2's.
+fn open_message(secret: &StaticSecret) -> [u8; MESSAGE_BYTES] {
+    let mut message = [0; MESSAGE_BYTES];
+    message[..32].copy_from_slice(AgreementKey::from(secret).as_bytes());
+    message
+}
+
+/// One side of agreeing a key.
+enum Agreement {
+    /// An open game's.
+    Open(StaticSecret),
+    /// A game with a password's.
+    Password(Spake2<Ed25519Group>),
 }
 
 /// One exchange a host has answered.
@@ -189,6 +251,22 @@ impl Doorman {
             && !self.addresses.contains_key(&from.ip())
     }
 
+    /// Agrees a key with what was `asked`, and says what to answer.
+    fn agree(&self, asked: &[u8; MESSAGE_BYTES]) -> Option<(Vec<u8>, [u8; MESSAGE_BYTES])> {
+        if self.password.is_empty() {
+            let secret = StaticSecret::from(generate_random_bytes::<32>());
+            let answer = open_message(&secret);
+            return Some((open_key(&secret, asked, asked, &answer)?, answer));
+        }
+        let (state, answer) = Spake2::<Ed25519Group>::start_b(
+            &Password::new(self.password.as_bytes()),
+            &Identity::new(CLIENT_NAME),
+            &Identity::new(HOST_NAME),
+        );
+        let key = state.finish(asked).ok()?;
+        Some((key, answer.try_into().ok()?))
+    }
+
     /// Starts an exchange with what `player` asked, sealing the token that
     /// `mint` makes along with who this host is.
     fn start(
@@ -198,13 +276,7 @@ impl Doorman {
         now: Duration,
         mint: impl FnOnce(PublicKey) -> Option<Vec<u8>>,
     ) -> Option<Exchange> {
-        let (state, answer) = Spake2::<Ed25519Group>::start_b(
-            &Password::new(self.password.as_bytes()),
-            &Identity::new(CLIENT_NAME),
-            &Identity::new(HOST_NAME),
-        );
-        let key = state.finish(&asked).ok()?;
-        let answer: [u8; MESSAGE_BYTES] = answer.try_into().ok()?;
+        let (key, answer) = self.agree(&asked)?;
         let mut sealing = self.identity.public().to_vec();
         sealing.extend_from_slice(&self.identity.sign(&host_message(&asked, &answer, &player)));
         sealing.push(u8::try_from(self.identity.link_count()).ok()?);
@@ -238,7 +310,8 @@ impl Doorman {
         }
         self.forget_old(now);
         let part = *request.get(REQUEST_MAGIC.len())?;
-        let first = REQUEST_MAGIC.len() + 1;
+        let kind = *request.get(REQUEST_MAGIC.len() + 1)?;
+        let first = REQUEST_MAGIC.len() + 2;
         let asked: [u8; MESSAGE_BYTES] =
             request.get(first..first + MESSAGE_BYTES)?.try_into().ok()?;
         if let Some(exchange) = self.exchanges.get(&from)
@@ -258,8 +331,17 @@ impl Doorman {
         if !verify(&player, &player_message(&asked), signature) {
             return None;
         }
-        if self.banned.contains(&player) {
-            return Some([BANNED_MAGIC.as_slice(), &asked[..ECHO_BYTES]].concat());
+        let refusal = if self.banned.contains(&player) {
+            Some(REFUSED_BANNED)
+        } else if kind == KIND_OPEN && !self.password.is_empty() {
+            Some(REFUSED_NEEDS_PASSWORD)
+        } else if kind == KIND_PASSWORD && self.password.is_empty() {
+            Some(REFUSED_NO_PASSWORD)
+        } else {
+            None
+        };
+        if let Some(reason) = refusal {
+            return Some([REFUSAL_MAGIC.as_slice(), &asked[..ECHO_BYTES], &[reason]].concat());
         }
         let exchange = self.start(asked, player, now, mint)?;
         let answer = exchange.part(part);
@@ -293,7 +375,9 @@ pub(crate) struct Expected {
 /// The client's side.
 pub(crate) struct Asker {
     /// The exchange, until it's finished.
-    state: Option<Spake2<Ed25519Group>>,
+    state: Option<Agreement>,
+    /// Which kind it is.
+    kind: u8,
     /// What this side said.
     asked: [u8; MESSAGE_BYTES],
     /// What the host said.
@@ -307,16 +391,24 @@ pub(crate) struct Asker {
 impl Asker {
     /// Starts asking.
     pub(crate) fn new(expected: Expected) -> Self {
-        let (state, asked) = Spake2::<Ed25519Group>::start_a(
-            &Password::new(expected.password.as_bytes()),
-            &Identity::new(CLIENT_NAME),
-            &Identity::new(HOST_NAME),
-        );
-        let mut message = [0; MESSAGE_BYTES];
-        message.copy_from_slice(&asked);
+        let (state, kind, asked) = if expected.password.is_empty() {
+            let secret = StaticSecret::from(generate_random_bytes::<32>());
+            let message = open_message(&secret);
+            (Agreement::Open(secret), KIND_OPEN, message)
+        } else {
+            let (state, asked) = Spake2::<Ed25519Group>::start_a(
+                &Password::new(expected.password.as_bytes()),
+                &Identity::new(CLIENT_NAME),
+                &Identity::new(HOST_NAME),
+            );
+            let mut message = [0; MESSAGE_BYTES];
+            message.copy_from_slice(&asked);
+            (Agreement::Password(state), KIND_PASSWORD, message)
+        };
         Self {
             state: Some(state),
-            asked: message,
+            kind,
+            asked,
             answer: None,
             parts: Vec::new(),
             expected,
@@ -344,6 +436,7 @@ impl Asker {
         let mut out = Vec::with_capacity(REQUEST_BYTES);
         out.extend_from_slice(REQUEST_MAGIC);
         out.push(part);
+        out.push(self.kind);
         out.extend_from_slice(&self.asked);
         out.extend_from_slice(&self.expected.identity.public());
         out.extend_from_slice(&self.expected.identity.sign(&player_message(&self.asked)));
@@ -365,12 +458,24 @@ impl Asker {
 
     /// Opens the token, with everything here.
     fn open(&mut self) -> Heard {
-        let wrong = || Heard::Refused("wrong password".to_owned());
+        let kind = self.kind;
+        let wrong = || {
+            let reason = if kind == KIND_OPEN {
+                "the host's answer was spoiled"
+            } else {
+                "wrong password"
+            };
+            Heard::Refused(reason.to_owned())
+        };
         let (Some(state), Some(answer)) = (self.state.take(), self.answer) else {
             return wrong();
         };
         let sealed: Vec<u8> = self.parts.iter().flatten().flatten().copied().collect();
-        let Some(key) = state.finish(&answer).ok() else {
+        let key = match state {
+            Agreement::Open(secret) => open_key(&secret, &answer, &self.asked, &answer),
+            Agreement::Password(state) => state.finish(&answer).ok(),
+        };
+        let Some(key) = key else {
             return wrong();
         };
         let payload = Payload {
@@ -411,9 +516,15 @@ impl Asker {
 
     /// Takes in a `packet` from the host.
     pub(crate) fn hear(&mut self, packet: &[u8]) -> Heard {
-        let refusal = [BANNED_MAGIC.as_slice(), &self.asked[..ECHO_BYTES]].concat();
-        if packet == refusal.as_slice() {
-            return Heard::Refused("you're banned from this server".to_owned());
+        let refusal = [REFUSAL_MAGIC.as_slice(), &self.asked[..ECHO_BYTES]].concat();
+        if let Some([reason]) = packet.strip_prefix(refusal.as_slice()) {
+            let reason = match *reason {
+                REFUSED_BANNED => "you're banned from this server",
+                REFUSED_NEEDS_PASSWORD => "this game needs a password",
+                REFUSED_NO_PASSWORD => "this game has no password: clear yours to join",
+                _ => "refused",
+            };
+            return Heard::Refused(reason.to_owned());
         }
         let header = ANSWER_MAGIC.len() + ECHO_BYTES + 2 + MESSAGE_BYTES;
         if packet.len() <= header

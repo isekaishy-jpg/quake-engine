@@ -53,6 +53,10 @@ pub struct Projectile {
     pub bounces: bool,
     /// Whether it blows up when it first hits something.
     pub blasts: bool,
+    /// How many times stronger than usual its damage is.
+    pub strength: f32,
+    /// Seconds until it blows up by itself, or 0 if it won't.
+    pub fuse: f32,
 }
 
 /// How a shot feels to the one firing it, which a game supplies so that it can
@@ -81,6 +85,8 @@ pub struct BlastRule {
     pub falloff: f32,
     /// The share of the damage you take from your own.
     pub own_share: f32,
+    /// The damage of a direct hit, before any strength.
+    pub direct_damage: f32,
     /// How much speed a point of damage gives.
     pub knock_per_damage: f32,
     /// The stat that says what the player is carrying.

@@ -520,6 +520,8 @@ impl ServerMessage {
                 put_vec3(&mut out, launch.origin);
                 put_vec3(&mut out, launch.velocity);
                 out.extend_from_slice(&launch.time.to_le_bytes());
+                put_f32(&mut out, launch.strength);
+                put_f32(&mut out, launch.fuse);
             }
             Self::Effect(Effect::Outline { low, high }) => {
                 out.push(TAG_OUTLINE);
@@ -632,6 +634,8 @@ impl ServerMessage {
                     time: reader.f64()?,
                     bounces: flags & 1 != 0,
                     blasts: flags & 2 != 0,
+                    strength: reader.f32()?,
+                    fuse: reader.f32()?,
                 };
                 reader
                     .finished()

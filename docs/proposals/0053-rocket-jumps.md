@@ -20,9 +20,9 @@ Status: accepted, 2026-11-04, increment 9.
 ## Proposal
 
 - **Selected approach:** the above.
-- **Tradeoffs:** other people's rockets aren't predicted, because nothing says when they were fired. A host's own rockets are only known from the server, which is exact with no network in the way.
+- **Tradeoffs:** a host's own rockets are only known from the server, which is exact with no network in the way.
 - **Acceptance criteria:** with prediction, a rocket jump stays within a unit of the server at 40 and 80 ms, and at most half the error without it.
-- **Future extension:** none planned. Quad damage and held fire followed in [proposal 0057](0057-the-feel-of-a-shot.md).
+- **Future extension:** none planned. Quad damage and held fire followed in [proposal 0057](0057-the-feel-of-a-shot.md), and other players' shots in [proposal 0060](0060-incoming-blasts.md).
 
 ## Review
 

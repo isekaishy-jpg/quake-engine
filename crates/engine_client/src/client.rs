@@ -15,9 +15,9 @@ use engine_net::{
 };
 use engine_physics::CollisionWorld;
 
-use crate::effects::EFFECT_MUZZLE_FLASH;
+use crate::effects::{EFFECT_MUZZLE_FLASH, SEEN_BOX_HIGH, SEEN_BOX_LOW};
 use crate::lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
-use crate::projectiles::{Flights, Launch, Timeline};
+use crate::projectiles::{Blast, Flights, Launch, Timeline};
 use crate::shown_shot::ShownShot;
 use crate::view_clock::ViewClock;
 
@@ -596,7 +596,7 @@ impl Client {
         model: &str,
         origin: Vec3,
         velocity: Vec3,
-        (bounces, blasts): (bool, bool),
+        (bounces, blasts, fuse): (bool, bool, f32),
     ) {
         if let Some(model) = self.model_numbers.get(model).copied() {
             let launch = Launch {
@@ -605,6 +605,8 @@ impl Client {
                 time: self.own_time(),
                 bounces,
                 blasts,
+                strength: self.own_strength(),
+                fuse,
             };
             let behind = self.clock.time();
             let fired_on = self.next_sequence;
@@ -629,39 +631,76 @@ impl Client {
             .retain(|id| ids.contains(&id), self.clock.time(), give_up);
         let now = self.clock.time();
         self.expected_sounds.retain(|(_, by)| *by > now);
-        let blasts = self.flights.take_blasts(self.next_sequence);
         let Some(rule) = self.blast else {
             return;
         };
-        let answered = self.history.back().map_or(0, |last| last.acknowledged);
-        for (lands_on, blast) in blasts {
-            if lands_on <= answered.wrapping_add(1) {
-                // The server's numbers already have it.
-                continue;
-            }
-            let middle = self.predicted.origin + Vec3::new(0.0, 0.0, 4.0);
-            let distance = (blast - middle).length();
-            if distance > rule.reach {
-                continue;
-            }
-            let carried = self.stats.get(rule.carried_stat).copied().unwrap_or(0);
-            let boost = if carried & rule.boost_bits != 0 {
-                rule.boost
+        // What flies into us goes off first, and never gets to where it's going.
+        let origin = self.predicted.origin;
+        let (low, high) = (origin + SEEN_BOX_LOW, origin + SEEN_BOX_HIGH);
+        let hits = self
+            .flights
+            .take_hits(self.next_sequence, (low, high), &self.boxes);
+        for hit in hits {
+            if hit.direct {
+                let points = rule.direct_damage * hit.strength;
+                self.knock(&rule, hit.place, points, self.next_sequence);
             } else {
-                1.0
-            };
-            let points = (rule.damage - distance * rule.falloff) * rule.own_share * boost;
-            let collision = self.world.with(&self.instances);
-            let clear = collision
-                .move_box(blast, Vec3::ZERO, Vec3::ZERO, middle)
-                .fraction
-                >= 1.0;
-            if points > 0.0 && clear {
-                let direction = (self.predicted.origin - blast).normalized();
-                let knock = direction * (points * rule.knock_per_damage);
-                self.knocks.push((lands_on, knock));
-                self.replay();
+                let blast = Blast {
+                    lands_on: self.next_sequence,
+                    place: hit.place,
+                    own: hit.own,
+                    strength: hit.strength,
+                };
+                self.take_blast(&rule, &blast);
             }
+        }
+        let answered = self.history.back().map_or(0, |last| last.acknowledged);
+        for blast in self.flights.take_blasts(self.next_sequence) {
+            // Otherwise, the server's numbers already have it.
+            if blast.lands_on > answered.wrapping_add(1) {
+                self.take_blast(&rule, &blast);
+            }
+        }
+    }
+
+    /// Works out what `blast` does to us, from `T_RadiusDamage`.
+    fn take_blast(&mut self, rule: &BlastRule, blast: &Blast) {
+        let middle = self.predicted.origin + Vec3::new(0.0, 0.0, 4.0);
+        let distance = (blast.place - middle).length();
+        if distance > rule.reach {
+            return;
+        }
+        let share = if blast.own { rule.own_share } else { 1.0 };
+        let points = (rule.damage - distance * rule.falloff) * share * blast.strength;
+        let collision = self.world.with(&self.instances);
+        let clear = collision
+            .move_box(blast.place, Vec3::ZERO, Vec3::ZERO, middle)
+            .fraction
+            >= 1.0;
+        if points > 0.0 && clear {
+            self.knock(rule, blast.place, points, blast.lands_on);
+        }
+    }
+
+    /// Knocks us away from `place` by `points` of damage, on command
+    /// `lands_on`, from `T_Damage`.
+    fn knock(&mut self, rule: &BlastRule, place: Vec3, points: f32, lands_on: u32) {
+        let direction = (self.predicted.origin - place).normalized();
+        let knock = direction * (points * rule.knock_per_damage);
+        self.knocks.push((lands_on, knock));
+        self.replay();
+    }
+
+    /// How strong a shot of ours is, by what we're carrying.
+    fn own_strength(&self) -> f32 {
+        let Some(rule) = self.blast else {
+            return 1.0;
+        };
+        let carried = self.stats.get(rule.carried_stat).copied().unwrap_or(0);
+        if carried & rule.boost_bits != 0 {
+            rule.boost
+        } else {
+            1.0
         }
     }
 
@@ -846,10 +885,11 @@ impl Client {
                 Some(ServerMessage::Print(text)) => self.prints.push(text),
                 Some(ServerMessage::Effect(Effect::Launch(projectile))) => {
                     let own = projectile.owner == self.player_entity;
-                    let fired_on = own.then(|| self.command_at(projectile.time));
+                    let fired_on = self.command_at(projectile.time);
                     let behind = self.clock.time();
                     self.flights.launched(
                         &projectile,
+                        own,
                         fired_on,
                         behind,
                         &self.world,

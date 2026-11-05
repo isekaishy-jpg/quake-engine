@@ -176,7 +176,11 @@ fn the_right_password_gets_in() {
 
 #[test]
 fn the_wrong_password_is_refused() {
-    for given in ["rockets", "", "ROCKET"] {
+    let (client, arrived) = try_password("rocket", "");
+    assert!(!arrived);
+    let reason = client.refusal().unwrap_or_default();
+    assert!(reason.contains("needs a password"), "{reason}");
+    for given in ["rockets", "ROCKET"] {
         let (client, arrived) = try_password("rocket", given);
         assert!(!arrived, "{given:?} got in");
         assert!(!client.is_connected());
@@ -187,7 +191,10 @@ fn the_wrong_password_is_refused() {
 #[test]
 fn a_password_isnt_needed_in_an_open_game_but_has_to_match() {
     assert!(try_password("", "").1);
-    assert!(!try_password("", "something").1);
+    let (client, arrived) = try_password("", "something");
+    assert!(!arrived, "a client never gives up on a password");
+    let reason = client.refusal().unwrap_or_default();
+    assert!(reason.contains("no password"), "{reason}");
 }
 
 #[test]
@@ -237,7 +244,7 @@ fn a_client_with_no_token_never_gets_in() {
     let server_addr = SocketAddr::from(([127, 0, 0, 1], server.port()));
     let socket = UdpSocket::bind("127.0.0.1:0").expect("a socket");
     let authentication = ClientAuthentication::Unsecure {
-        protocol_id: 0x5155_414B_4531_0003,
+        protocol_id: 0x5155_414B_4531_0004,
         client_id: 1,
         server_addr,
         user_data: None,

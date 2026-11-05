@@ -128,10 +128,10 @@ const REWOUND_COLOR: u8 = 72;
 const SEEN_COLOR: u8 = 56;
 
 /// The low corner of a player's box.
-const SEEN_BOX_LOW: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
+pub(crate) const SEEN_BOX_LOW: Vec3 = Vec3::new(-16.0, -16.0, -24.0);
 
 /// The high corner of a player's box.
-const SEEN_BOX_HIGH: Vec3 = Vec3::new(16.0, 16.0, 32.0);
+pub(crate) const SEEN_BOX_HIGH: Vec3 = Vec3::new(16.0, 16.0, 32.0);
 
 /// Everything the client shows that the server doesn't track.
 #[derive(Clone, Debug, Default)]

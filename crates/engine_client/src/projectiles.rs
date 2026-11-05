@@ -60,6 +60,36 @@ pub struct Launch {
     pub bounces: bool,
     /// Whether it blows up when it first hits something.
     pub blasts: bool,
+    /// How many times stronger than usual its damage is.
+    pub strength: f32,
+    /// Seconds until it blows up by itself, or 0 if it won't.
+    pub fuse: f32,
+}
+
+/// A blast on its way, as a flight's path has it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Blast {
+    /// The command it lands on.
+    pub(crate) lands_on: u32,
+    /// Where it is.
+    pub(crate) place: Vec3,
+    /// Whether it's our own.
+    pub(crate) own: bool,
+    /// How many times stronger than usual it is.
+    pub(crate) strength: f32,
+}
+
+/// Something flying into us, or into something else.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct Hit {
+    /// Where it is.
+    pub(crate) place: Vec3,
+    /// How many times stronger than usual it is.
+    pub(crate) strength: f32,
+    /// Whether all its damage comes from the hit, rather than as a blast.
+    pub(crate) direct: bool,
+    /// Whether it's our own.
+    pub(crate) own: bool,
 }
 
 /// One path through the map.
@@ -162,7 +192,7 @@ struct Flight {
     model: u16,
     /// Whether it's been used to predict a blast.
     blast_used: bool,
-    /// The command it was fired on, if it's our own.
+    /// The command running when it was fired.
     fired_on: u32,
 }
 
@@ -197,19 +227,21 @@ impl Flights {
     pub fn launched(
         &mut self,
         projectile: &Projectile,
-        fired_on: Option<u32>,
+        own: bool,
+        fired_on: u32,
         behind: f64,
         world: &CollisionWorld,
         instances: &[ModelInstance],
     ) {
-        let own = fired_on.is_some();
-        let mut fired_on = fired_on.unwrap_or(0);
+        let mut fired_on = fired_on;
         let launch = Launch {
             origin: projectile.origin,
             velocity: projectile.velocity,
             time: projectile.time,
             bounces: projectile.bounces,
             blasts: projectile.blasts,
+            strength: projectile.strength,
+            fuse: projectile.fuse,
         };
         let mut seen_at = behind;
         let mut blast_used = false;
@@ -293,29 +325,87 @@ impl Flights {
             })
     }
 
-    /// Takes the commands and places of own rockets that go off by command
-    /// `command`, once each. A rocket that flies for a number of ticks knocks
-    /// the command that many after the one that fired it.
-    pub fn take_blasts(&mut self, command: u32) -> Vec<(u32, Vec3)> {
+    /// Takes blasts that go off by command `command`, once each, whoever's
+    /// they are. Something that flies for a number of ticks goes off that many
+    /// commands after the one it was fired on.
+    pub(crate) fn take_blasts(&mut self, command: u32) -> Vec<Blast> {
         let mut blasts = Vec::new();
         for flight in &mut self.flights {
-            let Some((when, place)) = flight.path.impact else {
+            let launch = flight.path.launch;
+            let due = if launch.fuse > 0.0 {
+                let when = launch.time + f64::from(launch.fuse);
+                Some((when, flight.path.at(when)))
+            } else if launch.blasts {
+                flight.path.impact
+            } else {
+                None
+            };
+            let Some((when, place)) = due else {
                 continue;
             };
-            let flown = (when - flight.path.launch.time) / f64::from(STEP);
+            let flown = (when - launch.time) / f64::from(STEP);
             #[expect(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
                 reason = "a few hundred ticks at most"
             )]
             let lands_on = flight.fired_on + flown.round() as u32;
-            let mine = flight.own && flight.path.launch.blasts;
-            if mine && !flight.blast_used && lands_on <= command {
+            if !flight.blast_used && lands_on <= command {
                 flight.blast_used = true;
-                blasts.push((lands_on, place));
+                blasts.push(Blast {
+                    lands_on,
+                    place,
+                    own: flight.own,
+                    strength: launch.strength,
+                });
             }
         }
         blasts
+    }
+
+    /// Takes whatever of anyone else's is inside our box, from `low` to `high`,
+    /// by command `command`, once each, and what's run into one of `others` on
+    /// the way, which goes off there. Like a blast, it's counted in commands
+    /// from the one it was fired on, a tick of flight to each.
+    pub(crate) fn take_hits(
+        &mut self,
+        command: u32,
+        (low, high): (Vec3, Vec3),
+        others: &[(Vec3, Vec3)],
+    ) -> Vec<Hit> {
+        let within = |place: Vec3, low: Vec3, high: Vec3| {
+            (low.x..=high.x).contains(&place.x)
+                && (low.y..=high.y).contains(&place.y)
+                && (low.z..=high.z).contains(&place.z)
+        };
+        let mut hits = Vec::new();
+        for flight in &mut self.flights {
+            let launch = flight.path.launch;
+            let explosive = launch.blasts || launch.fuse > 0.0;
+            if flight.blast_used || !explosive {
+                continue;
+            }
+            let flown = command.checked_sub(flight.fired_on);
+            let place = flown.and_then(|flown| flight.path.points.get(flown as usize));
+            let Some(&place) = place else {
+                continue;
+            };
+            // What fired it can't be hit by it, and an item's box is nothing.
+            let blocked = others.iter().any(|(low, high)| {
+                low != high && within(place, *low, *high) && !within(launch.origin, *low, *high)
+            });
+            let inside = !flight.own && within(place, low, high);
+            if inside || blocked {
+                flight.blast_used = true;
+                hits.push(Hit {
+                    place,
+                    strength: launch.strength,
+                    direct: inside && launch.blasts,
+                    own: flight.own,
+                });
+            }
+        }
+        hits
     }
 
     /// The newest launch known, with its entity.

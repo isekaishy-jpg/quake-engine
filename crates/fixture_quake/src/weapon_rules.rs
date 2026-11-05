@@ -41,6 +41,7 @@ pub const ROCKET_BLAST: BlastRule = BlastRule {
     reach: 160.0,
     falloff: 0.5,
     own_share: 0.5,
+    direct_damage: 110.0,
     knock_per_damage: 8.0,
     carried_stat: STAT_ITEMS,
     boost_bits: IT_QUAD,
@@ -48,7 +49,7 @@ pub const ROCKET_BLAST: BlastRule = BlastRule {
 };
 
 /// What a weapon fires.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ShotModel {
     /// Its model.
     pub model: &'static str,
@@ -56,6 +57,8 @@ pub struct ShotModel {
     pub bounces: bool,
     /// Whether it blows up on what it hits.
     pub blasts: bool,
+    /// Seconds until it blows up by itself, or 0 if it won't.
+    pub fuse: f32,
 }
 
 /// What a client can show of a weapon's shot before the server answers.
@@ -106,6 +109,7 @@ pub fn weapon_rule(weapon: i32, ammo: i32) -> Option<WeaponRule> {
         model: "progs/spike.mdl",
         bounces: false,
         blasts: false,
+        fuse: 0.0,
     };
     let shotgun = WeaponRule {
         shot: None,
@@ -161,6 +165,7 @@ pub fn weapon_rule(weapon: i32, ammo: i32) -> Option<WeaponRule> {
                 model: "progs/grenade.mdl",
                 bounces: true,
                 blasts: false,
+                fuse: 2.5,
             }),
             sound: "weapons/grenade.wav",
             sound_once: false,
@@ -173,6 +178,7 @@ pub fn weapon_rule(weapon: i32, ammo: i32) -> Option<WeaponRule> {
                 model: "progs/missile.mdl",
                 bounces: false,
                 blasts: true,
+                fuse: 0.0,
             }),
             sound: "weapons/sgun1.wav",
             sound_once: false,

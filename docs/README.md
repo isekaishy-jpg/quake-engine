@@ -78,6 +78,7 @@
     - [0057: the feel of a shot](proposals/0057-the-feel-of-a-shot.md)
     - [0058: secure connections](proposals/0058-secure-connections.md)
     - [0059: lasting identities](proposals/0059-lasting-identities.md)
+    - [0060: incoming blasts](proposals/0060-incoming-blasts.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -867,7 +867,7 @@ fn point_blank_error(shot: PointBlank) -> f32 {
             // As a click or a held button does, before the server has heard.
             let down = Vec3::new(0.017, 0.0, -1.0);
             let start = client.predicted().origin + Vec3::new(0.14, 0.0, 8.0);
-            let flags = (false, true);
+            let flags = (false, true, 0.0);
             client.guess_launch("progs/missile.mdl", start, down * 1000.0, flags);
         }
         let sequence = client.next_sequence();
@@ -937,6 +937,226 @@ fn held_rockets_are_predicted_as_clicked_ones_are() {
     println!("{with:.1} guessed, {unknown:.1} from the server alone, {without:.1} not predicted");
     assert!(with * 2.0 < without, "it has to make a real difference");
     assert!(with < unknown, "and guessing has to be what does it");
+}
+
+/// Someone else's shot, at a player on `ping`.
+#[derive(Clone, Copy)]
+struct Incoming {
+    /// The victim's ping.
+    ping: u64,
+    /// How blasts are predicted.
+    blast: Option<BlastRule>,
+    /// How far down the attacker aims, in degrees.
+    pitch: f32,
+    /// Lua that sets the attacker up.
+    setup: &'static str,
+    /// Whether a third player is there to get in the way.
+    blocked: bool,
+}
+
+/// Lua for an attacker with the quad.
+const ATTACKER_WITH_THE_QUAD: &str = r#"
+    local bot = find_all("netname", "bot2")[1]
+    bot.super_damage_finished = time() + 60
+    bot.items = bit32.bor(bot.items, IT_QUAD)
+"#;
+
+/// Lua for an attacker with grenades.
+const ATTACKER_WITH_GRENADES: &str = r#"
+    local bot = find_all("netname", "bot2")[1]
+    bot.items = bit32.bor(bot.items, IT_GRENADE_LAUNCHER)
+    bot.weapon = IT_GRENADE_LAUNCHER
+    W_SetCurrentAmmo(bot)
+"#;
+
+/// Lua for a victim to one side, so that a grenade rolls past them, settles
+/// nearby and goes off there.
+const VICTIM_TO_ONE_SIDE: &str = r#"
+    setorigin(find_all("netname", "bot1")[1], vector.create(-880, -292, -16))
+    local bot = find_all("netname", "bot2")[1]
+    bot.items = bit32.bor(bot.items, IT_GRENADE_LAUNCHER)
+    bot.weapon = IT_GRENADE_LAUNCHER
+    W_SetCurrentAmmo(bot)
+"#;
+
+/// Has an attacker fire once at the victim, and returns the worst gap between
+/// where the victim's client thinks it is and where the server says, and how
+/// fast the shot left the victim going, by the server's numbers.
+fn incoming_error(shot: Incoming) -> (f32, f32) {
+    let map = load("dm3");
+    let (mut server, mut host, world) = game(&map, "dm3", &[("deathmatch", 1.0)]);
+    let still = BotSkill {
+        moves: false,
+        shoots: false,
+        ..BotSkill::default()
+    };
+    let mut bots = vec![
+        add_bot(&mut server, &world, network(shot.ping, 0, 0.0), still, 1),
+        add_bot(&mut server, &world, network(20, 0, 0.0), still, 2),
+    ];
+    if shot.blocked {
+        bots.push(add_bot(&mut server, &world, network(20, 0, 0.0), still, 3));
+    }
+    bots[0].client_mut().set_blast(shot.blast);
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    server
+        .exec(
+            r#"
+            local host = find_all("netname", "player")[1]
+            setorigin(host, vector.create(0, 0, 4000))
+            host.frozen = true
+            local victim = find_all("netname", "bot1")[1]
+            setorigin(victim, vector.create(-880, -232, -16))
+            victim.health = 5000
+            local attacker = find_all("netname", "bot2")[1]
+            setorigin(attacker, vector.create(-640, -232, -16))
+            attacker.health = 5000
+            attacker.ammo_rockets = 50
+            attacker.items = bit32.bor(attacker.items, IT_ROCKET_LAUNCHER)
+            attacker.weapon = IT_ROCKET_LAUNCHER
+            W_SetCurrentAmmo(attacker)
+            "#,
+        )
+        .expect("it runs");
+    server.exec(shot.setup).expect("it runs");
+    run(&mut server, &mut host, &mut bots, &world, 1.0);
+    #[expect(clippy::cast_possible_truncation, reason = "a tick fits f32")]
+    let tick = TICK as f32;
+    let (mut worst, mut fastest) = (0.0_f32, 0.0_f32);
+    let mut predictions = std::collections::HashMap::new();
+    for tick_number in 0..300 {
+        let victim = bots[0].client_mut();
+        victim.update_network(Duration::from_secs_f32(tick));
+        victim.receive();
+        let sequence = victim.next_sequence();
+        victim.send_command(UserCommand::default(), tick);
+        victim.flush_network();
+        predictions.insert(sequence, victim.predicted().origin);
+        if let Some((answered, truth)) = victim.last_answer() {
+            fastest = fastest.max(truth.velocity.length());
+            if let Some(predicted) = predictions.get(&answered) {
+                worst = worst.max((*predicted - truth.origin).length());
+            }
+        }
+        let attacker = bots[1].client_mut();
+        attacker.update_network(Duration::from_secs_f32(tick));
+        attacker.receive();
+        let command = UserCommand {
+            yaw: 180.0,
+            pitch: shot.pitch,
+            attack: tick_number < 2,
+            ..UserCommand::default()
+        };
+        attacker.send_command(command, tick);
+        attacker.flush_network();
+        for bot in bots.iter_mut().skip(2) {
+            bot.tick(tick, &world);
+        }
+        host.send_command(UserCommand::default(), tick);
+        server.tick();
+        host.receive();
+    }
+    (worst, fastest)
+}
+
+/// Runs `shot` with and without prediction, and checks it was worth it.
+fn check_incoming(what: &str, shot: Incoming) -> f32 {
+    let (with, speed) = incoming_error(shot);
+    let (without, _speed) = incoming_error(Incoming {
+        blast: None,
+        ..shot
+    });
+    println!("{what}: {with:.1} units with prediction, {without:.1} without, at {speed:.0} u/s");
+    assert!(speed > 100.0, "{what} has to have knocked them");
+    assert!(with * 2.0 < without, "{what} has to make a real difference");
+    with
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn someone_elses_blast_is_predicted() {
+    for ping in [40, 80] {
+        let shot = Incoming {
+            ping,
+            blast: Some(ROCKET_BLAST),
+            pitch: 11.0,
+            setup: "",
+            blocked: false,
+        };
+        assert!(check_incoming("a rocket at your feet", shot) < 3.0);
+    }
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn someone_elses_direct_hit_is_predicted() {
+    let shot = Incoming {
+        ping: 60,
+        blast: Some(ROCKET_BLAST),
+        pitch: 0.0,
+        setup: "",
+        blocked: false,
+    };
+    let _error = check_incoming("a direct hit", shot);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn an_attackers_quad_comes_with_the_launch() {
+    let shot = Incoming {
+        ping: 60,
+        blast: Some(ROCKET_BLAST),
+        pitch: 11.0,
+        setup: ATTACKER_WITH_THE_QUAD,
+        blocked: false,
+    };
+    assert!(check_incoming("a quad rocket", shot) < 3.0);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn someone_elses_grenade_is_predicted() {
+    let shot = Incoming {
+        ping: 60,
+        blast: Some(ROCKET_BLAST),
+        pitch: 0.0,
+        setup: ATTACKER_WITH_GRENADES,
+        blocked: false,
+    };
+    let _error = check_incoming("a grenade", shot);
+}
+
+/// Lua for someone standing between the attacker and the victim.
+const SOMEONE_IN_THE_WAY: &str = r#"
+    local bot = find_all("netname", "bot3")[1]
+    bot.health = 5000
+    setorigin(bot, vector.create(-790, -232, -16))
+"#;
+
+#[test]
+#[ignore = "needs game data"]
+fn a_rocket_that_hits_someone_on_the_way_goes_off_there() {
+    let shot = Incoming {
+        ping: 60,
+        blast: Some(ROCKET_BLAST),
+        pitch: 0.0,
+        setup: SOMEONE_IN_THE_WAY,
+        blocked: true,
+    };
+    assert!(check_incoming("a rocket hitting someone else", shot) < 3.0);
+}
+
+#[test]
+#[ignore = "needs game data"]
+fn a_grenade_going_off_nearby_is_predicted_from_its_fuse() {
+    let shot = Incoming {
+        ping: 60,
+        blast: Some(ROCKET_BLAST),
+        pitch: 89.0,
+        setup: VICTIM_TO_ONE_SIDE,
+        blocked: false,
+    };
+    let _error = check_incoming("a grenade's fuse", shot);
 }
 
 #[test]
