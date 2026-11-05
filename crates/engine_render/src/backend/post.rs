@@ -3,10 +3,12 @@
 
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CullMode, DescriptorPool,
-    DescriptorPoolSize, DescriptorSet, DescriptorType, Device, Framebuffer, GraphicsPipeline,
-    GraphicsPipelineBuilder, GraphicsShaderStage, Image, Image2dCreateInfo, ImageLayout,
-    ImageUsage, PipelineLayout, RenderPass, RenderPassCreateInfo, ShaderModule,
+    DescriptorPoolSize, DescriptorSet, DescriptorType, Device, Format, Framebuffer,
+    GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, Image, Image2dCreateInfo,
+    ImageLayout, ImageUsage, PipelineLayout, RenderPass, RenderPassCreateInfo, ShaderModule,
 };
+
+use engine_map::Map;
 
 use super::upload::device_image;
 use super::{Backend, COLOR_FORMAT, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER};
@@ -70,6 +72,44 @@ impl Backend {
             .build(device)?)
     }
 
+    /// Points `set` at the stencils' pictures.
+    pub(super) fn write_stencils(&mut self, set: &DescriptorSet) -> Result<(), RenderError> {
+        if self.blank_stencil.is_none() {
+            let image = self.upload_image(&[(1, 1, &[0, 0, 0, 0][..])], Format::R8G8B8A8_UNORM)?;
+            self.blank_stencil = Some(image);
+        }
+        for slot in 0..4_u32 {
+            let view = self
+                .stencil_images
+                .get(slot as usize)
+                .or(self.blank_stencil.as_ref())
+                .map(|image| &image.view);
+            if let Some(view) = view {
+                set.write_sampled_image(slot + 4, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            }
+        }
+        Ok(())
+    }
+
+    /// Uploads `map`'s stencils.
+    pub(super) fn load_stencils(&mut self, map: &Map) -> Result<(), RenderError> {
+        let mut images = Vec::new();
+        for stencil in map.stencils.iter().take(4) {
+            let levels: Vec<(u32, u32, &[u8])> = stencil
+                .image
+                .iter()
+                .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
+                .collect();
+            images.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
+        }
+        self.stencil_images = images;
+        if let Some(target) = self.scene_target.take() {
+            self.write_stencils(&target.set)?;
+            self.scene_target = Some(target);
+        }
+        Ok(())
+    }
+
     /// Makes sure the scene target is `size`.
     pub(super) fn ensure_scene_target(&mut self, size: (u32, u32)) -> Result<(), RenderError> {
         if self
@@ -118,7 +158,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 2,
+                    descriptor_count: 6,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -137,6 +177,7 @@ impl Backend {
         set.write_sampled_image(1, &color.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampler(3, &self.light_sampler);
+        self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             set,
             _pool: pool,

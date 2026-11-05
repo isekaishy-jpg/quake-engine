@@ -1,0 +1,144 @@
+//! What the view asks collision and the bake about light: which of a
+//! stencil's boxes are open, and who shades what (proposal 0076).
+
+use engine_client::Client;
+use engine_core::math::Vec3;
+use engine_map::{Map, RayStencil, STENCIL_GRID};
+use engine_render::CapsuleDraw;
+
+/// A stencil's occlusion grid.
+pub(super) type StencilMask = [f32; STENCIL_GRID * STENCIL_GRID];
+
+/// How many box tests a frame gets. A window with many boxes takes a few
+/// frames to go round, which its fade hides.
+const TESTS_PER_FRAME: usize = 24;
+
+/// How many seconds a box takes to fade.
+const FADE_SECONDS: f32 = 0.2;
+
+/// How far past a stencil a test starts, so the stencil's own wall isn't hit.
+const TEST_START: f32 = 2.0;
+
+/// How far a sun's test looks for what's in the way.
+const SUN_REACH: f32 = 4096.0;
+
+/// How wide the player's shade is.
+const CAPSULE_RADIUS: f32 = 22.0;
+
+/// How many characters shade the light, nearest first.
+const MAX_CAPSULES: usize = 16;
+
+/// How dark a character's shade is at its strongest.
+const CAPSULE_STRENGTH: f32 = 0.7;
+
+/// Which of a map's stencil boxes are open.
+#[derive(Debug, Default)]
+pub(super) struct StencilGates {
+    /// Whether each box should be open, by stencil.
+    wanted: Vec<Vec<bool>>,
+    /// How open each box is, by stencil.
+    open: Vec<Vec<f32>>,
+    /// Each stencil's grid.
+    masks: Vec<StencilMask>,
+    /// Where each stencil's light is.
+    lights: Vec<Vec3>,
+    /// The next box to test, counting through all of them.
+    next: usize,
+}
+
+impl StencilGates {
+    /// Where stencils' lights are.
+    pub(super) fn lights(&self) -> &[Vec3] {
+        &self.lights
+    }
+
+    /// How open stencils are.
+    pub(super) fn masks(&self) -> &[StencilMask] {
+        &self.masks
+    }
+
+    /// Starts again for `stencils`.
+    fn reset(&mut self, stencils: &[RayStencil]) {
+        self.wanted = stencils.iter().map(|s| vec![true; s.boxes.len()]).collect();
+        self.open = stencils.iter().map(|s| vec![1.0; s.boxes.len()]).collect();
+        self.masks = vec![[1.0; STENCIL_GRID * STENCIL_GRID]; stencils.len()];
+        self.next = 0;
+    }
+
+    /// Tests some boxes against `client`'s collision, and eases all of them.
+    pub(super) fn update(&mut self, map: &Map, client: &Client, time: f32, seconds: f32) {
+        let stencils = &map.stencils;
+        if self.open.len() != stencils.len() {
+            self.reset(stencils);
+        }
+        self.lights = stencils.iter().map(|s| s.light_at(time)).collect();
+        let total: usize = stencils.iter().map(|s| s.boxes.len()).sum();
+        for _ in 0..TESTS_PER_FRAME.min(total) {
+            self.next = (self.next + 1) % total;
+            let mut left = self.next;
+            for (index, stencil) in stencils.iter().enumerate() {
+                if left < stencil.boxes.len() {
+                    let area = stencil.boxes[left];
+                    self.wanted[index][left] =
+                        box_is_clear(stencil, area, self.lights[index], client);
+                    break;
+                }
+                left -= stencil.boxes.len();
+            }
+        }
+        let step = seconds / FADE_SECONDS;
+        for (index, stencil) in stencils.iter().enumerate() {
+            for (open, wanted) in self.open[index].iter_mut().zip(&self.wanted[index]) {
+                let target = if *wanted { 1.0 } else { 0.0 };
+                *open += (target - *open).clamp(-step, step);
+            }
+            stencil.fill_mask(&self.open[index], &mut self.masks[index]);
+        }
+    }
+}
+
+/// Whether light reaches a box of a stencil.
+fn box_is_clear(stencil: &RayStencil, area: [f32; 4], light: Vec3, client: &Client) -> bool {
+    let point = stencil.point_in(area);
+    let (towards, end) = if stencil.sun {
+        let towards = light.normalized();
+        (towards, point + towards * SUN_REACH)
+    } else {
+        ((light - point).normalized(), light)
+    };
+    client.line_is_clear(point + towards * TEST_START, end, stencil.sun)
+}
+
+/// The bodies shading light for a view from `eye`, with `body` being the
+/// player, and light coming the way the bake says.
+pub(super) fn capsule_draws(
+    map: &Map,
+    body: Vec3,
+    eye: Vec3,
+    solid_boxes: &[(Vec3, Vec3)],
+) -> Vec<CapsuleDraw> {
+    let mut places: Vec<(Vec3, f32)> = solid_boxes
+        .iter()
+        .map(|(low, high)| ((*low + *high) * 0.5, (high.x - low.x) * 0.7))
+        .collect();
+    places.sort_by(|a, b| (a.0 - eye).length().total_cmp(&(b.0 - eye).length()));
+    places.truncate(MAX_CAPSULES - 1);
+    places.push((body, CAPSULE_RADIUS));
+    places
+        .into_iter()
+        .map(|(origin, radius)| {
+            let sample = map.probes.as_ref().and_then(|probes| probes.sample(origin));
+            let (toward_light, strength) =
+                sample.map_or((Vec3::new(0.0, 0.0, 1.0), 0.5), |sample| {
+                    let brightness = (sample.brightness / 96.0).min(1.0);
+                    (sample.direction.normalized(), CAPSULE_STRENGTH * brightness)
+                });
+            CapsuleDraw {
+                origin,
+                radius,
+                toward_light,
+                strength,
+            }
+        })
+        .collect()
+}

@@ -33,4 +33,20 @@ struct Frame {
     outline: vec4<f32>,
     // x edge smoothing on, y outline width, z outline fade distance.
     post_params: vec4<f32>,
+    // Per stencil: a corner and strength, the two edges with reach in `down`,
+    // and the light with w 1 for a sun.
+    stencil_corner: array<vec4<f32>, 4>,
+    stencil_across: array<vec4<f32>, 4>,
+    stencil_down: array<vec4<f32>, 4>,
+    stencil_light: array<vec4<f32>, 4>,
+    // x how many stencils.
+    stencil_params: vec4<f32>,
+    // Each stencil's occlusion grid, four cells to an entry.
+    stencil_mask: array<vec4<f32>, 256>,
+    // Characters that shade the light: a centre and radius, and the direction
+    // light comes from with w how strong.
+    capsules: array<vec4<f32>, 16>,
+    capsule_light: array<vec4<f32>, 16>,
+    // x how many capsules.
+    capsule_params: vec4<f32>,
 }

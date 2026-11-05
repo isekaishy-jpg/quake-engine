@@ -11,6 +11,7 @@ use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_core::time::{TICK_HERTZ, TICK_SECONDS};
+use engine_map::Contents;
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
     ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport,
@@ -667,6 +668,29 @@ impl Client {
                 self.take_blast(&rule, &blast);
             }
         }
+    }
+
+    /// Solid bodies, from the latest snapshot.
+    #[must_use]
+    pub fn solid_boxes(&self) -> &[(Vec3, Vec3)] {
+        &self.boxes
+    }
+
+    /// Whether a line is clear of the world, moving models and bodies,
+    /// counting ourselves. With `to_sky`, reaching sky counts as clear, since
+    /// sky is solid to collision.
+    #[must_use]
+    pub fn line_is_clear(&self, start: Vec3, end: Vec3, to_sky: bool) -> bool {
+        let origin = self.predicted.origin;
+        let mut boxes = self.boxes.clone();
+        boxes.push((origin + PLAYER_MINS, origin + PLAYER_MAXS));
+        let collision = self.world.with(&self.instances).with_boxes(&boxes);
+        let trace = collision.trace(start, end);
+        if trace.start_solid || trace.fraction >= 1.0 {
+            return true;
+        }
+        let beyond = trace.end + (end - start).normalized() * 2.0;
+        to_sky && trace.model.is_none() && self.world.map_contents(beyond) == Contents::Sky
     }
 
     /// Works out what `blast` does to us, from `T_RadiusDamage`.

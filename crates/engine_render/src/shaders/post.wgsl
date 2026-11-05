@@ -5,6 +5,10 @@
 @group(0) @binding(1) var scene: texture_2d<f32>;
 @group(0) @binding(2) var scene_depth: texture_depth_2d;
 @group(0) @binding(3) var scene_sampler: sampler;
+@group(0) @binding(4) var stencil0: texture_2d<f32>;
+@group(0) @binding(5) var stencil1: texture_2d<f32>;
+@group(0) @binding(6) var stencil2: texture_2d<f32>;
+@group(0) @binding(7) var stencil3: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -145,6 +149,139 @@ fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
     return mix(color, frame.fog_color.rgb, 1.0 - exp(-max(total, 0.0)));
 }
 
+// One stencil's picture, blurred, so rays stay chunky.
+fn read_stencil(index: i32, uv: vec2<f32>) -> vec4<f32> {
+    let level = frame.stencil_params.z;
+    switch index {
+        case 0: { return textureSampleLevel(stencil0, scene_sampler, uv, level); }
+        case 1: { return textureSampleLevel(stencil1, scene_sampler, uv, level); }
+        case 2: { return textureSampleLevel(stencil2, scene_sampler, uv, level); }
+        default: { return textureSampleLevel(stencil3, scene_sampler, uv, level); }
+    }
+}
+
+// How open a stencil is at `uv`, from its occlusion grid.
+fn stencil_open(index: i32, uv: vec2<f32>) -> f32 {
+    let cell = vec2<i32>(clamp(uv, vec2<f32>(0.0), vec2<f32>(0.999)) * 16.0);
+    let at = cell.y * 16 + cell.x;
+    return frame.stencil_mask[index * 64 + at / 4][at % 4];
+}
+
+// Narrows `span` of a ray to the side of a plane that `inside` is on.
+fn clip_span(
+    span: vec2<f32>,
+    eye: vec3<f32>,
+    ray: vec3<f32>,
+    at: vec3<f32>,
+    normal: vec3<f32>,
+) -> vec2<f32> {
+    let start = dot(normal, eye - at);
+    let change = dot(normal, ray);
+    var out = span;
+    if abs(change) < 0.00001 {
+        if start < 0.0 {
+            out.y = -1.0;
+        }
+    } else if change > 0.0 {
+        out.x = max(out.x, -start / change);
+    } else {
+        out.y = min(out.y, -start / change);
+    }
+    return out;
+}
+
+// Narrows `span` of a ray to one side of a beam, the edge from `from` to `to`.
+fn clip_edge(
+    span: vec2<f32>,
+    eye: vec3<f32>,
+    ray: vec3<f32>,
+    from_corner: vec3<f32>,
+    to_corner: vec3<f32>,
+    middle: vec3<f32>,
+    source: vec4<f32>,
+) -> vec2<f32> {
+    var towards = source.xyz - from_corner;
+    if source.w > 0.5 {
+        towards = source.xyz;
+    }
+    var normal = cross(to_corner - from_corner, towards);
+    if dot(normal, middle - from_corner) < 0.0 {
+        normal = -normal;
+    }
+    return clip_span(span, eye, ray, from_corner, normal);
+}
+
+// Light in the air, shaped by a stencil. The view ray is cut to the beam, and
+// each step looks towards the light and reads where that crosses the stencil.
+// Brightness follows how far the ray runs through the beam.
+fn stencil_rays(index: i32, eye: vec3<f32>, stop: vec3<f32>, jitter: f32) -> vec3<f32> {
+    let corner = frame.stencil_corner[index];
+    let across = frame.stencil_across[index].xyz;
+    let down = frame.stencil_down[index].xyz;
+    let reach = frame.stencil_down[index].w;
+    let source = frame.stencil_light[index];
+    var normal = normalize(cross(across, down));
+    let width = dot(across, across);
+    let height = dot(down, down);
+    let middle = corner.xyz + (across + down) * 0.5;
+    var to_light = source.xyz - middle;
+    if source.w > 0.5 {
+        to_light = source.xyz;
+    }
+    // The beam runs away from the light.
+    if dot(normal, to_light) > 0.0 {
+        normal = -normal;
+    }
+    let ray = stop - eye;
+    let first = corner.xyz;
+    let second = first + across;
+    let third = second + down;
+    let fourth = first + down;
+    var span = vec2<f32>(0.0, 1.0);
+    span = clip_span(span, eye, ray, first, normal);
+    span = clip_span(span, eye, ray, first + normal * reach, -normal);
+    span = clip_edge(span, eye, ray, first, second, middle, source);
+    span = clip_edge(span, eye, ray, second, third, middle, source);
+    span = clip_edge(span, eye, ray, third, fourth, middle, source);
+    span = clip_edge(span, eye, ray, fourth, first, middle, source);
+    if span.y <= span.x {
+        return vec3<f32>(0.0);
+    }
+    let steps = i32(frame.stencil_params.y);
+    var total = vec3<f32>(0.0);
+    for (var step = 0; step < steps; step = step + 1) {
+        let share = mix(span.x, span.y, (f32(step) + jitter) / f32(steps));
+        let point = eye + ray * share;
+        var towards = source.xyz - point;
+        if source.w > 0.5 {
+            towards = source.xyz;
+        }
+        let facing = dot(towards, normal);
+        if abs(facing) < 0.0001 {
+            continue;
+        }
+        let along = dot(corner.xyz - point, normal) / facing;
+        if along <= 0.0 || (source.w < 0.5 && along >= 1.0) {
+            continue;
+        }
+        let hit = point + towards * along;
+        let local = hit - corner.xyz;
+        let uv = vec2<f32>(dot(local, across) / width, dot(local, down) / height);
+        if uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 {
+            continue;
+        }
+        let distance_to = length(point - hit);
+        let fade = clamp(1.0 - distance_to / max(reach, 1.0), 0.0, 1.0);
+        // Soft at the rim, so the beam has no hard outline.
+        let rim = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
+        let soft = smoothstep(0.0, 0.06, rim);
+        let texel = read_stencil(index, uv);
+        total = total + texel.rgb * texel.a * fade * soft * stencil_open(index, uv);
+    }
+    let path = (span.y - span.x) * length(ray);
+    return total * corner.w * path / (f32(steps) * 256.0);
+}
+
 @fragment
 fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.clip.xy);
@@ -156,5 +293,14 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let edge = outline_strength(at, in.uv, depth);
     color = mix(color, frame.outline.rgb, edge);
     color = fogged(color, in.uv, depth);
+    let count = i32(frame.stencil_params.x);
+    if count > 0 {
+        let stop = world_at(in.uv, min(depth, 0.9999));
+        // Interleaved gradient noise: an even dither, not grain.
+        let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+        for (var index = 0; index < count; index = index + 1) {
+            color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
+        }
+    }
     return vec4<f32>(color, 1.0);
 }

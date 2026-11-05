@@ -10,6 +10,7 @@ mod geometry;
 mod light;
 mod material;
 mod source;
+mod stencil;
 mod texture;
 mod tree;
 

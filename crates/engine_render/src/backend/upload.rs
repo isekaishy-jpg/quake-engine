@@ -3,7 +3,10 @@
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
-use engine_map::{AliasModel, BOUNCE_STYLE, Fog, Map, Sky, Sprite, Texture, TextureKind};
+use engine_core::math::Vec3;
+use engine_map::{
+    AliasModel, BOUNCE_STYLE, Fog, Map, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
+};
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType, Device, DeviceMemory,
@@ -12,8 +15,8 @@ use vulkane::safe::{
 };
 
 use super::{
-    Backend, DEPTH_FORMAT, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap, GpuPicture,
-    GpuSprite, POST_BYTES, SKY_BYTES, Scene,
+    Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
+    GpuPicture, GpuSprite, POST_BYTES, SKY_BYTES, Scene,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
@@ -22,7 +25,7 @@ use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
 };
 use crate::matrix::{inverse, view_projection};
-use crate::renderer::{PostSettings, View};
+use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::world::{Vertex, WorldMesh};
 
@@ -108,6 +111,7 @@ pub(super) fn frame_bytes(
     sky: Option<&Sky>,
     fog: Option<&Fog>,
     post: &PostSettings,
+    extra: &FrameExtras<'_>,
 ) -> Vec<u8> {
     let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
     let matrix = view_projection(
@@ -142,9 +146,103 @@ pub(super) fn frame_bytes(
         .chain(&cuts)
         .chain(&sky_values(sky))
         .chain(&post_values(&matrix, post, fog))
+        .chain(&extra_values(extra, post))
     {
         out.extend_from_slice(&value.to_le_bytes());
     }
+    out
+}
+
+/// What a frame's stencils and capsules are.
+#[derive(Clone, Copy)]
+pub(super) struct FrameExtras<'a> {
+    /// The stencils.
+    stencils: &'a [RayStencil],
+    /// Where their lights are now.
+    lights: &'a [Vec3],
+    /// How open their cells are.
+    masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// The characters shading light.
+    capsules: &'a [CapsuleDraw],
+}
+
+/// The stencil and capsule part of the frame uniforms.
+fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
+    let FrameExtras {
+        stencils,
+        lights,
+        masks,
+        capsules,
+    } = *extra;
+    let mut out = vec![0.0; EXTRA_FLOATS];
+    let count = if post.rays == 0 {
+        0
+    } else {
+        stencils.len().min(4)
+    };
+    for (index, stencil) in stencils.iter().take(4).enumerate() {
+        let at = index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            stencil.corner.x,
+            stencil.corner.y,
+            stencil.corner.z,
+            stencil.strength,
+        ]);
+        let at = 16 + index * 4;
+        out[at..at + 3].copy_from_slice(&[stencil.across.x, stencil.across.y, stencil.across.z]);
+        let at = 32 + index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            stencil.down.x,
+            stencil.down.y,
+            stencil.down.z,
+            stencil.reach,
+        ]);
+        let at = 48 + index * 4;
+        let light = lights.get(index).copied().unwrap_or(stencil.light);
+        out[at..at + 4].copy_from_slice(&[
+            light.x,
+            light.y,
+            light.z,
+            f32::from(u8::from(stencil.sun)),
+        ]);
+        let at = 68 + index * 256;
+        match masks.get(index) {
+            Some(mask) => out[at..at + 256].copy_from_slice(mask),
+            None => out[at..at + 256].fill(1.0),
+        }
+    }
+    #[expect(clippy::cast_precision_loss, reason = "four at most")]
+    let stencil_count = count as f32;
+    out[64] = stencil_count;
+    // Steps along the view, and how blurred the stencil is read.
+    let (steps, blur) = match post.rays {
+        1 => (8.0, 8.0),
+        2 => (12.0, 3.0),
+        _ => (24.0, 1.5),
+    };
+    out[65] = steps;
+    out[66] = blur;
+    let base = 68 + 1024;
+    let shown = capsules.len().min(16);
+    for (index, capsule) in capsules.iter().take(16).enumerate() {
+        let at = base + index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            capsule.origin.x,
+            capsule.origin.y,
+            capsule.origin.z,
+            capsule.radius,
+        ]);
+        let at = base + 64 + index * 4;
+        out[at..at + 4].copy_from_slice(&[
+            capsule.toward_light.x,
+            capsule.toward_light.y,
+            capsule.toward_light.z,
+            capsule.strength,
+        ]);
+    }
+    #[expect(clippy::cast_precision_loss, reason = "sixteen at most")]
+    let capsule_count = shown as f32;
+    out[base + 128] = capsule_count;
     out
 }
 
@@ -503,6 +601,7 @@ impl Backend {
             }
             None => None,
         };
+        self.load_stencils(map)?;
         self.map = Some(GpuMap {
             sky_set,
             material_sets,
@@ -643,7 +742,13 @@ impl Backend {
         let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
         let sky = scene.and_then(|scene| scene.map.sky.as_ref());
         let fog = scene.and_then(|scene| scene.map.fog.as_ref());
-        let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post);
+        let extra = FrameExtras {
+            stencils: scene.map_or(&[][..], |scene| scene.map.stencils.as_slice()),
+            lights: scene.map_or(&[][..], |scene| scene.drawables.stencil_lights),
+            masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
+            capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
+        };
+        let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene
             && !scene.drawables.particles.is_empty()

@@ -11,11 +11,12 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
 use engine_map::Contents;
 use engine_render::{
-    Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, SpriteDraw, View,
+    CapsuleDraw, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, SpriteDraw, View,
 };
 use fixture_quake::Intermission;
 
 use super::World;
+use super::shading::{StencilMask, capsule_draws};
 use crate::models::{DrawLists, Lighting};
 
 /// A frame's picture.
@@ -34,6 +35,12 @@ pub(crate) struct Picture {
     lights: Vec<LightDraw>,
     /// What's drawn over all of that.
     pub(crate) quads: Vec<Quad>,
+    /// Where stencils' lights are.
+    stencil_lights: Vec<Vec3>,
+    /// How open stencils are.
+    stencil_masks: Vec<StencilMask>,
+    /// Characters shading the light.
+    capsules: Vec<CapsuleDraw>,
 }
 
 /// How far the eye sits above a dead player's middle.
@@ -52,6 +59,9 @@ impl Picture {
             particles: &self.particles,
             lights: &self.lights,
             quads: &self.quads,
+            stencil_lights: &self.stencil_lights,
+            stencil_masks: &self.stencil_masks,
+            capsules: &self.capsules,
         }
     }
 }
@@ -187,6 +197,7 @@ impl World {
         let online = self.is_online();
         let mut sway = (0.0, 0.0, 0.0);
         let mut roll = 0.0;
+        let mut capsules = Vec::new();
         let time = self.map_time as f32;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
@@ -233,6 +244,7 @@ impl World {
                 .map(|score| (score.entity, score.colors))
                 .collect();
             let (model, frame) = client.weapon();
+            let bodies = client.solid_boxes().to_vec();
             let player = EffectSource {
                 id: client.player_entity(),
                 origin: body,
@@ -274,6 +286,7 @@ impl World {
                 // From `V_CalcRefdef`, with the status bar's 2 units.
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
+                capsules = capsule_draws(&map, body, origin, &bodies);
                 if !frozen {
                     lists.entities.extend(self.models.draw_weapon(
                         u32::from(model),
@@ -283,6 +296,9 @@ impl World {
                     ));
                 }
             }
+        }
+        if let (Some(map), Some(client)) = (&self.map, &self.client) {
+            self.gates.update(map, client, time, frame_seconds);
         }
         let contents = self.contents_at(origin);
         let fade = if self.is_running() {
@@ -309,6 +325,9 @@ impl World {
             particles: self.particle_draws(),
             lights,
             quads: Vec::new(),
+            stencil_lights: self.gates.lights().to_vec(),
+            stencil_masks: self.gates.masks().to_vec(),
+            capsules,
         }
     }
 }

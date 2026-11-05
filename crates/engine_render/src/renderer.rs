@@ -6,7 +6,7 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, Sprite};
+use engine_map::{AliasModel, Map, STENCIL_GRID, Sprite};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
@@ -64,6 +64,25 @@ pub struct Drawables<'a> {
     pub lights: &'a [LightDraw],
     /// What's drawn flat over all of that, in order.
     pub quads: &'a [Quad],
+    /// Where each stencil's light is now.
+    pub stencil_lights: &'a [Vec3],
+    /// How open each stencil's cells are.
+    pub stencil_masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// Characters shading the light.
+    pub capsules: &'a [CapsuleDraw],
+}
+
+/// A character that shades what's behind it, with no shadow map.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CapsuleDraw {
+    /// Its middle.
+    pub origin: Vec3,
+    /// How wide it is.
+    pub radius: f32,
+    /// Which way its light comes from.
+    pub toward_light: Vec3,
+    /// How dark its shade is, from 0 to 1.
+    pub strength: f32,
 }
 
 /// Pixels read back from the renderer.
@@ -111,6 +130,8 @@ pub struct PostSettings {
     pub outline_fade: f32,
     /// Their colour.
     pub outline_color: [f32; 3],
+    /// Stencil rays: 0 for none, 1 for a box each, 2 for chunky, 3 for full.
+    pub rays: u8,
 }
 
 /// How surfaces are filtered.

@@ -7,6 +7,7 @@ use engine_core::math::Vec3;
 use crate::material::Material;
 use crate::probes::ProbeGrid;
 use crate::sky::{Fog, Sky};
+use crate::stencil::RayStencil;
 
 use crate::tree::{ClipChild, NodeChild, Tree};
 
@@ -186,6 +187,8 @@ pub struct Map {
     pub entities: Vec<Entity>,
     /// The sky sphere, if the map has one.
     pub sky: Option<Sky>,
+    /// Surfaces that shape visible rays.
+    pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.
     pub fog: Option<Fog>,
     /// Where each sample's light comes from, as bytes. Empty unless the map

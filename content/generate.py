@@ -157,6 +157,24 @@ def glass_color(x, y):
     return (r, g, b, 170)
 
 
+def glass_rays(x, y):
+    """The window's stencil: a few chunky panes, with wide frames to cut them."""
+    colors = [(255, 70, 50), (70, 110, 255), (255, 210, 60), (70, 220, 120)]
+    cx, cy = x // 64, y // 64
+    if x % 64 < 24 or y % 64 < 24:
+        return (0, 0, 0, 0)
+    r, g, b = colors[(cx * 3 + cy * 5 + (cx * cy)) % 4]
+    return (r, g, b, 255)
+
+
+def glass_marks(x, y):
+    # Red lines group the window's panes into boxes for occlusion, four across
+    # and three down. They're kept apart from the glass, whose panes can be red.
+    if x % 64 == 0 or y % 86 == 0:
+        return (255, 0, 0, 255)
+    return (255, 255, 255, 255)
+
+
 def water_base(x, y):
     n = fractal(NOISE, x, y)
     return (clamp(20 + n * 40), clamp(70 + n * 60), clamp(110 + n * 80), 255)
@@ -202,6 +220,8 @@ def flame_sheet(x, y):
 
 
 IMAGES = {
+    'glass_marks': glass_marks,
+    'glass_rays': glass_rays,
     'brick': brick_base,
     'brick_normal': height_normal(brick_height),
     'brick_height': lambda x, y: (clamp(brick_height(x, y) * 255),) * 3 + (255,),
@@ -238,6 +258,10 @@ MATERIALS_TEXT = {
     'triplanar_rock': 'base = textures/stone.png\n    triplanar = true',
     'conveyor': 'base = textures/metal.png\n    scroll = 0 0.5',
     'torch_flame': 'base = textures/flame.png\n    alpha = blend\n    shading = unlit\n    flipbook = 2 2 10',
+    'glass_marks': 'base = textures/glass_marks.png',
+    'glass_rays': 'base = textures/glass_rays.png',
+    'hidden': 'base = textures/grate.png\n    kind = hidden',
+    'slime': 'base = textures/water.png\n    kind = liquid',
     'water': 'base = textures/water.png\n    kind = liquid',
     'lava': 'base = textures/lava.png\n    kind = liquid',
 }

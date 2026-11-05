@@ -45,3 +45,17 @@ entity spot {
     spot_direction = 0 0 -1
     spot_angle = 22
 }
+
+# Rays through the window, in the panes' colours, its boxes grouped by red lines.
+entity window_rays {
+    type = ray_stencil
+    image = glass_rays
+    marks = glass_marks
+    corner = -624 -128 320
+    across = 0 256 0
+    down = 0 0 -256
+    light = -0.75 0.1 0.65
+    sun = true
+    strength = 1.5
+    reach = 1100
+}

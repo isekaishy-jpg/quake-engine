@@ -9,12 +9,12 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, Sprite, SpriteFacing, SpriteFrame,
-    SpriteImage,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, Map, MipLevel, RayStencil, Sprite,
+    SpriteFacing, SpriteFrame, SpriteImage,
 };
 use engine_render::{
-    Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw, Renderer, SpriteDraw,
-    Target, View,
+    CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, ParticleColor, ParticleDraw,
+    PostSettings, Renderer, SpriteDraw, Target, View,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -568,4 +568,134 @@ fn a_model_is_only_seen_from_outside() {
         .capture(&view_from_above(), Drawables::default(), 64, 64)
         .expect("capture");
     assert_eq!(centre(&capture), centre(&plain));
+}
+
+/// A stencil colour the lit square has room to show: it's full of red already.
+const BLUE: [u8; 4] = [0, 0, 255, 255];
+
+/// A map with a stencil high over the square, lit from above, whose left half
+/// is `left` and whose right half is clear.
+fn stencil_map(left: [u8; 4]) -> Map {
+    let mut rgba = Vec::new();
+    for _ in 0..8 {
+        for x in 0..8 {
+            rgba.extend_from_slice(if x < 4 { &left } else { &[0, 0, 0, 0] });
+        }
+    }
+    let mut built = map(1);
+    built.stencils.push(RayStencil {
+        corner: Vec3::new(0.0, 0.0, 128.0),
+        across: Vec3::new(128.0, 0.0, 0.0),
+        down: Vec3::new(0.0, 128.0, 0.0),
+        light: Vec3::new(0.0, 0.0, 1.0),
+        sun: true,
+        path: Vec::new(),
+        period: 0.0,
+        strength: 4.0,
+        reach: 512.0,
+        image: Arc::new(vec![MipLevel {
+            width: 8,
+            height: 8,
+            rgba,
+        }]),
+        boxes: vec![[0.0, 0.0, 1.0, 1.0]],
+    });
+    built
+}
+
+/// How bright the middle of a picture of `built` is, with `masks` on it.
+fn stencil_centre(built: Map, masks: &[[f32; 256]], rays: u8) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        rays,
+        ..PostSettings::default()
+    });
+    let drawables = Drawables {
+        stencil_masks: masks,
+        ..Drawables::default()
+    };
+    let view = View {
+        origin: Vec3::new(32.0, 64.0, 64.0),
+        ..view_from_above()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    Some(centre(&capture))
+}
+
+/// Light through a coloured stencil shows in the air, tinted.
+#[test]
+fn a_stencil_tints_the_air_below_it() {
+    let plain = stencil_centre(stencil_map(BLUE), &[], 0);
+    let shown = stencil_centre(stencil_map(BLUE), &[], 3);
+    let (Some(plain), Some(shown)) = (plain, shown) else {
+        return;
+    };
+    assert!(shown[2] > plain[2] + 20, "{plain:?} {shown:?}");
+    assert_eq!(shown[1], plain[1], "no green in a blue stencil");
+}
+
+/// A stencil's clear part lets nothing through, so a frame cuts the light.
+#[test]
+fn a_frame_cuts_the_rays() {
+    let plain = stencil_centre(stencil_map([0, 0, 0, 0]), &[], 0);
+    let shown = stencil_centre(stencil_map([0, 0, 0, 0]), &[], 3);
+    if let (Some(plain), Some(shown)) = (plain, shown) {
+        assert_eq!(plain, shown);
+    }
+}
+
+/// A closed box takes its rays away.
+#[test]
+fn a_closed_box_stops_its_rays() {
+    let plain = stencil_centre(stencil_map(BLUE), &[], 0);
+    let closed = stencil_centre(stencil_map(BLUE), &[[0.0; 256]], 3);
+    if let (Some(plain), Some(closed)) = (plain, closed) {
+        assert_eq!(plain, closed);
+    }
+}
+
+/// A capsule shades what's behind it from its light, and nothing elsewhere.
+#[test]
+fn a_capsule_shades_what_is_behind_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = view_from_above();
+    let lit = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
+    let capsule = |toward_light: Vec3| CapsuleDraw {
+        origin: Vec3::new(64.0, 64.0, 24.0),
+        radius: 16.0,
+        toward_light,
+        strength: 1.0,
+    };
+    let over = [capsule(Vec3::new(0.0, 0.0, 1.0))];
+    let shaded = renderer
+        .capture(
+            &view,
+            Drawables {
+                capsules: &over,
+                ..Drawables::default()
+            },
+            64,
+            64,
+        )
+        .expect("capture");
+    assert!(centre(&shaded)[0] < centre(&lit)[0], "shaded below it");
+    let under = [capsule(Vec3::new(0.0, 0.0, -1.0))];
+    let clear = renderer
+        .capture(
+            &view,
+            Drawables {
+                capsules: &under,
+                ..Drawables::default()
+            },
+            64,
+            64,
+        )
+        .expect("capture");
+    assert_eq!(centre(&clear), centre(&lit), "light from below passes");
 }

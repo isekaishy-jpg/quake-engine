@@ -15,6 +15,7 @@ use crate::geometry::{
     Plane3, Point, Polygon, Split, clip_behind, plane_polygon, solid_corners, split,
 };
 use crate::source::{Brush, BrushFace, WorkingMap, read_map};
+use crate::stencil::build_stencil;
 use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
 
 /// Supplies textures for materials.
@@ -437,6 +438,10 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
     }
     builder.map.entities = entities;
+    for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
+        let stencil = build_stencil(entity, builder.source)?;
+        builder.map.stencils.push(stencil);
+    }
     builder.map.fog = working.fog;
     if let Some(sky) = &working.sky {
         let mut built = sky.sky.clone();

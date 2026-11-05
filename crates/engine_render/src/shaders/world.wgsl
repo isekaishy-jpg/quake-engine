@@ -70,11 +70,34 @@ fn dynamic_light(world: vec3<f32>) -> f32 {
     return total / 255.0;
 }
 
+// How much light characters leave on a point. Each is a soft ball, shading
+// what's behind it from the direction its light comes from.
+fn capsule_shade(world: vec3<f32>) -> f32 {
+    var open = 1.0;
+    let count = u32(frame.capsule_params.x);
+    for (var index = 0u; index < count; index = index + 1u) {
+        let capsule = frame.capsules[index];
+        let source = frame.capsule_light[index];
+        let offset = world - capsule.xyz;
+        let along = -dot(offset, source.xyz);
+        if along <= 0.0 {
+            continue;
+        }
+        let across = length(offset + source.xyz * along);
+        let radius = capsule.w * (1.0 + along / 256.0);
+        let shade = 1.0 - smoothstep(radius * 0.4, radius, across);
+        let distance_fade = clamp(1.0 - along / 256.0, 0.0, 1.0);
+        open = open * (1.0 - shade * distance_fade * source.w);
+    }
+    return open;
+}
+
 // All the light on a pixel. A sample of one half leaves a texture unchanged.
 fn light(in: VertexOut) -> vec3<f32> {
     let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
         + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
-    return min(2.0 * (baked + vec3<f32>(dynamic_light(in.world))), vec3<f32>(2.0));
+    let shaded = baked * capsule_shade(in.world);
+    return min(2.0 * (shaded + vec3<f32>(dynamic_light(in.world))), vec3<f32>(2.0));
 }
 
 // The brightness setting, as `BuildGammaTable` does for the palette.

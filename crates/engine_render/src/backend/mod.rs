@@ -49,7 +49,14 @@ const INDEX_TYPE_U32: u32 = 1;
 
 /// Bytes in the frame uniforms: a matrix, two vectors, 64 styles, and each
 /// light's vector and least light.
-const FRAME_SIZE: usize = 64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20 + SKY_BYTES + POST_BYTES;
+const FRAME_SIZE: usize =
+    64 + 16 + 16 + 256 + MAX_LIGHT_DRAWS * 20 + SKY_BYTES + POST_BYTES + EXTRA_BYTES;
+
+/// Bytes of stencil and capsule values in the frame uniforms.
+const EXTRA_BYTES: usize = EXTRA_FLOATS * 4;
+
+/// Floats of stencil and capsule values in the frame uniforms.
+const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4;
 
 /// Bytes of final pass values in the frame uniforms.
 const POST_BYTES: usize = 128;
@@ -336,6 +343,10 @@ pub(crate) struct Backend {
     post_pipeline: GraphicsPipeline,
     /// The final pass's settings.
     post: PostSettings,
+    /// A picture for unused stencils.
+    blank_stencil: Option<GpuImage>,
+    /// The stencils' pictures.
+    stencil_images: Vec<GpuImage>,
     /// The texture sampler.
     texture_sampler: Sampler,
     /// The material sampler.
@@ -509,6 +520,10 @@ impl Backend {
                 image_binding(1, DescriptorType::SAMPLED_IMAGE),
                 image_binding(2, DescriptorType::SAMPLED_IMAGE),
                 image_binding(3, DescriptorType::SAMPLER),
+                image_binding(4, DescriptorType::SAMPLED_IMAGE),
+                image_binding(5, DescriptorType::SAMPLED_IMAGE),
+                image_binding(6, DescriptorType::SAMPLED_IMAGE),
+                image_binding(7, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -563,7 +578,8 @@ impl Backend {
             },
             MATERIAL_MAX_LOD,
         )?;
-        let light_sampler = Sampler::new(&device, SamplerCreateInfo::default())?;
+        let light_sampler =
+            Sampler::new_mipmapped(&device, SamplerCreateInfo::default(), MATERIAL_MAX_LOD)?;
         let uniforms = host_buffer(&device, &physical, FRAME_SIZE, BufferUsage::UNIFORM_BUFFER)?;
         let particles = host_buffer(
             &device,
@@ -599,6 +615,8 @@ impl Backend {
             post_set_layout,
             post_layout,
             post: PostSettings::default(),
+            blank_stencil: None,
+            stencil_images: Vec::new(),
             texture_sampler,
             material_sampler,
             filter: None,

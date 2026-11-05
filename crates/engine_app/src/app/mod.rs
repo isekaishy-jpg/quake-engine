@@ -2,9 +2,12 @@
 
 mod keys;
 mod net;
+mod shading;
 mod shots;
 mod sound;
 mod view;
+
+use self::shading::StencilGates;
 
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
@@ -105,6 +108,8 @@ pub(crate) struct World {
     pub(crate) server: Option<Server>,
     /// Smooths the view on stairs.
     step: StepSmoother,
+    /// Which stencil boxes are open.
+    gates: StencilGates,
     /// The movement buttons held.
     pub(crate) buttons: Buttons,
     /// Key bindings.
@@ -315,6 +320,7 @@ impl World {
         palette: Palette,
     ) -> Result<(), Box<dyn std::error::Error>> {
         self.shot_clock.reset();
+        self.gates = StencilGates::default();
         let map = Arc::clone(map);
         self.map_time = 0.0;
         self.hud = Hud::new();
@@ -505,6 +511,7 @@ impl Engine {
         console.register_cvar("r_outline", "0", saved);
         console.register_cvar("r_outline_width", "1", saved);
         console.register_cvar("r_outline_fade", "1500", saved);
+        console.register_cvar("r_rays", "3", saved);
         console.register_cvar("r_anisotropy", "8", saved);
         console.register_cvar("volume", "0.7", saved);
         console.register_cvar("bgmvolume", "1", saved);
@@ -552,6 +559,7 @@ impl Engine {
                 client: None,
                 server: None,
                 step: StepSmoother::default(),
+                gates: StencilGates::default(),
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,
@@ -656,6 +664,7 @@ impl Engine {
             outline_width: self.cvar_number("r_outline_width") as f32,
             outline_fade: self.cvar_number("r_outline_fade") as f32,
             outline_color: [0.0; 3],
+            rays: self.cvar_number("r_rays").clamp(0.0, 3.0) as u8,
         };
         if let Some(renderer) = &mut self.world.renderer {
             renderer.set_post(post);

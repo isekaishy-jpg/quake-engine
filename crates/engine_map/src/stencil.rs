@@ -22,6 +22,10 @@ pub struct RayStencil {
     pub light: Vec3,
     /// Whether `light` is a direction.
     pub sun: bool,
+    /// Points `light` moves through in turn, if it moves.
+    pub path: Vec<Vec3>,
+    /// How many seconds a trip round `path` takes.
+    pub period: f32,
     /// How bright the rays are.
     pub strength: f32,
     /// How far they reach.
@@ -34,6 +38,26 @@ pub struct RayStencil {
 }
 
 impl RayStencil {
+    /// Where the light is at `time`.
+    #[must_use]
+    pub fn light_at(&self, time: f32) -> Vec3 {
+        if self.path.len() < 2 || self.period <= 0.0 {
+            return self.light;
+        }
+        #[expect(clippy::cast_precision_loss, reason = "paths are short")]
+        let legs = self.path.len() as f32;
+        let along = (time / self.period).rem_euclid(1.0) * legs;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "within the path"
+        )]
+        let leg = along as usize % self.path.len();
+        let from = self.path[leg];
+        let to = self.path[(leg + 1) % self.path.len()];
+        from + (to - from) * along.fract()
+    }
+
     /// The middle of `area` on the surface.
     #[must_use]
     pub fn point_in(&self, area: [f32; 4]) -> Vec3 {

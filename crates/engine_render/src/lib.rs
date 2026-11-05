@@ -25,7 +25,8 @@ pub use error::RenderError;
 pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
 pub use matrix::view_projection;
 pub use renderer::{
-    Capture, Drawables, PostSettings, Renderer, Statistics, Target, TextureFilter, View,
+    CapsuleDraw, Capture, Drawables, PostSettings, Renderer, Statistics, Target, TextureFilter,
+    View,
 };
 pub use sprite::{
     LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, ParticleColor, ParticleDraw, SpriteDraw,

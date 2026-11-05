@@ -12,6 +12,7 @@ mod material;
 mod probes;
 mod sky;
 mod sprite;
+mod stencil;
 mod tree;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
@@ -24,4 +25,5 @@ pub use material::{
 pub use probes::{BOUNCE_STYLE, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
+pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
 pub use tree::{ClipChild, ClipNode, Contents, Leaf, Node, NodeChild, Plane, Tree};
