@@ -303,6 +303,9 @@ pub struct Simulation {
     collision: Option<Rc<CollisionWorld>>,
     /// Model names, where a shape's number is its place here plus one.
     shapes: Vec<String>,
+    /// What's been given a brush model, in slot order, so that traces needn't
+    /// look through everything. Some may have gone since.
+    brushes: Vec<EntityId>,
     /// The state of `rand`.
     pub(crate) seed: u32,
     /// When monsters last took a look at where a player can be seen from.
@@ -346,6 +349,7 @@ impl Simulation {
             time: LEVEL_START_TIME,
             collision: None,
             shapes: Vec::new(),
+            brushes: Vec::new(),
             seed: 1,
             last_check: 0.0,
             check_index: 0,
@@ -417,6 +421,7 @@ impl Simulation {
             time,
             collision: _,
             shapes,
+            brushes: _,
             seed,
             last_check,
             check_index,
@@ -449,8 +454,15 @@ impl Simulation {
         for player in &mut players {
             player.last_command = 0;
         }
+        let brushes = saved
+            .entities
+            .iter()
+            .filter(|(_, entity)| entity.model.is_some())
+            .map(|(id, _)| id)
+            .collect();
         Self {
             map,
+            brushes,
             entities: saved.entities,
             players,
             vars: MoveVars {
@@ -799,6 +811,43 @@ impl Simulation {
             entity.visible = true;
             entity.mins = model.mins;
             entity.maxs = model.maxs;
+            let entities = &self.entities;
+            self.brushes.retain(|brush| entities.get(*brush).is_some());
+            if let Err(at) = self.brushes.binary_search(&id) {
+                self.brushes.insert(at, id);
+            }
+        }
+    }
+
+    /// What's been given a brush model and is still here.
+    pub(crate) fn brushes(&self) -> impl Iterator<Item = (EntityId, &Entity)> {
+        self.brushes
+            .iter()
+            .filter_map(|id| Some((*id, self.entities.get(*id)?)))
+    }
+
+    /// Where the solid brush models are, leaving out `ignored`.
+    pub(crate) fn solid_instances(&self, ignored: Option<u32>) -> Vec<ModelInstance> {
+        self.brushes()
+            .filter(|(_, entity)| entity.solid == Solid::Bsp && entity.model != ignored)
+            .filter_map(|(id, entity)| {
+                Some(ModelInstance {
+                    model: entity.model?,
+                    origin: self.instance_origin(id, entity),
+                    visible: entity.visible,
+                    solid: true,
+                    frame: entity.frame,
+                })
+            })
+            .collect()
+    }
+
+    /// Where a brush model is for now, which a rewind can change.
+    fn instance_origin(&self, id: EntityId, entity: &Entity) -> Vec3 {
+        if self.rewound.is_empty() {
+            entity.origin
+        } else {
+            self.origin(id).unwrap_or(entity.origin)
         }
     }
 
@@ -809,14 +858,9 @@ impl Simulation {
             .iter()
             .filter_map(|(id, entity)| {
                 let solid = entity.solid == Solid::Bsp;
-                let origin = if self.rewound.is_empty() {
-                    entity.origin
-                } else {
-                    self.origin(id).unwrap_or(entity.origin)
-                };
                 (entity.visible || solid).then_some(ModelInstance {
                     model: entity.model?,
-                    origin,
+                    origin: self.instance_origin(id, entity),
                     visible: entity.visible,
                     solid,
                     frame: entity.frame,
@@ -830,7 +874,7 @@ impl Simulation {
         if command.sequence <= self.last_command(id) {
             return;
         }
-        let instances = self.instances();
+        let instances = self.solid_instances(None);
         let boxes = self.solid_boxes(id);
         let vars = self.vars;
         let Some(player) = self.slot_mut(id) else {
@@ -994,14 +1038,6 @@ impl Simulation {
             .filter(|(_, entity)| matches!(entity.solid, Solid::Bbox | Solid::SlideBox))
     }
 
-    /// The first entity `test` accepts.
-    pub(crate) fn entity_ids_with(&self, test: impl Fn(&Entity) -> bool) -> Option<EntityId> {
-        self.entities
-            .iter()
-            .find(|(_, entity)| test(entity))
-            .map(|(id, _)| id)
-    }
-
     /// `SV_PushMove`: moves a pusher, and what it carries or runs into. If
     /// anything is in the way, everything goes back.
     fn push_move(
@@ -1064,7 +1100,7 @@ impl Simulation {
         let Some(origin) = self.entities.get(id).map(|pusher| pusher.origin) else {
             return true;
         };
-        let instances = self.instances();
+        let instances = self.solid_instances(None);
         let Some(state) = self.slot_mut(player).map(|player| &mut player.state) else {
             return true;
         };
@@ -1352,7 +1388,7 @@ impl Simulation {
             touched.sort_unstable();
             touched.dedup();
             for model in touched {
-                for (id, entity) in self.entities.iter() {
+                for (id, entity) in self.brushes() {
                     if entity.model == Some(model) && entity.solid == Solid::Bsp {
                         touches.push(Callback::Touch {
                             id,

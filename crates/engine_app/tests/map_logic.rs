@@ -276,6 +276,28 @@ fn a_closed_door_is_solid() {
 }
 
 #[test]
+fn a_closed_door_stays_solid_in_a_loaded_game() {
+    let (mins, maxs) = door_box();
+    let targeted = [DOOR, &[("targetname", "never")]].concat();
+    let map = map(&[(mins, maxs)], &[&targeted]);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.wait(0.1);
+    let saved = game.server.save().expect("it saves");
+    let (client, server_end) = loopback();
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    game.server =
+        Server::resume(Box::new(server_end), world, SCRIPTS, TICK, saved).expect("it loads");
+    game.client = client;
+    let forward = UserCommand {
+        forward: 400.0,
+        ..UserCommand::default()
+    };
+    game.run(72, forward);
+    assert!(game.player().origin.x > 50.0, "the control: it moved");
+    assert!(game.player().origin.x < 101.0, "{}", game.player().origin.x);
+}
+
+#[test]
 fn a_door_coming_down_on_the_player_goes_back_up() {
     let (mins, maxs) = door_box();
     let map = map(&[(mins, maxs)], &[DOOR]);

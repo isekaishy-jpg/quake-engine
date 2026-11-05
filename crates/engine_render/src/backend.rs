@@ -301,8 +301,10 @@ pub(crate) struct Backend {
     command_pool: CommandPool,
     /// Signals when an image is ready to draw to.
     available: Semaphore,
-    /// Signals when the last frame finished.
-    in_flight: Option<Fence>,
+    /// Whether a frame is being drawn.
+    in_flight: bool,
+    /// What says the frame in flight has finished.
+    frame_done: Fence,
     /// The present mode.
     present_mode: PresentMode,
     /// The present mode when frames don't wait for the display.
@@ -593,6 +595,7 @@ impl Backend {
             BufferUsage::VERTEX_BUFFER,
         )?;
         let command_pool = CommandPool::new(&device, queue_family)?;
+        let frame_done = Fence::new(&device)?;
         let available = Semaphore::binary(&device)?;
         let mut backend = Self {
             surface,
@@ -616,7 +619,8 @@ impl Backend {
             command_pool,
             commands: None,
             available,
-            in_flight: None,
+            in_flight: false,
+            frame_done,
             present_mode,
             free_present_mode: present_mode,
             queue,
@@ -1019,8 +1023,10 @@ impl Backend {
 
     /// Waits for the frame in flight.
     fn wait_for_frame(&mut self) -> Result<(), RenderError> {
-        if let Some(fence) = self.in_flight.take() {
-            fence.wait(u64::MAX)?;
+        if self.in_flight {
+            self.frame_done.wait(u64::MAX)?;
+            self.frame_done.reset()?;
+            self.in_flight = false;
         }
         self.commands = None;
         Ok(())
@@ -1391,7 +1397,6 @@ impl Backend {
             rec.end_render_pass();
             rec.end()?;
         }
-        let fence = Fence::new(&self.device)?;
         self.queue.submit_with_sync(
             &[&commands],
             &[WaitSemaphore::binary(
@@ -1399,13 +1404,13 @@ impl Backend {
                 PipelineStage::COLOR_ATTACHMENT_OUTPUT,
             )],
             &[SignalSemaphore::binary(&window.finished[at])],
-            Some(&fence),
+            Some(&self.frame_done),
         )?;
         let presented = window
             .swapchain
             .present(&self.queue, image, &[&window.finished[at]]);
         self.commands = Some(commands);
-        self.in_flight = Some(fence);
+        self.in_flight = true;
         if presented.is_err() {
             self.wait_for_frame()?;
             self.rebuild_window()?;

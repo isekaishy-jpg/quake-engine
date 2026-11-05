@@ -99,8 +99,7 @@ impl Simulation {
         ignored: Option<u32>,
     ) -> MoveTrace {
         let ((start, end), (mins, maxs)) = path;
-        let mut instances = self.instances();
-        instances.retain(|instance| Some(instance.model) != ignored);
+        let instances = self.solid_instances(ignored);
         let hull = world.with(&instances).move_box(start, mins, maxs, end);
         let hit = hull.fraction < 1.0 || hull.start_solid;
         let mut best = MoveTrace {
@@ -217,7 +216,9 @@ impl Simulation {
 
     /// The entity showing brush model `model`.
     fn entity_of_model(&self, model: u32) -> Option<EntityId> {
-        self.entity_ids_with(|entity| entity.model == Some(model))
+        self.brushes()
+            .find(|(_, entity)| entity.model == Some(model))
+            .map(|(id, _)| id)
     }
 
     /// The boxes of everything solid but brush models, for what `player` can't

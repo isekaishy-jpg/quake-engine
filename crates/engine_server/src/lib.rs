@@ -16,6 +16,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::canvas::TALK_MARK;
+use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_core::sound::StaticSound;
@@ -653,8 +654,12 @@ impl Server {
         self.send_shapes();
         self.send_scores(&stats);
         self.tick = self.tick.wrapping_add(1);
+        let shown = {
+            let simulation = self.simulation.borrow();
+            (simulation.instances(), simulation.entity_states())
+        };
         for (index, stats) in stats.into_iter().enumerate() {
-            if let Some(snapshot) = self.snapshot(index, stats) {
+            if let Some(snapshot) = self.snapshot(index, stats, &shown) {
                 self.seats[index].send_snapshot(snapshot);
             }
         }
@@ -704,15 +709,20 @@ impl Server {
     }
 
     /// What seat `index` sees now, if they're in the game.
-    fn snapshot(&self, index: usize, stats: Vec<i32>) -> Option<Snapshot> {
+    fn snapshot(
+        &self,
+        index: usize,
+        stats: Vec<i32>,
+        shown: &(Vec<ModelInstance>, Vec<EntityState>),
+    ) -> Option<Snapshot> {
         let id = self.seats[index].player?;
         let simulation = self.simulation.borrow();
         Some(Snapshot {
             tick: self.tick,
             acknowledged: simulation.last_command(id),
             player: *simulation.player_of(id)?,
-            instances: simulation.instances(),
-            entities: simulation.entity_states(),
+            instances: shown.0.clone(),
+            entities: shown.1.clone(),
             boxes: simulation.solid_boxes(id),
             weapon_model: simulation.shown_weapon_model(id),
             weapon_frame: simulation.weapon_frame(id),

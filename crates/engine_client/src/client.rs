@@ -724,10 +724,11 @@ impl Client {
         let Some(mut state) = self.history.back().map(|last| last.player) else {
             return;
         };
-        let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
+        let pending = std::mem::take(&mut self.pending);
         for command in &pending {
             self.run_on(&mut state, command);
         }
+        self.pending = pending;
         self.predicted = state;
     }
 
@@ -830,10 +831,11 @@ impl Client {
         self.time = snapshot.time;
         self.stats = snapshot.stats;
         let mut predicted = snapshot.player;
-        let pending: Vec<UserCommand> = self.pending.iter().copied().collect();
+        let pending = std::mem::take(&mut self.pending);
         for command in &pending {
             self.run_on(&mut predicted, command);
         }
+        self.pending = pending;
         self.predicted = predicted;
     }
 
