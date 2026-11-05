@@ -291,8 +291,10 @@ impl Simulation {
                 entity.velocity = Vec3::ZERO;
                 entity.angular_velocity = Vec3::ZERO;
             }
+            // Only on a hit: `SV_Physics_Toss` returns first on a clear move,
+            // so what flies through a surface does so in silence.
+            Self::check_water(&mut entity, id, world, callbacks);
         }
-        Self::check_water(&mut entity, id, world, callbacks);
         if let Some(stored) = self.entity_mut(id) {
             *stored = entity;
         }

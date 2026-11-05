@@ -424,6 +424,133 @@ fn bubbles_rise_from_someone_hurt_under_water_and_nowhere_else() {
     assert_eq!(bubbles_at(&mut server, &mut client, dry), (0, 0), "on land");
 }
 
+/// The times `sound` starts while a player falls from `place` and settles.
+fn landings_after_a_fall(
+    server: &mut Server,
+    client: &mut Loopback,
+    place: Vec3,
+    sequence: &mut u32,
+    sound: &str,
+) -> u32 {
+    server
+        .exec(&format!(
+            r#"
+            local player = find_all("classname", "player")[1]
+            setorigin(player, vector.create({}, {}, {}))
+            player.velocity = vector.zero
+            "#,
+            place.x, place.y, place.z
+        ))
+        .expect("it runs");
+    let mut heard = 0;
+    for _ in 0..200 {
+        *sequence += 1;
+        let command = UserCommand {
+            sequence: *sequence,
+            seconds: 1.0 / 72.0,
+            yaw: 90.0,
+            ..UserCommand::default()
+        };
+        client.send(ClientMessage::Move(vec![command], 0).encode());
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            if let Some(ServerMessage::Sound(start)) = ServerMessage::decode(&bytes)
+                && start.name == sound
+            {
+                heard += 1;
+            }
+        }
+    }
+    heard
+}
+
+/// Water brakes a fall slowly, so a player can stand on the bottom still moving
+/// fast. The landing has to be heard once, not on every move until they slow.
+#[test]
+#[ignore = "needs game data"]
+fn a_fall_into_water_lands_once_and_the_next_fall_lands_again() {
+    let base = base();
+    let (mut server, mut client, _map) = start(&base, "e1m2");
+    let place = Vec3::new(484.6, 26.3, 322.0);
+    let mut sequence = 0;
+    for fall in 1..=2 {
+        let heard = landings_after_a_fall(
+            &mut server,
+            &mut client,
+            place,
+            &mut sequence,
+            "player/h2ojump.wav",
+        );
+        println!("fall {fall}: {heard} landing sounds");
+        assert_eq!(heard, 1, "fall {fall}");
+    }
+}
+
+/// The times `sound` starts over `ticks` ticks.
+fn heard_over(server: &mut Server, client: &mut Loopback, ticks: u32, sound: &str) -> u32 {
+    let mut heard = 0;
+    for sequence in 1..=ticks {
+        let command = UserCommand {
+            sequence,
+            seconds: 1.0 / 72.0,
+            ..UserCommand::default()
+        };
+        client.send(ClientMessage::Move(vec![command], 0).encode());
+        server.tick();
+        while let Some(bytes) = client.receive() {
+            if let Some(ServerMessage::Sound(start)) = ServerMessage::decode(&bytes)
+                && start.name == sound
+            {
+                heard += 1;
+            }
+        }
+    }
+    heard
+}
+
+/// `SV_Physics_Toss` only looks for water after hitting something, where
+/// `SV_Physics_Step` looks every tick. So two things falling through the same
+/// surface differ, and lava's fireballs are silent.
+#[test]
+#[ignore = "needs game data"]
+fn only_what_walks_splashes_on_crossing_water_in_the_air() {
+    let base = base();
+    let dropped = |movetype: &str| {
+        let (mut server, mut client, _map) = start(&base, "e1m2");
+        server
+            .exec(&format!(
+                r#"
+                local thing = spawn()
+                thing.movetype = {movetype}
+                thing.solid = SOLID_NOT
+                setorigin(thing, vector.create(484.6, 26.3, 240))
+                "#
+            ))
+            .expect("it runs");
+        heard_over(&mut server, &mut client, 144, "misc/h2ohit1.wav")
+    };
+    assert_eq!(dropped("MOVETYPE_STEP"), 1, "a monster's fall splashes");
+    assert_eq!(dropped("MOVETYPE_TOSS"), 0, "a thrown thing's doesn't");
+
+    let (mut server, mut client, _map) = start(&base, "e1m6");
+    let splashes = heard_over(&mut server, &mut client, 72 * 30, "misc/h2ohit1.wav");
+    server
+        .exec(r#"engine.print("flying " .. #find_all("classname", "fireball"))"#)
+        .expect("it runs");
+    server.tick();
+    let mut flying = 0;
+    while let Some(bytes) = client.receive() {
+        if let Some(ServerMessage::Print(text)) = ServerMessage::decode(&bytes)
+            && let Some(number) = text.strip_prefix("flying ")
+        {
+            flying = number.trim().parse().expect("a number");
+        }
+    }
+    println!("e1m6: {flying} fireballs about, {splashes} splashes in 30 s");
+    assert!(flying > 0, "the level has fireballs");
+    assert_eq!(splashes, 0, "and they leave the lava silently");
+}
+
 /// How high a jump goes on `name`, and the gravity the client was told of.
 fn jump_on(base: &Path, name: &str) -> (f32, Option<f32>) {
     let (mut server, mut client, _map) = start(base, name);

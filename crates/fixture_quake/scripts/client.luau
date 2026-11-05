@@ -661,8 +661,9 @@ function PlayerPostThink(self)
 	if self.deadflag ~= DEAD_NO then
 		return
 	end
+	W_WeaponFrame(self)
 	local fall = self.jump_flag or 0
-	if fall < -300 and self.onground then
+	if fall < -300 and self.onground and self.health > 0 then
 		if self.watertype == CONTENT_WATER then
 			sound(self, CHAN_BODY, "player/h2ojump.wav", 1, ATTN_NORM)
 		elseif fall < -650 then
@@ -672,10 +673,12 @@ function PlayerPostThink(self)
 		else
 			sound(self, CHAN_VOICE, "player/land.wav", 1, ATTN_NORM)
 		end
+		self.jump_flag = 0
 	end
-	self.jump_flag = self.velocity.z
+	if not self.onground then
+		self.jump_flag = self.velocity.z
+	end
 	CheckPowerups(self)
-	W_WeaponFrame(self)
 end
 
 -- A thing crossed a liquid's surface.

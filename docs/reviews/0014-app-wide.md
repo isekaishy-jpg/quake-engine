@@ -78,6 +78,15 @@ One second opinion finding was wrong: it said a monster's landing thud should us
 
 The Sol crates, at about 31,000 lines of source and as much again of tests, weren't read. Proposal 0009 exempts them from the workspace lints, and their own tests pass. Monster frame tables were spot checked, not compared in full. The Vulkan backend's recording and pipeline code was moved but not read line by line, and the second opinion on quality saw only part of it.
 
+## Found in play
+
+The human played episode 1 after these reviews, and heard what no reading had found.
+
+| Finding | Cause | Change |
+|---|---|---|
+| Falling into water beside a wall could screech, with many copies of a sound | `PlayerPostThink` overwrote `jump_flag` on every move, where the original clears it on landing and only reads it in the air. Water brakes slowly, so a player stood on the bottom still moving fast, and `h2ojump.wav` restarted up to 20 times in one fall | Ported as written, with `W_WeaponFrame` back at the top. A real map test on `e1m2` fails at 20 without this |
+| Lava fireballs are far too loud, and heard through walls | `SV_Physics_Toss` returns on a clear move, before `SV_CheckWaterTransition`, so what flies through a surface is silent. The port looked for water on every move, so each fireball splashed at full volume twice. Reading only the call's volume, the first answer here called this correct. The human's ears were right | The check now runs on a hit alone. A real map test pairs a tossed thing with a stepping one through the same surface, and `e1m6`'s fireballs fall silent |
+
 ## Validation
 
 `cargo xtask check`, the real map tests (26) and the netplay tests (24) pass. A real host and guest played `dm3` over a password, with chat, a suicide reaching the scores, and screenshots from both.
