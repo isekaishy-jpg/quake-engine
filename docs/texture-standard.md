@@ -57,6 +57,17 @@ surface {
 
 `world_size` is how many world units one repeat covers, across and down. It's what sets a surface's size in a level, whatever size its pictures are, so a set can go up in resolution and no level changes. A brick is about 32 by 16 units, a door 64 by 112, and a player 56 tall.
 
+## How a surface shines
+
+There are two ways to say it, and a material can use both.
+
+| Fields | Says | Comes from |
+|---|---|---|
+| `specular`, `gloss`, `specular_strength` | A map of shine colour, with gloss in alpha | Our own sets, or `derive_maps` |
+| `metal_rough`, `metallic`, `roughness` | A map with occlusion in red, roughness in green and metal in blue, or just numbers | glTF, or anything made for it |
+
+With a map, `metallic` and `roughness` scale it. Without one they're the whole answer, so `metallic = 1` and `roughness = 0.3` is polished metal. Roughness is gloss the other way round, and metal says that a surface's colour tints what it reflects, not what it's lit by. A surface using both ways adds them. See [proposal 0108](proposals/0108-metal-and-roughness.md).
+
 ## Asking a model for textures
 
 Say all of this in the request:

@@ -279,3 +279,48 @@ fn a_shaders_images_take_slots() {
     assert_eq!(material.shader_images, [Some(1), Some(2)]);
     fs::remove_dir_all(&root).expect("clean up");
 }
+
+#[test]
+fn a_material_can_be_metal_and_rough() {
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n metallic = 1\n roughness = 0.25\n}\n";
+    let (filesystem, root) = container("metal", &[("gold", text)]);
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("gold")
+        .expect("loads");
+    let surface = texture
+        .material
+        .expect("a material")
+        .metal_rough
+        .expect("described");
+    assert_eq!(surface.metallic, 1.0);
+    assert_eq!(surface.roughness, 0.25);
+    assert_eq!(surface.map, None);
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_metal_map_says_everything_unless_scaled() {
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n metal_rough = textures/1.png\n specular = textures/2.png\n gloss = 12\n}\n";
+    let (filesystem, root) = container("metalmap", &[("all_four", text)]);
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("all_four")
+        .expect("loads");
+    let material = texture.material.expect("a material");
+    let surface = material.metal_rough.expect("described");
+    assert_eq!((surface.metallic, surface.roughness), (1.0, 1.0));
+    assert_eq!(surface.map, Some(1));
+    assert_eq!(material.specular, Some(2), "all four, on one surface");
+    assert_eq!(material.gloss, 12.0);
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn most_materials_arent_metal() {
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n gloss = 12\n}\n";
+    let (filesystem, root) = container("notmetal", &[("wall", text)]);
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("wall")
+        .expect("loads");
+    assert_eq!(texture.material.expect("a material").metal_rough, None);
+    fs::remove_dir_all(&root).expect("clean up");
+}

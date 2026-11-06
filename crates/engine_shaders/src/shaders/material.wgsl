@@ -25,6 +25,10 @@ struct MaterialParams {
     shader_params: array<vec4<f32>, 2>,
     // The slots of the images its shader was given, or -1.
     shader_slots: vec4<i32>,
+    // x how metal, y how rough, z 1 if it's described that way, w the slot of its
+    // map, or -1: occlusion in red, roughness in green and metal in blue, as glTF
+    // has them.
+    metal_rough: vec4<f32>,
 }
 
 // What surface code sees of a surface, and can change, ahead of its light.
@@ -209,6 +213,26 @@ fn specular_light(world: vec3<f32>, normal: vec3<f32>, to_eye: vec3<f32>, gloss:
     return total;
 }
 
+// How much highlight there is here, from moving lights and baked light.
+fn shine_at(
+    in: VertexOut,
+    normal: vec3<f32>,
+    to_eye: vec3<f32>,
+    gloss: f32,
+    baked: vec3<f32>,
+    baked_from: vec3<f32>,
+    has_direction: bool,
+) -> f32 {
+    var shine = specular_light(in.world, normal, to_eye, gloss);
+    if has_direction {
+        // A highlight from baked light, which slides as the eye moves.
+        let half_vector = normalize(normalize(baked_from) + to_eye);
+        let strength = dot(baked, vec3<f32>(0.333));
+        shine = shine + pow(max(dot(normal, half_vector), 0.0), gloss) * strength;
+    }
+    return shine;
+}
+
 // Hard bands from smooth light, from the ramp if there is one.
 fn cel_bands(amount: f32, dx: vec2<f32>, dy: vec2<f32>) -> vec3<f32> {
     let slot = material.slots_b.z;
@@ -326,13 +350,36 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     }
     let has_direction = dot(baked_from, baked_from) > 0.01;
 
+    // Metal and roughness come to a colour and a gloss, as a specular map does,
+    // so that all four can be on one surface. What's metal has no colour of its
+    // own under light, only what it reflects, tinted.
+    var shine_tint = vec3<f32>(0.0);
+    var shine_gloss = 0.0;
+    var metal = 0.0;
+    var rough = 1.0;
+    var occlusion = 1.0;
+    let described = !PLAIN && material.metal_rough.z > 0.5;
+    if described {
+        var packed = vec4<f32>(1.0);
+        if material.metal_rough.w >= 0.0 {
+            packed = read_slot(i32(material.metal_rough.w), uv, dx, dy);
+        }
+        metal = clamp(packed.b * material.metal_rough.x, 0.0, 1.0);
+        rough = clamp(packed.g * material.metal_rough.y, 0.05, 1.0);
+        occlusion = packed.r;
+        shine_tint = mix(vec3<f32>(0.04), base.rgb, metal);
+        // Roughness says the same thing as gloss, the other way round.
+        let squared = rough * rough;
+        shine_gloss = max(2.0 / (squared * squared) - 2.0, 1.0);
+    }
+
     var color = base.rgb;
     var shading = 0;
     if !PLAIN {
         shading = material.flags.x;
     }
     var baked = vec3<f32>(0.0);
-    if shading != 3 || material.slots_a.y >= 0 {
+    if shading != 3 || material.slots_a.y >= 0 || described {
         baked = light(in);
     }
     if shading != 3 {
@@ -352,19 +399,23 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         } else {
             color = base.rgb * lit;
         }
+        if described {
+            // What metal reflects is mostly the room, which the light here stands
+            // in for, and less of it comes back from what's rough.
+            let room = shine_tint * lit * mix(1.0, 0.45, rough);
+            color = mix(color, room, metal) * occlusion;
+        }
     }
 
     if material.slots_a.y >= 0 {
         let specular = read_slot(material.slots_a.y, uv, dx, dy);
         let gloss = material.values.y * max(specular.a, 0.05);
-        var shine = specular_light(in.world, normal, to_eye, gloss);
-        if has_direction {
-            // A highlight from baked light, which slides as the eye moves.
-            let half_vector = normalize(normalize(baked_from) + to_eye);
-            let strength = dot(baked, vec3<f32>(0.333));
-            shine = shine + pow(max(dot(normal, half_vector), 0.0), gloss) * strength;
-        }
-        color = color + specular.rgb * shine * material.values.x;
+        color = color + specular.rgb * shine_at(in, normal, to_eye, gloss, baked, baked_from, has_direction) * material.values.x;
+    }
+    if described {
+        // Sharper highlights are brighter, as the same light is in a smaller spot.
+        let focus = min((shine_gloss + 8.0) / 25.0, 8.0);
+        color = color + shine_tint * shine_at(in, normal, to_eye, shine_gloss, baked, baked_from, has_direction) * focus;
     }
 
     if shading == 2 && material.slots_b.y >= 0 {
@@ -383,8 +434,9 @@ fn material_color(in: VertexOut) -> vec4<f32> {
 
     color = color + coded.emissive;
 
-    // An opaque surface's alpha says how much the final pass mirrors it.
-    var alpha = 1.0 - material.extra.x;
+    // An opaque surface's alpha says how much the final pass mirrors it. Polished
+    // metal mirrors without being told to.
+    var alpha = 1.0 - max(material.extra.x, metal * (1.0 - rough) * (1.0 - rough) * 0.6);
     if material.flags.y != 0 {
         alpha = base.a;
     }

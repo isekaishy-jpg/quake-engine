@@ -10,9 +10,9 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
-    Material, MaterialLayer, MipLevel, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT,
-    RayStencil, ShaderCode, Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame,
-    SpriteImage, TextureKind, TileLight,
+    Material, MaterialLayer, MetalRough, MipLevel, PAINT_MASK, PixelForm, Pool, PoolLook,
+    ProbeGrid, RESIDENT, RayStencil, ShaderCode, Shading, SideFiles, Sky, Sprite, SpriteFacing,
+    SpriteFrame, SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
@@ -316,6 +316,43 @@ fn with_shader(renderer: &mut Renderer, code: &str, params: [f32; 8]) -> [u8; 4]
         .capture(&view_from_above(), Drawables::default(), 64, 64)
         .expect("capture");
     centre(&capture)
+}
+
+/// The centre of the square, drawn with `metal_rough`, in a dim red light.
+fn with_metal(renderer: &mut Renderer, metal_rough: Option<MetalRough>) -> [u8; 4] {
+    let mut built = map(1);
+    // Dim enough that nothing's held to what the screen can show.
+    built.light = vec![[60, 30, 15]; 81];
+    built.textures[0].material = Some(Arc::new(Material {
+        metal_rough,
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    centre(&capture)
+}
+
+#[test]
+fn metal_shows_the_room_tinted_by_its_colour() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let plain = with_metal(&mut renderer, None);
+    let dull = |metallic, roughness| {
+        Some(MetalRough {
+            metallic,
+            roughness,
+            map: None,
+        })
+    };
+    let not_metal = with_metal(&mut renderer, dull(0.0, 1.0));
+    let difference = (i32::from(plain[0]) - i32::from(not_metal[0])).abs();
+    assert!(difference <= 8, "{plain:?} {not_metal:?}");
+    let metal = with_metal(&mut renderer, dull(1.0, 0.5));
+    assert!(metal[0] > 0, "it isn't black: {metal:?}");
+    assert_ne!(plain, metal);
 }
 
 /// What green a broken shader shows.

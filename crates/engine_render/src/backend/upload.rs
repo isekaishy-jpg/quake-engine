@@ -119,7 +119,9 @@ fn slot_format(material: &Material, number: u8) -> Format {
         return format;
     }
     let [first, second] = material.shader_images;
+    let metal_rough = material.metal_rough.and_then(|surface| surface.map);
     let data = [
+        metal_rough,
         material.normal,
         material.specular,
         material.height,

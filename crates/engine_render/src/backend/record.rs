@@ -44,6 +44,7 @@ fn plain_material(map: &Map, batch: &Batch) -> bool {
         .and_then(|texture| texture.material.as_ref());
     material.is_some_and(|material| {
         material.shader.is_none()
+            && material.metal_rough.is_none()
             && material.shading == Shading::Lit
             && !material.triplanar
             && !material.hex_tiling

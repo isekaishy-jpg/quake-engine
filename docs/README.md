@@ -136,6 +136,7 @@
     - [0105: linear colour](proposals/0105-linear-colour.md)
     - [0106: packing](proposals/0106-packing.md)
     - [0107: shaders](proposals/0107-shaders.md)
+    - [0108: metal and roughness](proposals/0108-metal-and-roughness.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

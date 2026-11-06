@@ -49,6 +49,17 @@ pub struct MaterialLayer {
 /// The mask of a layer that reads the map's paint, not an image.
 pub const PAINT_MASK: u8 = 15;
 
+/// A surface described by metal and roughness, as glTF does (proposal 0108).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct MetalRough {
+    /// How metal it is, from 0 to 1. Its map is scaled by this.
+    pub metallic: f32,
+    /// How rough it is, from 0 to 1. Its map is scaled by this.
+    pub roughness: f32,
+    /// The slot of its map: occlusion in red, roughness in green, metal in blue.
+    pub map: Option<u8>,
+}
+
 /// A shader, as a surface or a level names it (proposal 0107).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct ShaderCode {
@@ -71,6 +82,9 @@ pub type SlotImage = Arc<Vec<MipLevel>>;
 /// own image, in slot 0.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
+    /// Its metal and roughness, if it's described that way. It can have a
+    /// specular map as well, which adds to them.
+    pub metal_rough: Option<MetalRough>,
     /// Its shader, if it has one of its own.
     pub shader: Option<Arc<ShaderCode>>,
     /// The numbers it gives its shader.

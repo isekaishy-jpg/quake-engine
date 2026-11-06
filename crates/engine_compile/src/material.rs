@@ -6,8 +6,8 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
-    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, PAINT_MASK,
-    SHADER_PARAMS, ShaderCode, Shading, SlotImage, Texture, TextureKind, mip_chain,
+    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough, MipLevel,
+    PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, Texture, TextureKind, mip_chain,
 };
 
 use crate::error::CompileError;
@@ -510,6 +510,21 @@ impl<'a> MaterialLibrary<'a> {
         let shader_name = block.get("shader").and_then(Value::text);
         material.shader = shader_name.map(|name| filler.library.shader(name));
         material.shader_params = shader_params(block);
+        let metal_map = filler.field(block, "metal_rough")?;
+        let says_metal = block.get("metallic").is_some() || block.get("roughness").is_some();
+        if metal_map.is_some() || says_metal {
+            // With a map these scale it, so 1 leaves it as it is.
+            let (metallic, roughness) = if metal_map.is_some() {
+                (1.0, 1.0)
+            } else {
+                (0.0, 0.5)
+            };
+            material.metal_rough = Some(MetalRough {
+                metallic: number(block, "metallic", metallic),
+                roughness: number(block, "roughness", roughness),
+                map: metal_map,
+            });
+        }
         material.shader_images = [
             filler.field(block, "shader_image_a")?,
             filler.field(block, "shader_image_b")?,
