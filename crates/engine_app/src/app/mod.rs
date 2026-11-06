@@ -122,6 +122,9 @@ pub(crate) struct World {
     pub(crate) bindings: Bindings,
     /// Seconds since the map loaded.
     pub(crate) map_time: f64,
+    /// What's to be said about the level just loaded, once the clock has
+    /// started, so that it stays on the screen for as long as other lines.
+    load_warning: Option<String>,
     /// The field of view in degrees, at 4:3.
     pub(crate) fov: f32,
     /// Everything that sounds.
@@ -272,11 +275,6 @@ impl World {
             palette,
             start,
         } = crate::level::load_level(&self.filesystem, name)?;
-        // An old bake is ignored, which leaves the level bright and flat.
-        if !map.lit && self.filesystem.read(&format!("maps/{name}.ebake")).is_ok() {
-            let line = format!("{name} has an out of date bake, so it's unlit");
-            self.console_view.print(&line, self.map_time);
-        }
         let level = Level {
             name: name.to_owned(),
             parms: self.next_parms.take(),
@@ -359,6 +357,12 @@ impl World {
         if let Some(renderer) = &mut self.renderer {
             self.tile_streamer = TileStreamer::new(&map);
             renderer.load_map(map)?;
+        }
+        // An old bake is ignored, which leaves the level bright and flat.
+        let name = &self.level.name;
+        let unlit = self.map.as_ref().is_some_and(|map| !map.lit);
+        if unlit && self.filesystem.read(&format!("maps/{name}.ebake")).is_ok() {
+            self.load_warning = Some(format!("{name} has an out of date bake, so it's unlit"));
         }
         Ok(())
     }
@@ -587,6 +591,7 @@ impl Engine {
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,
+                load_warning: None,
                 fov: DEFAULT_FOV,
                 audio: if options.no_sound {
                     Audio::silent()
@@ -858,6 +863,9 @@ impl Engine {
     /// Writes waiting console lines to standard output. This is the reporting
     /// layer until the console is drawn. A closed output isn't a reason to stop.
     fn show_output(&mut self) {
+        if let Some(line) = self.world.load_warning.take() {
+            self.console.print(line);
+        }
         let lines = self.console.take_output();
         if lines.is_empty() {
             return;
