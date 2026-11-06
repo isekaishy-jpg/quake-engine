@@ -207,17 +207,25 @@ fn capsule_shade(world: vec3<f32>) -> f32 {
 }
 
 // All the light on a pixel. A sample of one half leaves a texture unchanged.
+// `color`, brought down as a whole if any of it is past `most`. Cutting each part
+// off alone would turn orange light green near its source.
+fn keep_hue(color: vec3<f32>, most: f32) -> vec3<f32> {
+    let brightest = max(color.r, max(color.g, color.b));
+    return color * (most / max(brightest, most));
+}
+
 fn light(in: VertexOut) -> vec3<f32> {
     let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
         + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
     let shaded = baked * capsule_shade(in.world);
     let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, in.clip.xy);
-    return min(2.0 * (shaded + moving), vec3<f32>(2.0));
+    return keep_hue(2.0 * (shaded + moving), 2.0);
 }
 
-// The brightness setting, as `BuildGammaTable` does for the palette.
+// The brightness setting, as `BuildGammaTable` does for the palette. What's too
+// bright to show comes down as a whole, so that it keeps its colour.
 fn raised(color: vec3<f32>) -> vec3<f32> {
-    return pow(max(color, vec3<f32>(0.0)), vec3<f32>(frame.params.w));
+    return pow(max(keep_hue(color, 1.0), vec3<f32>(0.0)), vec3<f32>(frame.params.w));
 }
 
 @fragment

@@ -7489,7 +7489,7 @@ brush {
 }
 
 brush {
-    cuboid = [1356 -204 112 1364 -196 136]
+    cuboid = [1356 -190 112 1364 -182 136]
     material = "metal"
     prefab = "torch"
     id = 420
@@ -7497,8 +7497,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1360 -200 152]
+    intensity = 230
+    origin = [1360 -186 152]
     size = 4
     style = 1
     type = "light"
@@ -7507,14 +7507,14 @@ entity {
 }
 
 entity {
-    origin = [1360 -200 148]
+    origin = [1360 -186 148]
     type = "flame"
     prefab = "torch"
     id = 422
 }
 
 brush {
-    cuboid = [1708 -204 112 1716 -196 136]
+    cuboid = [1708 -190 112 1716 -182 136]
     material = "metal"
     prefab = "torch"
     id = 423
@@ -7522,8 +7522,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1712 -200 152]
+    intensity = 230
+    origin = [1712 -186 152]
     size = 4
     style = 1
     type = "light"
@@ -7532,14 +7532,14 @@ entity {
 }
 
 entity {
-    origin = [1712 -200 148]
+    origin = [1712 -186 148]
     type = "flame"
     prefab = "torch"
     id = 425
 }
 
 brush {
-    cuboid = [648 252 -32 656 260 -8]
+    cuboid = [662 252 -32 670 260 -8]
     material = "metal"
     prefab = "torch"
     id = 426
@@ -7547,8 +7547,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [652 256 8]
+    intensity = 230
+    origin = [666 256 8]
     size = 4
     style = 1
     type = "light"
@@ -7557,14 +7557,14 @@ entity {
 }
 
 entity {
-    origin = [652 256 4]
+    origin = [666 256 4]
     type = "flame"
     prefab = "torch"
     id = 428
 }
 
 brush {
-    cuboid = [880 252 -32 888 260 -8]
+    cuboid = [866 252 -32 874 260 -8]
     material = "metal"
     prefab = "torch"
     id = 429
@@ -7572,8 +7572,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [884 256 8]
+    intensity = 230
+    origin = [870 256 8]
     size = 4
     style = 1
     type = "light"
@@ -7582,7 +7582,7 @@ entity {
 }
 
 entity {
-    origin = [884 256 4]
+    origin = [870 256 4]
     type = "flame"
     prefab = "torch"
     id = 431
@@ -8969,7 +8969,7 @@ brush {
 }
 
 brush {
-    cuboid = [264 828 -32 272 836 -8]
+    cuboid = [278 828 -32 286 836 -8]
     material = "metal"
     prefab = "torch"
     id = 462
@@ -8977,8 +8977,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [268 832 8]
+    intensity = 230
+    origin = [282 832 8]
     size = 4
     style = 1
     type = "light"
@@ -8987,7 +8987,7 @@ entity {
 }
 
 entity {
-    origin = [268 832 4]
+    origin = [282 832 4]
     type = "flame"
     prefab = "torch"
     id = 464
@@ -11154,7 +11154,7 @@ brush {
 }
 
 brush {
-    cuboid = [1224 540 96 1232 548 120]
+    cuboid = [1238 540 96 1246 548 120]
     material = "metal"
     prefab = "torch"
     id = 505
@@ -11162,8 +11162,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1228 544 136]
+    intensity = 230
+    origin = [1242 544 136]
     size = 4
     style = 1
     type = "light"
@@ -11172,14 +11172,14 @@ entity {
 }
 
 entity {
-    origin = [1228 544 132]
+    origin = [1242 544 132]
     type = "flame"
     prefab = "torch"
     id = 507
 }
 
 brush {
-    cuboid = [1224 1084 96 1232 1092 120]
+    cuboid = [1238 1084 96 1246 1092 120]
     material = "metal"
     prefab = "torch"
     id = 508
@@ -11187,8 +11187,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1228 1088 136]
+    intensity = 230
+    origin = [1242 1088 136]
     size = 4
     style = 1
     type = "light"
@@ -11197,14 +11197,14 @@ entity {
 }
 
 entity {
-    origin = [1228 1088 132]
+    origin = [1242 1088 132]
     type = "flame"
     prefab = "torch"
     id = 510
 }
 
 brush {
-    cuboid = [1840 540 96 1848 548 120]
+    cuboid = [1826 540 96 1834 548 120]
     material = "metal"
     prefab = "torch"
     id = 511
@@ -11212,8 +11212,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1844 544 136]
+    intensity = 230
+    origin = [1830 544 136]
     size = 4
     style = 1
     type = "light"
@@ -11222,14 +11222,14 @@ entity {
 }
 
 entity {
-    origin = [1844 544 132]
+    origin = [1830 544 132]
     type = "flame"
     prefab = "torch"
     id = 513
 }
 
 brush {
-    cuboid = [1840 1084 96 1848 1092 120]
+    cuboid = [1826 1084 96 1834 1092 120]
     material = "metal"
     prefab = "torch"
     id = 514
@@ -11237,8 +11237,8 @@ brush {
 
 entity {
     color = [1 0.7 0.4]
-    intensity = 340
-    origin = [1844 1088 136]
+    intensity = 230
+    origin = [1830 1088 136]
     size = 4
     style = 1
     type = "light"
@@ -11247,7 +11247,7 @@ entity {
 }
 
 entity {
-    origin = [1844 1088 132]
+    origin = [1830 1088 132]
     type = "flame"
     prefab = "torch"
     id = 516

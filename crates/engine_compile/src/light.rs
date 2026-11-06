@@ -1079,7 +1079,15 @@ fn bounced_at(
     reason = "clamped to a byte"
 )]
 fn to_bytes(color: [f64; 3]) -> [u8; 3] {
-    color.map(|part| part.clamp(0.0, 255.0) as u8)
+    // Too bright for a byte, the whole colour comes down together. Cutting off
+    // each part alone turns orange light green, as red stops and green doesn't.
+    let brightest = color.iter().copied().fold(0.0, f64::max);
+    let share = if brightest > 255.0 {
+        255.0 / brightest
+    } else {
+        1.0
+    };
+    color.map(|part| (part * share).clamp(0.0, 255.0) as u8)
 }
 
 /// A direction as bytes.

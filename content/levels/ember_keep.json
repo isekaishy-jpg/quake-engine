@@ -26,11 +26,11 @@
 "prefab": "torch",
 "at": [
 1360,
--200,
+-186,
 112
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -41,11 +41,11 @@
 "prefab": "torch",
 "at": [
 1712,
--200,
+-186,
 112
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -55,12 +55,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-652,
+666,
 256,
 -32
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -70,12 +70,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-884,
+870,
 256,
 -32
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -193,12 +193,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-268,
+282,
 832,
 -32
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -352,12 +352,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-1228,
+1242,
 544,
 96
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -367,12 +367,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-1228,
+1242,
 1088,
 96
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -382,12 +382,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-1844,
+1830,
 544,
 96
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }
@@ -397,12 +397,12 @@
 "args": {
 "prefab": "torch",
 "at": [
-1844,
+1830,
 1088,
 96
 ],
 "params": {
-"intensity": 340,
+"intensity": 230,
 "style": 1
 }
 }

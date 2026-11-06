@@ -868,6 +868,26 @@ tile_grid {{ size = 1024 }}
     }
 }
 
+/// A torch hard up against a wall keeps its colour in the light it leaves, where
+/// it's far too bright for a byte.
+#[test]
+fn a_bright_light_keeps_its_colour_in_a_bake() {
+    let text = format!(
+        "{ROOM}\nentity lamp {{ type = light origin = 0 0 -230 intensity = 6000 color = 1 0.5 0.25 }}\n"
+    );
+    let map = baked(&text, &[]);
+    let hottest = map
+        .light
+        .iter()
+        .max_by_key(|sample| sample[0])
+        .expect("light");
+    assert_eq!(hottest[0], 255, "it's past what a byte holds");
+    // Ambient and bounce are grey, so it's a little less pure than the lamp.
+    let [_, green, blue] = hottest.map(i32::from);
+    assert!((100..=150).contains(&green), "{hottest:?}");
+    assert!(blue < green, "{hottest:?}");
+}
+
 /// A bake keeps its walkable grid.
 #[test]
 fn a_bake_keeps_the_nav_grid() {

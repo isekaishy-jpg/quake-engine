@@ -50,7 +50,7 @@ level = Level(
 fog { color = 0.6 0.32 0.2 density = 0.00008 height = 0 falloff = 0.004 }''')
 
 
-def torch(x, y, z, intensity=340):
+def torch(x, y, z, intensity=230):
     level.prefab('torch', (x, y, z), intensity=intensity, style=1)
 
 
@@ -108,8 +108,8 @@ for x in range(544, 2560, 128):
 level.carve(1408, -128, 0, 1664, 256, 224, floor=FLAGS, wall=STONE, ceiling=COFFER)
 level.moving('func_door', [(1408, -152, 0, 1664, -136, 224)], GATE, name='main_gate',
              targetname='gate_up', angle=-1, wait=-1, speed=80, lip=8)
-torch(1360, -200, 112)
-torch(1712, -200, 112)
+torch(1360, -186, 112)
+torch(1712, -186, 112)
 
 # --- The Undercroft -------------------------------------------------------
 # The only way in: a door at the end of the ledge, and stairs down.
@@ -118,8 +118,8 @@ level.moving('func_door', [(704, -152, 0, 832, -136, 128)], 'qg01_ashen_abbey_do
              wait=4, lip=4)
 for step in range(8):
     level.box(FLAGS, 640, -128 + step * 32, -128, 896, -128 + step * 32 + 32, -step * 16)
-torch(652, 256, -32)
-torch(884, 256, -32)
+torch(666, 256, -32)
+torch(870, 256, -32)
 monster('army', 768, 500, -128, angle=270)
 
 # The pillared hall, low and dark, where the first real fight is.
@@ -134,7 +134,7 @@ item('item_shells', 320, 640, -128)
 item('item_health', 320, 1020, -128)
 lamp(544, 832, 120, 180)
 lamp(960, 640, 120, 140)
-torch(268, 832, -32)
+torch(282, 832, -32)
 
 # Up into the Great Hall.
 level.carve(1088, 736, -128, 1216, 928, 96, floor=FLAGS, wall=BRICK, ceiling=STONE)
@@ -161,10 +161,10 @@ level.box(CARVED, 1216, 1392, 224, 1856, 1408, 256)
 lamp(1536, 832, 480, 420)
 lamp(1536, 500, 300, 240)
 lamp(1536, 1200, 300, 240)
-torch(1228, 544, 96)
-torch(1228, 1088, 96)
-torch(1844, 544, 96)
-torch(1844, 1088, 96)
+torch(1242, 544, 96)
+torch(1242, 1088, 96)
+torch(1830, 544, 96)
+torch(1830, 1088, 96)
 monster('knight', 1536, 800, 0, angle=270)
 monster('army', 1280, 1320, 256, angle=270)
 monster('army', 1800, 1320, 256, angle=270)

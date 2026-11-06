@@ -33,10 +33,14 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 16 | Every face was tested against every brush, so loading took 24 seconds | A brush only meets its neighbours, and it takes under 5 |
 | 17 | A map's solids each worked out the mass of the whole world | They don't, as they don't move |
 | 18 | Prefabs could only face one way, and an outline drawn clockwise turned a solid inside out | They turn, and outlines work either way round |
+| 19 | The human saw olive-green patches round torches. Each colour channel was cut off alone, so red stopped and green rose, in the bake and in the shader | Light too bright comes down as a whole. Tests in the bake and on screen fail without this |
+| 20 | The human saw clouds in blocks and pieces. Their noise hashed with `sin`, which breaks up at large numbers | An integer hash, layers turned against each other, and fine layers faded low in the sky |
+| 21 | Torches 12 units off a wall, and too bright, filled it flat with no falloff | They stand further off and burn lower |
 
 ## Process
 
 - Four commits failed `cargo xtask check` first, on a lint in a test, unformatted Rust, a lint on a type and a lint on a cast. The gate held all four back, and each went in once it passed.
+- Findings 19 and 20 were in captures for some time, and were passed over until the human named them. Reading captures has to mean looking for what's wrong.
 - Commit `aaf9474` says the city plays, when its route test was still failing at the time. That test is ignored by the check, as it needs a bake. It passes now, after later commits.
 - A crashed script left a game running that held the build's output open, and a script of mine named `bisect.py` hid a Python module. Both cost time, and neither touched the repository.
 - The real map suites were first run without `QUAKE_DIR`, and every test failed in no time at all. Run with it, they passed.
@@ -50,5 +54,6 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | Baking big maps | `wide_world` took 46 minutes before finding 11 and 12. It hasn't been timed since. `vesper_deep`, of 17,000 faces, bakes in about 90 seconds |
 | Normal maps for the packs | The packs are diffuse only, so stonework is lit flat. They could be drawn from the images, or made with the packs' art |
 | Real people for the city | Stand-ins now, as the human said they could be |
+| The Fall | It reads as a flat blue slab, and wants real falling water |
 | The host, worker and cache crates under the workspace lints | Measured at 1,703 items, about 800 of them doc comments to write by hand, with 47 uses of `unsafe` to allow by name. The open questions keep this apart from the rename. The test layout rule would also need test seams moved out of 189 places under `src/` |
 | Jumps, water and lifts in paths | The human set these for later |

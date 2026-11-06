@@ -9,9 +9,10 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Fog, LightTiles, Map, Material,
-    MaterialLayer, MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Shading,
-    SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TextureKind, TileLight,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
+    Material, MaterialLayer, MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil,
+    Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TextureKind,
+    TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
@@ -238,9 +239,10 @@ fn a_lit_white_surface_shows_its_doubled_light() {
         .capture(&view_from_above(), Drawables::default(), 64, 64)
         .expect("capture");
     let [r, g, b, _] = centre(&capture);
-    assert_eq!(r, 255, "400 of 255 clamps");
-    assert!((199..=201).contains(&g), "green {g}");
-    assert!((99..=101).contains(&b), "blue {b}");
+    // Doubled to 400, 200 and 100, then brought down together to fit.
+    assert_eq!(r, 255, "400 of 255 fits");
+    assert!((126..=129).contains(&g), "green {g}");
+    assert!((62..=66).contains(&b), "blue {b}");
 }
 
 #[test]
@@ -1100,6 +1102,80 @@ fn streamed_light_goes_past_what_an_atlas_holds() {
     built.light_tiles = Some(LightTiles::new(1024.0, vec![[0, 0]]));
     let mesh = build_world(&built).expect("it builds");
     assert_eq!(mesh.atlas_size, 4096);
+}
+
+/// Light too bright to show keeps its colour. Red stopping while green goes on
+/// rising used to turn an orange light green near its source.
+#[test]
+fn bright_light_keeps_its_colour() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let lights = [LiveLight {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        radius: 300.0,
+        color: [8.0, 4.0, 2.0],
+        ..LiveLight::default()
+    }];
+    let drawables = Drawables {
+        live_lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 16, 16)
+        .expect("capture");
+    let [red, green, blue, _] = centre(&capture);
+    assert!(red > 200, "it's bright: {red}");
+    assert!(
+        i32::from(green) * 2 < i32::from(red) + 40,
+        "{red} {green} {blue}"
+    );
+    assert!(green > blue, "{red} {green} {blue}");
+}
+
+/// Clouds drift smoothly. A hash of `sin` broke them into blocks with hard edges,
+/// so neighbouring pixels of open sky jumped.
+#[test]
+fn clouds_have_no_hard_edges() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.1, 0.2, 0.5],
+        horizon: [0.1, 0.2, 0.5],
+        clouds: Some(Clouds {
+            color: [1.0, 1.0, 1.0],
+            coverage: 0.5,
+            speed: [0.0, 0.0],
+            scale: 1.0,
+            image: None,
+        }),
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, -2000.0),
+        pitch: -70.0,
+        ..view_from_above()
+    };
+    let capture = renderer
+        .capture(&view, Drawables::default(), 256, 256)
+        .expect("capture");
+    let red = |x: u32, y: u32| i32::from(pixel(&capture, x, y)[0]);
+    let (mut jumps, mut low, mut high) = (0, 255, 0);
+    for y in 0..256 {
+        for x in 0..255 {
+            low = low.min(red(x, y));
+            high = high.max(red(x, y));
+            if (red(x, y) - red(x + 1, y)).abs() > 48 {
+                jumps += 1;
+            }
+        }
+    }
+    assert!(high - low > 60, "there are clouds: {low} {high}");
+    assert!(jumps < 150, "{jumps}");
 }
 
 /// How many different colours a capture has.
