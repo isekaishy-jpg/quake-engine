@@ -214,6 +214,111 @@ brush { material = ground cuboid = -512 -512 -64 512 512 0 }
     assert!(roofed < clear * 0.2, "{roofed} against {clear}");
 }
 
+/// Each sample of `style` along the column of `face` nearest `x`, as red.
+fn column_at(map: &Map, face: &Face, x: i32, style: u8) -> Vec<u8> {
+    let light = face.light.expect("lit");
+    let layer = light
+        .styles
+        .iter()
+        .position(|known| *known == style)
+        .expect("a layer");
+    let (width, height) = (light.width as usize, light.height as usize);
+    let first = light.first_sample as usize + layer * width * height;
+    let column = usize::try_from((x - light.texel_origin[0]) / 32).expect("on the face");
+    (0..height)
+        .map(|row| map.light[first + row * width + column][0])
+        .collect()
+}
+
+/// Two faces side by side agree where they join, so a shadow crossing the join
+/// runs straight on. The join is between samples, as it is more often than not:
+/// the left face's last sample lies over the right face.
+#[test]
+fn a_shadow_runs_straight_over_a_join() {
+    let text = "format 1 map
+entity world { type = worldspawn light_spacing = 32 }
+brush { material = left cuboid = -512 -512 -64 20 512 0 }
+brush { material = right cuboid = 20 -512 -64 512 512 0 }
+brush { material = post cuboid = 40 -40 0 120 40 200 }
+entity lamp { type = light origin = 300 150 120 intensity = 900 }
+";
+    let map = baked(text, &[]);
+    let (left, right) = (face_of(&map, "left"), face_of(&map, "right"));
+    let (one, other) = (column_at(&map, left, 32, 0), column_at(&map, right, 32, 0));
+    let most = one
+        .iter()
+        .zip(&other)
+        .map(|(a, b)| a.abs_diff(*b))
+        .max()
+        .expect("samples");
+    assert!(most <= 2, "{one:?} against {other:?}");
+    assert!(one.iter().any(|sample| *sample > 20), "{one:?}");
+    assert!(one.contains(&0), "the shadow crosses: {one:?}");
+}
+
+/// The edges of crisp light down the column of `face` nearest `x`.
+fn edges_at(map: &Map, face: &Face, x: i32) -> Vec<u8> {
+    let light = face.light.expect("lit");
+    let layer = light
+        .styles
+        .iter()
+        .position(|known| *known == 62)
+        .expect("a crisp layer");
+    let (width, height) = (light.width as usize, light.height as usize);
+    let first = light.first_sample as usize + layer * width * height;
+    let column = usize::try_from((x - light.texel_origin[0]) / 32).expect("on the face");
+    (0..height)
+        .map(|row| map.light_edges[first + row * width + column])
+        .collect()
+}
+
+/// Two faces hold the same samples either side of a join, so what blends between
+/// them is the same on both, right down to how far a crisp shadow's edge is.
+#[test]
+fn faces_hold_the_same_samples_at_a_join() {
+    let text = "format 1 map
+entity world { type = worldspawn light_spacing = 32 }
+brush { material = left cuboid = -512 -512 -64 20 512 0 }
+brush { material = right cuboid = 20 -512 -64 512 512 0 }
+brush { material = post cuboid = -60 -40 4 60 40 200 }
+entity lamp { type = light origin = 240 190 90 intensity = 900 crisp = true }
+";
+    let map = baked(text, &[]);
+    let (left, right) = (face_of(&map, "left"), face_of(&map, "right"));
+    let rows = |face: &Face| face.light.expect("lit").texel_origin[1];
+    assert_eq!(rows(left), rows(right), "the same rows");
+    for x in [0, 32] {
+        let one = edges_at(&map, left, x);
+        assert_eq!(one, edges_at(&map, right, x), "at {x}");
+        assert!(one.iter().any(|edge| *edge < 128), "{one:?}");
+        assert!(one.iter().any(|edge| *edge > 128), "{one:?}");
+    }
+}
+
+/// A wall stands on the join between two floors. What's lit on one side stays
+/// there, though their samples fall in the same places.
+#[test]
+fn faces_share_no_samples_through_a_wall() {
+    let text = "format 1 map
+entity world { type = worldspawn light_spacing = 32 }
+brush { material = left cuboid = -512 -512 -64 0 512 0 }
+brush { material = right cuboid = 0 -512 -64 512 512 0 }
+brush { material = wall cuboid = -8 -512 0 8 512 400 }
+entity lamp { type = light origin = -100 0 100 intensity = 900 }
+";
+    let map = baked(text, &[]);
+    let (left, right) = (face_of(&map, "left"), face_of(&map, "right"));
+    let lit = column_at(&map, left, -32, 0);
+    assert!(lit.iter().any(|sample| *sample > 20), "{lit:?}");
+    for x in [0, 32, 64] {
+        let column = column_at(&map, right, x, 0);
+        assert!(
+            column.iter().all(|sample| *sample == 0),
+            "at {x}: {column:?}"
+        );
+    }
+}
+
 /// Light goes through what's only seen, as it wouldn't through anything else.
 #[test]
 fn light_goes_through_a_mesh_only_to_be_seen() {

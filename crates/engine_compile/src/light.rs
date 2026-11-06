@@ -637,6 +637,49 @@ struct FaceBake {
     area: f64,
     /// How far each sample is from the edge of a crisp shadow, if it has any.
     edges: Option<Vec<u8>>,
+    /// How far each sample's place on the grid is off the face.
+    gaps: Vec<f64>,
+    /// Which faces its samples can fall in the same places as.
+    sample_grid: SampleGrid,
+    /// Its corners.
+    corners: Vec<Point>,
+    /// Where its grid sits.
+    frame: GridFrame,
+}
+
+/// What faces have in common when their samples fall in the same places: a plane
+/// and a texture mapping.
+type SampleGrid = ([i64; 4], [[u32; 4]; 2]);
+
+/// The [`SampleGrid`] of `face`.
+fn sample_grid(face: &Face, normal: Point, distance: f64) -> SampleGrid {
+    #[expect(clippy::cast_possible_truncation, reason = "worlds are small")]
+    let rounded = |value: f64, scale: f64| (value * scale).round() as i64;
+    let plane = [
+        rounded(normal[0], 256.0),
+        rounded(normal[1], 256.0),
+        rounded(normal[2], 256.0),
+        rounded(distance, 4.0),
+    ];
+    // Adding nothing makes a negative zero a zero.
+    let axes = face.axes.map(|axis| {
+        [axis.axis.x, axis.axis.y, axis.axis.z, axis.offset].map(|part| (part + 0.0).to_bits())
+    });
+    (plane, axes)
+}
+
+/// A face's light samples, before any light is worked out at them.
+struct LightGrid {
+    /// Its shape.
+    light: FaceLight,
+    /// Where each sample is lit from.
+    points: Vec<Point>,
+    /// How far each sample's place on the grid is off the face.
+    gaps: Vec<f64>,
+    /// The face's corners.
+    corners: Vec<Point>,
+    /// Where the grid sits.
+    frame: GridFrame,
 }
 
 /// `place` moved onto a convex face, just inside its edges. The grid of a
@@ -729,7 +772,7 @@ fn face_area(map: &Map, face: &Face) -> f64 {
 }
 
 /// The extents of a face in texels, spaced by `spacing`.
-fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Point>, GridFrame)> {
+fn light_grid(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<LightGrid> {
     let space = face_space(map, face)?;
     let first = face.first_point as usize;
     let points = map.points.get(first..first + face.point_count as usize)?;
@@ -780,6 +823,7 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
         down: add_scaled(place_at(0.0, 1.0)?, start, -1.0),
     };
     let mut positions = Vec::with_capacity((width * height) as usize);
+    let mut gaps = Vec::with_capacity((width * height) as usize);
     for y in 0..height {
         for x in 0..width {
             let s = f64::from(origin[0]) + f64::from(x) * spacing;
@@ -790,11 +834,13 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
                 space.plane.distance,
             ];
             let place = solve(&space.rows, rhs)?;
-            positions.push(onto_face(&corners, space.plane.normal, place));
+            let off = add_scaled(place, onto_face(&corners, space.plane.normal, place), -1.0);
+            gaps.push(dot(off, off).sqrt());
+            positions.push(sample_place(scene, &corners, space.plane.normal, place));
         }
     }
-    Some((
-        FaceLight {
+    Some(LightGrid {
+        light: FaceLight {
             first_sample: 0,
             width,
             height,
@@ -804,9 +850,11 @@ fn light_grid(map: &Map, face: &Face, spacing: f64) -> Option<(FaceLight, Vec<Po
             tile: RESIDENT,
             average: [0; 3],
         },
-        positions,
+        points: positions,
+        gaps,
+        corners,
         frame,
-    ))
+    })
 }
 
 /// The average colour of the texture of `face`.
@@ -837,7 +885,13 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
     }
     let space = face_space(map, face)?;
     let normal = space.plane.normal;
-    let (light, points, grid) = light_grid(map, face, spacing)?;
+    let LightGrid {
+        light,
+        points,
+        gaps,
+        corners,
+        frame: grid,
+    } = light_grid(scene, map, face, spacing)?;
     let shine_at = scene.lifts.get(&face.first_point).map(|lift| wide(*lift));
     let lifted: Vec<Point> = points
         .iter()
@@ -882,7 +936,217 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         albedo: albedo_of(map, face),
         area: face_area(map, face),
         edges,
+        gaps,
+        sample_grid: sample_grid(face, normal, space.plane.distance),
+        corners,
+        frame: grid,
     })
+}
+
+/// How far apart two edges can be and still be one join.
+const JOIN_SLACK: f64 = 0.05;
+
+/// A sample, and which face has it.
+#[derive(Clone, Copy)]
+struct HeldSample {
+    /// Where it is on the grid.
+    texel: [i64; 2],
+    /// How far that is off its face.
+    gap: f64,
+    /// Which face has it.
+    face: usize,
+    /// Which of the face's samples it is.
+    index: usize,
+}
+
+/// Each sample of `bake`, which is face number `face`.
+fn held_samples(bake: &FaceBake, face: usize) -> impl Iterator<Item = HeldSample> {
+    let light = bake.light;
+    let width = light.width;
+    let step = i64::from(light.texels_per_sample);
+    (0_u32..).zip(&bake.gaps).map(move |(index, gap)| {
+        let (x, y) = (i64::from(index % width), i64::from(index / width));
+        HeldSample {
+            texel: [
+                i64::from(light.texel_origin[0]) + x * step,
+                i64::from(light.texel_origin[1]) + y * step,
+            ],
+            gap: *gap,
+            face,
+            index: index as usize,
+        }
+    })
+}
+
+/// Whether two faces meet along an edge within `reach` of `place`.
+fn join_near(one: &[Point], other: &[Point], place: Point, reach: f64) -> bool {
+    let sides = |corners: &[Point]| -> Vec<[Point; 2]> {
+        let next = corners.iter().cycle().skip(1);
+        corners.iter().zip(next).map(|(a, b)| [*a, *b]).collect()
+    };
+    let (ours, theirs) = (sides(one), sides(other));
+    ours.iter().any(|side| {
+        let Some(along) = normalized(add_scaled(side[1], side[0], -1.0)) else {
+            return false;
+        };
+        let distance_along = |point: Point| dot(add_scaled(point, side[0], -1.0), along);
+        let off_line = |point: Point| {
+            let closest = add_scaled(side[0], along, distance_along(point));
+            let offset = add_scaled(point, closest, -1.0);
+            dot(offset, offset).sqrt()
+        };
+        theirs.iter().any(|across| {
+            if off_line(across[0]) > JOIN_SLACK || off_line(across[1]) > JOIN_SLACK {
+                return false;
+            }
+            let (a, b) = (distance_along(across[0]), distance_along(across[1]));
+            let low = a.min(b).max(0.0);
+            let high = a.max(b).min(distance_along(side[1]));
+            let shared = [
+                add_scaled(side[0], along, low),
+                add_scaled(side[0], along, high),
+            ];
+            high - low > JOIN_SLACK && distance_to_line(place, &shared) < reach
+        })
+    })
+}
+
+/// Which sample each of `faces`, all on one grid, takes its light from. Where
+/// samples fall in one place, the one on its own face knows that place best. Two
+/// are joined if they're in sight of each other, as a wall between them means the
+/// light on its far side isn't theirs, or if their faces meet at that place, as
+/// then they have to show the same light up to their join.
+fn shared_samples(
+    scene: &Scene<'_>,
+    bakes: &[Option<FaceBake>],
+    faces: &[usize],
+) -> Vec<(HeldSample, HeldSample)> {
+    let mut held: Vec<HeldSample> = faces
+        .iter()
+        .filter_map(|face| Some(held_samples(bakes[*face].as_ref()?, *face)))
+        .flatten()
+        .collect();
+    held.sort_by(|a, b| {
+        a.texel
+            .cmp(&b.texel)
+            .then(a.gap.total_cmp(&b.gap))
+            .then(a.face.cmp(&b.face))
+    });
+    let lit_from = |sample: &HeldSample| {
+        let bake = bakes[sample.face].as_ref()?;
+        Some(add_scaled(
+            bake.points[sample.index],
+            bake.normal,
+            SURFACE_OFFSET,
+        ))
+    };
+    let in_sight = |a: &HeldSample, b: &HeldSample| {
+        let ends = lit_from(a).zip(lit_from(b));
+        ends.is_some_and(|(a, b)| !blocked(scene, scene.root, a, b))
+    };
+    let meet = |a: &HeldSample, b: &HeldSample| {
+        let (Some(one), Some(other)) = (&bakes[a.face], &bakes[b.face]) else {
+            return false;
+        };
+        let frame = &one.frame;
+        #[expect(clippy::cast_precision_loss, reason = "faces are small")]
+        let place = add_scaled(
+            add_scaled(
+                frame.start,
+                frame.across,
+                (a.index % one.light.width as usize) as f64,
+            ),
+            frame.down,
+            (a.index / one.light.width as usize) as f64,
+        );
+        let cell = add_scaled(frame.across, frame.down, 1.0);
+        a.face != b.face && join_near(&one.corners, &other.corners, place, dot(cell, cell).sqrt())
+    };
+    let mut shared = Vec::new();
+    for place in held.chunk_by(|a, b| a.texel == b.texel) {
+        // Whatever's joined, even through another, ends up with the one owner, or
+        // two faces that meet could take after different samples.
+        let mut owners: Vec<usize> = (0..place.len()).collect();
+        for (rank, sample) in place.iter().enumerate() {
+            for (other, best) in place[..rank].iter().enumerate() {
+                let apart = owners[rank] != owners[other];
+                if apart && (in_sight(sample, best) || meet(sample, best)) {
+                    let keep = owners[rank].min(owners[other]);
+                    let drop = owners[rank].max(owners[other]);
+                    for owner in owners.iter_mut().filter(|owner| **owner == drop) {
+                        *owner = keep;
+                    }
+                }
+            }
+        }
+        for (rank, (sample, owner)) in place.iter().zip(&owners).enumerate() {
+            if *owner != rank {
+                shared.push((place[*owner], *sample));
+            }
+        }
+    }
+    shared
+}
+
+/// Gives `to` everything `from` has.
+fn copy_sample(bakes: &mut [Option<FaceBake>], from: HeldSample, to: HeldSample) {
+    let Some(source) = &bakes[from.face] else {
+        return;
+    };
+    let layers: Vec<[f64; 3]> = source
+        .layers
+        .iter()
+        .map(|(_, layer)| layer[from.index])
+        .collect();
+    let direction = source.directions[from.index];
+    let edge = source.edges.as_ref().map(|edges| edges[from.index]);
+    let Some(target) = &mut bakes[to.face] else {
+        return;
+    };
+    for ((_, layer), color) in target.layers.iter_mut().zip(layers) {
+        layer[to.index] = color;
+    }
+    target.directions[to.index] = direction;
+    if let (Some(edges), Some(edge)) = (&mut target.edges, edge) {
+        edges[to.index] = edge;
+    }
+}
+
+/// Makes faces agree on the samples they share. Light blends between samples, so
+/// two faces with the same samples either side of a join show the same light along
+/// it, and a shadow runs straight on across.
+fn share_samples(scene: &Scene<'_>, bakes: &mut [Option<FaceBake>]) {
+    let mut grids: HashMap<SampleGrid, Vec<usize>> = HashMap::new();
+    for (number, bake) in bakes.iter().enumerate() {
+        if let Some(bake) = bake {
+            grids.entry(bake.sample_grid).or_default().push(number);
+        }
+    }
+    let mut groups: Vec<Vec<usize>> = grids
+        .into_values()
+        .filter(|faces| faces.len() > 1)
+        .collect();
+    groups.sort_unstable();
+    let known: &[Option<FaceBake>] = bakes;
+    let shared = in_parallel(&groups, |faces| shared_samples(scene, known, faces));
+    for (from, to) in shared.into_iter().flatten() {
+        copy_sample(bakes, from, to);
+    }
+}
+
+/// Where a sample at `place` on a face is lit from. Samples are on a grid that
+/// runs past the face's edges, so that light can blend up to them. Most of those
+/// lie over the next face along, and have to be lit where they are, or two faces
+/// disagree where they join and a shadow steps sideways there. Only what's behind
+/// something, as a wall, comes back onto the face.
+fn sample_place(scene: &Scene<'_>, corners: &[Point], normal: Point, place: Point) -> Point {
+    let on_face = onto_face(corners, normal, place);
+    let lifted = |point: Point| add_scaled(point, normal, SURFACE_OFFSET);
+    if blocked(scene, scene.root, lifted(on_face), lifted(place)) {
+        on_face
+    } else {
+        place
+    }
 }
 
 /// Where a light sample grid sits in the world.
@@ -926,7 +1190,7 @@ fn crisp_edges(
             grid.down,
             across,
         );
-        let place = onto_face(&corners, normal, place);
+        let place = sample_place(scene, &corners, normal, place);
         let (color, _) = light_on(scene, source, place, normal, true);
         color[0] + color[1] + color[2] > 0.0
     };
@@ -1474,7 +1738,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
 
     let faces: Vec<Face> = map.faces.clone();
     let shared: &Map = map;
-    let bakes: Vec<Option<FaceBake>> =
+    let mut bakes: Vec<Option<FaceBake>> =
         in_parallel(&faces, |face| bake_face(&scene, shared, face, spacing));
     let sources = bounce_sources(&bakes, spacing, f64::from(shared.tile_size));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
@@ -1487,18 +1751,23 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         })
     });
     let probes = bake_probes(&scene, shared, &sources, bounce_gain, ambient);
+    for (bake, bounce) in bakes.iter_mut().zip(bounced) {
+        if let (Some(bake), Some(bounce)) = (bake, bounce) {
+            bake.layers.push((BOUNCE_STYLE, bounce));
+        }
+    }
+    share_samples(&scene, &mut bakes);
 
     let mut samples = Vec::new();
     let mut directions = Vec::new();
     let mut edges = Vec::new();
     let mut paint = Vec::new();
     let mut lit_faces = Vec::with_capacity(faces.len());
-    for (bake, bounce) in bakes.into_iter().zip(bounced) {
-        let (Some(mut bake), Some(bounce)) = (bake, bounce) else {
+    for bake in bakes {
+        let Some(bake) = bake else {
             lit_faces.push(None);
             continue;
         };
-        bake.layers.push((BOUNCE_STYLE, bounce));
         let mut light = bake.light;
         light.first_sample = u32::try_from(samples.len()).unwrap_or(u32::MAX);
         for (index, (style, layer)) in bake.layers.iter().enumerate().take(MAX_LAYERS) {
