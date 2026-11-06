@@ -129,6 +129,7 @@
     - [0099: maps from pictures](proposals/0099-maps-from-pictures.md)
     - [0100: falling water](proposals/0100-falling-water.md)
     - [0101: baking big maps](proposals/0101-baking-big-maps.md)
+    - [0102: frames that keep up](proposals/0102-frames-that-keep-up.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -155,6 +155,11 @@ fn parallax_uv(
     return at;
 }
 
+// Whether this is the shader for surfaces with nothing unusual about them, which
+// most are. Everything else a surface can do makes the shader bigger and slower
+// for all of them, even where it's off, so `plain` leaves it out.
+const PLAIN: bool = false;
+
 // Specular light from the dynamic lights, on a bumped surface.
 fn specular_light(world: vec3<f32>, normal: vec3<f32>, to_eye: vec3<f32>, gloss: f32) -> f32 {
     var total = 0.0;
@@ -194,16 +199,25 @@ fn flowing(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
 }
 
 fn material_color(in: VertexOut) -> vec4<f32> {
-    let uv0 = moved_uv(in.uv);
+    var uv0 = in.uv;
+    if !PLAIN {
+        uv0 = moved_uv(in.uv);
+    }
     let dx = dpdx(in.uv);
     let dy = dpdy(in.uv);
     let surface_at = surface_frame(in.world, in.uv);
     let to_eye = normalize(frame.eye.xyz - in.world);
-    let uv = parallax_uv(uv0, surface_at, to_eye, dx, dy);
-    let features = material.flags.z;
+    var uv = uv0;
+    var features = 0;
+    if !PLAIN {
+        uv = parallax_uv(uv0, surface_at, to_eye, dx, dy);
+        features = material.flags.z;
+    }
 
     var base: vec4<f32>;
-    if (features & 1) != 0 {
+    if PLAIN {
+        base = read_slot(0, uv, dx, dy);
+    } else if (features & 1) != 0 {
         // Project from the world along each axis, and blend by the normal.
         let scale = 1.0 / 128.0;
         let weights = pow(abs(surface_at.normal), vec3<f32>(4.0));
@@ -221,12 +235,17 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     }
 
     // Layers over the base, each joining along the height of what's below.
-    let height_slot = material.slots_a.w;
+    var height_slot = -1;
+    var layers = 0;
+    if !PLAIN {
+        height_slot = material.slots_a.w;
+        layers = material.flags.w;
+    }
     var below = 0.5;
     if height_slot >= 0 {
         below = read_slot(height_slot, uv, dx, dy).r;
     }
-    for (var index = 0; index < material.flags.w; index = index + 1) {
+    for (var index = 0; index < layers; index = index + 1) {
         let layer = material.layers[index];
         let color = read_slot(layer.x, uv, dx, dy);
         var mask = read_slot(layer.y, uv, dx, dy).r;
@@ -238,7 +257,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         base = vec4<f32>(mix(base.rgb, color.rgb, share), base.a);
     }
 
-    if material.slots_b.w >= 0 {
+    if !PLAIN && material.slots_b.w >= 0 {
         let scale = material.more.x;
         let detail = read_slot(material.slots_b.w, uv * scale, dx * scale, dy * scale);
         base = vec4<f32>(base.rgb * detail.rgb * 2.0, base.a);
@@ -261,9 +280,16 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     let has_direction = dot(baked_from, baked_from) > 0.01;
 
     var color = base.rgb;
-    let shading = material.flags.x;
+    var shading = 0;
+    if !PLAIN {
+        shading = material.flags.x;
+    }
+    var baked = vec3<f32>(0.0);
+    if shading != 3 || material.slots_a.y >= 0 {
+        baked = light(in);
+    }
     if shading != 3 {
-        var lit = light(in);
+        var lit = baked;
         if has_direction {
             let toward = normalize(baked_from);
             // Light baked for a flat surface is shaped by how a bump turns from
@@ -288,7 +314,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         if has_direction {
             // A highlight from baked light, which slides as the eye moves.
             let half_vector = normalize(normalize(baked_from) + to_eye);
-            let strength = dot(light(in), vec3<f32>(0.333));
+            let strength = dot(baked, vec3<f32>(0.333));
             shine = shine + pow(max(dot(normal, half_vector), 0.0), gloss) * strength;
         }
         color = color + specular.rgb * shine * material.values.x;
@@ -304,7 +330,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         color = color * shine.rgb * 2.0;
     }
 
-    if material.slots_a.z >= 0 {
+    if !PLAIN && material.slots_a.z >= 0 {
         color = color + read_slot(material.slots_a.z, uv, dx, dy).rgb * material.more.y;
     }
 

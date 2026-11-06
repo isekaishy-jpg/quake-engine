@@ -1,0 +1,55 @@
+# The sprint through the list
+
+The human's instruction, 2026-11-06: take every item on the list through the [workflow](../../DESIGN.md#workflow) without them, end to end, with no list of known limitations. When the work is exhausted, review code quality in a circle and fix until nothing's left, review for bugs and fix until none are left, and sweep performance for the big items only.
+
+Each item ends in a proposal, code, a review and a commit. Decisions that would have been the human's are made here and recorded in the proposal, with the reasoning, so they can be changed afterwards.
+
+Status: `todo`, `doing`, `done`, or `needs a person`, which is only for what can't be done from here, with what was done as far as it can go.
+
+## Items, in order
+
+Earlier items unblock later ones.
+
+| # | Item | From | Status |
+|---|---|---|---|
+| 1 | Measure a frame on the CPU and GPU, worst frames and hitches, and fix what's found | Open questions | done |
+| 2 | Loading: stop compiling a map from text at each load | Review 0016 | todo |
+| 3 | Texture standard: world size, sizes, delivery spec, sets, naming, import checks | [Note](texture-standard.md) | todo |
+| 4 | Linear colour, with the murky look kept on purpose | [Note](texture-standard.md) | todo |
+| 5 | Packing: compiled textures, BC compression, one `.epak` container | [Note](texture-standard.md) | todo |
+| 6 | Shader system: container, cache, surface code, instances, one way of drawing | [Note](effects-water-shaders.md) | todo |
+| 7 | Metal, roughness, specular and gloss together | [Note](texture-standard.md) | todo |
+| 8 | Full meshes: format, normals, drawing path, glTF import | [Note](mesh-support.md) | todo |
+| 9 | Mesh light: generated light map UVs, probes for props, one face per flat polygon | [Note](mesh-support.md) | todo |
+| 10 | Mesh collision: generated convex shapes | [Note](mesh-support.md) | todo |
+| 11 | Baked shadows: several rays per sample, more than one sharp light, joins at an angle, light order and layer limits | [Note](shadow-rendering.md) | todo |
+| 12 | Moving lights' shadows: soft, without sawtooth or bands | [Note](shadow-rendering.md) | todo |
+| 13 | Particles: graph and modules, CPU and GPU, attach points | [Note](effects-water-shaders.md) | todo |
+| 14 | Water: the general system, reflections without stipple, depth, murk | [Note](effects-water-shaders.md) | todo |
+| 15 | Zones: research, then regions, sub zones, names, music, ambient light | Open questions | todo |
+| 16 | Engine UI: text, nine-slice, menus, splash, console, animated pictures | Open questions | todo |
+| 17 | Status bar and menus as scripts | Open questions | todo |
+| 18 | Editor: full pass for anyone to make maps | Open questions | todo |
+| 19 | Use layers, masks, paint, decals and hex tiling in the real levels | Review 0016 | todo |
+| 20 | Level faults: foundry lava, enemies once they move, real people in the city | Review 0016 | todo |
+| 21 | Paths: jumps, water and lifts | Review 0016 | todo |
+| 22 | Door logic | Open questions | todo |
+| 23 | Coloured `.lit` light for the original levels | Open questions | todo |
+| 24 | Review of the host, worker and cache crates, and tests out of `src` | Open questions | todo |
+| 25 | Projectile launch delay and correction | Open questions | todo |
+| 26 | Input at 8 kHz | Open questions | todo |
+| 27 | Online numbers on a network | Open questions | todo |
+| 28 | Real sound features and entity culling | [Research plan](plan.md) | todo |
+
+## Then
+
+| Round | Status |
+|---|---|
+| Circular code quality review, fixing until nothing's left | todo |
+| Bug review and fix until none are left | todo |
+| Performance sweeps for big items | todo |
+| Report to the human | todo |
+
+## Log
+
+Newest last. One line for each thing finished, with its commit.

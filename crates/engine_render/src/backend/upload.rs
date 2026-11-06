@@ -17,8 +17,8 @@ use vulkane::safe::{
 
 use super::shadow::{ShadowRange, shadow_figures};
 use super::{
-    Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, GpuAlias, GpuBuffer, GpuImage, GpuMap,
-    GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
+    Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer, GpuImage, GpuMap,
+    GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene, TileWrite,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
@@ -96,6 +96,24 @@ pub(super) fn host_buffer(
             usage,
         },
         MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
+    )?;
+    Ok(GpuBuffer { buffer, memory })
+}
+
+/// A uniform buffer that only the GPU writes, by copying.
+pub(super) fn uniform_buffer(
+    device: &Device,
+    physical: &PhysicalDevice,
+    size: usize,
+) -> Result<GpuBuffer, RenderError> {
+    let (buffer, memory) = Buffer::new_bound(
+        device,
+        physical,
+        BufferCreateInfo {
+            size: size.max(4) as u64,
+            usage: BufferUsage::UNIFORM_BUFFER | BufferUsage::TRANSFER_DST,
+        },
+        MemoryPropertyFlags::DEVICE_LOCAL,
     )?;
     Ok(GpuBuffer { buffer, memory })
 }
@@ -442,11 +460,13 @@ impl Backend {
         quads: &[Quad],
         size: (u32, u32),
     ) -> Result<(), RenderError> {
+        let slot = self.slot;
         let Some(canvas) = &mut self.canvas else {
             return Ok(());
         };
+        canvas.slot = slot;
         let (floats, batches) = canvas_vertices(quads, size);
-        let mut mapped = canvas.vertices.memory.map()?;
+        let mut mapped = canvas.vertices[slot].memory.map()?;
         let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
         let ui_first = floats.len() / VERTEX_FLOATS;
         for (value, chunk) in floats.iter().chain(&canvas.ui.vertices).zip(target) {
@@ -536,25 +556,31 @@ impl Backend {
         self.wait_for_frame()?;
         self.device.wait_idle()?;
         self.map = None;
+        self.tile_writes.borrow_mut().clear();
         let mut vertex_bytes = Vec::with_capacity(mesh.vertices.len() * Vertex::SIZE);
         for vertex in &mesh.vertices {
             vertex.write(&mut vertex_bytes);
         }
         let vertices = self.device_buffer(&vertex_bytes, BufferUsage::VERTEX_BUFFER)?;
         let world_indices = mesh.world_index_count as usize;
-        let mut indices = host_buffer(
-            &self.device,
-            &self.physical,
-            (world_indices + mesh.model_indices.len()) * 4,
-            BufferUsage::INDEX_BUFFER,
-        )?;
-        {
-            let mut mapped = indices.memory.map()?;
-            let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
-            for (index, chunk) in mesh.model_indices.iter().zip(&mut target[world_indices..]) {
-                *chunk = index.to_le_bytes();
+        let index_buffer = || -> Result<GpuBuffer, RenderError> {
+            let mut indices = host_buffer(
+                &self.device,
+                &self.physical,
+                (world_indices + mesh.model_indices.len()) * 4,
+                BufferUsage::INDEX_BUFFER,
+            )?;
+            {
+                let mut mapped = indices.memory.map()?;
+                let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
+                let models = &mut target[world_indices..];
+                for (index, chunk) in mesh.model_indices.iter().zip(models) {
+                    *chunk = index.to_le_bytes();
+                }
             }
-        }
+            Ok(indices)
+        };
+        let indices = [index_buffer()?, index_buffer()?];
 
         let sets = u32::try_from(map.textures.len() + 2).unwrap_or(u32::MAX);
         let material_count = map.textures.iter().filter(|t| t.material.is_some()).count();
@@ -770,6 +796,7 @@ impl Backend {
             material_sets,
             vertices,
             indices,
+            indices_stale: [true; FRAMES],
             shadow_indices,
             shadow_world_count,
             shadow_parts,
@@ -852,74 +879,107 @@ impl Backend {
         self.write_tile(Some((image, corner)), patches)
     }
 
-    /// Writes what's given in one go. Barriers wait for any frame still using
-    /// what's written.
+    /// Queues what's given for the next frame to write, first thing, so nothing
+    /// has to stop and wait for the GPU while the view moves through a level.
+    /// Barriers wait for any frame still using what's written.
     fn write_tile(
         &self,
         image: Option<(&TileImage, [u32; 2])>,
         patches: &[VertexPatch],
     ) -> Result<(), RenderError> {
-        let Some(map) = &self.map else {
+        if self.map.is_none() {
             return Ok(());
-        };
+        }
+        // Without paint, a tile has nothing to say in that atlas.
         let parts = image.iter().flat_map(|(image, _)| {
+            let paint = image.paint.iter().any(|byte| *byte != 0);
+            let paint = paint.then_some(image.paint.as_slice());
             [
-                image.bytes.as_slice(),
-                image.directions.as_slice(),
-                image.paint.as_slice(),
+                Some(image.bytes.as_slice()),
+                Some(image.directions.as_slice()),
+                paint,
             ]
+            .into_iter()
+            .flatten()
         });
-        let mut bytes = Vec::new();
+        let mut pieces: Vec<&[u8]> = Vec::with_capacity(patches.len() + 3);
         let mut offsets = Vec::new();
+        let mut total = 0;
         for part in parts {
-            offsets.push(bytes.len() as u64);
-            bytes.extend_from_slice(part);
+            offsets.push(total as u64);
+            total += part.len();
+            pieces.push(part);
         }
         let mut copies = Vec::with_capacity(patches.len());
         for (first, patch) in patches {
             copies.push(BufferCopy {
-                src_offset: bytes.len() as u64,
+                src_offset: total as u64,
                 dst_offset: u64::from(*first) * Vertex::SIZE as u64,
                 size: patch.len() as u64,
             });
-            bytes.extend_from_slice(patch);
+            total += patch.len();
+            pieces.push(patch);
         }
-        if bytes.is_empty() {
+        if total == 0 {
             return Ok(());
         }
         let mut staging = host_buffer(
             &self.device,
             &self.physical,
-            bytes.len(),
+            total,
             BufferUsage::TRANSFER_SRC,
         )?;
-        staging.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
-        let atlases = [&map.atlas, &map.direction_atlas, &map.paint_atlas];
-        self.queue
-            .one_shot(&self.device, self.queue_family, |rec| {
-                if let Some((image, corner)) = image {
-                    for (atlas, offset) in atlases.iter().zip(&offsets) {
-                        copy_into_atlas(rec, &staging, atlas, *offset, image.size, corner);
-                    }
-                }
-                if !copies.is_empty() {
-                    rec.memory_barrier(
-                        PipelineStage::ALL_GRAPHICS,
-                        PipelineStage::TRANSFER,
-                        AccessFlags::VERTEX_ATTRIBUTE_READ,
-                        AccessFlags::TRANSFER_WRITE,
-                    );
-                    rec.copy_buffer(&staging.buffer, &map.vertices.buffer, &copies);
-                    rec.memory_barrier(
-                        PipelineStage::TRANSFER,
-                        PipelineStage::ALL_GRAPHICS,
-                        AccessFlags::TRANSFER_WRITE,
-                        AccessFlags::VERTEX_ATTRIBUTE_READ,
-                    );
-                }
-                Ok(())
-            })?;
+        {
+            let mut mapped = staging.memory.map()?;
+            let mut rest = mapped.as_slice_mut();
+            for piece in pieces {
+                let (here, after) = rest.split_at_mut(piece.len());
+                here.copy_from_slice(piece);
+                rest = after;
+            }
+        }
+        self.tile_writes.borrow_mut().push(TileWrite {
+            staging,
+            picture: image.map(|(image, corner)| (image.size, corner)),
+            offsets,
+            copies,
+        });
         Ok(())
+    }
+
+    /// Records the tile writes that are waiting, and holds on to what they read
+    /// until this frame's done.
+    pub(super) fn record_tile_writes(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>) {
+        let Some(map) = &self.map else {
+            return;
+        };
+        let atlases = [&map.atlas, &map.direction_atlas, &map.paint_atlas];
+        let mut writes = self.tile_writes.borrow_mut();
+        for write in writes.iter() {
+            if let Some((size, corner)) = write.picture {
+                for (atlas, offset) in atlases.iter().zip(&write.offsets) {
+                    copy_into_atlas(rec, &write.staging, atlas, *offset, size, corner);
+                }
+            }
+            if !write.copies.is_empty() {
+                rec.memory_barrier(
+                    PipelineStage::ALL_GRAPHICS,
+                    PipelineStage::TRANSFER,
+                    AccessFlags::VERTEX_ATTRIBUTE_READ,
+                    AccessFlags::TRANSFER_WRITE,
+                );
+                rec.copy_buffer(&write.staging.buffer, &map.vertices.buffer, &write.copies);
+                rec.memory_barrier(
+                    PipelineStage::TRANSFER,
+                    PipelineStage::ALL_GRAPHICS,
+                    AccessFlags::TRANSFER_WRITE,
+                    AccessFlags::VERTEX_ATTRIBUTE_READ,
+                );
+            }
+        }
+        self.written_tiles[self.slot]
+            .borrow_mut()
+            .extend(writes.drain(..));
     }
 
     pub(super) fn upload_image(
@@ -1015,7 +1075,9 @@ impl Backend {
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
-        self.uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
+        let slot = self.slot;
+        let values = &mut self.frame_values[slot];
+        values.frame.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         let live = scene.map_or(&[][..], |scene| scene.drawables.live_lights);
         let slots = match scene.filter(|_| self.post.live_shadows) {
             Some(scene) => {
@@ -1030,24 +1092,30 @@ impl Backend {
             }
         };
         let size = self.scene_size();
-        let bytes = live_bytes(view, aspect, size, live, &slots);
-        self.live_uniforms.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
+        let capsules = scene.map_or(&[][..], |scene| scene.drawables.capsules);
+        let bytes = live_bytes(view, aspect, size, live, capsules, &slots);
+        let values = &mut self.frame_values[slot];
+        values.live.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene
             && !scene.drawables.particles.is_empty()
         {
-            let mut mapped = self.particles.memory.map()?;
+            let mut mapped = self.particles[slot].memory.map()?;
             let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<PARTICLE_BYTES>();
             for (particle, chunk) in scene.drawables.particles.iter().zip(target) {
                 write_particle(particle, chunk);
             }
         }
-        if let (Some(scene), Some(map)) = (scene, &mut self.map)
-            && scene.changed
-        {
-            let mut mapped = map.indices.memory.map()?;
-            let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
-            for (index, chunk) in scene.visible.indices.iter().zip(target) {
-                *chunk = index.to_le_bytes();
+        if let (Some(scene), Some(map)) = (scene, &mut self.map) {
+            if scene.changed {
+                map.indices_stale = [true; FRAMES];
+            }
+            if map.indices_stale[slot] {
+                let mut mapped = map.indices[slot].memory.map()?;
+                let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<4>();
+                for (index, chunk) in scene.visible.indices.iter().zip(target) {
+                    *chunk = index.to_le_bytes();
+                }
+                map.indices_stale[slot] = false;
             }
         }
         Ok(())

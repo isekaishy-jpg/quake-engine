@@ -2,7 +2,8 @@
 
 use engine_core::math::Vec3;
 use engine_render::{
-    CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, View, cluster_masks, cube_face, slice_of,
+    CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, CapsuleDraw, LiveLight, MAX_LIVE_LIGHTS, View,
+    cluster_masks, cube_face, slice_of,
 };
 
 /// A view from the origin along x, at a 16 by 9 shape.
@@ -44,6 +45,24 @@ fn reached(masks: &[u64]) -> Vec<(usize, usize, usize)> {
     out
 }
 
+/// A capsule ahead takes a bit after the lights', and only where its shade may
+/// fall, so that most pixels never look at it.
+#[test]
+fn a_capsule_only_reaches_the_clusters_it_shades() {
+    let capsule = CapsuleDraw {
+        origin: Vec3::new(1500.0, 0.0, 0.0),
+        radius: 16.0,
+        toward_light: Vec3::new(0.0, 0.0, 1.0),
+        strength: 0.5,
+    };
+    let masks = cluster_masks(&view(), 16.0 / 9.0, &[], &[capsule]);
+    let bit = 1_u64 << MAX_LIVE_LIGHTS;
+    let reached = masks.iter().filter(|mask| **mask & bit != 0).count();
+    assert!(reached > 0);
+    assert!(reached < masks.len() / 20, "{reached} of {}", masks.len());
+    assert!(masks.iter().all(|mask| *mask & (bit - 1) == 0));
+}
+
 /// A small light ahead reaches the middle of the view, at its own distance.
 #[test]
 fn a_light_ahead_reaches_the_middle() {
@@ -51,6 +70,7 @@ fn a_light_ahead_reaches_the_middle() {
         &view(),
         16.0 / 9.0,
         &[light(Vec3::new(500.0, 0.0, 0.0), 40.0)],
+        &[],
     );
     let found = reached(&masks);
     assert!(!found.is_empty());
@@ -68,6 +88,7 @@ fn a_light_behind_reaches_nothing() {
         &view(),
         16.0 / 9.0,
         &[light(Vec3::new(-500.0, 0.0, 0.0), 40.0)],
+        &[],
     );
     assert!(reached(&masks).is_empty());
 }
@@ -80,12 +101,14 @@ fn a_light_lands_on_its_side_of_the_view() {
         &view(),
         aspect,
         &[light(Vec3::new(500.0, 400.0, 0.0), 30.0)],
+        &[],
     );
     assert!(reached(&left).iter().all(|(column, ..)| *column < 8));
     let up = cluster_masks(
         &view(),
         aspect,
         &[light(Vec3::new(500.0, 0.0, 200.0), 30.0)],
+        &[],
     );
     assert!(reached(&up).iter().all(|(_, row, _)| *row < 4));
 }
@@ -97,6 +120,7 @@ fn a_light_round_the_eye_reaches_everywhere() {
         &view(),
         16.0 / 9.0,
         &[light(Vec3::new(10.0, 0.0, 0.0), 100.0)],
+        &[],
     );
     let found = reached(&masks);
     let first = found.iter().filter(|(.., slice)| *slice == 0).count();
@@ -110,7 +134,7 @@ fn lights_have_their_own_bits() {
         light(Vec3::new(500.0, 400.0, 0.0), 30.0),
         light(Vec3::new(500.0, -400.0, 0.0), 30.0),
     ];
-    let masks = cluster_masks(&view(), 16.0 / 9.0, &lights);
+    let masks = cluster_masks(&view(), 16.0 / 9.0, &lights, &[]);
     assert!(masks.contains(&1));
     assert!(masks.contains(&2));
     assert!(!masks.contains(&3), "they are far apart");

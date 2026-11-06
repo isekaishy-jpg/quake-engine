@@ -94,7 +94,7 @@ struct LiveFrame {
     params: vec4<f32>,
     // Which way the view looks, and where slices start.
     forward: vec4<f32>,
-    lights: array<LiveLight, 64>,
+    lights: array<LiveLight, 48>,
     shadows: array<mat4x4<f32>, 60>,
     // Two clusters to an entry, each a 64 bit mask.
     clusters: array<vec4<u32>, 1152>,
@@ -164,23 +164,27 @@ fn live_shadow(
     return total / 16.0;
 }
 
-// Moving lights on a surface. A pixel's cluster says which to look at.
-fn live_light(world: vec3<f32>, screen: vec2<f32>) -> vec3<f32> {
-    let count = live.params.z;
-    if count < 0.5 {
-        return vec3<f32>(0.0);
-    }
-    let normal = normalize(cross(dpdx(world), dpdy(world)));
+// What reaches a pixel: a bit for each moving light, then each capsule.
+fn cluster_at(world: vec3<f32>, screen: vec2<f32>) -> vec2<u32> {
     let depth = dot(world - frame.eye.xyz, live.forward.xyz);
     let slice = u32(clamp(log2(max(depth, live.forward.w) / live.forward.w) * live.params.w, 0.0, 15.0));
     let column = u32(clamp(screen.x / live.params.x * 16.0, 0.0, 15.0));
     let row = u32(clamp(screen.y / live.params.y * 9.0, 0.0, 8.0));
     let at = (slice * 9u + row) * 16u + column;
     let pair = live.clusters[at / 2u];
-    var masks = pair.xy;
     if at % 2u == 1u {
-        masks = pair.zw;
+        return pair.zw;
     }
+    return pair.xy;
+}
+
+// Moving lights on a surface. A pixel's cluster says which to look at.
+fn live_light(world: vec3<f32>, cluster: vec2<u32>) -> vec3<f32> {
+    let masks = vec2<u32>(cluster.x, cluster.y & 0xffffu);
+    if (masks.x | masks.y) == 0u {
+        return vec3<f32>(0.0);
+    }
+    let normal = normalize(cross(dpdx(world), dpdy(world)));
     var total = vec3<f32>(0.0);
     for (var half_mask = 0u; half_mask < 2u; half_mask = half_mask + 1u) {
         var bits = masks[half_mask];
@@ -216,10 +220,12 @@ fn live_light(world: vec3<f32>, screen: vec2<f32>) -> vec3<f32> {
 
 // How much light characters leave on a point. Each is a soft ball, shading
 // what's behind it from the direction its light comes from.
-fn capsule_shade(world: vec3<f32>) -> f32 {
+fn capsule_shade(world: vec3<f32>, cluster: vec2<u32>) -> f32 {
     var open = 1.0;
-    let count = u32(frame.capsule_params.x);
-    for (var index = 0u; index < count; index = index + 1u) {
+    var bits = cluster.y >> 16u;
+    while bits != 0u {
+        let index = firstTrailingBit(bits);
+        bits = bits & (bits - 1u);
         let capsule = frame.capsules[index];
         let source = frame.capsule_light[index];
         let offset = world - capsule.xyz;
@@ -247,8 +253,9 @@ fn keep_hue(color: vec3<f32>, most: f32) -> vec3<f32> {
 fn light(in: VertexOut) -> vec3<f32> {
     let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
         + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
-    let shaded = baked * capsule_shade(in.world);
-    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, in.clip.xy);
+    let cluster = cluster_at(in.world, in.clip.xy);
+    let shaded = baked * capsule_shade(in.world, cluster);
+    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster);
     return keep_hue(2.0 * (shaded + moving), 2.0);
 }
 

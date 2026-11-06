@@ -21,7 +21,7 @@ const SHOW_REACH: i32 = 2;
 const KEEP_REACH: i32 = 3;
 
 /// How many tiles a frame copies to the GPU.
-const SHOWN_PER_FRAME: usize = 2;
+const SHOWN_PER_FRAME: usize = 1;
 
 /// How many tiles are read ahead of being shown.
 const MOST_ASKED: usize = 8;

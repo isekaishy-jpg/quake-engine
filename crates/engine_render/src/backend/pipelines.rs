@@ -100,12 +100,15 @@ impl Backend {
             .depth_test(false, false)
             .alpha_blending(true)
             .build(&self.device)?;
-        let vertices = host_buffer(
-            &self.device,
-            &self.physical,
-            MAX_QUADS * 6 * VERTEX_FLOATS * 4,
-            BufferUsage::VERTEX_BUFFER,
-        )?;
+        let buffer = || {
+            host_buffer(
+                &self.device,
+                &self.physical,
+                MAX_QUADS * 6 * VERTEX_FLOATS * 4,
+                BufferUsage::VERTEX_BUFFER,
+            )
+        };
+        let vertices = [buffer()?, buffer()?];
         Ok(CanvasPass {
             pipeline,
             layout,
@@ -113,6 +116,7 @@ impl Backend {
             sampler,
             pictures: Vec::new(),
             vertices,
+            slot: 0,
             batches: Vec::new(),
             ui: UiFrame::default(),
             ui_first: 0,
@@ -287,18 +291,28 @@ impl Backend {
         // What's been through the depth pass needn't write depth again. Writing
         // it would hold back the test that skips what's hidden, as this shader
         // can discard.
-        let material_after_depth = GraphicsPipelineBuilder::new(&layouts.material, pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_material")
-            .vertex_input(&bindings, &attributes)
-            .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
-            .depth_test(true, false)
-            .samples(samples)
-            .build(device)?;
+        let after_depth = |shader: &ShaderModule| {
+            GraphicsPipelineBuilder::new(&layouts.material, pass)
+                .stage(GraphicsShaderStage::Vertex, shader, "vs_main")
+                .stage(GraphicsShaderStage::Fragment, shader, "fs_material")
+                .vertex_input(&bindings, &attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(true, false)
+                .samples(samples)
+                .build(device)
+        };
+        let material_after_depth = after_depth(&shader)?;
+        let plain_source =
+            WORLD_SHADER.replace("const PLAIN: bool = false;", "const PLAIN: bool = true;");
+        let plain_spirv = vulkane::safe::naga::compile_wgsl(&plain_source)
+            .map_err(|error| RenderError(error.to_string()))?;
+        let plain_shader = ShaderModule::from_spirv(device, &plain_spirv)?;
+        let plain_after_depth = after_depth(&plain_shader)?;
         Ok(Pipelines {
             depth_only,
             material_after_depth,
+            plain_after_depth,
             solid: pipeline("fs_solid")?,
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,

@@ -31,8 +31,37 @@ pub(super) struct SceneTarget {
     _resolved: Option<GpuImage>,
     /// What SMAA draws.
     pub(super) smaa: SmaaTarget,
+    /// Where light in the air is drawn.
+    pub(super) rays: RayTarget,
     /// Its size.
     pub(super) size: (u32, u32),
+}
+
+/// Where light in the air is drawn, at half the scene's size each way.
+pub(super) struct RayTarget {
+    /// Where it's drawn.
+    pub(super) framebuffer: Framebuffer,
+    /// Kept alive for the framebuffer.
+    image: GpuImage,
+    /// Its size.
+    pub(super) size: (u32, u32),
+}
+
+/// The render pass of light in the air, every pixel of which is drawn.
+pub(super) fn make_ray_pass(device: &Device) -> Result<RenderPass, RenderError> {
+    Ok(RenderPass::new(
+        device,
+        RenderPassCreateInfo {
+            color_attachments: &[AttachmentDescription {
+                format: COLOR_FORMAT,
+                load_op: AttachmentLoadOp::DONT_CARE,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: ImageLayout::UNDEFINED,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            }],
+            depth_attachment: None,
+        },
+    )?)
 }
 
 /// The render pass of a scene, leaving what the final pass reads ready to
@@ -90,12 +119,13 @@ fn probe_slices(probes: &ProbeGrid) -> (u32, u32, Vec<u8>) {
 }
 
 impl Backend {
-    /// The final pass's pipeline.
+    /// A pipeline of the post shader, by the name of its fragment stage.
     pub(super) fn make_post_pipeline(
         device: &Device,
         layout: &PipelineLayout,
         pass: &RenderPass,
         samples: u32,
+        entry: &str,
     ) -> Result<GraphicsPipeline, RenderError> {
         // Depth isn't resolved, so with samples it's read as it was drawn.
         let source = if samples > 1 {
@@ -108,11 +138,33 @@ impl Backend {
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         Ok(GraphicsPipelineBuilder::new(layout, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_post")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_post")
+            .stage(GraphicsShaderStage::Fragment, &shader, entry)
             .dynamic_viewport_scissor()
             .cull_mode(CullMode::NONE)
             .depth_test(false, false)
             .build(device)?)
+    }
+
+    /// Makes what light in the air is drawn into, for a scene of `size`.
+    fn ray_target(&self, size: (u32, u32)) -> Result<RayTarget, RenderError> {
+        let size = (size.0.div_ceil(2), size.1.div_ceil(2));
+        let image = Image::new_2d(
+            &self.device,
+            Image2dCreateInfo {
+                format: COLOR_FORMAT,
+                width: size.0,
+                height: size.1,
+                usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
+            },
+        )?;
+        let image = device_image(&self.device, &self.physical, image, false)?;
+        let framebuffer =
+            Framebuffer::new(&self.device, &self.ray_pass, &[&image.view], size.0, size.1)?;
+        Ok(RayTarget {
+            framebuffer,
+            image,
+            size,
+        })
     }
 
     /// Points `set` at the stencils' pictures.
@@ -186,8 +238,20 @@ impl Backend {
         self.scene_pass = make_scene_pass(&self.device, samples)?;
         self.pipelines =
             Self::make_pipelines(&self.device, &self.layouts, &self.scene_pass, samples)?;
-        self.post_pipeline =
-            Self::make_post_pipeline(&self.device, &self.post_layout, &self.present_pass, samples)?;
+        self.post_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.present_pass,
+            samples,
+            "fs_post",
+        )?;
+        self.ray_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.ray_pass,
+            samples,
+            "fs_rays",
+        )?;
         Ok(())
     }
 
@@ -253,7 +317,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 8,
+                    descriptor_count: 9,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -281,6 +345,8 @@ impl Backend {
             &smaa.weights().view,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
+        let rays = self.ray_target(size)?;
+        set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             set,
@@ -290,6 +356,7 @@ impl Backend {
             _depth: depth,
             _resolved: resolved,
             smaa,
+            rays,
             size,
         });
         Ok(())

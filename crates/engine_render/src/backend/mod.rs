@@ -7,16 +7,17 @@ mod shadow;
 mod smaa;
 mod upload;
 
+use std::cell::RefCell;
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite};
 use pipelines::make_pass;
-use upload::{depth_image, device_image, host_buffer};
+use upload::{depth_image, device_image, host_buffer, uniform_buffer};
 use vulkane::safe::{
-    AccessFlags, ApiVersion, Buffer, BufferImageCopy, BufferUsage, ClearValue, CommandBuffer,
-    CommandPool, CompareOp, DescriptorPool, DescriptorSet, DescriptorSetLayout,
+    AccessFlags, ApiVersion, Buffer, BufferCopy, BufferImageCopy, BufferUsage, ClearValue,
+    CommandBuffer, CommandPool, CompareOp, DescriptorPool, DescriptorSet, DescriptorSetLayout,
     DescriptorSetLayoutBinding, DescriptorType, Device, DeviceCreateInfo, DeviceExtensions,
     DeviceFeatures, DeviceMemory, Fence, Format, Framebuffer, GraphicsPipeline, Image,
     Image2dCreateInfo, ImageLayout, ImageUsage, ImageView, Instance, InstanceCreateInfo,
@@ -170,12 +171,49 @@ struct WindowTarget {
     extent: (u32, u32),
 }
 
+/// How many frames can be on their way at once. With one, the CPU and GPU take
+/// turns, and neither is ever busy while the other is.
+const FRAMES: usize = 2;
+
+/// A tile's light and vertices, waiting to be written by a frame.
+struct TileWrite {
+    /// What's written.
+    staging: GpuBuffer,
+    /// The size of the tile's square in the atlas, and where it goes.
+    picture: Option<(u32, [u32; 2])>,
+    /// Where each atlas's part is in `staging`.
+    offsets: Vec<u64>,
+    /// Which vertices are written.
+    copies: Vec<BufferCopy>,
+}
+
+/// What a frame in flight writes its uniforms into.
+struct FrameValues {
+    /// The frame's.
+    frame: GpuBuffer,
+    /// The moving lights'.
+    live: GpuBuffer,
+}
+
+impl FrameValues {
+    /// Somewhere for a frame's uniforms.
+    fn new(device: &Device, physical: &PhysicalDevice) -> Result<Self, RenderError> {
+        Ok(Self {
+            frame: host_buffer(device, physical, FRAME_SIZE, BufferUsage::TRANSFER_SRC)?,
+            live: host_buffer(device, physical, LIVE_BYTES, BufferUsage::TRANSFER_SRC)?,
+        })
+    }
+}
+
 /// A map on the GPU.
 struct GpuMap {
     /// All vertices.
     vertices: GpuBuffer,
-    /// The visible indices, rewritten when the view changes leaf.
-    indices: GpuBuffer,
+    /// The visible indices, one for each frame in flight.
+    indices: [GpuBuffer; FRAMES],
+    /// Which of those are behind the view, which changes as it moves between
+    /// leaves.
+    indices_stale: [bool; FRAMES],
     /// Each texture's descriptor set, by map texture index.
     texture_sets: Vec<Option<DescriptorSet>>,
     /// The cloud image's set, if the map has a sky sphere.
@@ -227,7 +265,9 @@ struct CanvasPass {
     /// Every picture, where the first is solid white.
     pictures: Vec<GpuPicture>,
     /// The vertices, rewritten every frame.
-    vertices: GpuBuffer,
+    vertices: [GpuBuffer; FRAMES],
+    /// Which of them this frame drew into.
+    slot: usize,
     /// What to draw this frame.
     batches: Vec<QuadBatch>,
     /// A UI to draw over that.
@@ -284,6 +324,8 @@ struct Pipelines {
     depth_only: GraphicsPipeline,
     /// Materials whose depth is already drawn.
     material_after_depth: GraphicsPipeline,
+    /// Those with nothing unusual about them, which is most surfaces.
+    plain_after_depth: GraphicsPipeline,
     /// Lit surfaces.
     solid: GraphicsPipeline,
     /// Lit surfaces with holes.
@@ -353,7 +395,7 @@ pub(crate) struct Backend {
     /// Every sprite uploaded.
     sprites: Vec<GpuSprite>,
     /// The particles to draw, rewritten each frame.
-    particles: GpuBuffer,
+    particles: [GpuBuffer; FRAMES],
     /// The pipelines.
     pipelines: Pipelines,
     /// The pass ending ready to present.
@@ -368,6 +410,15 @@ pub(crate) struct Backend {
     view_area: Option<[u32; 4]>,
     /// The moving light uniforms.
     live_uniforms: GpuBuffer,
+    /// What each frame in flight writes the uniforms into, for the GPU to copy
+    /// when it reaches that frame.
+    frame_values: [FrameValues; FRAMES],
+    /// Which frame in flight this is.
+    slot: usize,
+    /// What's waiting for the next frame to write.
+    tile_writes: RefCell<Vec<TileWrite>>,
+    /// What each frame in flight is still reading from.
+    written_tiles: [RefCell<Vec<TileWrite>>; FRAMES],
     /// Shadow maps for moving lights.
     shadows: shadow::Shadows,
     /// Compares against shadow maps.
@@ -380,6 +431,10 @@ pub(crate) struct Backend {
     post_layout: PipelineLayout,
     /// The final pass.
     post_pipeline: GraphicsPipeline,
+    /// The pass light in the air is drawn in.
+    ray_pass: RenderPass,
+    /// Light in the air.
+    ray_pipeline: GraphicsPipeline,
     /// The final pass's settings.
     post: PostSettings,
     /// SMAA's passes.
@@ -401,15 +456,15 @@ pub(crate) struct Backend {
     /// The lightmap sampler.
     light_sampler: Sampler,
     /// The buffer being recorded or in flight.
-    commands: Option<CommandBuffer>,
+    commands: [Option<CommandBuffer>; FRAMES],
     /// Commands for a frame.
     command_pool: CommandPool,
-    /// Signals when an image is ready to draw to.
-    available: Semaphore,
-    /// Whether a frame is being drawn.
-    in_flight: bool,
-    /// What says the frame in flight has finished.
-    frame_done: Fence,
+    /// Signals when an image is ready to draw to, by frame.
+    available: [Semaphore; FRAMES],
+    /// Whether each frame is being drawn.
+    in_flight: [bool; FRAMES],
+    /// What says each frame has finished.
+    frame_done: [Fence; FRAMES],
     /// The present mode.
     present_mode: PresentMode,
     /// The present mode when frames don't wait for the display.
@@ -573,6 +628,7 @@ impl Backend {
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
                 image_binding(9, DescriptorType::SAMPLED_IMAGE),
+                image_binding(10, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -630,9 +686,12 @@ impl Backend {
         )?;
         let light_sampler =
             Sampler::new_mipmapped(&device, SamplerCreateInfo::default(), MATERIAL_MAX_LOD)?;
-        let uniforms = host_buffer(&device, &physical, FRAME_SIZE, BufferUsage::UNIFORM_BUFFER)?;
-        let live_uniforms =
-            host_buffer(&device, &physical, LIVE_BYTES, BufferUsage::UNIFORM_BUFFER)?;
+        let uniforms = uniform_buffer(&device, &physical, FRAME_SIZE)?;
+        let live_uniforms = uniform_buffer(&device, &physical, LIVE_BYTES)?;
+        let frame_values = [
+            FrameValues::new(&device, &physical)?,
+            FrameValues::new(&device, &physical)?,
+        ];
         let shadows = shadow::Shadows::new(&device, &physical)?;
         let shadow_sampler = Sampler::new(
             &device,
@@ -641,16 +700,23 @@ impl Backend {
                 ..SamplerCreateInfo::default()
             },
         )?;
-        let particles = host_buffer(
-            &device,
-            &physical,
-            MAX_PARTICLE_DRAWS * PARTICLE_BYTES,
-            BufferUsage::VERTEX_BUFFER,
-        )?;
+        let particle_buffer = || {
+            host_buffer(
+                &device,
+                &physical,
+                MAX_PARTICLE_DRAWS * PARTICLE_BYTES,
+                BufferUsage::VERTEX_BUFFER,
+            )
+        };
+        let particles = [particle_buffer()?, particle_buffer()?];
         let command_pool = CommandPool::new(&device, queue_family)?;
-        let frame_done = Fence::new(&device)?;
-        let available = Semaphore::binary(&device)?;
-        let post_pipeline = Self::make_post_pipeline(&device, &post_layout, &present_pass, 1)?;
+        let frame_done = [Fence::new(&device)?, Fence::new(&device)?];
+        let available = [Semaphore::binary(&device)?, Semaphore::binary(&device)?];
+        let post_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &present_pass, 1, "fs_post")?;
+        let ray_pass = post::make_ray_pass(&device)?;
+        let ray_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays")?;
         let smaa = smaa::Smaa::new(&device)?;
         let mut backend = Self {
             surface,
@@ -673,10 +739,16 @@ impl Backend {
             samples: 1,
             view_area: None,
             live_uniforms,
+            frame_values,
+            slot: 0,
+            tile_writes: RefCell::default(),
+            written_tiles: [RefCell::default(), RefCell::default()],
             shadows,
             shadow_sampler,
             scene_target: None,
             post_pipeline,
+            ray_pass,
+            ray_pipeline,
             smaa,
             post_set_layout,
             post_layout,
@@ -690,9 +762,9 @@ impl Backend {
             material_layout,
             light_sampler,
             command_pool,
-            commands: None,
+            commands: [None, None],
             available,
-            in_flight: false,
+            in_flight: [false; FRAMES],
             frame_done,
             present_mode,
             free_present_mode: present_mode,
@@ -721,14 +793,23 @@ impl Backend {
         &self.device_name
     }
 
-    /// Waits for the frame in flight.
-    fn wait_for_frame(&mut self) -> Result<(), RenderError> {
-        if self.in_flight {
-            self.frame_done.wait(u64::MAX)?;
-            self.frame_done.reset()?;
-            self.in_flight = false;
+    /// Waits for frame `slot`, if it's in flight.
+    fn wait_for_slot(&mut self, slot: usize) -> Result<(), RenderError> {
+        if self.in_flight[slot] {
+            self.frame_done[slot].wait(u64::MAX)?;
+            self.frame_done[slot].reset()?;
+            self.in_flight[slot] = false;
         }
-        self.commands = None;
+        self.commands[slot] = None;
+        self.written_tiles[slot].borrow_mut().clear();
+        Ok(())
+    }
+
+    /// Waits for every frame in flight.
+    fn wait_for_frame(&mut self) -> Result<(), RenderError> {
+        for slot in 0..FRAMES {
+            self.wait_for_slot(slot)?;
+        }
         Ok(())
     }
 
@@ -911,6 +992,41 @@ impl Backend {
     }
 
     /// Records the scene into its target.
+    /// Starts a frame on the GPU. Another may still be drawing, and they share
+    /// what's drawn to, so this waits for that much. Then it takes this frame's
+    /// uniforms, which only the GPU writes where shaders read them.
+    fn record_values(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>) {
+        rec.memory_barrier(
+            PipelineStage::ALL_COMMANDS,
+            PipelineStage::ALL_COMMANDS,
+            AccessFlags::MEMORY_WRITE,
+            AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE,
+        );
+        self.record_tile_writes(rec);
+        let values = &self.frame_values[self.slot];
+        let copy = |size: usize| BufferCopy {
+            src_offset: 0,
+            dst_offset: 0,
+            size: size as u64,
+        };
+        rec.copy_buffer(
+            &values.frame.buffer,
+            &self.uniforms.buffer,
+            &[copy(FRAME_SIZE)],
+        );
+        rec.copy_buffer(
+            &values.live.buffer,
+            &self.live_uniforms.buffer,
+            &[copy(LIVE_BYTES)],
+        );
+        rec.memory_barrier(
+            PipelineStage::TRANSFER,
+            PipelineStage::ALL_GRAPHICS,
+            AccessFlags::TRANSFER_WRITE,
+            AccessFlags::UNIFORM_READ,
+        );
+    }
+
     fn record_scene(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
@@ -918,6 +1034,7 @@ impl Backend {
         view: &View,
         size: (u32, u32),
     ) {
+        self.record_values(rec);
         let Some(target) = &self.scene_target else {
             return;
         };
@@ -958,6 +1075,9 @@ impl Backend {
         );
         let wanted = self.post.edge_smoothing >= SMAA_SETTING;
         self.smaa.record(rec, &target.smaa, target.size, wanted);
+        if self.post.rays != 0 && !self.stencil_images.is_empty() {
+            self.record_rays(rec, target);
+        }
     }
 
     /// What a shadow map draws: the world's opaque faces, then moving models',
@@ -987,6 +1107,32 @@ impl Backend {
     }
 
     /// Records the final pass.
+    /// Draws light in the air, for the final pass to add.
+    fn record_rays(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        target: &post::SceneTarget,
+    ) {
+        let size = target.rays.size;
+        rec.begin_render_pass_ext(&self.ray_pass, &target.rays.framebuffer, &[]);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&self.ray_pipeline);
+        rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+        rec.draw(3, 1, 0, 0);
+        rec.end_render_pass();
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::FRAGMENT_SHADER,
+            AccessFlags::COLOR_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ,
+        );
+    }
+
     fn record_post(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
@@ -1030,19 +1176,24 @@ impl Backend {
         scene: Option<&Scene<'_>>,
         quads: &[Quad],
     ) -> Result<(), RenderError> {
-        self.wait_for_frame()?;
+        self.slot = (self.slot + 1) % FRAMES;
+        let slot = self.slot;
+        self.wait_for_slot(slot)?;
         if self.resized || self.window.is_none() {
             self.resized = false;
+            self.wait_for_frame()?;
             self.rebuild_window()?;
         }
         let Some(window) = &self.window else {
             return Ok(());
         };
         let extent = window.extent;
-        let Ok(image) = window
-            .swapchain
-            .acquire_next_image(u64::MAX, Some(&self.available), None)
+        let Ok(image) =
+            window
+                .swapchain
+                .acquire_next_image(u64::MAX, Some(&self.available[slot]), None)
         else {
+            self.wait_for_frame()?;
             return self.rebuild_window();
         };
         let (corner, shown) = self.view_area(extent);
@@ -1081,17 +1232,17 @@ impl Backend {
         self.queue.submit_with_sync(
             &[&commands],
             &[WaitSemaphore::binary(
-                &self.available,
+                &self.available[slot],
                 PipelineStage::COLOR_ATTACHMENT_OUTPUT,
             )],
             &[SignalSemaphore::binary(&window.finished[at])],
-            Some(&self.frame_done),
+            Some(&self.frame_done[slot]),
         )?;
         let presented = window
             .swapchain
             .present(&self.queue, image, &[&window.finished[at]]);
-        self.commands = Some(commands);
-        self.in_flight = true;
+        self.commands[slot] = Some(commands);
+        self.in_flight[slot] = true;
         if presented.is_err() {
             self.wait_for_frame()?;
             self.rebuild_window()?;

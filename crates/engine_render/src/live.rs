@@ -4,10 +4,17 @@
 use engine_core::math::Vec3;
 
 use crate::matrix::rolled_axes;
-use crate::renderer::View;
+use crate::renderer::{CapsuleDraw, View};
 
-/// The most moving lights in a frame, one for each bit of a cluster's mask.
-pub const MAX_LIVE_LIGHTS: usize = 64;
+/// The most moving lights in a frame, one for each of a cluster's first bits.
+pub const MAX_LIVE_LIGHTS: usize = 48;
+
+/// The most capsules in a frame, one for each of a cluster's last bits. A capsule
+/// only shades what's close behind it, so few pixels should look at any of them.
+pub(crate) const MAX_CAPSULES: usize = 16;
+
+/// How far behind a capsule its shade runs.
+const CAPSULE_REACH: f32 = 256.0;
 
 /// The most lights with shadows, at six atlas tiles each.
 pub const MAX_SHADOW_LIGHTS: usize = 10;
@@ -74,33 +81,46 @@ fn slice_scale() -> f32 {
     CLUSTERS_Z as f32 / (SLICE_FAR / SLICE_NEAR).log2()
 }
 
-/// Which clusters each light reaches, as a bit for each light in each cluster.
-/// A sphere's bounds on the screen stand in for it, which can only add clusters
-/// that a pixel's own distance check then leaves dark.
+/// Which clusters each light and capsule reaches, as a bit for each in each
+/// cluster. A sphere's bounds on the screen stand in for them, which can only add
+/// clusters that a pixel's own distance check then leaves dark.
 #[must_use]
-pub fn cluster_masks(view: &View, aspect: f32, lights: &[LiveLight]) -> Vec<u64> {
+pub fn cluster_masks(
+    view: &View,
+    aspect: f32,
+    lights: &[LiveLight],
+    capsules: &[CapsuleDraw],
+) -> Vec<u64> {
+    let lit = lights.iter().take(MAX_LIVE_LIGHTS).enumerate();
+    let spheres = lit.map(|(bit, light)| (bit, light.origin, light.radius));
+    let shaded = capsules.iter().take(MAX_CAPSULES).enumerate();
+    let shades = shaded.map(|(bit, capsule)| {
+        let half = CAPSULE_REACH * 0.5;
+        let middle = capsule.origin - capsule.toward_light * half;
+        (MAX_LIVE_LIGHTS + bit, middle, half + capsule.radius * 2.0)
+    });
     let mut masks = vec![0; CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z];
     let [forward, right, up] = rolled_axes(view.yaw, view.pitch, view.roll);
     let scale_y = (4.0 / 3.0) / (view.fov.to_radians() * 0.5).tan();
     let scale_x = scale_y / aspect;
     #[expect(clippy::cast_precision_loss, reason = "small counts")]
     let (across, down) = (CLUSTERS_X as f32, CLUSTERS_Y as f32);
-    for (bit, light) in lights.iter().take(MAX_LIVE_LIGHTS).enumerate() {
-        let offset = light.origin - view.origin;
+    for (bit, origin, radius) in spheres.chain(shades) {
+        let offset = origin - view.origin;
         let depth = offset.dot(forward);
-        if depth + light.radius <= 0.0 {
+        if depth + radius <= 0.0 {
             continue;
         }
-        let first_slice = slice_of(depth - light.radius);
-        let last_slice = slice_of(depth + light.radius);
+        let first_slice = slice_of(depth - radius);
+        let last_slice = slice_of(depth + radius);
         // A sphere round the eye covers the whole view.
-        let near = depth - light.radius;
+        let near = depth - radius;
         let (left, top, right_edge, bottom) = if near <= 1.0 {
             (0, 0, CLUSTERS_X - 1, CLUSTERS_Y - 1)
         } else {
             let (x, y) = (offset.dot(right), offset.dot(up));
-            let spread_x = (light.radius / near) * scale_x;
-            let spread_y = (light.radius / near) * scale_y;
+            let spread_x = (radius / near) * scale_x;
+            let spread_y = (radius / near) * scale_y;
             let (middle_x, middle_y) = (x / depth * scale_x, y / depth * scale_y);
             let column = |value: f32| {
                 #[expect(
@@ -182,6 +202,7 @@ pub(crate) fn live_bytes(
     aspect: f32,
     size: (u32, u32),
     lights: &[LiveLight],
+    capsules: &[CapsuleDraw],
     slots: &[Option<usize>],
 ) -> Vec<u8> {
     let mut floats = Vec::with_capacity(LIVE_BYTES / 4);
@@ -234,7 +255,7 @@ pub(crate) fn live_bytes(
     for float in floats {
         bytes.extend_from_slice(&float.to_le_bytes());
     }
-    for mask in cluster_masks(view, aspect, lights) {
+    for mask in cluster_masks(view, aspect, lights, capsules) {
         bytes.extend_from_slice(&mask.to_le_bytes());
     }
     bytes

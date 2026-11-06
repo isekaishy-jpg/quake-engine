@@ -11,6 +11,7 @@
 @group(0) @binding(7) var stencil3: texture_2d<f32>;
 @group(0) @binding(8) var probe_slices: texture_2d<f32>;
 @group(0) @binding(9) var smaa_weights: texture_2d<f32>;
+@group(0) @binding(10) var ray_light: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -591,12 +592,24 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     color = mix(color, frame.outline.rgb, edge);
     color = in_pools(color, in.uv, depth, noise);
     color = fogged(color, in.uv, depth, noise);
+    if frame.stencil_params.x > 0.5 {
+        color = color + textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0).rgb;
+    }
+    return vec4<f32>(color, 1.0);
+}
+
+// Light in the air, for the final pass to add. It's soft, so a quarter of the
+// pixels do, and a beam that fills the view would cost more than the scene
+// otherwise.
+@fragment
+fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
+    let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
+    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let stop = world_at(in.uv, min(load_depth(at), 0.9999));
+    var color = vec3<f32>(0.0);
     let count = i32(frame.stencil_params.x);
-    if count > 0 {
-        let stop = world_at(in.uv, min(depth, 0.9999));
-        for (var index = 0; index < count; index = index + 1) {
-            color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
-        }
+    for (var index = 0; index < count; index = index + 1) {
+        color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
     }
     return vec4<f32>(color, 1.0);
 }

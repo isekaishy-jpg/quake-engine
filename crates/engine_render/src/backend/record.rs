@@ -1,7 +1,7 @@
 //! Recording a frame's draw calls.
 
 use engine_core::math::Vec3;
-use engine_map::Map;
+use engine_map::{Map, Shading};
 use vulkane::safe::ShaderStageFlags;
 
 use super::{
@@ -30,6 +30,8 @@ pub(super) struct Recorder<'a> {
     particles: &'a GpuBuffer,
     /// The map.
     map: &'a GpuMap,
+    /// Its visible indices, for this frame.
+    indices: &'a GpuBuffer,
     /// Whether models get hull outlines.
     outline_hull: bool,
 }
@@ -46,6 +48,27 @@ fn depth_first(map: &Map, batch: &Batch) -> bool {
         batch.kind,
         BatchKind::Solid | BatchKind::Liquid | BatchKind::Material
     ) && !fades
+}
+
+/// Whether `batch`'s material does nothing the plain shader leaves out.
+fn plain_material(map: &Map, batch: &Batch) -> bool {
+    let material = map
+        .textures
+        .get(batch.texture as usize)
+        .and_then(|texture| texture.material.as_ref());
+    material.is_some_and(|material| {
+        material.shading == Shading::Lit
+            && !material.triplanar
+            && !material.hex_tiling
+            && material.flow.is_none()
+            && material.parallax == 0.0
+            && material.height.is_none()
+            && material.layers.is_empty()
+            && material.detail.is_none()
+            && material.emissive.is_none()
+            && material.scroll == [0.0; 2]
+            && material.flipbook == [0.0; 3]
+    })
 }
 
 /// A model's position, as push constant bytes.
@@ -100,7 +123,7 @@ impl Backend {
         rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
         rec.set_scissor(0, 0, size.0, size.1);
         rec.bind_graphics_pipeline(&canvas.pipeline);
-        rec.bind_vertex_buffers(0, &[(&canvas.vertices.buffer, 0)]);
+        rec.bind_vertex_buffers(0, &[(&canvas.vertices[canvas.slot].buffer, 0)]);
         for batch in &canvas.batches {
             let Some(picture) = canvas.pictures.get(batch.picture as usize) else {
                 continue;
@@ -134,8 +157,9 @@ impl Backend {
             pipelines: &self.pipelines,
             models: &self.models,
             sprites: &self.sprites,
-            particles: &self.particles,
+            particles: &self.particles[self.slot],
             map: self.map.as_ref()?,
+            indices: &self.map.as_ref()?.indices[self.slot],
             outline_hull: self.post.outline_hull,
         })
     }
@@ -205,7 +229,7 @@ impl Recorder<'_> {
         rec.bind_graphics_pipeline(&self.pipelines.depth_only);
         rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set]);
         rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
-        rec.bind_index_buffer(&map.indices.buffer, 0, INDEX_TYPE_U32);
+        rec.bind_index_buffer(&self.indices.buffer, 0, INDEX_TYPE_U32);
         let wanted = |batch: u32| {
             let found = scene.mesh.batches.get(batch as usize);
             found.is_some_and(|batch| depth_first(scene.map, batch))
@@ -252,7 +276,7 @@ impl Recorder<'_> {
         rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
         rec.set_scissor(0, 0, size.0, size.1);
         rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
-        rec.bind_index_buffer(&map.indices.buffer, 0, INDEX_TYPE_U32);
+        rec.bind_index_buffer(&self.indices.buffer, 0, INDEX_TYPE_U32);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -276,15 +300,18 @@ impl Recorder<'_> {
                 return;
             };
             let after_depth = batch.kind == BatchKind::Material && depth_first(scene.map, batch);
-            if bound != Some((batch.kind, after_depth)) {
+            let plain = after_depth && plain_material(scene.map, batch);
+            if bound != Some((batch.kind, after_depth, plain)) {
                 if batch.kind == BatchKind::Sky && map.sky_set.is_some() {
                     rec.bind_graphics_pipeline(&self.pipelines.sky_window);
+                } else if plain {
+                    rec.bind_graphics_pipeline(&self.pipelines.plain_after_depth);
                 } else if after_depth {
                     rec.bind_graphics_pipeline(&self.pipelines.material_after_depth);
                 } else {
                     rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
                 }
-                bound = Some((batch.kind, after_depth));
+                bound = Some((batch.kind, after_depth, plain));
             }
             let set_layout = if matches!(
                 batch.kind,
