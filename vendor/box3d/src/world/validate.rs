@@ -12,6 +12,12 @@ impl World {
     /// C gates this behind B3_VALIDATE; here it always runs and asserts in
     /// debug builds (release builds compile the checks away).
     pub fn validate_solver_sets(&self) {
+        // The assertions go in a release build, but the loops round them don't,
+        // and this is called twice for each shape created. That made loading a
+        // map take seconds, growing with the square of how many solids it has.
+        if !cfg!(debug_assertions) {
+            return;
+        }
         use crate::body::body_flags;
         use crate::broad_phase::proxy_type;
         use crate::constants::GRAPH_COLOR_COUNT;
