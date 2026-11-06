@@ -202,10 +202,6 @@ pub const CRATE_RULES: &[CrateRule] = &[
     },
 ];
 
-/// Packages whose tests still sit beside their code. They reach private seams,
-/// so moving them needs those seams settled first (proposal 0096).
-pub const INLINE_TESTS: &[&str] = &["engine_host", "engine_worker", "engine_cache"];
-
 /// An external dependency that is a swappable backend and therefore private
 /// to one owning crate.
 #[derive(Clone, Copy, Debug)]
@@ -314,6 +310,11 @@ pub const FORMAT_RULES: &[FormatRule] = &[FormatRule {
     dependency: "serde_json",
     users: &["engine_app", "engine_editor", "engine_tools"],
 }];
+
+/// Packages that reach their tests through `#[path]` modules and keep hooks for them, to
+/// drive a fake window system or inject faults through private seams. No test sits in
+/// their `src`, and the hooks are all that's let off (proposal 0125).
+pub const TEST_SEAMS: &[&str] = &["engine_cache", "engine_host", "engine_worker"];
 
 /// The edition every workspace package uses.
 pub const REQUIRED_EDITION: &str = "2024";

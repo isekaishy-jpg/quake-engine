@@ -35,7 +35,7 @@ Earlier items unblock later ones.
 | 21 | Paths: jumps, water and lifts | Review 0016 | done |
 | 22 | Door logic | Open questions | done |
 | 23 | Coloured `.lit` light for the original levels | Open questions | done |
-| 24 | Review of the host, worker and cache crates, and tests out of `src` | Open questions | todo |
+| 24 | Review of the host, worker and cache crates, and tests out of `src` | Open questions | done |
 | 25 | Projectile launch delay and correction | Open questions | todo |
 | 26 | Input at 8 kHz | Open questions | todo |
 | 27 | Online numbers on a network | Open questions | todo |
@@ -75,3 +75,5 @@ Newest last. One line for each thing finished, with its commit.
 - Item 19: f746656
 - Item 20: 96b69e0, which also fixed how faces share samples at joins
 - Item 21: 62948dd
+- Item 22: 7ba6352
+- Item 23: ab90233
