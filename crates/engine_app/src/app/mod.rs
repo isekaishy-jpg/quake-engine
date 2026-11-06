@@ -43,7 +43,8 @@ use engine_ui::ConsoleView;
 use engine_ui::UiTheme;
 use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
-    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, mount_game, mount_music,
+    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, mount_coloured_levels, mount_game,
+    mount_music,
 };
 use sound::AudioLevels;
 use view::DEFAULT_FOV;
@@ -529,6 +530,9 @@ impl Engine {
         }
         for game in &options.game_directories {
             mount_game(&mut filesystem, &options.base_directory.join(game))?;
+            if !options.white_light {
+                mount_coloured_levels(&mut filesystem, &options.base_directory, game);
+            }
         }
         let user_directory = saves::user_directory(&options);
         let _created = std::fs::create_dir_all(&user_directory);

@@ -25,7 +25,7 @@ mod wav;
 mod weapon_rules;
 
 pub use bsp::{MapError, SpawnPoint, import_map, parse_entities, spawn_point, without_stray_tail};
-pub use game::{mount_game, mount_music};
+pub use game::{ColouredLevels, mount_coloured_levels, mount_game, mount_music};
 pub use hud::{Hud, Intermission, Score};
 pub use items::parse_item_bsp;
 pub use layout::{

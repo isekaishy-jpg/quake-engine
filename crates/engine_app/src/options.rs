@@ -32,6 +32,8 @@ pub(crate) struct Options {
     pub(crate) windowed: bool,
     /// Whether `-nosound` asked for silence.
     pub(crate) no_sound: bool,
+    /// Whether `-whitelight` asked for the original levels as they were.
+    pub(crate) white_light: bool,
 }
 
 impl Options {
@@ -46,6 +48,7 @@ impl Options {
         let mut startup_commands = String::new();
         let mut windowed = false;
         let mut no_sound = false;
+        let mut white_light = false;
         let mut arguments = arguments.peekable();
         while let Some(argument) = arguments.next() {
             match argument.as_str() {
@@ -63,6 +66,7 @@ impl Options {
                 }
                 "-window" => windowed = true,
                 "-nosound" => no_sound = true,
+                "-whitelight" => white_light = true,
                 "-game" => {
                     let name = arguments
                         .next()
@@ -86,7 +90,7 @@ impl Options {
         }
         let base_directory = base_directory.ok_or_else(|| {
             OptionsError(
-                "usage: quake-engine -basedir <Quake directory> [-content <directory>] [-window] [-nosound] [+command ...]"
+                "usage: quake-engine -basedir <Quake directory> [-content <directory>] [-window] [-nosound] [-whitelight] [+command ...]"
                     .to_owned(),
             )
         })?;
@@ -97,6 +101,7 @@ impl Options {
             startup_commands,
             windowed,
             no_sound,
+            white_light,
         })
     }
 }

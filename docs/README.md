@@ -18,6 +18,7 @@
   - [Effects](effects.md): writing one
   - [Water](water.md): how a level sets it
   - [Making a level](editor.md): the floor plan, and how to use it without a mouse
+  - [Doors and lifts](doors.md): what they do, and how to open one from somewhere else
   - [Zones](zones.md): named parts of a map
   - [Texture standard](texture-standard.md): what a texture has to be, to hand to whoever makes them
 - **Designs:** none yet.
@@ -157,6 +158,8 @@
     - [0120: wear in the real levels](proposals/0120-wear.md)
     - [0121: level faults](proposals/0121-level-faults.md)
     - [0122: paths that drop, jump, swim and ride](proposals/0122-paths-that-leap.md)
+    - [0123: doors and what a name means](proposals/0123-doors.md)
+    - [0124: coloured light for the original levels](proposals/0124-coloured-levels.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

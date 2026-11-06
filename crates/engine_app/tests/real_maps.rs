@@ -19,8 +19,8 @@ use engine_net::{ClientMessage, Loopback, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
 use fixture_quake::{
-    Palette, SCRIPTS, Wad, import_map, load_picture, mount_game, mount_music, parse_item_bsp,
-    parse_mdl, parse_spr, parse_wav, spawn_point,
+    Palette, SCRIPTS, Wad, import_map, load_picture, mount_coloured_levels, mount_game,
+    mount_music, parse_item_bsp, parse_mdl, parse_spr, parse_wav, spawn_point,
 };
 
 /// A level on normal skill, as the console's default sets.
@@ -1124,6 +1124,46 @@ fn fight_everything(map: &Arc<Map>) -> (Vec<String>, u32) {
         })
         .count();
     (errors, u32::try_from(count).expect("a few monsters"))
+}
+
+/// The rerelease's levels are different files from the originals, as a `.lit` only fits
+/// the level it was made with. Every one has to load and run with coloured light.
+#[test]
+#[ignore = "needs game data"]
+fn every_coloured_level_loads_runs_and_fights() {
+    let base = base();
+    let palette = palette(&base);
+    let mut filesystem = game(&base, "id1");
+    mount_coloured_levels(&mut filesystem, &base, "id1");
+    let mut levels = 0;
+    let mut failures = 0;
+    for path in filesystem.list("maps/") {
+        let Some(name) = path
+            .strip_prefix("maps/")
+            .and_then(|p| p.strip_suffix(".lit"))
+        else {
+            continue;
+        };
+        // A test room the rerelease keeps for itself isn't a level.
+        if name.contains('/') {
+            continue;
+        }
+        let map = load(&filesystem, name, &palette);
+        assert!(
+            map.light.iter().any(|[r, g, b]| r != g || g != b),
+            "{name} is white"
+        );
+        let (errors, _) = run_scripts(&map, 2);
+        let (fights, _) = fight_everything(&map);
+        levels += 1;
+        if !errors.is_empty() || !fights.is_empty() {
+            failures += 1;
+            println!("{name}: {errors:?} {fights:?}");
+        }
+    }
+    println!("{levels} levels, {failures} with errors");
+    assert_eq!(failures, 0);
+    assert!(levels >= 36);
 }
 
 #[test]
