@@ -33,6 +33,7 @@ pub(crate) fn run<A: Application>(
         app,
         stop_poll_interval: config.stop_poll_interval,
         next_stop_poll: None,
+        motion: super::winit_input::MotionGather::default(),
         post_recheck_interval: config.post_recheck_interval,
         deadline_wake,
     };
@@ -49,6 +50,7 @@ struct Bridge<'a, A: Application> {
     app: &'a mut A,
     stop_poll_interval: Duration,
     next_stop_poll: Option<Instant>,
+    motion: super::winit_input::MotionGather,
     post_recheck_interval: Duration,
     deadline_wake: super::deadline::DeadlineWake,
 }
@@ -71,6 +73,13 @@ impl<A: Application> Bridge<'_, A> {
             self.core.fail(error, StopReason::BackendFailed);
         }
     }
+    /// Delivers the mouse movement gathered so far, before anything that comes after it.
+    fn flush_motion(&mut self, event_loop: &ActiveEventLoop) {
+        if let Some(motion) = self.motion.take() {
+            self.intake(event_loop, Ok(vec![motion]));
+        }
+    }
+
     fn advance(&mut self, event_loop: &ActiveEventLoop) {
         self.core
             .pump_display(self.app, BackendOps::Winit(event_loop));
@@ -174,6 +183,7 @@ impl<A: Application> ApplicationHandler<()> for Bridge<'_, A> {
         id: WinitWindowId,
         event: WindowEvent,
     ) {
+        self.flush_motion(event_loop);
         let key = NativeWindowKey::Winit(id);
         let Some((_, target)) = self
             .core
@@ -267,11 +277,22 @@ impl<A: Application> ApplicationHandler<()> for Bridge<'_, A> {
                 native: device,
             },
         );
-        self.intake(event_loop, batch);
-        self.advance(event_loop);
+        // The host runs when the queue's empty, not for each report.
+        match batch {
+            Ok(inputs) => {
+                for input in inputs {
+                    let ready = self.motion.add(input);
+                    if !ready.is_empty() {
+                        self.intake(event_loop, Ok(ready));
+                    }
+                }
+            }
+            Err(error) => self.intake(event_loop, Err(error)),
+        }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        self.flush_motion(event_loop);
         self.advance(event_loop);
     }
 }

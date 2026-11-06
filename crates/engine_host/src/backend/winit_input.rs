@@ -27,6 +27,53 @@ pub(crate) struct NormalizedInput {
     pub(crate) device: Option<crate::InputDeviceId>,
 }
 
+/// Raw mouse movement waiting to be delivered as one. A mouse can report 8,000 times a
+/// second, and what's wanted from them is their sum, read once a frame. Delivering each
+/// would run the whole host for each (proposal 0127).
+#[derive(Default)]
+pub(crate) struct MotionGather {
+    /// What's gathered so far.
+    held: Option<NormalizedInput>,
+}
+
+impl MotionGather {
+    /// Takes in `input`, and returns what has to be delivered now, in order. Movement from
+    /// the same device to the same window joins what's held, and anything else goes
+    /// after it, so nothing changes order.
+    pub(crate) fn add(&mut self, input: NormalizedInput) -> Vec<NormalizedInput> {
+        if let (
+            Some(NormalizedInput {
+                target,
+                device,
+                event: InputEvent::RelativeMotion { x, y },
+                ..
+            }),
+            InputEvent::RelativeMotion {
+                x: more_x,
+                y: more_y,
+            },
+        ) = (&mut self.held, &input.event)
+            && *target == input.target
+            && *device == input.device
+        {
+            *x += *more_x;
+            *y += *more_y;
+            return Vec::new();
+        }
+        let earlier = self.held.take();
+        if matches!(input.event, InputEvent::RelativeMotion { .. }) {
+            self.held = Some(input);
+            return earlier.into_iter().collect();
+        }
+        earlier.into_iter().chain(Some(input)).collect()
+    }
+
+    /// What's held, to deliver before anything else happens.
+    pub(crate) const fn take(&mut self) -> Option<NormalizedInput> {
+        self.held.take()
+    }
+}
+
 struct KeyMeaning {
     logical: LogicalKey,
     location: KeyLocation,

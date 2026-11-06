@@ -1114,3 +1114,60 @@ fn normalized_receipt_movement_benchmark() {
         }
     }
 }
+
+fn motion_for(target: WindowTarget, x: f64, y: f64) -> NormalizedInput {
+    NormalizedInput {
+        target,
+        event: InputEvent::RelativeMotion { x, y },
+        origin: InputOrigin::RawDevice,
+        source_time: None,
+        device: None,
+    }
+}
+
+#[test]
+fn a_second_of_an_8_khz_mouse_is_one_delivery_with_nothing_lost() {
+    let target = target();
+    let mut gather = MotionGather::default();
+    for _ in 0..8000 {
+        assert!(gather.add(motion_for(target, 1.0, -0.5)).is_empty());
+    }
+    let held = gather.take().expect("what was gathered");
+    assert!(matches!(
+        held.event,
+        InputEvent::RelativeMotion { x, y } if (x - 8000.0).abs() < 1e-9 && (y + 4000.0).abs() < 1e-9
+    ));
+    assert!(gather.take().is_none(), "it's only delivered once");
+}
+
+#[test]
+fn movement_stays_ahead_of_what_comes_after_it() {
+    let target = target();
+    let mut gather = MotionGather::default();
+    let _none = gather.add(motion_for(target, 2.0, 0.0));
+    let mut absolute = motion_for(target, 0.0, 0.0);
+    absolute.event = InputEvent::RawAbsoluteMotion {
+        x: 1,
+        y: 1,
+        virtual_desktop: false,
+    };
+    let ready = gather.add(absolute);
+    assert_eq!(ready.len(), 2);
+    assert!(matches!(ready[0].event, InputEvent::RelativeMotion { .. }));
+    assert!(matches!(
+        ready[1].event,
+        InputEvent::RawAbsoluteMotion { .. }
+    ));
+    assert!(gather.take().is_none());
+}
+
+#[test]
+fn movement_for_another_window_is_not_added_to_this_one() {
+    let (one, other) = (target(), target());
+    let mut gather = MotionGather::default();
+    let _none = gather.add(motion_for(one, 2.0, 0.0));
+    let ready = gather.add(motion_for(other, 3.0, 0.0));
+    assert_eq!(ready.len(), 1);
+    assert_eq!(ready[0].target, one);
+    assert_eq!(gather.take().expect("the other").target, other);
+}
