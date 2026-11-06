@@ -28,6 +28,7 @@ fn map() -> Map {
                 tile: RESIDENT,
                 average: [0; 3],
             }),
+            light_axes: None,
         }],
         light: vec![[30; 3], [60; 3], [90; 3], [120; 3]],
         tree: Tree {

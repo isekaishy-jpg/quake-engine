@@ -4,21 +4,21 @@
 //! records the text it was made from, so one that's out of date is ignored and
 //! the map falls back on playing unlit.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
 use engine_map::{
     CHUNK_COLUMNS, CRISP_STYLE, ChunkedNav, Face, FaceLight, LightTiles, Map, MegaMaps, NavGrid,
-    NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TileLight, chunks_of,
+    NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TexelAxis, TileLight, chunks_of,
 };
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 20;
+const BAKE_VERSION: u64 = 21;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -174,11 +174,21 @@ fn split_light(map: &Map) -> SplitLight {
         cells: numbers.keys().copied().collect(),
         tiles: vec![TileLight::default(); numbers.len()],
     };
+    // A chart's faces share their samples, so they go once, with the first.
+    let mut charts: HashMap<u32, FaceLight> = HashMap::new();
     for (at, face) in map.faces.iter().enumerate() {
         let Some(mut light) = face.light else {
             split.faces.push(None);
             continue;
         };
+        if let Some(done) = charts
+            .get(&light.first_sample)
+            .filter(|_| face.light_axes.is_some())
+        {
+            split.faces.push(Some(*done));
+            continue;
+        }
+        let held_at = light.first_sample;
         light.average = average_of(map, &light);
         if world.contains(&at) {
             let number = numbers[&cell_of(face)];
@@ -188,6 +198,9 @@ fn split_light(map: &Map) -> SplitLight {
             let source = face.light.unwrap_or(light);
             light.first_sample = copy_samples(map, &source, &mut split.resident);
             light.tile = RESIDENT;
+        }
+        if face.light_axes.is_some() {
+            charts.insert(held_at, light);
         }
         split.faces.push(Some(light));
     }
@@ -307,11 +320,11 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         |split| split.faces.clone(),
     );
     let mut lights = Vec::new();
-    for face_light in &face_lights {
+    for (face, face_light) in map.faces.iter().zip(&face_lights) {
         match *face_light {
             None => lights.push(0),
             Some(light) => {
-                lights.push(1);
+                lights.push(if face.light_axes.is_some() { 2 } else { 1 });
                 lights.extend_from_slice(&light.first_sample.to_le_bytes());
                 lights.extend_from_slice(&light.width.to_le_bytes());
                 lights.extend_from_slice(&light.height.to_le_bytes());
@@ -321,6 +334,11 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
                 lights.extend_from_slice(&light.styles);
                 lights.extend_from_slice(&light.tile.to_le_bytes());
                 lights.extend_from_slice(&light.average);
+                for axis in face.light_axes.iter().flatten() {
+                    for number in [axis.axis.x, axis.axis.y, axis.axis.z, axis.offset] {
+                        lights.extend_from_slice(&number.to_le_bytes());
+                    }
+                }
             }
         }
     }
@@ -427,15 +445,18 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     to_binary(&document)
 }
 
+/// A face's light, and what places it, if that isn't its texture.
+type ReadLight = (Option<FaceLight>, Option<[TexelAxis; 2]>);
+
 /// Reads the faces' light records. `None` if they don't match `faces`.
-fn read_face_lights(bytes: &[u8], faces: &[Face]) -> Option<Vec<Option<FaceLight>>> {
+fn read_face_lights(bytes: &[u8], faces: &[Face]) -> Option<Vec<ReadLight>> {
     let mut at = 0;
     let mut out = Vec::with_capacity(faces.len());
     for _ in faces {
         let flag = *bytes.get(at)?;
         at += 1;
         if flag == 0 {
-            out.push(None);
+            out.push((None, None));
             continue;
         }
         let word = |offset: usize| {
@@ -452,8 +473,20 @@ fn read_face_lights(bytes: &[u8], faces: &[Face]) -> Option<Vec<Option<FaceLight
             tile: u32::from_le_bytes(word(28)?),
             average: bytes.get(at + 32..at + 35)?.try_into().ok()?,
         };
-        at += 35;
-        out.push(Some(light));
+        let axes = if flag == 2 {
+            let number = |offset: usize| word(offset).map(f32::from_le_bytes);
+            let axis = |first: usize| -> Option<TexelAxis> {
+                Some(TexelAxis {
+                    axis: Vec3::new(number(first)?, number(first + 4)?, number(first + 8)?),
+                    offset: number(first + 12)?,
+                })
+            };
+            Some([axis(35)?, axis(51)?])
+        } else {
+            None
+        };
+        at += if axes.is_some() { 67 } else { 35 };
+        out.push((Some(light), axes));
     }
     (at == bytes.len()).then_some(out)
 }
@@ -573,8 +606,9 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     }
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();
-    for (face, light) in map.faces.iter_mut().zip(faces) {
+    for (face, (light, axes)) in map.faces.iter_mut().zip(faces) {
         face.light = light;
+        face.light_axes = axes;
     }
     if let (Some(rgba), Some(faces)) = (bytes_of(light, "mega"), bytes_of(light, "mega_faces")) {
         let numbers: Vec<i32> = faces

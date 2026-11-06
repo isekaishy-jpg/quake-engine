@@ -142,16 +142,14 @@ fn surface_frame(world: vec3<f32>, uv: vec2<f32>, smooth_normal: vec3<f32>) -> S
     let duv2 = dpdy(uv);
     var out: SurfaceFrame;
     var normal = normalize(cross(dp2, dp1));
-    let flipped = dot(normal, frame.eye.xyz - world) < 0.0;
-    if flipped {
+    if dot(normal, frame.eye.xyz - world) < 0.0 {
         normal = -normal;
     }
-    // A mesh says which way it faces, and that's what makes it look round.
+    // A mesh says which way it faces, and that's what makes it look round. Seen
+    // from behind, it's the other way.
     if dot(smooth_normal, smooth_normal) > 0.01 {
-        normal = normalize(smooth_normal);
-        if flipped {
-            normal = -normal;
-        }
+        let given = normalize(smooth_normal);
+        normal = select(given, -given, dot(given, normal) < 0.0);
     }
     out.normal = normal;
     let perp2 = cross(dp2, normal);
@@ -271,7 +269,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     }
     let dx = dpdx(in.uv);
     let dy = dpdy(in.uv);
-    let surface_at = surface_frame(in.world, in.uv, in.normal);
+    let surface_at = surface_frame(in.world, in.uv, in.normal.xyz);
     let to_eye = normalize(frame.eye.xyz - in.world);
     var uv = uv0;
     var features = 0;
@@ -397,9 +395,14 @@ fn material_color(in: VertexOut) -> vec4<f32> {
             // Light baked for a flat surface is shaped by how a bump turns from
             // it. Where it strikes at a shallow angle, a small turn is a huge
             // ratio, which only shows as glare, so it's held to what looks true.
-            let flat_response = max(dot(surface_at.normal, toward), 0.25);
-            let bumped = max(dot(normal, toward), 0.0);
-            lit = lit * mix(1.0, min(bumped / flat_response, 1.5), 0.8);
+            let flat_facing = dot(surface_at.normal, toward);
+            let turned = dot(normal, toward) - flat_facing;
+            let response = clamp(1.0 + turned / max(flat_facing, 0.25), 0.0, 1.5);
+            lit = lit * mix(1.0, response, 0.8);
+            // Light from a probe has no shape, so it gets it here.
+            if in.normal.w > 0.5 {
+                lit = lit * (0.5 + max(dot(normal, toward), 0.0));
+            }
         }
         if shading == 1 {
             let amount = dot(lit, vec3<f32>(0.3, 0.59, 0.11));

@@ -154,6 +154,17 @@ impl FaceLight {
     }
 }
 
+/// One placed mesh's faces.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MeshGroup {
+    /// The first face.
+    pub first_face: u32,
+    /// How many there are.
+    pub face_count: u32,
+    /// Whether it's lit from one place, as a small prop is.
+    pub by_probe: bool,
+}
+
 /// A convex polygon.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Face {
@@ -167,9 +178,26 @@ pub struct Face {
     pub axes: [TexelAxis; 2],
     /// Its baked light, if any.
     pub light: Option<FaceLight>,
+    /// How a place becomes a place on its light map, where that isn't by `axes`.
+    /// A mesh's triangles share light maps laid out for them (proposal 0110).
+    pub light_axes: Option<[TexelAxis; 2]>,
 }
 
 impl Face {
+    /// What places its light map.
+    #[must_use]
+    pub fn light_space(&self) -> &[TexelAxis; 2] {
+        self.light_axes.as_ref().unwrap_or(&self.axes)
+    }
+
+    /// Whether it's lit from one place, as a probe is, and so has no shape to its
+    /// light until it's drawn.
+    #[must_use]
+    pub fn lit_by_probe(&self) -> bool {
+        self.light_axes
+            .is_some_and(|axes| axes[0].axis == Vec3::ZERO && axes[1].axis == Vec3::ZERO)
+    }
+
     /// The style number marking an unused lighting layer.
     pub const NO_STYLE: u8 = 255;
 }
@@ -263,6 +291,8 @@ pub struct Map {
     pub normals: Vec<[i8; 3]>,
     /// The faces.
     pub faces: Vec<Face>,
+    /// Each placed mesh's faces.
+    pub mesh_groups: Vec<MeshGroup>,
     /// The models. The first is the world.
     pub models: Vec<Model>,
     /// Baked light samples, as RGB.

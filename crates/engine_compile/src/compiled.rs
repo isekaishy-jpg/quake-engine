@@ -5,7 +5,8 @@
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Face, Leaf, Map, Model, Node, NodeChild, Plane, TexelAxis, Tree,
+    ClipChild, ClipNode, Contents, Face, Leaf, Map, MeshGroup, Model, Node, NodeChild, Plane,
+    TexelAxis, Tree,
 };
 
 /// What takes a compile its time.
@@ -17,6 +18,8 @@ pub struct Geometry {
     pub(crate) points: Vec<Vec3>,
     /// Which way corners face.
     pub(crate) normals: Vec<[i8; 3]>,
+    /// Each placed mesh's faces.
+    pub(crate) mesh_groups: Vec<MeshGroup>,
     /// The faces, without their light.
     pub(crate) faces: Vec<Face>,
     /// The models.
@@ -304,6 +307,7 @@ fn read_face(input: &mut Reader<'_>) -> Option<Face> {
         texture,
         axes: [axis()?, axis()?],
         light: None,
+        light_axes: None,
     })
 }
 
@@ -333,6 +337,12 @@ pub fn write_geometry(map: &Map, hash: u64) -> Vec<u8> {
     for normal in &map.normals {
         out.0
             .extend(normal.map(i8::to_ne_bytes).into_iter().flatten());
+    }
+    out.count(map.mesh_groups.len());
+    for group in &map.mesh_groups {
+        out.number(group.first_face);
+        out.number(group.face_count);
+        out.number(u32::from(group.by_probe));
     }
     let names: Vec<&str> = map.textures.iter().map(|t| t.name.as_str()).collect();
     let mut document = Document::new("geometry");
@@ -380,6 +390,13 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
     geometry.tree = read_tree(&mut input)?;
     for _ in 0..input.count(3)? {
         geometry.normals.push(input.normal()?);
+    }
+    for _ in 0..input.count(12)? {
+        geometry.mesh_groups.push(MeshGroup {
+            first_face: input.number()?,
+            face_count: input.number()?,
+            by_probe: input.number()? != 0,
+        });
     }
     Some(geometry)
 }

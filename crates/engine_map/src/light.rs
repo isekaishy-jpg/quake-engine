@@ -63,7 +63,7 @@ impl Map {
         let light = face.light.as_ref()?;
         let spacing = light.texels_per_sample.max(1);
         let reach = |axis: usize, samples: u32| {
-            let texel = face.axes[axis].project(point) - light.texel_origin[axis] as f32;
+            let texel = face.light_space()[axis].project(point) - light.texel_origin[axis] as f32;
             let extent = (samples.saturating_sub(1) * spacing) as f32;
             (texel >= 0.0 && texel <= extent).then_some(texel as u32 / spacing)
         };

@@ -30,8 +30,9 @@ struct VertexOut {
     @location(2) light_uv: vec2<f32>,
     @location(3) light_step: f32,
     @location(4) @interpolate(flat) styles: vec4<u32>,
-    // Which way a mesh faces here, or zeros on a flat face.
-    @location(5) normal: vec3<f32>,
+    // Which way a mesh faces here, or zeros on a flat face. w is 1 where its
+    // light came from one place, as a probe's does, and has no shape yet.
+    @location(5) normal: vec4<f32>,
 }
 
 @vertex
@@ -44,7 +45,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.light_uv = in.light_uv;
     out.light_step = in.light_step;
     out.styles = in.styles;
-    out.normal = in.normal.xyz;
+    out.normal = in.normal;
     return out;
 }
 

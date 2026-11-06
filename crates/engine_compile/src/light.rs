@@ -14,6 +14,7 @@ use engine_map::{
     MipLevel, ProbeGrid, RESIDENT, TextureKind,
 };
 
+use crate::charts::{Chart, map_charts};
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::mega::bake_mega;
@@ -56,6 +57,16 @@ const BOUNCE_STRIDE: usize = 2;
 
 /// How many probes apart a grid sits, in world units.
 const PROBE_SPACING: f64 = 128.0;
+
+/// The directions a probe looks in.
+const PROBE_SIDES: [Point; 6] = [
+    [1.0, 0.0, 0.0],
+    [-1.0, 0.0, 0.0],
+    [0.0, 1.0, 0.0],
+    [0.0, -1.0, 0.0],
+    [0.0, 0.0, 1.0],
+    [0.0, 0.0, -1.0],
+];
 
 /// Reads an image by path.
 pub type ImageReader<'a> = dyn FnMut(&str) -> Result<Arc<Vec<MipLevel>>, CompileError> + 'a;
@@ -645,6 +656,8 @@ struct FaceBake {
     corners: Vec<Point>,
     /// Where its grid sits.
     frame: GridFrame,
+    /// Which way each sample faces, for a chart, whose surface isn't flat.
+    normals: Option<Vec<Point>>,
 }
 
 /// What faces have in common when their samples fall in the same places: a plane
@@ -940,6 +953,106 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         sample_grid: sample_grid(face, normal, space.plane.distance),
         corners,
         frame: grid,
+        normals: None,
+    })
+}
+
+/// Lights what's at `point` from all round, seen from `reach` away, for something
+/// lit by a probe. Returns the colour and where most of it comes from.
+fn all_round(scene: &Scene<'_>, source: &BakeLight, point: Point, reach: f64) -> ([f64; 3], Point) {
+    let mut color = [0.0; 3];
+    let mut from = [0.0; 3];
+    for side in PROBE_SIDES {
+        let outside = add_scaled(point, side, reach);
+        let (light, direction) = light_on(scene, source, outside, side, true);
+        let energy = light[0] + light[1] + light[2];
+        from = add_scaled(from, direction, energy);
+        for part in 0..3 {
+            color[part] += light[part] / PROBE_SIDES.len() as f64 * 1.5;
+        }
+    }
+    (color, from)
+}
+
+/// Lights one chart of a mesh, which is `number` of them. Each sample takes the
+/// light that falls on the surface there, by its own normal, so the mesh looks
+/// smooth, and no light is sharp, as one sample has to serve a curve.
+fn bake_chart(
+    scene: &Scene<'_>,
+    map: &Map,
+    chart: &Chart,
+    number: usize,
+    spacing: f64,
+) -> Option<FaceBake> {
+    let first = map.faces.get(*chart.faces.first()? as usize)?;
+    let count = chart.spots.len();
+    let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
+    let mut directions = vec![[0.0; 3]; count];
+    for source in scene.lights {
+        let at = match layers.iter().position(|(known, _)| *known == source.style) {
+            Some(at) => at,
+            None if layers.len() + 1 < MAX_LAYERS => {
+                layers.push((source.style, vec![[0.0; 3]; count]));
+                layers.len() - 1
+            }
+            None => continue,
+        };
+        for (index, spot) in chart.spots.iter().enumerate() {
+            let (color, direction) = match chart.probe_reach {
+                Some(reach) => all_round(scene, source, spot.point, reach),
+                None => light_on(scene, source, spot.point, spot.normal, true),
+            };
+            let energy = color[0] + color[1] + color[2];
+            if energy > 0.0 {
+                let sample = &mut layers[at].1[index];
+                for part in 0..3 {
+                    sample[part] += color[part];
+                }
+                directions[index] = add_scaled(directions[index], direction, energy);
+            }
+        }
+    }
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "small"
+    )]
+    let texels_per_sample = spacing as u32;
+    #[expect(clippy::cast_possible_wrap, reason = "there aren't that many charts")]
+    let own_grid = number as i64;
+    Some(FaceBake {
+        layers,
+        directions,
+        light: FaceLight {
+            first_sample: 0,
+            width: chart.width,
+            height: chart.height,
+            texel_origin: chart.origin,
+            texels_per_sample,
+            styles: [Face::NO_STYLE; 4],
+            tile: RESIDENT,
+            average: [0; 3],
+        },
+        // What bounces reaches a probe's mesh from above it, not from inside it.
+        points: chart
+            .spots
+            .iter()
+            .map(|spot| add_scaled(spot.point, spot.normal, chart.probe_reach.unwrap_or(0.0)))
+            .collect(),
+        normal: chart.normal,
+        albedo: albedo_of(map, first),
+        area: chart.area,
+        edges: None,
+        gaps: vec![0.0; count],
+        // Nothing else shares a chart's samples.
+        sample_grid: ([i64::MIN, own_grid, 0, 0], [[0; 4]; 2]),
+        corners: Vec::new(),
+        frame: GridFrame {
+            start: [0.0; 3],
+            across: [0.0; 3],
+            down: [0.0; 3],
+        },
+        normals: Some(chart.spots.iter().map(|spot| spot.normal).collect()),
     })
 }
 
@@ -1425,8 +1538,9 @@ fn bounced_face(
     let mut known = Vec::with_capacity(columns.len() * rows.len());
     for row in &rows {
         for column in &columns {
-            let point = bake.points[row * width + column];
-            known.push(bounced_at(scene, sources, point, bake.normal, gain));
+            let at = row * width + column;
+            let normal = bake.normals.as_ref().map_or(bake.normal, |all| all[at]);
+            known.push(bounced_at(scene, sources, bake.points[at], normal, gain));
         }
     }
     let read = |column: usize, row: usize| {
@@ -1549,14 +1663,6 @@ fn bake_probes(
             }
         }
     }
-    const SIDES: [Point; 6] = [
-        [1.0, 0.0, 0.0],
-        [-1.0, 0.0, 0.0],
-        [0.0, 1.0, 0.0],
-        [0.0, -1.0, 0.0],
-        [0.0, 0.0, 1.0],
-        [0.0, 0.0, -1.0],
-    ];
     let baked = in_parallel(&positions, |point| {
         let mut colors = [[0_u8; 3]; 6];
         let mut direction = [0.0; 3];
@@ -1565,7 +1671,7 @@ fn bake_probes(
         let leaf = map.tree.leaf(map.tree.leaf_at(place));
         let open = leaf.is_some_and(|leaf| leaf.contents != engine_map::Contents::Solid);
         let base = if open { ambient } else { 0.0 };
-        for (side, normal) in SIDES.iter().enumerate() {
+        for (side, normal) in PROBE_SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
             for source in scene.lights {
                 let (color, from) = light_on(scene, source, *point, *normal, true);
@@ -1738,8 +1844,26 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
 
     let faces: Vec<Face> = map.faces.clone();
     let shared: &Map = map;
-    let mut bakes: Vec<Option<FaceBake>> =
-        in_parallel(&faces, |face| bake_face(&scene, shared, face, spacing));
+    let charts = map_charts(shared, spacing);
+    let mut charted = vec![false; faces.len()];
+    for face in charts.iter().flat_map(|chart| &chart.faces) {
+        charted[*face as usize] = true;
+    }
+    let numbered: Vec<(&Face, bool)> = faces.iter().zip(charted.iter().copied()).collect();
+    let mut bakes: Vec<Option<FaceBake>> = in_parallel(&numbered, |(face, charted)| {
+        (!charted)
+            .then(|| bake_face(&scene, shared, face, spacing))
+            .flatten()
+    });
+    let numbered_charts: Vec<(usize, &Chart)> = charts.iter().enumerate().collect();
+    let chart_bakes = in_parallel(&numbered_charts, |(number, chart)| {
+        bake_chart(&scene, shared, chart, *number, spacing)
+    });
+    for (chart, bake) in charts.iter().zip(chart_bakes) {
+        if let Some(first) = chart.faces.first() {
+            bakes[*first as usize] = bake;
+        }
+    }
     let sources = bounce_sources(&bakes, spacing, f64::from(shared.tile_size));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
@@ -1791,6 +1915,17 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     }
     for (face, light) in map.faces.iter_mut().zip(lit_faces) {
         face.light = light;
+    }
+    for chart in &charts {
+        let held = chart
+            .faces
+            .first()
+            .and_then(|first| map.faces[*first as usize].light);
+        for number in &chart.faces {
+            let face = &mut map.faces[*number as usize];
+            face.light = held;
+            face.light_axes = Some(chart.axes);
+        }
     }
     map.light = samples;
     map.light_directions = directions;

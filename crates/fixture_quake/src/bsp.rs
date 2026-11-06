@@ -529,6 +529,7 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
             texture: info.texture_idx.0.unwrap_or(fallback),
             axes,
             light: face_light(face, face_points, &axes),
+            light_axes: None,
         });
     }
 

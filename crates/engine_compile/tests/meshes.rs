@@ -18,6 +18,7 @@ fn in_place() -> MeshPlacement {
         angles: [0.0; 3],
         scale: [1.0; 3],
         only_seen: false,
+        by_probe: false,
     }
 }
 

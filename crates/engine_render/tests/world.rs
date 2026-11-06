@@ -5,7 +5,7 @@ mod common;
 use common::map;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
-use engine_map::{Face, Map};
+use engine_map::{Face, Map, TexelAxis};
 use engine_render::{Atlas, BatchKind, VisibleSet, build_world, canvas_vertices, view_projection};
 
 /// A map with one square.
@@ -222,4 +222,30 @@ fn a_vertex_says_which_way_a_mesh_faces() {
 fn a_vertex_on_a_flat_face_says_nothing() {
     let mesh = build_world(&map(1)).expect("builds");
     assert!(mesh.vertices.iter().all(|vertex| vertex.normal == [0; 4]));
+}
+
+#[test]
+fn faces_on_one_chart_share_their_place_in_the_atlas() {
+    let mut built = map(2);
+    let alone = build_world(&built).expect("builds");
+    let separate = (alone.vertices[0].light_uv, alone.vertices[4].light_uv);
+    assert_ne!(separate.0, separate.1, "two faces, two places");
+    let axes = built.faces[0].axes;
+    for face in &mut built.faces {
+        face.light_axes = Some(axes);
+    }
+    let shared = build_world(&built).expect("builds");
+    assert_eq!(shared.vertices[0].light_uv, shared.vertices[4].light_uv);
+}
+
+#[test]
+fn a_vertex_lit_by_a_probe_says_so() {
+    let mut built = map(1);
+    let none = TexelAxis {
+        axis: Vec3::ZERO,
+        offset: 0.0,
+    };
+    built.faces[0].light_axes = Some([none, none]);
+    let mesh = build_world(&built).expect("builds");
+    assert!(mesh.vertices.iter().all(|vertex| vertex.normal[3] == 127));
 }

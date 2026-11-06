@@ -63,6 +63,8 @@ pub struct PlacedMesh {
     pub occluders: Vec<OccluderSphere>,
     /// Whether light goes through it.
     pub only_seen: bool,
+    /// Whether it's lit from one place, and not by a light map of its own.
+    pub by_probe: bool,
 }
 
 /// The numbers of a field, in groups of `N`.
@@ -298,6 +300,7 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
     let transform = Transform::of(placement);
     let mut placed = PlacedMesh {
         only_seen: placement.only_seen,
+        by_probe: placement.by_probe,
         ..PlacedMesh::default()
     };
     for part in &mesh.parts {

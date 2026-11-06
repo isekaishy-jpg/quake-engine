@@ -116,6 +116,9 @@ pub struct MeshPlacement {
     /// Whether it's only there to be seen: it can't be touched, and light goes
     /// through it. Falling water is like this.
     pub only_seen: bool,
+    /// Whether it's lit from one place, as a small prop is, and not by a light
+    /// map of its own.
+    pub by_probe: bool,
 }
 
 /// A map as it's edited.
@@ -517,6 +520,7 @@ fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileErro
             .get("only_seen")
             .and_then(Value::number)
             .is_some_and(|flag| flag != 0.0),
+        by_probe: block.get("light").and_then(Value::text) == Some("probe"),
     })
 }
 

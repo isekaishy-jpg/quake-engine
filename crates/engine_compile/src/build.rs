@@ -7,8 +7,8 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, Model, ModelOccluder, Node,
-    NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
+    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup, Model, ModelOccluder,
+    Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -570,6 +570,7 @@ impl Builder<'_> {
             texture,
             axes,
             light: None,
+            light_axes: None,
         });
         Some(())
     }
@@ -600,6 +601,7 @@ impl Builder<'_> {
             texture,
             axes,
             light: None,
+            light_axes: None,
         });
         Some(())
     }
@@ -694,14 +696,25 @@ impl Builder<'_> {
                 self.add_face(&flipped, whole, face).ok_or_else(too_big)?;
             }
         }
-        for triangle in meshes.iter().flat_map(|mesh| &mesh.triangles) {
-            for point in &triangle.points {
-                for axis in 0..3 {
-                    low[axis] = low[axis].min(point[axis]);
-                    high[axis] = high[axis].max(point[axis]);
+        for mesh in meshes {
+            let first_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
+            for triangle in &mesh.triangles {
+                for point in &triangle.points {
+                    for axis in 0..3 {
+                        low[axis] = low[axis].min(point[axis]);
+                        high[axis] = high[axis].max(point[axis]);
+                    }
                 }
+                self.add_triangle(triangle).ok_or_else(too_big)?;
             }
-            self.add_triangle(triangle).ok_or_else(too_big)?;
+            let last_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
+            if last_face > first_face {
+                self.map.mesh_groups.push(MeshGroup {
+                    first_face,
+                    face_count: last_face - first_face,
+                    by_probe: mesh.by_probe,
+                });
+            }
         }
         if low[0] > high[0] {
             (low, high) = ([0.0; 3], [0.0; 3]);
@@ -861,6 +874,7 @@ fn compile_with(
         builder.known_models = Some((count, 0));
         builder.map.points = geometry.points;
         builder.map.normals = geometry.normals;
+        builder.map.mesh_groups = geometry.mesh_groups;
         builder.map.faces = geometry.faces;
         builder.map.models = geometry.models;
         builder.map.light_lifts = geometry.light_lifts;

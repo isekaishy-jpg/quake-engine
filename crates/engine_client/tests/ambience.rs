@@ -32,6 +32,7 @@ fn map(names: &[&str], ambient: [u8; 4]) -> Arc<Map> {
             texture: index,
             axes: Default::default(),
             light: None,
+            light_axes: None,
         });
     }
     map.tree = Tree {

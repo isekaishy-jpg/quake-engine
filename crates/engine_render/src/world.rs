@@ -314,7 +314,29 @@ fn atlas_size_of(light: &FaceLight) -> [u32; 2] {
 /// Packs every face's styles side by side.
 fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
     let lights: Vec<Option<FaceLight>> = map.faces.iter().map(|f| lit_face(map, f)).collect();
-    let mut sizes: Vec<[u32; 2]> = lights.iter().flatten().map(atlas_size_of).collect();
+    // A chart's faces share their light, so it goes in once.
+    let mut first_of: HashMap<(u32, u32), usize> = HashMap::new();
+    let mut sizes: Vec<[u32; 2]> = Vec::new();
+    let mut slots = Vec::with_capacity(lights.len());
+    for (light, face) in lights.iter().zip(&map.faces) {
+        let Some(light) = light else {
+            slots.push(None);
+            continue;
+        };
+        let shared = face
+            .light_axes
+            .is_some()
+            .then_some((light.tile, light.first_sample));
+        let known = shared.and_then(|key| first_of.get(&key).copied());
+        slots.push(Some(known.unwrap_or_else(|| {
+            sizes.push(atlas_size_of(light));
+            if let Some(key) = shared {
+                first_of.insert(key, sizes.len() - 1);
+            }
+            sizes.len() - 1
+        })));
+    }
+    let neutral_slot = sizes.len();
     sizes.push([1, 1]);
     let packed = Atlas::pack(&sizes, ATLAS_LIMIT)?;
     // What streams needs room beyond what's always there.
@@ -328,15 +350,17 @@ fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
     let mut bytes = vec![0; side * side * ATLAS_PIXEL];
     let mut directions = vec![128; side * side * ATLAS_PIXEL];
     let mut paint = vec![0; side * side * ATLAS_PIXEL];
-    let mut positions = packed.positions.iter().copied();
     let mut places = Vec::with_capacity(lights.len());
-    for light in &lights {
-        let Some(light) = light else {
+    let mut copied = vec![false; sizes.len()];
+    for (light, slot) in lights.iter().zip(&slots) {
+        let (Some(light), Some(slot)) = (light, slot) else {
             places.push(None);
             continue;
         };
-        let position = positions.next()?;
-        if light.tile == RESIDENT {
+        let position = *packed.positions.get(*slot)?;
+        if std::mem::replace(&mut copied[*slot], true) {
+            // It's already there.
+        } else if light.tile == RESIDENT {
             let samples = Samples::of_map(map);
             copy_light(samples, light, position, side, &mut bytes, &mut directions);
             copy_paint(samples, light, position, side, &mut paint);
@@ -350,7 +374,7 @@ fn build_atlas(map: &Map) -> Option<BuiltAtlas> {
             width: light.width,
         }));
     }
-    let neutral = positions.next()?;
+    let neutral = *packed.positions.get(neutral_slot)?;
     let at = (neutral[1] as usize * side + neutral[0] as usize) * ATLAS_PIXEL;
     bytes[at..at + ATLAS_PIXEL].copy_from_slice(&[FULL_LIGHT, FULL_LIGHT, FULL_LIGHT, 255]);
     Some(BuiltAtlas {
@@ -437,7 +461,7 @@ fn make_vertex(
         position: [point.x, point.y, point.z],
         uv: [s / size[0], t / size[1]],
         styles: [Face::NO_STYLE; 4],
-        normal: [x, y, z, 0],
+        normal: [x, y, z, if face.lit_by_probe() { 127 } else { 0 }],
         ..Vertex::default()
     };
     #[expect(
@@ -461,8 +485,9 @@ fn make_vertex(
         vertex.styles[0] = 0;
     } else if let (Some(place), Some(light)) = (place, face.light) {
         let step = light.texels_per_sample as f32;
-        let x = (s - light.texel_origin[0] as f32) / step + 0.5;
-        let y = (t - light.texel_origin[1] as f32) / step + 0.5;
+        let [across, down] = face.light_space();
+        let x = (across.project(point) - light.texel_origin[0] as f32) / step + 0.5;
+        let y = (down.project(point) - light.texel_origin[1] as f32) / step + 0.5;
         vertex.light_uv = [
             (place.position[0] as f32 + x) * scale,
             (place.position[1] as f32 + y) * scale,
@@ -668,10 +693,26 @@ pub fn tile_image(mesh: &WorldMesh, map: &Map, tile: u32, light: &TileLight) -> 
         .iter()
         .filter_map(|face| Some((*face, map.faces.get(*face as usize)?.light?)))
         .collect();
-    let sizes: Vec<[u32; 2]> = lights
-        .iter()
-        .map(|(_, light)| [light.width * light.style_count().max(1), light.height])
-        .collect();
+    // A chart's faces share their light, so it goes in once.
+    let mut first_of: HashMap<u32, usize> = HashMap::new();
+    let mut sizes: Vec<[u32; 2]> = Vec::new();
+    let mut slots = Vec::with_capacity(lights.len());
+    for (face, light) in &lights {
+        let charted = map
+            .faces
+            .get(*face as usize)
+            .is_some_and(|f| f.light_axes.is_some());
+        let known = charted
+            .then(|| first_of.get(&light.first_sample).copied())
+            .flatten();
+        slots.push(known.unwrap_or_else(|| {
+            sizes.push([light.width * light.style_count().max(1), light.height]);
+            if charted {
+                first_of.insert(light.first_sample, sizes.len() - 1);
+            }
+            sizes.len() - 1
+        }));
+    }
     let packed = Atlas::pack_tile(&sizes, mesh.atlas_size / 2)?;
     let side = packed.size as usize;
     let mut image = TileImage {
@@ -682,16 +723,20 @@ pub fn tile_image(mesh: &WorldMesh, map: &Map, tile: u32, light: &TileLight) -> 
         places: Vec::with_capacity(lights.len()),
     };
     let samples = Samples::of_tile(light);
-    for ((face, found), position) in lights.iter().zip(&packed.positions) {
-        copy_light(
-            samples,
-            found,
-            *position,
-            side,
-            &mut image.bytes,
-            &mut image.directions,
-        );
-        copy_paint(samples, found, *position, side, &mut image.paint);
+    let mut copied = vec![false; sizes.len()];
+    for ((face, found), slot) in lights.iter().zip(&slots) {
+        let position = packed.positions.get(*slot)?;
+        if !std::mem::replace(&mut copied[*slot], true) {
+            copy_light(
+                samples,
+                found,
+                *position,
+                side,
+                &mut image.bytes,
+                &mut image.directions,
+            );
+            copy_paint(samples, found, *position, side, &mut image.paint);
+        }
         image.places.push((*face, *position));
     }
     Some(image)

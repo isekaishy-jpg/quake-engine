@@ -330,7 +330,8 @@ pub(crate) fn bake_mega(
     // so this is only done here, and not each time a bake is read.
     for place in &places {
         let light = map.faces.get_mut(place.face as usize);
-        if let Some(light) = light.and_then(|face| face.light.as_mut()) {
+        let shifted = light.filter(|face| face.light_axes.is_none());
+        if let Some(light) = shifted.and_then(|face| face.light.as_mut()) {
             light.texel_origin[0] += place.shift[0];
             light.texel_origin[1] += place.shift[1];
         }

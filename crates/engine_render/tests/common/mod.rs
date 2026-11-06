@@ -77,6 +77,7 @@ pub(crate) fn map(models: u32) -> Map {
                 tile: RESIDENT,
                 average: [0; 3],
             }),
+            light_axes: None,
         });
         map.models.push(Model {
             first_face: number,

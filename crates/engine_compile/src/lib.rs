@@ -6,6 +6,7 @@
 mod bake;
 mod build;
 mod cells;
+mod charts;
 mod compiled;
 mod content_pack;
 mod derive;

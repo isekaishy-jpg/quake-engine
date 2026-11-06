@@ -20,6 +20,12 @@ mesh { source = well origin = 200 -180 0 angles = 0 45 0 scale = 1.4 }
 
 Or give an entity `mesh = well`, and it's that entity's model.
 
+Light maps are laid out for it when the level is baked, so there's no second set of UVs to make. For something small, `light = probe` lights the whole of it from one place, which costs almost nothing:
+
+```text
+mesh { source = barrel origin = 40 12 0 light = probe }
+```
+
 ## What's in a `.emesh`
 
 A document, binary from import, and text if a script writes it. Each `part` has a `material`, `points`, `uvs` and `triangles`, and can have `normals`, one to a corner. With none, they're worked out from the shape: smooth, except where two triangles turn by more than 40 degrees. Each `hull` is a box for collision.
