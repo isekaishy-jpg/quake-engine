@@ -39065,7 +39065,7 @@ brush {
 
 brush {
     cuboid = [6276 1196 68 6324 1244 80]
-    material = "stone"
+    material = "qg02_iron_cathedral_wall_blocks"
     prefab = "fire_pit"
     id = 1610
 }
@@ -39092,7 +39092,7 @@ entity {
 
 brush {
     cuboid = [6276 2136 68 6324 2184 80]
-    material = "stone"
+    material = "qg02_iron_cathedral_wall_blocks"
     prefab = "fire_pit"
     id = 1613
 }
@@ -39119,7 +39119,7 @@ entity {
 
 brush {
     cuboid = [7276 1196 68 7324 1244 80]
-    material = "stone"
+    material = "qg02_iron_cathedral_wall_blocks"
     prefab = "fire_pit"
     id = 1616
 }
@@ -39146,7 +39146,7 @@ entity {
 
 brush {
     cuboid = [7276 2136 68 7324 2184 80]
-    material = "stone"
+    material = "qg02_iron_cathedral_wall_blocks"
     prefab = "fire_pit"
     id = 1619
 }

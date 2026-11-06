@@ -2323,7 +2323,8 @@
 68
 ],
 "params": {
-"size": 48
+"size": 48,
+"material": "qg02_iron_cathedral_wall_blocks"
 }
 }
 },
@@ -2337,7 +2338,8 @@
 68
 ],
 "params": {
-"size": 48
+"size": 48,
+"material": "qg02_iron_cathedral_wall_blocks"
 }
 }
 },
@@ -2351,7 +2353,8 @@
 68
 ],
 "params": {
-"size": 48
+"size": 48,
+"material": "qg02_iron_cathedral_wall_blocks"
 }
 }
 },
@@ -2365,7 +2368,8 @@
 68
 ],
 "params": {
-"size": 48
+"size": 48,
+"material": "qg02_iron_cathedral_wall_blocks"
 }
 }
 },

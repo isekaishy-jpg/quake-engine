@@ -266,7 +266,7 @@ for x in (6560, 6880, 7120):
     level.prefab('pipe', (x, 1160, 560), to=[0, 1040, 0], radius=28, material=COPPER, collar=COPPER_TRIM)
     level.prefab('pipe', (x, 1700, QUAY + 4), to=[0, 0, 480], radius=20, material=COPPER, collar=COPPER_TRIM)
 for x, y in ((6300, 1220), (6300, 2160), (7300, 1220), (7300, 2160)):
-    level.prefab('fire_pit', (x, y, QUAY + 4), size=48)
+    level.prefab('fire_pit', (x, y, QUAY + 4), size=48, material=BASALT)
     glow(x, y, QUAY + 110, 420, (1, 0.5, 0.2))
 for x in (6600, 6900):
     glow(x, 1440, QUAY + 40, 340, (1, 0.45, 0.16))

@@ -34,6 +34,10 @@ const SUN_DISTANCE: f64 = 16_384.0;
 /// The most layers a face can have, as the renderer reads them.
 const MAX_LAYERS: usize = 4;
 
+/// How much the angle light strikes at counts, unless a light says. All of it
+/// leaves a circle on each wall at a corner, with nothing between them.
+const DEFAULT_ANGLE_SCALE: f64 = 0.5;
+
 /// The most surface samples bounced light gathers from.
 const MAX_BOUNCE_SOURCES: usize = 1024;
 
@@ -72,6 +76,8 @@ struct BakeLight {
     sun: bool,
     /// Whether its shadows stay sharp however coarse the light map is.
     crisp: bool,
+    /// How much the angle light strikes at counts, from 0 to 1 (proposal 0098).
+    angle_scale: f64,
 }
 
 /// A see-through surface that colours light passing through it.
@@ -327,7 +333,7 @@ fn light_on(
     if strength <= 0.0 {
         return none;
     }
-    strength *= facing;
+    strength *= 1.0 - light.angle_scale + light.angle_scale * facing;
     if let (Some(axis), false) = (light.direction, light.sun) {
         let along = -dot(direction, axis);
         if along < light.cone {
@@ -483,6 +489,10 @@ fn read_lights(
             profile,
             sun: false,
             crisp: entity.is_on("crisp"),
+            angle_scale: entity
+                .number("angle_scale")
+                .unwrap_or(DEFAULT_ANGLE_SCALE)
+                .clamp(0.0, 1.0),
         };
         let keyframes = entity
             .fields
@@ -1248,6 +1258,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
                         .iter()
                         .any(|(k, v)| k == "sun_crisp" && v.flag() == Some(true))
                 }),
+                angle_scale: 1.0,
             });
         }
     }

@@ -888,6 +888,29 @@ fn a_bright_light_keeps_its_colour_in_a_bake() {
     assert!(blue < green, "{hottest:?}");
 }
 
+/// A wall struck at a shallow angle keeps most of its light, so a lamp near a
+/// corner lights the corner, rather than a circle on each wall with nothing
+/// between them. A lamp can ask for all of the angle to count.
+#[test]
+fn a_lamp_near_a_corner_lights_the_corner() {
+    let glow = |extra: &str| {
+        let text = format!(
+            "{ROOM}
+entity lamp {{ type = light origin = -200 -200 -216 intensity = 200 {extra} }}
+"
+        );
+        let map = baked(&text, &[]);
+        let styles = [1.0; 64];
+        let at = |x: f32, y: f32| map.light_at(Vec3::new(x, y, -230.0), &styles);
+        // Under the lamp, and out towards the corner of the room.
+        (at(-200.0, -200.0), at(-248.0, -248.0), at(-100.0, -200.0))
+    };
+    let (under, corner, away) = glow("");
+    assert!(corner > under * 0.6, "{under} {corner}");
+    let (under_hard, _, away_hard) = glow("angle_scale = 1");
+    assert!(away > away_hard * 1.2, "{away} {away_hard} {under_hard}");
+}
+
 /// A bake keeps its walkable grid.
 #[test]
 fn a_bake_keeps_the_nav_grid() {

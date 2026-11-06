@@ -120,6 +120,7 @@
     - [0094: formatting Luau](proposals/0094-formatting-luau.md)
     - [0095: streaming tiles](proposals/0095-streaming-tiles.md)
     - [0097: two real levels](proposals/0097-two-real-levels.md)
+    - [0098: light in corners](proposals/0098-light-in-corners.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
