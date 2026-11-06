@@ -47,6 +47,7 @@ fn network(ping: u64, jitter: u64, loss: f64) -> Conditions {
         receive_delay: Duration::ZERO,
         jitter: Duration::from_millis(jitter),
         loss,
+        burst: 0.3,
     }
 }
 

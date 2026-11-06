@@ -5,6 +5,10 @@
 
 use std::time::Duration;
 
+/// The furthest behind the newest snapshot a client draws others on a bad connection, in
+/// seconds. The server needs to know, as it's how far a shot can be judged in the past.
+pub const MOST_VIEW_DELAY: f64 = 0.1;
+
 /// Nanoseconds in one second.
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 

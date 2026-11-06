@@ -373,10 +373,11 @@ fn remove_bots(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 /// The network the `net_fake` settings ask for, or `None` for the real one.
 fn fake_network(console: &Console<World>) -> Option<Conditions> {
     let number = |name: &str| console.cvar(name).map_or(0.0, engine_console::Cvar::number);
-    let (latency, jitter, loss) = (
+    let (latency, jitter, loss, burst) = (
         number("net_fake_latency"),
         number("net_fake_jitter"),
         number("net_fake_loss"),
+        number("net_fake_burst"),
     );
     let half = Duration::from_secs_f32(latency.max(0.0) / 2000.0);
     (latency > 0.0 || jitter > 0.0 || loss > 0.0).then(|| Conditions {
@@ -384,13 +385,15 @@ fn fake_network(console: &Console<World>) -> Option<Conditions> {
         receive_delay: half,
         jitter: Duration::from_secs_f32(jitter.max(0.0) / 1000.0),
         loss: f64::from(loss.clamp(0.0, 100.0)) / 100.0,
+        burst: f64::from(burst.clamp(0.0, 100.0)) / 100.0,
     })
 }
 
 /// `connect address [code]`: joins a game, checking the host against its code
 /// if it's given, or else against who was there last time. It goes through the
 /// `net_fake` settings if any are set: `net_fake_latency` and `net_fake_jitter`
-/// in milliseconds, and `net_fake_loss` in percent, of what's sent.
+/// in milliseconds, and `net_fake_loss` in percent, of what's sent, with `net_fake_burst`
+/// the percent chance that what follows a loss is lost too.
 fn connect(console: &mut Console<World>, world: &mut World, args: &Args) {
     let password = console
         .cvar("password")

@@ -592,6 +592,7 @@ impl Engine {
         console.register_cvar("net_fake_latency", "0", CvarFlags::default());
         console.register_cvar("net_fake_jitter", "0", CvarFlags::default());
         console.register_cvar("net_fake_loss", "0", CvarFlags::default());
+        console.register_cvar("net_fake_burst", "0", CvarFlags::default());
         for (name, value) in GAME_RULES {
             console.register_cvar(name, value, CvarFlags::default());
         }

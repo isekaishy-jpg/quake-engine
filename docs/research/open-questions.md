@@ -5,7 +5,6 @@ Questions the research so far has left open. Each names what's needed. Affected 
 | Question | Needed | Affects |
 |---|---|---|
 | Should the status bar and menus become scripts? | The human's decision. They're Rust in the fixture today, and only a canvas reaches the engine | UI |
-| How do online play's numbers feel on a real network? | Play over the internet. Interpolation delay, the rewind limit and the 5% loss design limit are starting points | Replication, lag compensation |
 | How should particles, water and shaders be built? | The workflow, once other decisions are made. [The direction so far](effects-water-shaders.md) is set, and nothing is designed | Rendering, editor, content |
 | How should full mesh support work? | The workflow, from [the direction so far](mesh-support.md): glTF import, generated light map UVs and generated collision shapes are chosen, and the rest is open | Meshes, baked light, rendering, collision, prefabs |
 | What's the texture standard, and how is it packed? | Wide research, then the workflow, from [the direction so far](texture-standard.md). Linear colour, block compression and compiling ahead are chosen. The next assets wait on this | Textures, materials, shaders, assets |

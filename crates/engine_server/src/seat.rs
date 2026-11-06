@@ -4,7 +4,7 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use engine_core::player::UserCommand;
-use engine_core::time::TICK_SECONDS;
+use engine_core::time::{MOST_VIEW_DELAY, TICK_SECONDS};
 use engine_net::{
     ClientMessage, FireCommand, MAX_NAME_BYTES, PublicKey, ServerMessage, Snapshot, Transport,
     delta_from,
@@ -18,9 +18,10 @@ use crate::fair::{FairSettings, Zone};
 /// save up time, or move faster than the clock, by sending commands in bursts.
 const MAX_ALLOWANCE: f32 = 0.25;
 
-/// How much later than a shooter's ping a view can be, in seconds: the
-/// interpolation buffer, with a tick to spare.
-const VIEW_SLACK: f64 = 3.0 * TICK_SECONDS;
+/// How much later than a shooter's ping a view can be, in seconds: as far back as a client
+/// draws on a bad connection, with a tick to spare. A client asking for more than it's
+/// really drawing only gets to shoot at the past, so this gives nothing away.
+const VIEW_SLACK: f64 = MOST_VIEW_DELAY + TICK_SECONDS;
 
 /// The most a single command can cost.
 const MAX_COMMAND_COST: f32 = 0.1;

@@ -17,6 +17,9 @@ pub struct Conditions {
     pub jitter: Duration,
     /// The share of what's sent unreliably that's lost, from 0 to 1.
     pub loss: f64,
+    /// The chance that what follows a loss is lost too, from 0 to 1, as real networks lose
+    /// things in bursts. Past [`Self::loss`], it's what decides how long they are.
+    pub burst: f64,
 }
 
 /// A message on its way.
@@ -46,6 +49,8 @@ pub struct Conditioned {
     incoming: VecDeque<(Duration, Vec<u8>)>,
     /// The state of the random numbers.
     random: u64,
+    /// Whether the last unreliable message was lost.
+    lost_last: bool,
 }
 
 impl Conditioned {
@@ -60,6 +65,7 @@ impl Conditioned {
             outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
             random: seed | 1,
+            lost_last: false,
         }
     }
 
@@ -97,7 +103,13 @@ impl Transport for Conditioned {
     }
 
     fn send_unreliable(&mut self, bytes: Vec<u8>) {
-        if self.next_random() < self.conditions.loss {
+        let chance = if self.lost_last {
+            self.conditions.burst.max(self.conditions.loss)
+        } else {
+            self.conditions.loss
+        };
+        self.lost_last = self.next_random() < chance;
+        if self.lost_last {
             return;
         }
         let due = self.due(true);

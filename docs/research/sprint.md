@@ -38,7 +38,7 @@ Earlier items unblock later ones.
 | 24 | Review of the host, worker and cache crates, and tests out of `src` | Open questions | done |
 | 25 | Projectile launch delay and correction | Open questions | done, and the feel of it needs a person |
 | 26 | Input at 8 kHz | Open questions | done, and a real 8 kHz mouse needs a person |
-| 27 | Online numbers on a network | Open questions | todo |
+| 27 | Online numbers on a network | Open questions | done, and real people on a real network need a person |
 | 28 | Real sound features and entity culling | [Research plan](plan.md) | todo |
 
 ## Then
@@ -79,3 +79,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 23: ab90233
 - Item 24: 9cb499c
 - Item 25: 612c3f3
+- Item 26: e348f46
