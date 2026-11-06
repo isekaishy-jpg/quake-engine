@@ -100,6 +100,8 @@ qbsp = { version = "=0.17.0", default-features = false }
 # Proposal 0044: what saved games are made of, and how they're written.
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "float_roundtrip"] }
+# Proposal 0117: drawing text from a font, private to `engine_ui`.
+fontdue = { version = "=0.9.5", default-features = false, features = ["std", "hashbrown"] }
 # Proposal 0109: reading models, private to `engine_compile`.
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names"] }
 # Proposal 0107: checking shaders with no GPU, private to `engine_shaders`.

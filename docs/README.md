@@ -150,6 +150,7 @@
     - [0114: effects](proposals/0114-effects.md)
     - [0115: water](proposals/0115-water.md)
     - [0116: zones](proposals/0116-zones.md)
+    - [0117: the engine's own UI](proposals/0117-engine-ui.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

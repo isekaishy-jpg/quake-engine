@@ -3,18 +3,22 @@
 use std::collections::HashMap;
 
 use engine_assets::FileSystem;
+use engine_compile::decode_png;
 use engine_console::Console;
-use engine_core::canvas::{Canvas, Picture, PictureSource, Quad};
+use engine_core::canvas::{Canvas, Image, Picture, PictureSource, Quad};
 use engine_core::math::Vec3;
 use engine_core::sound::SoundStart;
 use engine_render::Renderer;
-use engine_ui::{canvas_scale, draw_plaque, draw_rate};
+use engine_ui::{
+    FontStyle, UiTheme, canvas_scale, draw_piece, draw_plaque, draw_rate, draw_text, measure_text,
+};
 use fixture_quake::{
     BACKGROUND_PICTURE, Intermission, LOADING_PICTURE, MenuHost, PAUSE_PICTURE, PICTURE_WAD,
     Palette, SAVE_SLOTS, Wad, load_palette, load_picture,
 };
 
 use crate::app::World;
+use crate::look::{CONSOLE_PICTURE, SPLASH_PICTURE};
 use crate::saves;
 
 /// The sound channel of the menus.
@@ -50,6 +54,106 @@ impl PictureBank {
     }
 }
 
+/// How long the splash shows, then how long it takes to fade.
+const SPLASH_SECONDS: [f32; 2] = [1.5, 0.6];
+
+/// How long a zone's title takes to come up, stays, and takes to go.
+const TITLE_SECONDS: [f32; 3] = [0.5, 2.5, 1.0];
+
+/// How tall a zone's title is, in units.
+const TITLE_SIZE: f32 = 26.0;
+
+/// The colour of titles.
+const TITLE_INK: [f32; 3] = [0.87, 0.85, 0.8];
+
+/// How long each picture of the spinner shows.
+const SPINNER_SECONDS: f32 = 0.08;
+
+/// How many pictures the spinner has.
+const SPINNER_PICTURES: u32 = 8;
+
+/// How wide the spinner is, in units.
+const SPINNER_SIZE: f32 = 24.0;
+
+/// Draws the picture the engine starts with, if the content has it. It covers the
+/// screen, keeping its shape.
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "a fade needs no more than f32"
+)]
+fn draw_splash(canvas: &mut Canvas<'_>, run_time: f64) {
+    let [hold, fade] = SPLASH_SECONDS;
+    let age = run_time as f32;
+    if age >= hold + fade {
+        return;
+    }
+    let Some((width, height)) = canvas.size_of(SPLASH_PICTURE) else {
+        return;
+    };
+    let (across, down) = (canvas.width(), canvas.height());
+    let grow = (across / width).max(down / height);
+    let (shown_width, shown_height) = (width * grow, height * grow);
+    let (left, top) = ((across - shown_width) * 0.5, (down - shown_height) * 0.5);
+    let alpha = (1.0 - (age - hold) / fade).clamp(0.0, 1.0);
+    canvas.fill([0.0, 0.0, across, down], [0.0, 0.0, 0.0, alpha]);
+    canvas.stretched(
+        SPLASH_PICTURE,
+        [left, top, left + shown_width, top + shown_height],
+        alpha,
+    );
+}
+
+/// Draws the spinner in the corner, for as long as something's loading.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "which picture it's on"
+)]
+fn draw_spinner(canvas: &mut Canvas<'_>, theme: &UiTheme, run_time: f64) {
+    let number = (run_time as f32 / SPINNER_SECONDS) as u32 % SPINNER_PICTURES;
+    let (right, bottom) = (canvas.width() - 12.0, canvas.height() - 12.0);
+    let place = [right - SPINNER_SIZE, bottom - SPINNER_SIZE, right, bottom];
+    draw_piece(
+        canvas,
+        theme,
+        &format!("spinner-{number:02}"),
+        place,
+        [1.0; 4],
+    );
+}
+
+/// Draws a zone's title, `age` seconds after going in.
+fn draw_zone_title(canvas: &mut Canvas<'_>, theme: &mut UiTheme, title: &str, age: f32) {
+    let [rise, hold, fall] = TITLE_SECONDS;
+    let alpha = if age < rise {
+        age / rise
+    } else {
+        1.0 - (age - rise - hold) / fall
+    };
+    let alpha = alpha.clamp(0.0, 1.0);
+    if alpha <= 0.0 {
+        return;
+    }
+    let width = measure_text(canvas, theme, FontStyle::Display, TITLE_SIZE, title);
+    let x = (canvas.width() - width) * 0.5;
+    let y = canvas.height() * 0.2;
+    let [red, green, blue] = TITLE_INK;
+    let place = (x, y, TITLE_SIZE);
+    let color = [red, green, blue, alpha];
+    draw_text(canvas, theme, FontStyle::Display, place, title, color);
+}
+
+/// The PNG at `path`, as a picture.
+fn read_png(filesystem: &FileSystem, path: &str) -> Option<Image> {
+    let bytes = filesystem.read(path).ok()?;
+    let (width, height, rgba) = decode_png(&bytes).ok()?;
+    Some(Image {
+        width,
+        height,
+        rgba,
+    })
+}
+
 /// A bank of pictures, with what it takes to load more.
 pub(crate) struct PictureLoader<'a> {
     /// The bank.
@@ -61,14 +165,27 @@ pub(crate) struct PictureLoader<'a> {
 }
 
 impl PictureSource for PictureLoader<'_> {
+    fn add(&mut self, name: &str, image: &Image) {
+        let number = self.renderer.add_picture(image).ok();
+        let picture = number.map(|number| Picture {
+            number,
+            width: image.width,
+            height: image.height,
+        });
+        self.bank.by_name.insert(name.to_owned(), picture);
+    }
+
     fn picture(&mut self, name: &str) -> Option<Picture> {
         if let Some(picture) = self.bank.by_name.get(name) {
             return *picture;
         }
-        let picture = self
-            .bank
-            .source(self.filesystem)
-            .and_then(|(wad, palette)| load_picture(name, self.filesystem, wad, palette));
+        let picture = if name.ends_with(".png") {
+            read_png(self.filesystem, name)
+        } else {
+            self.bank
+                .source(self.filesystem)
+                .and_then(|(wad, palette)| load_picture(name, self.filesystem, wad, palette))
+        };
         let picture = picture.and_then(|image| {
             let number = self.renderer.add_picture(&image).ok()?;
             Some(Picture {
@@ -118,8 +235,14 @@ impl World {
                 self.console_view.draw_notify(&mut canvas, time, blink);
             }
         }
+        let own_look = self.theme.has_fonts() && canvas.size_of(CONSOLE_PICTURE).is_some();
+        let (background, theme) = if own_look {
+            (CONSOLE_PICTURE, Some(&mut self.theme))
+        } else {
+            (BACKGROUND_PICTURE, None)
+        };
         self.console_view
-            .draw(&mut canvas, BACKGROUND_PICTURE, VERSION, blink);
+            .draw(&mut canvas, background, VERSION, blink, theme);
         if self.menu.is_open() {
             // From `M_Draw`: the menus need something quiet behind them.
             let whole = [0.0, 0.0, canvas.width(), canvas.height()];
@@ -137,8 +260,18 @@ impl World {
         };
         self.menu.draw(&mut canvas, run_time, &view);
         if self.level_pending.is_some() {
-            draw_plaque(&mut canvas, LOADING_PICTURE);
+            if self.theme.kit.pieces.contains_key("spinner-00") {
+                draw_spinner(&mut canvas, &self.theme, run_time);
+            } else {
+                draw_plaque(&mut canvas, LOADING_PICTURE);
+            }
         }
+        if let Some((title, began)) = &self.zone_title {
+            #[expect(clippy::cast_possible_truncation, reason = "a fade's time")]
+            let age = (time - *began) as f32;
+            draw_zone_title(&mut canvas, &mut self.theme, title, age);
+        }
+        draw_splash(&mut canvas, run_time);
         if !self.rate_text.is_empty() {
             draw_rate(&mut canvas, &self.rate_text);
         }

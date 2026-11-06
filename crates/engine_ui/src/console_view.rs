@@ -4,6 +4,14 @@ use std::collections::VecDeque;
 
 use engine_core::canvas::{CHARACTER_SIZE, Canvas, TALK_MARK};
 
+use crate::theme::{UiTheme, draw_cells};
+
+/// The colour of what the console says, in the engine's own look.
+const CONSOLE_INK: [f32; 4] = [0.87, 0.85, 0.8, 1.0];
+
+/// The colour of someone talking.
+const CONSOLE_ACCENT: [f32; 4] = [0.73, 0.29, 0.24, 1.0];
+
 /// The most lines kept.
 const MAX_LINES: usize = 1024;
 
@@ -334,9 +342,56 @@ impl ConsoleView {
         }
     }
 
+    /// Draws what it says in the engine's own font.
+    fn draw_lines_in(
+        &self,
+        canvas: &mut Canvas<'_>,
+        theme: &mut UiTheme,
+        bottom: f32,
+        blink: bool,
+    ) {
+        let (size, cell, gap) = (CHARACTER_SIZE * 1.15, CHARACTER_SIZE, CHARACTER_SIZE * 1.25);
+        let mut y = bottom - 2.0 * gap;
+        if self.open {
+            let mut text = String::with_capacity(self.input.len() + 2);
+            text.push(']');
+            text.push_str(&self.input);
+            if blink {
+                text.push('_');
+            }
+            draw_cells(
+                canvas,
+                theme,
+                (CHARACTER_SIZE, y, cell),
+                size,
+                &text,
+                CONSOLE_INK,
+            );
+        }
+        y -= gap;
+        for line in self.lines.iter().rev().skip(self.scroll) {
+            if y < 0.0 {
+                break;
+            }
+            let (ink, plain) = match line.strip_prefix(TALK_MARK) {
+                Some(said) => (CONSOLE_ACCENT, said),
+                None => (CONSOLE_INK, line.as_str()),
+            };
+            draw_cells(canvas, theme, (CHARACTER_SIZE, y, cell), size, plain, ink);
+            y -= gap;
+        }
+    }
+
     /// Draws it over `background`, from `Con_DrawConsole`, with `version` in
     /// its corner.
-    pub fn draw(&self, canvas: &mut Canvas<'_>, background: &str, version: &str, blink: bool) {
+    pub fn draw(
+        &self,
+        canvas: &mut Canvas<'_>,
+        background: &str,
+        version: &str,
+        blink: bool,
+        theme: Option<&mut UiTheme>,
+    ) {
         if self.down <= 0.0 {
             return;
         }
@@ -344,6 +399,10 @@ impl ConsoleView {
         let bottom = (height * self.down).floor();
         // Slide the picture down rather than squash it.
         canvas.stretched(background, [0.0, bottom - height, width, bottom], 1.0);
+        if let Some(theme) = theme {
+            self.draw_lines_in(canvas, theme, bottom, blink);
+            return;
+        }
         #[expect(clippy::cast_precision_loss, reason = "a short version")]
         let left = width - (version.len() as f32 + 1.0) * CHARACTER_SIZE;
         canvas.bright_text(left, bottom - 2.0 * CHARACTER_SIZE, version.as_bytes());

@@ -111,17 +111,17 @@ fn a_line_with_breaks_is_kept_as_several() {
 #[test]
 fn it_slides_down_to_half_the_screen() {
     let mut view = ConsoleView::new();
-    assert!(drawn(|canvas| view.draw(canvas, "back", "1", false)).is_empty());
+    assert!(drawn(|canvas| view.draw(canvas, "back", "1", false, None)).is_empty());
     view.set_open(true);
     view.update(0.05, false);
-    let part = drawn(|canvas| view.draw(canvas, "back", "1", false))[0].place[3];
+    let part = drawn(|canvas| view.draw(canvas, "back", "1", false, None))[0].place[3];
     view.update(10.0, false);
-    let whole = drawn(|canvas| view.draw(canvas, "back", "1", false))[0].place[3];
+    let whole = drawn(|canvas| view.draw(canvas, "back", "1", false, None))[0].place[3];
     assert!(part < whole);
     assert_eq!(whole, 100.0);
     view.update(10.0, true);
     assert_eq!(
-        drawn(|canvas| view.draw(canvas, "back", "1", false))[0].place[3],
+        drawn(|canvas| view.draw(canvas, "back", "1", false, None))[0].place[3],
         200.0
     );
 }

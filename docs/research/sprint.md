@@ -27,7 +27,7 @@ Earlier items unblock later ones.
 | 13 | Particles: graph and modules, CPU and GPU, attach points | [Note](effects-water-shaders.md) | done |
 | 14 | Water: the general system, reflections without stipple, depth, murk | [Note](effects-water-shaders.md) | done |
 | 15 | Zones: research, then regions, sub zones, names, music, ambient light | Open questions | done |
-| 16 | Engine UI: text, nine-slice, menus, splash, console, animated pictures | Open questions | todo |
+| 16 | Engine UI: text, nine-slice, menus, splash, console, animated pictures | Open questions | done |
 | 17 | Status bar and menus as scripts | Open questions | todo |
 | 18 | Editor: full pass for anyone to make maps | Open questions | todo |
 | 19 | Use layers, masks, paint, decals and hex tiling in the real levels | Review 0016 | todo |

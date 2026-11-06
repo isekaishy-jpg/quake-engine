@@ -204,7 +204,11 @@ impl World {
             return;
         };
         if let Some(title) = change.title {
-            self.hud.center_print(title);
+            if self.theme.has_fonts() {
+                self.zone_title = Some((title, self.map_time));
+            } else {
+                self.hud.center_print(title);
+            }
         }
         if let Some(Some(music)) = change.music {
             self.play_named_music(&music);

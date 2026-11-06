@@ -38,6 +38,7 @@ use engine_render::{PostSettings, Renderer, Target, TextureFilter, TileStreamer}
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_shaders::built_in_shaders;
 use engine_ui::ConsoleView;
+use engine_ui::UiTheme;
 use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
     SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, mount_game, mount_music,
@@ -46,6 +47,7 @@ use sound::AudioLevels;
 use view::DEFAULT_FOV;
 
 use crate::keys::Keys;
+use crate::look::load_theme;
 use crate::models::ModelBank;
 use crate::options::Options;
 use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
@@ -149,6 +151,10 @@ pub(crate) struct World {
     pub(crate) effects_time: f32,
     /// Which zone the view is in.
     pub(crate) zones: ZoneTracker,
+    /// The engine's own look, if the content has it.
+    pub(crate) theme: UiTheme,
+    /// The title of the zone just entered, and when it was.
+    pub(crate) zone_title: Option<(String, f64)>,
     /// The colours particles are given in.
     palette: Option<Palette>,
     /// What the player carries into the next level.
@@ -525,6 +531,7 @@ impl Engine {
             }
         }
         filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
+        let theme = load_theme(&filesystem);
         let has_config = user_directory.join(CONFIG_NAME).is_file();
         let keys = Keys::load(&user_directory);
         let mut console = Console::new();
@@ -623,6 +630,8 @@ impl Engine {
                 effects: Effects::default(),
                 effects_time: 0.0,
                 zones: ZoneTracker::default(),
+                theme,
+                zone_title: None,
                 palette: None,
                 next_parms: None,
                 next_flags: 0.0,

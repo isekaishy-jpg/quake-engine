@@ -47,6 +47,10 @@ pub struct Picture {
 pub trait PictureSource {
     /// The picture called `name`, if there is one.
     fn picture(&mut self, name: &str) -> Option<Picture>;
+
+    /// Keeps `image` as the picture called `name`, for what's made as it's needed.
+    /// A source that can't take one leaves it.
+    fn add(&mut self, _name: &str, _image: &Image) {}
 }
 
 /// What marks a line of text as someone talking, from `Con_Print`. It's not
@@ -93,6 +97,34 @@ impl<'a> Canvas<'a> {
             quads: Vec::new(),
             font: None,
         }
+    }
+
+    /// Pixels to a unit.
+    #[must_use]
+    pub const fn scale(&self) -> f32 {
+        self.scale
+    }
+
+    /// Keeps `image` as the picture called `name`.
+    pub fn add_picture(&mut self, name: &str, image: &Image) {
+        self.source.add(name, image);
+    }
+
+    /// Draws part of the picture called `name` at `place`, both in pixels, as left,
+    /// top, right and bottom. What needs exact pixels, such as text, goes by this.
+    #[expect(clippy::cast_precision_loss, reason = "pictures are small")]
+    pub fn pixels(&mut self, name: &str, source: [f32; 4], place: [f32; 4], color: [f32; 4]) {
+        let Some(picture) = self.source.picture(name) else {
+            return;
+        };
+        let (width, height) = (picture.width as f32, picture.height as f32);
+        let [left, top, right, bottom] = source;
+        self.quads.push(Quad {
+            picture: picture.number,
+            place,
+            source: [left / width, top / height, right / width, bottom / height],
+            color,
+        });
     }
 
     /// The width in units.

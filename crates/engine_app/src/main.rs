@@ -5,6 +5,7 @@ mod app;
 mod commands;
 mod keys;
 mod level;
+mod look;
 mod models;
 mod options;
 mod saves;

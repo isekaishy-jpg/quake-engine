@@ -234,6 +234,10 @@ pub const BACKEND_RULES: &[BackendRule] = &[
         owner: "engine_compile",
     },
     BackendRule {
+        dependency: "fontdue",
+        owner: "engine_ui",
+    },
+    BackendRule {
         dependency: "box3d-rust",
         owner: "engine_physics",
     },

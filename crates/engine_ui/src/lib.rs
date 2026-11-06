@@ -6,8 +6,13 @@
 //! May depend on `engine_core`, `engine_console`, `engine_render`. See proposal 0008.
 
 mod console_view;
+mod theme;
 
 pub use console_view::ConsoleView;
+pub use theme::{
+    BakedFont, FontStyle, Glyph, KitPiece, TextMeasure, UiAnimation, UiColor, UiKit, UiTheme,
+    draw_cells, draw_frame, draw_piece, draw_text, measure_text, nine_slices, text_width, wrapped,
+};
 
 use engine_core::canvas::{CHARACTER_SIZE, Canvas};
 
