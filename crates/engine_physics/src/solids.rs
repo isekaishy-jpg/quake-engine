@@ -211,17 +211,74 @@ fn walk(tree: &Tree, child: ClipChild, faces: &[Vec<Point>], solids: &mut Vec<Ve
     }
 }
 
+/// How many levels of the tree get a thread each way, for a big map: 16 threads.
+const SPLIT_LEVELS: u32 = 4;
+
+/// As [`walk`], with each side of the top of the tree on a thread of its own. The two sides
+/// of a plane have nothing to do with each other, and a big world takes seconds on one
+/// thread. What's found comes back in the order `walk` finds it.
+fn walk_on_threads(
+    tree: &Tree,
+    child: ClipChild,
+    faces: &[Vec<Point>],
+    levels: u32,
+) -> Vec<Vec<Vec3>> {
+    let parts = match child {
+        ClipChild::Node(index) if levels > 0 => tree
+            .clip_nodes
+            .get(index as usize)
+            .and_then(|node| Some((node, tree.planes.get(node.plane as usize)?))),
+        _ => None,
+    };
+    let Some((node, plane)) = parts else {
+        let mut solids = Vec::new();
+        walk(tree, child, faces, &mut solids);
+        return solids;
+    };
+    let (normal, distance) = plane_parts(plane);
+    let front = clip_solid(faces, normal, distance);
+    let flipped = [-normal[0], -normal[1], -normal[2]];
+    let back = clip_solid(faces, flipped, -distance);
+    let side = |child: ClipChild, faces: &[Vec<Point>]| {
+        if faces.is_empty() {
+            Vec::new()
+        } else {
+            walk_on_threads(tree, child, faces, levels - 1)
+        }
+    };
+    let (mut solids, rest) = std::thread::scope(|scope| {
+        let front_side = scope.spawn(|| side(node.children[0], &front));
+        let rest = side(node.children[1], &back);
+        let solids = front_side
+            .join()
+            .unwrap_or_else(|panic| std::panic::resume_unwind(panic));
+        (solids, rest)
+    });
+    solids.extend(rest);
+    solids
+}
+
+/// As [`build_solids`], on as many threads as a big map's world is worth.
+#[must_use]
+pub fn build_world_solids(tree: &Tree, root: ClipChild, mins: Vec3, maxs: Vec3) -> Vec<Vec<Vec3>> {
+    walk_on_threads(tree, root, &bounds_faces(mins, maxs), SPLIT_LEVELS)
+}
+
+/// The faces of the box a model's solids are cut from.
+fn bounds_faces(mins: Vec3, maxs: Vec3) -> Vec<Vec<Point>> {
+    let low = |value: f32| f64::from(value - BOUNDS_MARGIN);
+    let high = |value: f32| f64::from(value + BOUNDS_MARGIN);
+    box_faces(
+        [low(mins.x), low(mins.y), low(mins.z)],
+        [high(maxs.x), high(maxs.y), high(maxs.z)],
+    )
+}
+
 /// The corners of every solid in the hull at `root`, within the bounds of
 /// `mins` and `maxs`.
 #[must_use]
 pub fn build_solids(tree: &Tree, root: ClipChild, mins: Vec3, maxs: Vec3) -> Vec<Vec<Vec3>> {
-    let low = |value: f32| f64::from(value - BOUNDS_MARGIN);
-    let high = |value: f32| f64::from(value + BOUNDS_MARGIN);
-    let faces = box_faces(
-        [low(mins.x), low(mins.y), low(mins.z)],
-        [high(maxs.x), high(maxs.y), high(maxs.z)],
-    );
     let mut solids = Vec::new();
-    walk(tree, root, &faces, &mut solids);
+    walk(tree, root, &bounds_faces(mins, maxs), &mut solids);
     solids
 }

@@ -151,8 +151,8 @@ fn brush(material: &str, cuboid: [f64; 6]) -> Block {
     block
 }
 
-/// Runs of squares side by side in a row that pass `wanted`, as a row and first
-/// and last columns. Fewer, longer brushes make for lighter levels.
+/// Runs of `squares` side by side in a row, as a row and first and last columns. Fewer,
+/// longer brushes make for lighter levels.
 fn runs(squares: &BTreeSet<(i32, i32)>) -> Vec<(i32, i32, i32)> {
     let mut by_row: BTreeMap<i32, Vec<i32>> = BTreeMap::new();
     for (x, y) in squares {

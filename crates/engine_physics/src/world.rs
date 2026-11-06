@@ -3,7 +3,7 @@
 use std::sync::Arc;
 
 use box3d_rust::body::create_body;
-use box3d_rust::hull::create_hull;
+use box3d_rust::hull::{HullData, create_hull};
 use box3d_rust::shape::create_hull_shape;
 use box3d_rust::types::{
     default_body_def, default_query_filter, default_shape_def, default_world_def,
@@ -16,7 +16,7 @@ use engine_core::player::{Liquid, PLAYER_MAXS, PLAYER_MINS};
 use engine_map::{ClipChild, Contents, Map, Model};
 
 use crate::hull::{HullRoot, enter_box, trace_hull};
-use crate::solids::build_solids;
+use crate::solids::{build_solids, build_world_solids};
 
 /// How finely a thin line looks for walls, which are thicker than this.
 const LINE_STEP: f32 = 8.0;
@@ -140,6 +140,36 @@ fn box_vec(value: Vec3) -> BoxVec3 {
     }
 }
 
+/// How many solids it takes for hulls to be worth a thread.
+const HULLS_PER_THREAD: usize = 2048;
+
+/// The hull of each of `solids`, in order, or `None` for what can't have one. Where planes
+/// nearly meet, a sliver can be left too thin to block anything, and too thin for a hull to
+/// be found at all.
+fn hulls_of(solids: &[Vec<Vec3>]) -> Vec<Option<HullData>> {
+    let hull_of = |solid: &Vec<Vec3>| {
+        if is_sliver(solid) {
+            return None;
+        }
+        let points: Vec<BoxVec3> = solid.iter().copied().map(box_vec).collect();
+        create_hull(&points, MAX_HULL_VERTICES)
+    };
+    std::thread::scope(|scope| {
+        let threads: Vec<_> = solids
+            .chunks(HULLS_PER_THREAD)
+            .map(|chunk| scope.spawn(move || chunk.iter().map(hull_of).collect::<Vec<_>>()))
+            .collect();
+        threads
+            .into_iter()
+            .flat_map(|thread| {
+                thread
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
+            .collect()
+    })
+}
+
 /// One model's solids, in their own `box3d` world.
 struct ModelSolids {
     /// The solids, where the map built them.
@@ -218,7 +248,8 @@ impl CollisionWorld {
         let models = map
             .models
             .iter()
-            .map(|model| {
+            .enumerate()
+            .map(|(number, model)| {
                 let root = model.hulls[0];
                 if root == ClipChild::Empty {
                     return None;
@@ -229,15 +260,14 @@ impl CollisionWorld {
                 // working it out again for each one takes minutes on a big map.
                 let mut shape = default_shape_def();
                 shape.update_body_mass = false;
-                for solid in build_solids(&map.tree, root, model.mins, model.maxs) {
-                    // Where planes nearly meet, a sliver can be left too thin to
-                    // block anything, and too thin for a hull to be found at all.
-                    if is_sliver(&solid) {
-                        refused_count += 1;
-                        continue;
-                    }
-                    let points: Vec<BoxVec3> = solid.into_iter().map(box_vec).collect();
-                    match create_hull(&points, MAX_HULL_VERTICES) {
+                // The world is nearly all of the work, so it's the one worth threads for.
+                let solids = if number == 0 {
+                    build_world_solids(&map.tree, root, model.mins, model.maxs)
+                } else {
+                    build_solids(&map.tree, root, model.mins, model.maxs)
+                };
+                for hull in hulls_of(&solids) {
+                    match hull {
                         Some(hull) => {
                             let _shape = create_hull_shape(&mut world, body, &shape, &hull);
                             solid_count += 1;

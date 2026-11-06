@@ -46,6 +46,9 @@ const LEAP_REACH: i32 = 2;
 /// How high a ledge something can climb out of water onto.
 const WATER_LIP: f32 = 48.0;
 
+/// What a place's link holds when there's none that way.
+const NO_LINK: u32 = u32::MAX;
+
 /// One leap of a kind is kept for each square of this many cells. Every place along an
 /// edge could drop, and a path only needs to find one nearby.
 const LEAP_SPREAD: i32 = 4;
@@ -318,7 +321,8 @@ fn find_leaps(grid: &NavGrid, hull: &Hull<'_>, afloat: &[bool]) -> Vec<NavLeap> 
                 let from = grid.places[place as usize];
                 let from_afloat = afloat[place as usize];
                 for (way, (dx, dy)) in NAV_WAYS.iter().enumerate() {
-                    if from.links[way] != u32::MAX {
+                    // Where something can walk, it doesn't need to leap.
+                    if from.links[way] != NO_LINK {
                         continue;
                     }
                     for cells in 1..=LONGEST_JUMP {

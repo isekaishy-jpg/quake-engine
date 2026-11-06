@@ -38,6 +38,9 @@ const MUTE_FADE: Duration = Duration::from_millis(250);
 /// How long a room takes to change, as walking through a door doesn't flip it.
 const ROOM_CHANGE: Duration = Duration::from_millis(400);
 
+/// The most a room sends back, which is the room's track at full volume.
+const LOUDEST_ROOM: f32 = 0.4;
+
 /// How low sound through a wall goes, in hertz.
 const MUFFLED_CUTOFF: f64 = 900.0;
 
@@ -169,8 +172,8 @@ pub(crate) struct Output {
     muffled: TrackHandle,
     /// The sound of the place.
     ambience: TrackHandle,
-    /// What comes back from the room, which is kept so that it isn't removed.
-    _room: SendTrackHandle,
+    /// What comes back from the room.
+    room: SendTrackHandle,
     /// The reverb on the room's track.
     reverb: ReverbHandle,
     /// The music playing.
@@ -221,7 +224,7 @@ impl Output {
             effects,
             muffled,
             ambience,
-            _room: room,
+            room,
             reverb,
             music: None,
             music_volume: 1.0,
@@ -290,8 +293,8 @@ impl Output {
     pub(crate) fn set_room(&mut self, room: Room) {
         self.reverb
             .set_feedback(f64::from(room.feedback()), tween(ROOM_CHANGE));
-        self._room
-            .set_volume(decibels(room.send() / 0.4), tween(ROOM_CHANGE));
+        self.room
+            .set_volume(decibels(room.send() / LOUDEST_ROOM), tween(ROOM_CHANGE));
     }
 
     /// Silences everything, or lets it back.

@@ -10,7 +10,7 @@ use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
 use engine_map::{Map, MipLevel};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Transport, loopback};
-use engine_physics::CollisionWorld;
+use engine_physics::{CollisionWorld, build_solids, build_world_solids};
 use engine_server::{Level, Server, Sight};
 use fixture_quake::{SCRIPTS, spawn_point};
 
@@ -109,6 +109,21 @@ fn rooms_world() -> CollisionWorld {
     let mut source = |name: &str| placeholder_texture(name);
     let map = compile_text(TWO_ROOMS, &mut source).expect("compiles");
     CollisionWorld::new(Arc::new(map))
+}
+
+/// Threads change how long a world's solids take, and nothing else about them.
+#[test]
+fn a_worlds_solids_are_the_same_on_threads() {
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(TWO_ROOMS, &mut source).expect("compiles");
+    let world = &map.models[0];
+    let root = world.hulls[0];
+    let plain = build_solids(&map.tree, root, world.mins, world.maxs);
+    assert!(plain.len() > 4, "{}", plain.len());
+    assert_eq!(
+        build_world_solids(&map.tree, root, world.mins, world.maxs),
+        plain
+    );
 }
 
 #[test]
