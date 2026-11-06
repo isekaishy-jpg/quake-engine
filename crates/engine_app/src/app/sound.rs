@@ -59,6 +59,20 @@ impl World {
         }
     }
 
+    /// Plays what a zone names: a track by number, or a file.
+    pub(crate) fn play_named_music(&mut self, music: &str) {
+        if let Ok(track) = music.parse::<u8>() {
+            self.play_track(track);
+            return;
+        }
+        self.music_track = None;
+        let bytes = self.filesystem.read(music);
+        let playing = bytes.is_ok_and(|bytes| self.audio.play_music(bytes).is_ok());
+        if !playing {
+            self.audio.stop_music();
+        }
+    }
+
     /// Plays music track `track`, unless it's already playing. With no file
     /// for it there's no music, as with no disc in the drive.
     pub(crate) fn play_track(&mut self, track: u8) {

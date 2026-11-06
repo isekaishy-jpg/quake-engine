@@ -37,7 +37,7 @@ fn luma(color: vec3<f32>) -> f32 {
 // `BuildGammaTable` was for the palette. The noise, under a step of the screen's
 // bytes, stops dark gradients banding.
 fn to_screen(light: vec3<f32>, noise: f32) -> vec3<f32> {
-    let bright = light * frame.color_params.y;
+    let bright = light * frame.color_params.y * frame.zone_light.rgb;
     let peak = max(bright.r, max(bright.g, bright.b));
     let held = max(bright / max(peak, 1.0), vec3<f32>(0.0));
     let raised = pow(held, vec3<f32>(frame.params.w));

@@ -195,6 +195,27 @@ impl World {
         out
     }
 
+    /// Follows the view from zone to zone, and does what going into one says.
+    fn follow_zones(&mut self, origin: Vec3, seconds: f32) {
+        let Some(map) = self.map.clone() else {
+            return;
+        };
+        let Some(change) = self.zones.update(&map, origin, seconds) else {
+            return;
+        };
+        if let Some(title) = change.title {
+            self.hud.center_print(title);
+        }
+        if let Some(Some(music)) = change.music {
+            self.play_named_music(&music);
+        }
+        if let Some(sound) = change.sound {
+            let clip =
+                sound.and_then(|name| self.sounds.clip(&name, &self.filesystem, &mut self.audio));
+            self.audio.set_zone_sound(clip);
+        }
+    }
+
     /// The batches of particles the GPU works out.
     pub(super) fn gpu_particles(&self) -> Vec<GpuParticles> {
         let emitters = self.effects.authored().gpu_emitters();
@@ -388,7 +409,9 @@ impl World {
             time: self.map_time as f32,
             styles,
             gamma: self.gamma,
+            light_shift: self.zones.light().map(|share| share - 1.0),
         };
+        self.follow_zones(origin, frame_seconds);
         // A device that's failed says so when it draws. Without this, far
         // colours stay, which is safe.
         if let (Some(streamer), Some(renderer)) = (&mut self.tile_streamer, &mut self.renderer)

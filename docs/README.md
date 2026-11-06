@@ -17,6 +17,7 @@
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one
   - [Water](water.md): how a level sets it
+  - [Zones](zones.md): named parts of a map
   - [Texture standard](texture-standard.md): what a texture has to be, to hand to whoever makes them
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
@@ -148,6 +149,7 @@
     - [0113: moving lights' shadows](proposals/0113-moving-light-shadows.md)
     - [0114: effects](proposals/0114-effects.md)
     - [0115: water](proposals/0115-water.md)
+    - [0116: zones](proposals/0116-zones.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

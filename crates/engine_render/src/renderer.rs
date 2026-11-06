@@ -49,6 +49,9 @@ pub struct View {
     pub styles: [f32; STYLE_COUNT],
     /// What the world's colours are raised to, where 1 leaves them alone.
     pub gamma: f32,
+    /// How much a zone takes off the light reaching the eye, or adds to it, in
+    /// each colour. 0 leaves it as it is.
+    pub light_shift: [f32; 3],
 }
 
 /// Everything in a frame besides the map itself.

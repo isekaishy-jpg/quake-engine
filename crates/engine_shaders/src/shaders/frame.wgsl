@@ -65,6 +65,8 @@ struct Frame {
     probe_size: vec4<f32>,
     // x what baked light is raised to, y how much light reaches the eye.
     color_params: vec4<f32>,
+    // How much of each colour of light a zone lets through to the eye.
+    zone_light: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

@@ -139,6 +139,10 @@ pub struct Audio {
     static_groups: Vec<StaticGroup>,
     /// Sounds from leaves.
     ambients: [Ambient; 2],
+    /// The sound of the zone the listener's in.
+    zone_sound: Ambient,
+    /// The sound it's fading over to.
+    next_zone_sound: Option<ClipId>,
     /// Where sounds are heard from.
     listener: Listener,
     /// How loud music is.
@@ -176,6 +180,8 @@ impl Audio {
             statics: Vec::new(),
             static_groups: Vec::new(),
             ambients: [Ambient::default(), Ambient::default()],
+            zone_sound: Ambient::default(),
+            next_zone_sound: None,
             listener: Listener::default(),
             music_volume: 1.0,
             ambient_level: 0.3,
@@ -311,6 +317,17 @@ impl Audio {
         self.ambients[1].clip = sky;
     }
 
+    /// Fades over to `clip`, for a zone, or to nothing.
+    pub const fn set_zone_sound(&mut self, clip: Option<ClipId>) {
+        self.next_zone_sound = clip;
+    }
+
+    /// What a zone's sound is doing, as how loud it is out of 1.
+    #[must_use]
+    pub fn zone_sound_volume(&self) -> f32 {
+        self.zone_sound.level / 255.0
+    }
+
     /// `S_Update`: moves on by `seconds`, heard from `listener`, in a leaf
     /// with these levels of water and sky out of 255.
     pub fn update(&mut self, listener: Listener, seconds: f64, levels: [u8; 2]) {
@@ -333,6 +350,45 @@ impl Audio {
         }
         self.update_statics(&listener);
         self.update_ambients(seconds, levels);
+        self.update_zone_sound(seconds);
+    }
+
+    /// Fades a zone's sound, down to nothing before another takes over.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a frame's fade needs no more than f32"
+    )]
+    fn update_zone_sound(&mut self, seconds: f64) {
+        let changing = self.zone_sound.clip != self.next_zone_sound;
+        let wanted = if changing || self.zone_sound.clip.is_none() {
+            0.0
+        } else {
+            self.ambient_level * 255.0
+        };
+        let step = AMBIENT_FADE * seconds as f32;
+        let sound = &mut self.zone_sound;
+        sound.level = if sound.level < wanted {
+            (sound.level + step).min(wanted)
+        } else {
+            (sound.level - step).max(wanted)
+        };
+        if changing && sound.level <= 0.0 {
+            if let Some(mut voice) = sound.voice.take() {
+                voice.stop();
+            }
+            sound.clip = self.next_zone_sound;
+        }
+        let volume = sound.level / 255.0;
+        match (&mut sound.voice, sound.clip, &mut self.output) {
+            (Some(voice), _, _) => voice.set_volumes(volume, volume),
+            (None, Some(clip), Some(output)) if volume > 0.0 => {
+                sound.voice = self
+                    .clips
+                    .get(clip.0)
+                    .and_then(|loaded| output.play(&loaded.prepared, 0.0, volume, volume));
+            }
+            _ => {}
+        }
     }
 
     /// Adds up the sounds at fixed places, and plays what can be heard.
@@ -454,6 +510,12 @@ impl Audio {
             if let Some(voice) = &mut group.voice {
                 voice.stop();
             }
+        }
+        self.next_zone_sound = None;
+        self.zone_sound.clip = None;
+        self.zone_sound.level = 0.0;
+        if let Some(mut voice) = self.zone_sound.voice.take() {
+            voice.stop();
         }
         for ambient in &mut self.ambients {
             ambient.level = 0.0;

@@ -16,6 +16,7 @@ mod projectiles;
 mod shown_shot;
 mod view;
 mod view_clock;
+mod zones;
 
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
@@ -31,3 +32,4 @@ pub use projectiles::{Flights, Launch, Path};
 pub use shown_shot::ShotClock;
 pub use view::{StepSmoother, VIEW_HEIGHT, ViewKick, dead_roll, view_bob, view_idle, view_roll};
 pub use view_clock::ViewClock;
+pub use zones::{ZoneChange, ZoneTracker};

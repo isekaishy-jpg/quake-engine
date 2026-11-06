@@ -20,7 +20,7 @@ use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Client, Effects, Look, LookScale, ShotClock,
-    StepSmoother, ViewKick,
+    StepSmoother, ViewKick, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
@@ -147,6 +147,8 @@ pub(crate) struct World {
     pub(crate) effects: Effects,
     /// The clock of the last update of effects.
     pub(crate) effects_time: f32,
+    /// Which zone the view is in.
+    pub(crate) zones: ZoneTracker,
     /// The colours particles are given in.
     palette: Option<Palette>,
     /// What the player carries into the next level.
@@ -356,6 +358,7 @@ impl World {
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         self.models.clear_numbers();
         self.effects = Effects::default();
+        self.zones = ZoneTracker::default();
         self.palette = Some(palette);
         self.map = Some(Arc::clone(&map));
         let authored = self.effects.authored_mut();
@@ -619,6 +622,7 @@ impl Engine {
                 models: ModelBank::default(),
                 effects: Effects::default(),
                 effects_time: 0.0,
+                zones: ZoneTracker::default(),
                 palette: None,
                 next_parms: None,
                 next_flags: 0.0,

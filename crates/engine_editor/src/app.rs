@@ -1252,6 +1252,7 @@ impl PlatformApp for Editor {
             time,
             styles: [1.0; 64],
             gamma: 1.0,
+            light_shift: [0.0; 3],
         };
         let moving: Vec<LiveLight> = self.map.as_ref().map_or_else(Vec::new, |map| {
             (0_u32..)

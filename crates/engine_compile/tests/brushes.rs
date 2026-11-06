@@ -667,3 +667,32 @@ brush { material = stone contents = water cuboid = -64 -64 -32 64 64 0 }
     assert_eq!(look.waves, 0.0);
     assert_eq!(look.refraction, 0.5);
 }
+
+#[test]
+fn a_zone_is_a_shape_and_nothing_to_see_or_touch() {
+    let text = "format 1 map
+brush { material = stone cuboid = -128 -128 -64 128 128 -32 }
+entity market {
+    type = zone
+    title = \"The Market\"
+    parent = town
+    music = 4
+    light = 0.5
+    brush { material = hidden cuboid = 0 0 0 64 64 64 }
+}
+";
+    let working = read_map_text(text).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile(&working, &mut source).expect("compiles");
+    assert_eq!(map.models.len(), 1, "it's no model");
+    assert_eq!(map.zones.len(), 1);
+    let zone = &map.zones[0];
+    assert_eq!(zone.name, "market");
+    assert_eq!(zone.title.as_deref(), Some("The Market"));
+    assert_eq!(zone.parent.as_deref(), Some("town"));
+    assert_eq!(zone.music.as_deref(), Some("4"));
+    assert_eq!(zone.light, Some([0.5; 3]));
+    assert!(zone.holds(Vec3::new(32.0, 32.0, 32.0)));
+    assert!(!zone.holds(Vec3::new(100.0, 32.0, 32.0)));
+    assert_eq!(zone.size, 64.0 * 64.0 * 64.0);
+}

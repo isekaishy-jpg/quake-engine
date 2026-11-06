@@ -22,6 +22,7 @@ mod sprite;
 mod stencil;
 mod tile_light;
 mod tree;
+mod zone;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
 pub use effect::{
@@ -48,3 +49,4 @@ pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
 pub use tile_light::{LightTiles, RESIDENT, TileLight};
 pub use tree::{ClipChild, ClipNode, Contents, Leaf, Node, NodeChild, Plane, Tree};
+pub use zone::{Zone, ZonePlane, ZoneSettings};

@@ -269,6 +269,8 @@ pub(super) struct FrameExtras<'a> {
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
     look: Look,
+    /// What a zone does to the light.
+    light_shift: [f32; 3],
     /// Bodies of liquid.
     pools: &'a [Pool],
     /// How many samples a pixel the scene has.
@@ -409,6 +411,8 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     }
     out[base + 12] = extra.look.light_curve;
     out[base + 13] = extra.look.exposure;
+    let [red, green, blue] = extra.light_shift;
+    out[base + 16..base + 19].copy_from_slice(&[1.0 + red, 1.0 + green, 1.0 + blue]);
     out
 }
 
@@ -1142,6 +1146,7 @@ impl Backend {
             samples: self.samples,
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
+            light_shift: view.light_shift,
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         let slot = self.slot;

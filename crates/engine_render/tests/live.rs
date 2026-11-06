@@ -17,6 +17,7 @@ fn view() -> View {
         time: 0.0,
         styles: [1.0; 64],
         gamma: 1.0,
+        light_shift: [0.0; 3],
     }
 }
 

@@ -731,6 +731,18 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "zone_at",
+            lua.create_function(move |_, point: Vector| {
+                let simulation = sim.borrow();
+                let map = simulation.map();
+                let found = map.zone_at(to_vec3(point));
+                Ok(found
+                    .and_then(|zone| map.zones.get(zone))
+                    .map(|zone| zone.name.clone()))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "find_path",
             lua.create_function(
                 move |lua, (from, to, width): (Vector, Vector, Option<f32>)| {

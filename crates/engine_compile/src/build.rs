@@ -9,6 +9,7 @@ use engine_format::{Value, from_text};
 use engine_map::{
     ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup, Model, ModelOccluder,
     Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
+    Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -21,7 +22,9 @@ use crate::geometry::{
 };
 use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
-use crate::source::{Brush, BrushFace, DecalSource, StampSource, WorkingMap, read_map};
+use crate::source::{
+    Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
+};
 use crate::stamp::stamp_piece;
 use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
@@ -29,6 +32,58 @@ use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 #[expect(clippy::cast_possible_truncation, reason = "held to a byte")]
 fn packed_normal(normal: Point) -> [i8; 3] {
     normal.map(|part| (part * 127.0).round().clamp(-127.0, 127.0) as i8)
+}
+
+/// The zone an entity describes. Its brushes are the shape of it, and aren't
+/// there to be seen or touched.
+#[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
+fn read_zone(entity: &EntitySource) -> Zone {
+    let shapes: Vec<Vec<ZonePlane>> = entity
+        .brushes
+        .iter()
+        .map(|brush| {
+            brush
+                .planes()
+                .iter()
+                .map(|plane| ZonePlane {
+                    normal: vec3(plane.normal),
+                    distance: plane.distance as f32,
+                })
+                .collect()
+        })
+        .collect();
+    let mut size = 0.0;
+    for brush in &entity.brushes {
+        let corners = solid_corners(&brush.planes());
+        let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
+        for corner in &corners {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(corner[axis]);
+                high[axis] = high[axis].max(corner[axis]);
+            }
+        }
+        if !corners.is_empty() {
+            size += (high[0] - low[0]) * (high[1] - low[1]) * (high[2] - low[2]);
+        }
+    }
+    let text = |key: &str| entity.text(key).map(str::to_owned);
+    let number_text = entity.field("music").and_then(Value::number);
+    let music = text("music").or_else(|| number_text.map(|track| format!("{track}")));
+    let light = entity
+        .point("light")
+        .map(|[r, g, b]| [r as f32, g as f32, b as f32]);
+    let brightness = entity.number("light").map(|all| [all as f32; 3]);
+    Zone {
+        name: entity.name.clone().unwrap_or_default(),
+        title: text("title"),
+        parent: text("parent"),
+        priority: entity.number("priority").map_or(0, |number| number as i32),
+        shapes,
+        size: size as f32,
+        music,
+        sound: text("sound"),
+        light: light.or(brightness),
+    }
 }
 
 /// Supplies textures for materials.
@@ -927,6 +982,10 @@ fn compile_with(
                 .iter()
                 .map(|(key, value)| (key.clone(), field_text(value))),
         );
+        if entity.kind == "zone" {
+            builder.map.zones.push(read_zone(entity));
+            continue;
+        }
         let meshes: Vec<&PlacedMesh> = entity.placed.iter().collect();
         if !entity.brushes.is_empty() || !meshes.is_empty() {
             let number = builder.add_model(&entity.brushes, &meshes, &[])?;

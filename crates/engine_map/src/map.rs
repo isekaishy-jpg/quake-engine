@@ -293,6 +293,8 @@ pub struct Map {
     pub faces: Vec<Face>,
     /// Each placed mesh's faces.
     pub mesh_groups: Vec<MeshGroup>,
+    /// The named parts of the map.
+    pub zones: Vec<crate::Zone>,
     /// The effects that can be started.
     pub effects: Vec<Arc<crate::EffectDef>>,
     /// The effects in the level from the start.
