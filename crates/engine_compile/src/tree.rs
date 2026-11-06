@@ -1,6 +1,10 @@
-//! Trees of solid and open space, built by inserting one convex brush at a
-//! time. Nothing is split: a brush goes down whichever sides it reaches, and a
-//! chain of its planes at each leaf marks what's inside it.
+//! Trees of solid and open space. Space is first halved until each part holds
+//! few brushes, so that a brush only meets its neighbours. Then in each part
+//! brushes go in one at a time. Nothing is split: a brush goes down whichever
+//! sides it reaches, and a chain of its planes at each leaf marks what's inside
+//! it.
+
+use std::collections::HashMap;
 
 use engine_map::Contents;
 
@@ -26,25 +30,64 @@ pub(crate) struct BuildNode {
     pub(crate) back: Child,
 }
 
+/// How many brushes a part of space holds before it's halved again.
+const BRUSHES_PER_PART: usize = 8;
+
+/// How many times space is halved, at most.
+const MOST_HALVINGS: u32 = 28;
+
 /// Planes, kept once each.
 #[derive(Debug, Default)]
 pub(crate) struct PlaneSet {
     /// The planes.
     pub(crate) planes: Vec<Plane3>,
+    /// Planes by their distance, to the nearest unit, to find them quickly.
+    by_distance: HashMap<i64, Vec<u32>>,
+}
+
+/// A brush going into a tree.
+#[derive(Clone, Debug)]
+pub(crate) struct Item {
+    /// Its planes, by index.
+    pub(crate) planes: Vec<u32>,
+    /// Its corners.
+    pub(crate) corners: Vec<Point>,
+    /// What fills it.
+    pub(crate) contents: Contents,
+}
+
+impl Item {
+    /// How far it reaches along `axis`.
+    fn extent(&self, axis: usize) -> (f64, f64) {
+        self.corners
+            .iter()
+            .fold((f64::MAX, f64::MIN), |(low, high), corner| {
+                (low.min(corner[axis]), high.max(corner[axis]))
+            })
+    }
 }
 
 impl PlaneSet {
     /// The index of `plane`, adding it if it's new.
+    #[expect(clippy::cast_possible_truncation, reason = "distances are small")]
     pub(crate) fn index_of(&mut self, plane: Plane3) -> u32 {
-        let found = self.planes.iter().position(|known| {
+        let bucket = plane.distance.round() as i64;
+        let same = |known: &Plane3| {
             (known.distance - plane.distance).abs() < ON_PLANE
                 && (0..3).all(|axis| (known.normal[axis] - plane.normal[axis]).abs() < ON_PLANE)
-        });
-        let index = found.unwrap_or_else(|| {
-            self.planes.push(plane);
-            self.planes.len() - 1
-        });
-        u32::try_from(index).unwrap_or(u32::MAX)
+        };
+        for near in bucket - 1..=bucket + 1 {
+            let candidates = self.by_distance.get(&near).into_iter().flatten();
+            for index in candidates {
+                if same(&self.planes[*index as usize]) {
+                    return *index;
+                }
+            }
+        }
+        let index = u32::try_from(self.planes.len()).unwrap_or(u32::MAX);
+        self.planes.push(plane);
+        self.by_distance.entry(bucket).or_default().push(index);
+        index
     }
 }
 
@@ -55,6 +98,43 @@ fn merged(old: Contents, new: Contents) -> Contents {
     } else {
         new
     }
+}
+
+/// The best way to halve `chosen`: an axis, a place along it, and what's each
+/// side, or `None` if no cut leaves both sides with less.
+#[expect(clippy::type_complexity, reason = "used once, just below")]
+fn halve(items: &[Item], chosen: &[usize]) -> Option<(usize, f64, Vec<usize>, Vec<usize>)> {
+    let mut best: Option<(usize, usize, f64, Vec<usize>, Vec<usize>)> = None;
+    for axis in 0..3 {
+        let mut middles: Vec<f64> = chosen
+            .iter()
+            .map(|at| {
+                let (low, high) = items[*at].extent(axis);
+                (low + high) * 0.5
+            })
+            .collect();
+        middles.sort_by(f64::total_cmp);
+        let place = middles[middles.len() / 2].round();
+        let reaches = |at: &&usize| items[**at].extent(axis);
+        let low: Vec<usize> = chosen
+            .iter()
+            .filter(|at| reaches(at).0 < place - ON_PLANE)
+            .copied()
+            .collect();
+        let high: Vec<usize> = chosen
+            .iter()
+            .filter(|at| reaches(at).1 > place + ON_PLANE)
+            .copied()
+            .collect();
+        if low.len() >= chosen.len() || high.len() >= chosen.len() {
+            continue;
+        }
+        let cost = low.len().max(high.len()) * 2 + low.len() + high.len();
+        if best.as_ref().is_none_or(|found| cost < found.1) {
+            best = Some((axis, cost, place, low, high));
+        }
+    }
+    best.map(|(axis, _, place, low, high)| (axis, place, low, high))
 }
 
 /// A tree under construction.
@@ -86,6 +166,42 @@ impl TreeBuilder {
             });
         }
         child
+    }
+
+    /// A tree of `items`, keeping their order wherever they overlap.
+    pub(crate) fn build(&mut self, set: &mut PlaneSet, items: &[Item]) -> Child {
+        let all: Vec<usize> = (0..items.len()).collect();
+        self.build_part(set, items, &all, MOST_HALVINGS)
+    }
+
+    /// A tree of the `chosen` items, halving space while it helps.
+    fn build_part(
+        &mut self,
+        set: &mut PlaneSet,
+        items: &[Item],
+        chosen: &[usize],
+        halvings: u32,
+    ) -> Child {
+        let halved = (chosen.len() > BRUSHES_PER_PART && halvings > 0)
+            .then(|| halve(items, chosen))
+            .flatten();
+        let Some((axis, place, low, high)) = halved else {
+            let mut child = Child::Leaf(Contents::Empty);
+            for at in chosen {
+                let item = &items[*at];
+                child = self.insert(child, set, &item.planes, &item.corners, item.contents);
+            }
+            return child;
+        };
+        let mut normal = [0.0; 3];
+        normal[axis] = 1.0;
+        let plane = set.index_of(Plane3 {
+            normal,
+            distance: place,
+        });
+        let front = self.build_part(set, items, &high, halvings - 1);
+        let back = self.build_part(set, items, &low, halvings - 1);
+        self.push(BuildNode { plane, front, back })
     }
 
     /// Inserts a brush under `child`, and returns what replaces it. `corners`

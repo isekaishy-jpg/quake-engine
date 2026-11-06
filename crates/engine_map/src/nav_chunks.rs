@@ -1,7 +1,7 @@
 //! Walkable grids in chunks, read as a search reaches them, for maps too big to
 //! hold all of theirs (proposal 0095).
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::fmt;
 use std::sync::{Arc, Mutex, PoisonError};
 
@@ -177,11 +177,13 @@ fn build_chunk(grid: &NavGrid, shape: &NavShape, level_of: &[u8], at: [u32; 2]) 
     built
 }
 
-/// The most recent chunks, oldest first.
+/// The most recent chunks.
 #[derive(Default)]
 struct Kept {
     /// What's been read, or found to be empty.
-    chunks: VecDeque<([u32; 2], Option<Arc<NavChunk>>)>,
+    chunks: HashMap<[u32; 2], Option<Arc<NavChunk>>>,
+    /// In the order they were read, oldest first.
+    order: VecDeque<[u32; 2]>,
     /// How many times a chunk has been read, for tests and for the console.
     reads: usize,
 }
@@ -259,11 +261,8 @@ impl ChunkedNav {
     /// A chunk, read if it has to be.
     fn chunk(&self, at: [u32; 2]) -> Option<Arc<NavChunk>> {
         let mut kept = self.lock();
-        if let Some(index) = kept.chunks.iter().position(|(place, _)| *place == at) {
-            let entry = kept.chunks.remove(index)?;
-            let found = entry.1.clone();
-            kept.chunks.push_back(entry);
-            return found;
+        if let Some(found) = kept.chunks.get(&at) {
+            return found.clone();
         }
         let side = self.shape.chunk as usize;
         let read = self
@@ -273,9 +272,12 @@ impl ChunkedNav {
             .and_then(|bytes| NavChunk::from_bytes(&bytes, side * side))
             .map(Arc::new);
         kept.reads += 1;
-        kept.chunks.push_back((at, read.clone()));
-        if kept.chunks.len() > CHUNKS_KEPT {
-            kept.chunks.pop_front();
+        kept.chunks.insert(at, read.clone());
+        kept.order.push_back(at);
+        if kept.order.len() > CHUNKS_KEPT
+            && let Some(oldest) = kept.order.pop_front()
+        {
+            kept.chunks.remove(&oldest);
         }
         read
     }

@@ -30,7 +30,7 @@ pub(crate) const SEARCH_REACH: i32 = 3;
 
 /// How many places a search looks at before giving up, so a goal nothing
 /// reaches can't walk a whole world.
-const SEARCH_BUDGET: usize = 500_000;
+const SEARCH_BUDGET: usize = 60_000;
 
 /// How far apart points of a line are checked, as a share of a cell.
 const LINE_STEP: f32 = 0.5;

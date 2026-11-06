@@ -152,3 +152,73 @@ fn the_ember_keep_has_no_way_round_its_doors() {
         [1536.0, 2500.0, 24.0]
     ));
 }
+
+/// Vesper Deep plays through, from the broken gate to the Pumpworks, with the
+/// walkways as a branch. Its grids come from beside its bake, a chunk at a time.
+#[test]
+#[ignore = "needs the level baked"]
+fn vesper_deep_plays_from_start_to_end() {
+    let map = level("vesper_deep");
+    walk(
+        &map,
+        &[
+            ("the gate", [4096.0, 160.0, 1560.0]),
+            ("the street", [4096.0, 900.0, 1560.0]),
+            ("the square", [3800.0, 1760.0, 1564.0]),
+            ("the Minster's door", [4096.0, 2300.0, 1560.0]),
+            ("the nave", [4096.0, 2900.0, 1560.0]),
+            ("behind the altar", [4096.0, 3200.0, 1560.0]),
+            ("under the altar", [4096.0, 3560.0, 1400.0]),
+        ],
+    );
+    walk(
+        &map,
+        &[
+            ("the foot of the shaft", [3930.0, 3700.0, 344.0]),
+            ("the arch", [4096.0, 3560.0, 344.0]),
+            ("the terrace", [4096.0, 3440.0, 344.0]),
+            ("the Grand Stair", [4096.0, 3100.0, 240.0]),
+            ("the Market", [3900.0, 2300.0, 92.0]),
+            ("the quay", [4400.0, 1450.0, 88.0]),
+            ("the bridge", [4160.0, 1200.0, 120.0]),
+            ("the south bank", [4160.0, 900.0, 88.0]),
+        ],
+    );
+    walk(
+        &map,
+        &[
+            ("the Market", [4900.0, 2300.0, 92.0]),
+            ("the east bridge", [5800.0, 1700.0, 120.0]),
+            ("the Foundry door", [6200.0, 1680.0, 92.0]),
+            ("the wheel", [7380.0, 1700.0, 92.0]),
+        ],
+    );
+    walk(
+        &map,
+        &[
+            ("the Market", [3300.0, 2300.0, 92.0]),
+            ("the west bridge", [2200.0, 2190.0, 120.0]),
+            ("the Pumpworks door", [1900.0, 2190.0, 88.0]),
+            ("the Pumpworks", [1320.0, 2190.0, 92.0]),
+            ("the way on", [480.0, 1880.0, 88.0]),
+        ],
+    );
+    walk(
+        &map,
+        &[
+            ("the terrace's east end", [5300.0, 3880.0, 344.0]),
+            ("the walkway", [5900.0, 3880.0, 344.0]),
+            ("the first tower", [6300.0, 3900.0, 344.0]),
+            ("the next tower", [6300.0, 3100.0, 344.0]),
+            ("the corner tower", [7000.0, 3100.0, 344.0]),
+        ],
+    );
+    walk(
+        &map,
+        &[
+            ("the high tower", [7000.0, 3900.0, 536.0]),
+            ("the high walk", [6600.0, 3900.0, 536.0]),
+            ("the far tower", [6300.0, 4600.0, 536.0]),
+        ],
+    );
+}

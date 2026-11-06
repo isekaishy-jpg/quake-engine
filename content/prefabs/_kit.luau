@@ -35,12 +35,28 @@ end
 -- where `make` turns an outward direction into a normal.
 local function sides(points, make)
 	local faces = {}
+	-- An outline the wrong way round would turn the solid inside out.
+	local area = 0
+	for index, point in points do
+		local next_point = points[index % #points + 1]
+		area += point[1] * next_point[2] - next_point[1] * point[2]
+	end
+	if area < 0 then
+		local flipped = {}
+		for index = #points, 1, -1 do
+			table.insert(flipped, points[index])
+		end
+		points = flipped
+	end
 	for index, point in points do
 		local next_point = points[index % #points + 1]
 		local dx, dy = next_point[1] - point[1], next_point[2] - point[2]
 		local length = math.sqrt(dx * dx + dy * dy)
-		local nx, ny = dy / length, -dx / length
-		table.insert(faces, make(nx, ny, nx * point[1] + ny * point[2]))
+		-- Two corners in one place have no side between them.
+		if length > 0.001 then
+			local nx, ny = dy / length, -dx / length
+			table.insert(faces, make(nx, ny, nx * point[1] + ny * point[2]))
+		end
 	end
 	return faces
 end

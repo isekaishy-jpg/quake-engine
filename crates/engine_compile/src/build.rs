@@ -22,7 +22,7 @@ use crate::light::light_tracks;
 use crate::mesh::{PlacedMesh, PlacedTriangle};
 use crate::source::{Brush, BrushFace, DecalSource, StampSource, WorkingMap, read_map};
 use crate::stamp::stamp_piece;
-use crate::tree::{BuildNode, Child, PlaneSet, TreeBuilder};
+use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
 /// Supplies textures for materials.
 pub trait TextureSource {
@@ -344,9 +344,76 @@ fn outside(polygon: Polygon, face_plane: &Plane3, other: &Brush, after: bool) ->
     kept
 }
 
+/// How wide a square of [`BrushGrid`] is.
+const BRUSH_GRID: f64 = 512.0;
+
+/// Which brushes are in each square of a flat grid.
+struct BrushGrid {
+    /// The brushes reaching into each square, in order.
+    squares: HashMap<[i64; 2], Vec<usize>>,
+}
+
+impl BrushGrid {
+    /// The squares a box reaches.
+    #[expect(clippy::cast_possible_truncation, reason = "maps are small")]
+    fn squares_of(area: (Point, Point)) -> impl Iterator<Item = [i64; 2]> {
+        let square = |value: f64| (value / BRUSH_GRID).floor() as i64;
+        let (x0, x1) = (square(area.0[0]), square(area.1[0]));
+        let (y0, y1) = (square(area.0[1]), square(area.1[1]));
+        (x0..=x1).flat_map(move |x| (y0..=y1).map(move |y| [x, y]))
+    }
+
+    /// The grid of `brushes`.
+    fn new(brushes: &[Brush], bounds: &[Option<(Point, Point)>]) -> Self {
+        let mut squares: HashMap<[i64; 2], Vec<usize>> = HashMap::new();
+        for (index, area) in bounds.iter().enumerate() {
+            if let Some(area) = area.filter(|_| brushes[index].contents == Contents::Solid) {
+                for square in Self::squares_of(area) {
+                    squares.entry(square).or_default().push(index);
+                }
+            }
+        }
+        Self { squares }
+    }
+
+    /// The brushes that might touch `area`, each once, in order.
+    fn near(&self, area: (Point, Point)) -> Vec<usize> {
+        let mut found: Vec<usize> = Self::squares_of(area)
+            .filter_map(|square| self.squares.get(&square))
+            .flatten()
+            .copied()
+            .collect();
+        found.sort_unstable();
+        found.dedup();
+        found
+    }
+}
+
+/// The box round a brush, a little grown, or `None` if it has no corners.
+fn brush_bounds(brush: &Brush) -> Option<(Point, Point)> {
+    let corners = solid_corners(&brush.planes());
+    let (first, rest) = corners.split_first()?;
+    let (mut low, mut high) = (*first, *first);
+    for corner in rest {
+        for axis in 0..3 {
+            low[axis] = low[axis].min(corner[axis]);
+            high[axis] = high[axis].max(corner[axis]);
+        }
+    }
+    Some((low.map(|part| part - 1.0), high.map(|part| part + 1.0)))
+}
+
+/// Whether two boxes touch.
+fn boxes_touch(a: (Point, Point), b: (Point, Point)) -> bool {
+    (0..3).all(|axis| a.0[axis] <= b.1[axis] && b.0[axis] <= a.1[axis])
+}
+
 /// The visible polygons of `brushes`, each with the face it came from.
 fn visible_faces(brushes: &[Brush]) -> Vec<VisibleFace<'_>> {
     let mut out = Vec::new();
+    let bounds: Vec<Option<(Point, Point)>> = brushes.iter().map(brush_bounds).collect();
+    // Solid brushes by where they are, so a face only meets its neighbours.
+    let grid = BrushGrid::new(brushes, &bounds);
     for (index, brush) in brushes.iter().enumerate() {
         let planes = brush.planes();
         for (at, face) in brush.faces.iter().enumerate() {
@@ -355,8 +422,15 @@ fn visible_faces(brushes: &[Brush]) -> Vec<VisibleFace<'_>> {
             };
             let whole = Arc::new(polygon.clone());
             let mut pieces = vec![polygon];
-            for (other_index, other) in brushes.iter().enumerate() {
-                if other_index == index || other.contents != Contents::Solid {
+            let Some(own) = bounds[index] else {
+                continue;
+            };
+            for other_index in grid.near(own) {
+                let other = &brushes[other_index];
+                if other_index == index
+                    || other.contents != Contents::Solid
+                    || !bounds[other_index].is_some_and(|box_of| boxes_touch(own, box_of))
+                {
                     continue;
                 }
                 let after = other_index > index;
@@ -385,17 +459,22 @@ pub(crate) fn build_tree(
     size: Option<(Point, Point)>,
     set: &mut PlaneSet,
 ) -> (TreeBuilder, Child) {
-    let mut tree = TreeBuilder::default();
-    let mut root = Child::Leaf(Contents::Empty);
+    let mut items = Vec::with_capacity(brushes.len());
     for brush in brushes {
         if size.is_some() && brush.contents != Contents::Solid {
             continue;
         }
         let planes = size.map_or_else(|| brush.planes(), |size| grown(brush, size));
         let corners = solid_corners(&planes);
-        let indices: Vec<u32> = planes.iter().map(|plane| set.index_of(*plane)).collect();
-        root = tree.insert(root, set, &indices, &corners, brush.contents);
+        let planes: Vec<u32> = planes.iter().map(|plane| set.index_of(*plane)).collect();
+        items.push(Item {
+            planes,
+            corners,
+            contents: brush.contents,
+        });
     }
+    let mut tree = TreeBuilder::default();
+    let root = tree.build(set, &items);
     (tree, root)
 }
 

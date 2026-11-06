@@ -11,4 +11,4 @@ mod world;
 
 pub use hull::enter_box;
 pub use solids::build_solids;
-pub use world::{Collision, CollisionWorld, DIST_EPSILON, PointContents, Trace};
+pub use world::{Collision, CollisionWorld, DIST_EPSILON, PointContents, Trace, is_sliver};

@@ -25,6 +25,46 @@ pub const DIST_EPSILON: f32 = 0.03125;
 /// The most corners `box3d` takes in a hull.
 const MAX_HULL_VERTICES: i32 = 128;
 
+/// How thin a solid can be and still be worth a hull.
+const THINNEST_SOLID: f32 = 0.05;
+
+/// Whether `points` have almost no thickness, whichever way they face: they're
+/// all near one point, one line or one plane.
+pub fn is_sliver(points: &[Vec3]) -> bool {
+    let Some(first) = points.first().copied() else {
+        return true;
+    };
+    let furthest = |measure: &dyn Fn(Vec3) -> f32| {
+        let best = points.iter().copied();
+        best.max_by(|a, b| measure(*a).total_cmp(&measure(*b)))
+            .unwrap_or(first)
+    };
+    let second = furthest(&|point| (point - first).length());
+    let line = second - first;
+    if line.length() < THINNEST_SOLID {
+        return true;
+    }
+    let along = line.normalized();
+    let off_line = |point: Vec3| {
+        let offset = point - first;
+        (offset - along * offset.dot(along)).length()
+    };
+    let third = furthest(&off_line);
+    if off_line(third) < THINNEST_SOLID {
+        return true;
+    }
+    let offset = third - first;
+    let up = offset - along * offset.dot(along);
+    let up = up.normalized();
+    let normal = Vec3::new(
+        along.y * up.z - along.z * up.y,
+        along.z * up.x - along.x * up.z,
+        along.x * up.y - along.y * up.x,
+    );
+    let off_plane = |point: Vec3| (point - first).dot(normal).abs();
+    off_plane(furthest(&off_plane)) < THINNEST_SOLID
+}
+
 /// The most steps a stopping point is moved back.
 const MAX_BACK_OUT_STEPS: u32 = 16;
 
@@ -179,8 +219,17 @@ impl CollisionWorld {
                 }
                 let mut world = World::new(&default_world_def());
                 let body = create_body(&mut world, &default_body_def());
-                let shape = default_shape_def();
+                // A map's solids don't move, so they have no use for a mass, and
+                // working it out again for each one takes minutes on a big map.
+                let mut shape = default_shape_def();
+                shape.update_body_mass = false;
                 for solid in build_solids(&map.tree, root, model.mins, model.maxs) {
+                    // Where planes nearly meet, a sliver can be left too thin to
+                    // block anything, and too thin for a hull to be found at all.
+                    if is_sliver(&solid) {
+                        refused_count += 1;
+                        continue;
+                    }
                     let points: Vec<BoxVec3> = solid.into_iter().map(box_vec).collect();
                     match create_hull(&points, MAX_HULL_VERTICES) {
                         Some(hull) => {

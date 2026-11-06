@@ -1,0 +1,2983 @@
+[
+{
+"op": "place_prefab",
+"args": {
+"prefab": "arch",
+"at": [
+4096,
+256,
+1536
+],
+"params": {
+"width": 224,
+"spring": 176,
+"length": 704,
+"height": 384,
+"thickness": 64,
+"material": "qg03_elder_crypt_wall_blocks",
+"stone": "qg03_elder_crypt_wall_brick",
+"segments": 10
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+2432,
+224,
+1536
+],
+"params": {
+"length": 1312,
+"height": 336,
+"thickness": 64,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 2,
+"ragged": 210
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+4448,
+224,
+1536
+],
+"params": {
+"length": 1312,
+"height": 336,
+"thickness": 64,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 3,
+"ragged": 210
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+3744,
+256,
+1536
+],
+"params": {
+"width": 160,
+"height": 448,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_wall_brick",
+"cap": "qg01_ashen_abbey_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+4448,
+256,
+1536
+],
+"params": {
+"width": 160,
+"height": 448,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_wall_brick",
+"cap": "qg01_ashen_abbey_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+3392,
+480,
+1536
+],
+"params": {
+"width": 352,
+"depth": 256,
+"height": 216,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "east",
+"seed": 1,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+3360,
+800,
+1536
+],
+"params": {
+"width": 384,
+"depth": 256,
+"height": 192,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "east",
+"seed": 2,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+3408,
+1120,
+1536
+],
+"params": {
+"width": 320,
+"depth": 256,
+"height": 168,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "east",
+"seed": 3,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+4480,
+480,
+1536
+],
+"params": {
+"width": 352,
+"depth": 256,
+"height": 240,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "west",
+"seed": 4,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+4448,
+800,
+1536
+],
+"params": {
+"width": 384,
+"depth": 256,
+"height": 216,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "west",
+"seed": 5,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+4496,
+1120,
+1536
+],
+"params": {
+"width": 320,
+"depth": 256,
+"height": 192,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "west",
+"seed": 6,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+2880,
+640,
+1536
+],
+"params": {
+"width": 352,
+"depth": 256,
+"height": 168,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "south",
+"seed": 7,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+5024,
+640,
+1536
+],
+"params": {
+"width": 384,
+"depth": 256,
+"height": 240,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "south",
+"seed": 8,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+2848,
+1060,
+1536
+],
+"params": {
+"width": 320,
+"depth": 256,
+"height": 216,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "east",
+"seed": 9,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+5088,
+1040,
+1536
+],
+"params": {
+"width": 352,
+"depth": 256,
+"height": 192,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "north",
+"seed": 10,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+2880,
+1900,
+1536
+],
+"params": {
+"width": 384,
+"depth": 256,
+"height": 168,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "east",
+"seed": 11,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+5040,
+1880,
+1536
+],
+"params": {
+"width": 320,
+"depth": 256,
+"height": 240,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "west",
+"seed": 12,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+2880,
+2280,
+1536
+],
+"params": {
+"width": 352,
+"depth": 256,
+"height": 216,
+"material": "qg03_elder_crypt_wall_damp",
+"door": "north",
+"seed": 13,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "house_shell",
+"at": [
+5040,
+2300,
+1536
+],
+"params": {
+"width": 384,
+"depth": 256,
+"height": 192,
+"material": "qg03_elder_crypt_wall_brick",
+"door": "south",
+"seed": 14,
+"beams": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+4016,
+620,
+1536
+],
+"params": {
+"radius": 168,
+"count": 11,
+"size": 56,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 21
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+4212,
+900,
+1536
+],
+"params": {
+"radius": 144,
+"count": 11,
+"size": 48,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 22
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+3990,
+1200,
+1536
+],
+"params": {
+"radius": 180,
+"count": 11,
+"size": 60,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 23
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+3560,
+1560,
+1536
+],
+"params": {
+"radius": 132,
+"count": 11,
+"size": 44,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 24
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+4660,
+1500,
+1536
+],
+"params": {
+"radius": 156,
+"count": 11,
+"size": 52,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 25
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+4400,
+2100,
+1536
+],
+"params": {
+"radius": 168,
+"count": 11,
+"size": 56,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 26
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+3700,
+2120,
+1536
+],
+"params": {
+"radius": 138,
+"count": 11,
+"size": 46,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 27
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "well",
+"at": [
+4096,
+1760,
+1540
+],
+"params": {
+"radius": 176,
+"height": 40,
+"sides": 16,
+"material": "qg03_elder_crypt_wall_blocks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4096,
+1760,
+1540
+],
+"params": {
+"radius": 20,
+"height": 176,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+3488,
+2064,
+1536
+],
+"params": {
+"length": 320,
+"height": 200,
+"thickness": 32,
+"material": "qg03_elder_crypt_wall_brick",
+"seed": 31
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+4384,
+1440,
+1536
+],
+"params": {
+"length": 320,
+"height": 160,
+"thickness": 32,
+"material": "qg03_elder_crypt_wall_brick",
+"seed": 32
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "arch",
+"at": [
+4096,
+2240,
+1536
+],
+"params": {
+"width": 256,
+"spring": 256,
+"length": 896,
+"height": 640,
+"thickness": 64,
+"material": "qg03_elder_crypt_wall_blocks",
+"stone": "qg03_elder_crypt_trim_carved",
+"segments": 12
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+2368,
+1536
+],
+"params": {
+"radius": 30,
+"height": 405,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+2560,
+1536
+],
+"params": {
+"radius": 30,
+"height": 429,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+2752,
+1536
+],
+"params": {
+"radius": 30,
+"height": 453,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+2944,
+1536
+],
+"params": {
+"radius": 30,
+"height": 477,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+3136,
+1536
+],
+"params": {
+"radius": 30,
+"height": 501,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+3328,
+1536
+],
+"params": {
+"radius": 30,
+"height": 305,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+3712,
+3520,
+1536
+],
+"params": {
+"radius": 30,
+"height": 329,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+2368,
+1536
+],
+"params": {
+"radius": 30,
+"height": 406,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+2560,
+1536
+],
+"params": {
+"radius": 30,
+"height": 430,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+2752,
+1536
+],
+"params": {
+"radius": 30,
+"height": 454,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+2944,
+1536
+],
+"params": {
+"radius": 30,
+"height": 478,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+3136,
+1536
+],
+"params": {
+"radius": 30,
+"height": 502,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+3328,
+1536
+],
+"params": {
+"radius": 30,
+"height": 306,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+4448,
+3520,
+1536
+],
+"params": {
+"radius": 30,
+"height": 330,
+"sides": 8,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+3632,
+3456,
+1536
+],
+"params": {
+"length": 896,
+"height": 560,
+"thickness": 48,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 43,
+"holes": 2
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+3648,
+2272,
+1536
+],
+"params": {
+"turn": 90,
+"length": 1184,
+"height": 480,
+"thickness": 32,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 44,
+"holes": 4
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "broken_wall",
+"at": [
+4544,
+2272,
+1536
+],
+"params": {
+"turn": 90,
+"length": 1184,
+"height": 420,
+"thickness": 32,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 45,
+"holes": 4
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+3900,
+2700,
+1536
+],
+"params": {
+"radius": 200,
+"count": 14,
+"size": 60,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 46
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+4320,
+3050,
+1536
+],
+"params": {
+"radius": 170,
+"count": 12,
+"size": 52,
+"material": "qg03_elder_crypt_wall_blocks",
+"seed": 47
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "spiral_stairs",
+"at": [
+4544,
+3648,
+320
+],
+"params": {
+"radius": 176,
+"rise": 1056,
+"core": 40,
+"material": "qg03_elder_crypt_floor_flags",
+"post": "qg03_elder_crypt_wall_blocks",
+"start": 180,
+"clockwise": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3300,
+3440,
+320
+],
+"params": {
+"intensity": 340,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3760,
+3440,
+320
+],
+"params": {
+"intensity": 340,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4432,
+3440,
+320
+],
+"params": {
+"intensity": 340,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4900,
+3440,
+320
+],
+"params": {
+"intensity": 340,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+5300,
+3440,
+320
+],
+"params": {
+"intensity": 340,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3180,
+4300,
+320
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+5200,
+4300,
+320
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2560,
+1520,
+64
+],
+"params": {
+"width": 256,
+"depth": 224,
+"height": 240,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2880,
+1520,
+64
+],
+"params": {
+"width": 288,
+"depth": 224,
+"height": 288,
+"material": "qg03_elder_crypt_wall_damp",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+3232,
+1520,
+64
+],
+"params": {
+"width": 224,
+"depth": 224,
+"height": 224,
+"material": "uc01_blight_sewers_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+4576,
+1520,
+64
+],
+"params": {
+"width": 256,
+"depth": 224,
+"height": 256,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+4896,
+1520,
+64
+],
+"params": {
+"width": 288,
+"depth": 224,
+"height": 224,
+"material": "qg03_elder_crypt_wall_damp",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+5264,
+1520,
+64
+],
+"params": {
+"width": 224,
+"depth": 224,
+"height": 272,
+"material": "uc01_blight_sewers_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2560,
+2880,
+64
+],
+"params": {
+"width": 288,
+"depth": 224,
+"height": 256,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2912,
+2880,
+64
+],
+"params": {
+"width": 256,
+"depth": 240,
+"height": 304,
+"material": "qg03_elder_crypt_wall_damp",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+3248,
+2880,
+64
+],
+"params": {
+"width": 256,
+"depth": 224,
+"height": 240,
+"material": "uc01_blight_sewers_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+4576,
+2880,
+64
+],
+"params": {
+"width": 256,
+"depth": 224,
+"height": 272,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+4880,
+2880,
+64
+],
+"params": {
+"width": 288,
+"depth": 240,
+"height": 224,
+"material": "qg03_elder_crypt_wall_damp",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+5216,
+2880,
+64
+],
+"params": {
+"width": 256,
+"depth": 224,
+"height": 256,
+"material": "uc01_blight_sewers_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2496,
+1856,
+64
+],
+"params": {
+"width": 224,
+"depth": 288,
+"height": 256,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+2496,
+2240,
+64
+],
+"params": {
+"width": 224,
+"depth": 288,
+"height": 304,
+"material": "qg03_elder_crypt_wall_damp",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+5216,
+1856,
+64
+],
+"params": {
+"width": 256,
+"depth": 288,
+"height": 240,
+"material": "uc01_blight_sewers_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "city_house",
+"at": [
+5216,
+2240,
+64
+],
+"params": {
+"width": 256,
+"depth": 288,
+"height": 288,
+"material": "uc03_apothecary_wall_blocks",
+"roof": "qg01_ashen_abbey_wood_planks",
+"door": "uc01_blight_sewers_door",
+"window": "uc01_blight_sewers_grille_opaque",
+"trim": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+3360,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc03_apothecary_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+3560,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc01_blight_sewers_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+3760,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "qg02_iron_cathedral_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+4380,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc03_apothecary_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+4580,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc01_blight_sewers_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+4780,
+2500,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "qg02_iron_cathedral_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+3360,
+2000,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc03_apothecary_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+3560,
+2000,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc01_blight_sewers_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+4580,
+2000,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "qg02_iron_cathedral_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "market_stall",
+"at": [
+4780,
+2000,
+68
+],
+"params": {
+"width": 160,
+"depth": 96,
+"post": "uc03_apothecary_wood_planks",
+"counter": "uc03_apothecary_wood_planks",
+"cloth": "uc03_apothecary_metal_plate"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "well",
+"at": [
+4096,
+2260,
+68
+],
+"params": {
+"radius": 120,
+"height": 36,
+"sides": 14,
+"material": "qg03_elder_crypt_wall_blocks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3240,
+1880,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3240,
+2680,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4920,
+1880,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4920,
+2680,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3900,
+1880,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4300,
+2680,
+68
+],
+"params": {
+"intensity": 360,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "sweeping_light",
+"at": [
+4096,
+2260,
+64
+],
+"params": {
+"reach": 420,
+"height": 200,
+"radius": 620,
+"color": [
+1,
+0.72,
+0.42
+],
+"period": 14
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+2500,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+2724,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+2948,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3172,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3396,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3620,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+3844,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4068,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4292,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4516,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4740,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+4964,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+5188,
+1416,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+5412,
+980,
+64
+],
+"params": {
+"intensity": 280,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "quay_steps",
+"at": [
+3400,
+1272,
+64
+],
+"params": {
+"width": 160,
+"material": "qg03_elder_crypt_floor_flags"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stone_bridge",
+"at": [
+4288,
+1000,
+64
+],
+"params": {
+"turn": 90,
+"length": 400,
+"width": 256,
+"rise": 40,
+"depth": 224,
+"material": "qg03_elder_crypt_floor_flags",
+"parapet": "qg03_elder_crypt_wall_blocks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stone_bridge",
+"at": [
+5600,
+1600,
+64
+],
+"params": {
+"length": 400,
+"width": 224,
+"rise": 40,
+"depth": 224,
+"material": "qg03_elder_crypt_floor_flags",
+"parapet": "qg03_elder_crypt_wall_blocks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "stone_bridge",
+"at": [
+2000,
+2080,
+64
+],
+"params": {
+"length": 400,
+"width": 224,
+"rise": 40,
+"depth": 224,
+"material": "qg03_elder_crypt_floor_flags",
+"parapet": "qg03_elder_crypt_wall_blocks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "sluice_gate",
+"at": [
+2424,
+2192,
+64
+],
+"params": {
+"width": 224,
+"height": 176,
+"name": "sluice_up",
+"material": "uc01_blight_sewers_metal_plate",
+"frame": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+6560,
+1160,
+560
+],
+"params": {
+"to": [
+0,
+1040,
+0
+],
+"radius": 28,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+6560,
+1700,
+68
+],
+"params": {
+"to": [
+0,
+0,
+480
+],
+"radius": 20,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+6880,
+1160,
+560
+],
+"params": {
+"to": [
+0,
+1040,
+0
+],
+"radius": 28,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+6880,
+1700,
+68
+],
+"params": {
+"to": [
+0,
+0,
+480
+],
+"radius": 20,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+7120,
+1160,
+560
+],
+"params": {
+"to": [
+0,
+1040,
+0
+],
+"radius": 28,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+7120,
+1700,
+68
+],
+"params": {
+"to": [
+0,
+0,
+480
+],
+"radius": 20,
+"material": "uc03_apothecary_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+6300,
+1220,
+68
+],
+"params": {
+"size": 48
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+6300,
+2160,
+68
+],
+"params": {
+"size": 48
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+7300,
+1220,
+68
+],
+"params": {
+"size": 48
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "fire_pit",
+"at": [
+7300,
+2160,
+68
+],
+"params": {
+"size": 48
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+6300,
+3100,
+64
+],
+"params": {
+"width": 224,
+"height": 256,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal",
+"cap": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+6300,
+3900,
+64
+],
+"params": {
+"width": 224,
+"height": 256,
+"material": "uc01_blight_sewers_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal",
+"cap": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+7000,
+3100,
+64
+],
+"params": {
+"width": 224,
+"height": 256,
+"material": "uc03_apothecary_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal",
+"cap": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+7000,
+3900,
+64
+],
+"params": {
+"width": 224,
+"height": 448,
+"material": "qg03_elder_crypt_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal",
+"cap": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "tower",
+"at": [
+6300,
+4600,
+64
+],
+"params": {
+"width": 224,
+"height": 448,
+"material": "uc01_blight_sewers_wall_blocks",
+"trim": "qg03_elder_crypt_trim_metal",
+"cap": "uc03_apothecary_wood_planks"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+5408,
+3820,
+320
+],
+"params": {
+"length": 780,
+"width": 112,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 256
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+6244,
+3212,
+320
+],
+"params": {
+"turn": 0,
+"length": 112,
+"width": 576,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 256,
+"rails": false
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+6412,
+3044,
+320
+],
+"params": {
+"length": 476,
+"width": 112,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 256
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+6944,
+3430,
+512
+],
+"params": {
+"length": 112,
+"width": 358,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 448,
+"rails": false
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+6412,
+3844,
+512
+],
+"params": {
+"length": 476,
+"width": 112,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 448
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "walkway",
+"at": [
+6244,
+4012,
+512
+],
+"params": {
+"length": 112,
+"width": 476,
+"deck": "uc03_apothecary_wood_planks",
+"rail": "uc01_blight_sewers_trim_metal",
+"post": "uc03_apothecary_wood_planks",
+"legs": 448,
+"rails": false
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+6220,
+3020,
+320
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+6220,
+3820,
+320
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+6920,
+3020,
+320
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+6920,
+3820,
+512
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "lantern_post",
+"at": [
+6220,
+4520,
+512
+],
+"params": {
+"intensity": 300,
+"color": [
+1,
+0.74,
+0.46
+],
+"material": "uc01_blight_sewers_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+1000,
+1200,
+264
+],
+"params": {
+"to": [
+0,
+1400,
+0
+],
+"radius": 48,
+"material": "uc01_blight_sewers_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1000,
+1500,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1000,
+2300,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+1240,
+1200,
+264
+],
+"params": {
+"to": [
+0,
+1400,
+0
+],
+"radius": 48,
+"material": "uc01_blight_sewers_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1240,
+1500,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1240,
+2300,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "pipe",
+"at": [
+1480,
+1200,
+264
+],
+"params": {
+"to": [
+0,
+1400,
+0
+],
+"radius": 48,
+"material": "uc01_blight_sewers_metal_plate",
+"collar": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1480,
+1500,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "column",
+"at": [
+1480,
+2300,
+68
+],
+"params": {
+"radius": 30,
+"height": 196,
+"sides": 8,
+"material": "uc03_apothecary_metal_plate",
+"trim": "uc03_apothecary_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "patrol",
+"at": [
+3300,
+2200,
+68
+],
+"params": {
+"name": "market_watch",
+"size": 260
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "patrol",
+"at": [
+4500,
+1440,
+64
+],
+"params": {
+"name": "quay_watch",
+"size": 160
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "seeker",
+"at": [
+3700,
+2740,
+68
+],
+"params": {
+"goal": [
+4400,
+2760,
+92
+]
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+1000,
+4200,
+1024
+],
+"params": {
+"radius": 110,
+"length": 300,
+"material": "qg03_elder_crypt_rock",
+"seed": 30,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+3000,
+2400,
+1024
+],
+"params": {
+"radius": 110,
+"length": 300,
+"material": "qg03_elder_crypt_rock",
+"seed": 90,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+5200,
+3200,
+1024
+],
+"params": {
+"radius": 110,
+"length": 300,
+"material": "qg03_elder_crypt_rock",
+"seed": 59,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+6800,
+1400,
+1024
+],
+"params": {
+"radius": 110,
+"length": 300,
+"material": "qg03_elder_crypt_rock",
+"seed": 10,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+2000,
+1500,
+1024
+],
+"params": {
+"radius": 110,
+"length": 300,
+"material": "qg03_elder_crypt_rock",
+"seed": 60,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+660,
+660,
+-32
+],
+"params": {
+"length": 6800,
+"height": 900,
+"depth": 120,
+"material": "qg03_elder_crypt_rock",
+"seed": 61
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+660,
+5480,
+-32
+],
+"params": {
+"length": 6800,
+"height": 900,
+"depth": -120,
+"material": "qg03_elder_crypt_rock",
+"seed": 62
+}
+}
+}
+]
