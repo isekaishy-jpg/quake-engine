@@ -21,7 +21,7 @@ Earlier items unblock later ones.
 | 7 | Metal, roughness, specular and gloss together | [Note](texture-standard.md) | done |
 | 8 | Full meshes: format, normals, drawing path, glTF import | [Note](mesh-support.md) | done |
 | 9 | Mesh light: generated light map UVs, probes for props, one face per flat polygon | [Note](mesh-support.md) | done |
-| 10 | Mesh collision: generated convex shapes | [Note](mesh-support.md) | todo |
+| 10 | Mesh collision: generated convex shapes | [Note](mesh-support.md) | done |
 | 11 | Baked shadows: several rays per sample, more than one sharp light, joins at an angle, light order and layer limits | [Note](shadow-rendering.md) | todo |
 | 12 | Moving lights' shadows: soft, without sawtooth or bands | [Note](shadow-rendering.md) | todo |
 | 13 | Particles: graph and modules, CPU and GPU, attach points | [Note](effects-water-shaders.md) | todo |

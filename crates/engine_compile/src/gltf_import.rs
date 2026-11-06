@@ -8,6 +8,7 @@ use std::path::Path;
 use engine_format::{Block, Document, Value, to_binary};
 use gltf::image::{Data, Format};
 
+use crate::convex::fit_convex;
 use crate::derive::encode_png;
 use crate::error::CompileError;
 use crate::geometry::{Point, dot, normalized};
@@ -368,6 +369,7 @@ pub fn import_gltf(path: &Path, name: &str, scale: f64) -> Result<ImportedModel,
     if importer.model.mesh.parts.is_empty() {
         return Err(CompileError::Bad(format!("{name}: nothing in it draws")));
     }
+    importer.model.mesh.convex = fit_convex(&importer.model.mesh);
     Ok(importer.model)
 }
 
@@ -388,6 +390,14 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
         }
         let corners = part.triangles.iter().flatten().map(|c| f64::from(*c));
         block.set("triangles", flat(&mut corners.into_iter()));
+        document.blocks.push(block);
+    }
+    for piece in &mesh.convex {
+        let mut block = Block::new("convex");
+        let numbers = piece
+            .iter()
+            .flat_map(|(normal, far)| [normal[0], normal[1], normal[2], *far]);
+        block.set("planes", flat(&mut numbers.into_iter()));
         document.blocks.push(block);
     }
     for hull in &mesh.hulls {

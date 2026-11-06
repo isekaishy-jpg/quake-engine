@@ -76,7 +76,9 @@ impl Grid {
     fn cell_of(&self, point: Point) -> [usize; 3] {
         let mut cell = [0; 3];
         for (axis, slot) in cell.iter_mut().enumerate() {
-            let place = ((point[axis] - self.low[axis]) / self.size).floor().max(0.0);
+            let place = ((point[axis] - self.low[axis]) / self.size)
+                .floor()
+                .max(0.0);
             *slot = (place as usize).min(self.counts[axis] - 1);
         }
         cell
@@ -188,7 +190,9 @@ fn voxels_of(mesh: &Mesh) -> Option<Grid> {
             high[axis] = high[axis].max(point[axis]);
         }
     }
-    let longest = (0..3).map(|axis| high[axis] - low[axis]).fold(0.0, f64::max);
+    let longest = (0..3)
+        .map(|axis| high[axis] - low[axis])
+        .fold(0.0, f64::max);
     if !longest.is_finite() || longest <= 0.0 {
         return None;
     }
@@ -289,6 +293,47 @@ fn emptiness(grid: &Grid, cells: &[[usize; 3]], directions: &[Point], far: &[f64
     1.0 - cells.len() as f64 / inside.max(1) as f64
 }
 
+/// The planes of `far` that shape what they hold. Most only touch a corner, and
+/// every plane costs a tree, so what cuts nothing goes. The six along the axes
+/// stay, as they're what closes it.
+fn needed_planes(
+    grid: &Grid,
+    cells: &[[usize; 3]],
+    directions: &[Point],
+    far: &[f64],
+) -> ConvexPiece {
+    let (low, high) = cell_bounds(cells);
+    let half = grid.size * 0.5;
+    let mut needed: Vec<bool> = directions
+        .iter()
+        .map(|direction| direction.iter().filter(|part| **part != 0.0).count() == 1)
+        .collect();
+    for z in low[2]..=high[2] {
+        for y in low[1]..=high[1] {
+            for x in low[0]..=high[0] {
+                let [a, ..] = grid.corners([x, y, z]);
+                let middle = a.map(|part| part + half);
+                let mut cutting = directions
+                    .iter()
+                    .zip(far)
+                    .enumerate()
+                    .filter(|(_, (direction, reach))| dot(middle, **direction) > **reach)
+                    .map(|(number, _)| number);
+                if let (Some(only), None) = (cutting.next(), cutting.next()) {
+                    needed[only] = true;
+                }
+            }
+        }
+    }
+    directions
+        .iter()
+        .zip(far)
+        .zip(needed)
+        .filter(|(_, needed)| *needed)
+        .map(|((direction, reach), _)| (*direction, *reach))
+        .collect()
+}
+
 /// The volume of the boxes round `cells`, cut at `at` along `axis`.
 fn boxes_after_cut(cells: &[[usize; 3]], axis: usize, at: usize) -> usize {
     let (lower, higher): (Vec<_>, Vec<_>) = cells.iter().partition(|cell| cell[axis] < at);
@@ -337,12 +382,11 @@ fn cut(
             || emptiness(grid, &piece, directions, &far) <= MOST_EMPTY;
         let split = (!fits).then(|| best_cut(&piece)).flatten();
         if let Some((axis, at)) = split {
-            let (lower, higher): (Vec<_>, Vec<_>) =
-                piece.iter().partition(|cell| cell[axis] < at);
+            let (lower, higher): (Vec<_>, Vec<_>) = piece.iter().partition(|cell| cell[axis] < at);
             cut(grid, &lower, cuts + 1, directions, out);
             cut(grid, &higher, cuts + 1, directions, out);
         } else {
-            out.push(directions.iter().copied().zip(far).collect());
+            out.push(needed_planes(grid, &piece, directions, &far));
         }
     }
 }

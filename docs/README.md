@@ -141,6 +141,7 @@
     - [0108: metal and roughness](proposals/0108-metal-and-roughness.md)
     - [0109: meshes](proposals/0109-meshes.md)
     - [0110: mesh light](proposals/0110-mesh-light.md)
+    - [0111: mesh collision](proposals/0111-mesh-collision.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

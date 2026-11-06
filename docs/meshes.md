@@ -29,3 +29,7 @@ mesh { source = barrel origin = 40 12 0 light = probe }
 ## What's in a `.emesh`
 
 A document, binary from import, and text if a script writes it. Each `part` has a `material`, `points`, `uvs` and `triangles`, and can have `normals`, one to a corner. With none, they're worked out from the shape: smooth, except where two triangles turn by more than 40 degrees. Each `hull` is a box for collision.
+
+## Collision
+
+Convex pieces are fitted to a mesh for you, so a well can be stepped into and its walls stop you. A `hull` box in the file replaces that, if you'd rather choose. A placement with `only_seen = 1` has none.

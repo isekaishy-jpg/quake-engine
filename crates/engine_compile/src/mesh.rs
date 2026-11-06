@@ -7,6 +7,7 @@ use std::sync::Arc;
 use engine_format::{Block, Document, Value, to_text};
 use engine_map::{Contents, OccluderSphere};
 
+use crate::convex::ConvexPiece;
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::source::{Brush, BrushFace, MeshPlacement, WorkingMap};
@@ -34,9 +35,11 @@ pub struct MeshPart {
 pub struct Mesh {
     /// Its pieces.
     pub parts: Vec<MeshPart>,
-    /// Boxes for collision, as low and high corners. With none, its bounds are
-    /// the one box.
+    /// Boxes for collision, as low and high corners, if an author chose them.
     pub hulls: Vec<[f64; 6]>,
+    /// Convex pieces that fit it, for collision where no boxes were chosen. With
+    /// neither, its bounds are the one box.
+    pub convex: Vec<ConvexPiece>,
 }
 
 /// A triangle where a mesh was placed.
@@ -127,6 +130,11 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
     for block in document.blocks_of("hull") {
         mesh.hulls.extend(groups::<6>(block, "cuboid"));
     }
+    for block in document.blocks_of("convex") {
+        let planes = groups::<4>(block, "planes");
+        let piece = planes.iter().map(|[x, y, z, far]| ([*x, *y, *z], *far));
+        mesh.convex.push(piece.collect());
+    }
     Ok(mesh)
 }
 
@@ -198,6 +206,31 @@ impl Transform {
     /// Whether this turns surfaces inside out.
     fn mirrors(&self) -> bool {
         self.scale.iter().filter(|scale| **scale < 0.0).count() % 2 == 1
+    }
+
+    /// The brush a convex piece becomes.
+    fn convex(&self, piece: &ConvexPiece) -> Brush {
+        let faces = piece
+            .iter()
+            .map(|(normal, far)| {
+                let place = self.apply(normal.map(|part| part * far));
+                let normal = self.turn(*normal);
+                BrushFace {
+                    plane: Plane3 {
+                        normal,
+                        distance: dot(normal, place),
+                    },
+                    material: "hidden".to_owned(),
+                    scale: [1.0, 1.0],
+                    offset: [0.0, 0.0],
+                    rotation: 0.0,
+                }
+            })
+            .collect();
+        Brush {
+            faces,
+            contents: Contents::Solid,
+        }
     }
 
     /// The brush a box becomes.
@@ -328,6 +361,14 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
     }
     let all = mesh.parts.iter().flat_map(|part| part.points.iter());
     let whole = bounds(all).map(|(low, high)| [low[0], low[1], low[2], high[0], high[1], high[2]]);
+    if mesh.hulls.is_empty() && !mesh.convex.is_empty() {
+        placed.hulls = mesh
+            .convex
+            .iter()
+            .map(|piece| transform.convex(piece))
+            .collect();
+        return placed;
+    }
     let hulls = if mesh.hulls.is_empty() {
         whole.into_iter().collect()
     } else {

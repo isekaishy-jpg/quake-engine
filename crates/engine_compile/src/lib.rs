@@ -9,6 +9,7 @@ mod cells;
 mod charts;
 mod compiled;
 mod content_pack;
+mod convex;
 mod derive;
 mod effects;
 mod error;
@@ -35,6 +36,7 @@ pub use bake::{
 pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
 pub use compiled::{Geometry, read_geometry, write_geometry};
 pub use content_pack::{PlayMap, pack_content, play_map};
+pub use convex::{ConvexPiece, fit_convex};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};

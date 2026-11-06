@@ -10,6 +10,7 @@ use engine_map::{
     PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, Texture, TextureKind, mip_chain,
 };
 
+use crate::convex::fit_convex;
 use crate::error::CompileError;
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
 use crate::source::{WorkingMap, read_map};
@@ -397,7 +398,10 @@ impl<'a> MaterialLibrary<'a> {
             .filesystem
             .read(&path)
             .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
-        let mesh = read_mesh(&document_of(&bytes)?)?;
+        let mut mesh = read_mesh(&document_of(&bytes)?)?;
+        if mesh.hulls.is_empty() && mesh.convex.is_empty() {
+            mesh.convex = fit_convex(&mesh);
+        }
         let occluders = self
             .filesystem
             .read(&format!("meshes/{name}.eocc"))

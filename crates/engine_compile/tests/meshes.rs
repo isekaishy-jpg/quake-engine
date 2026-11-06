@@ -4,8 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use engine_compile::{
-    Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known, document_of, import_gltf,
-    place_mesh, read_geometry, read_map_text, read_mesh, write_geometry, write_mesh,
+    ConvexPiece, Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known, document_of,
+    fit_convex, import_gltf, place_mesh, read_geometry, read_map_text, read_mesh, write_geometry,
+    write_mesh,
 };
 use engine_format::from_text;
 use engine_map::{Map, Texture};
@@ -225,4 +226,137 @@ fn a_mesh_written_reads_back() {
     let again = read_mesh(&document_of(&bytes).expect("reads")).expect("a mesh");
     assert_eq!(again, model.mesh);
     fs::remove_file(&path).expect("clean up");
+}
+
+/// A ring wall of `sides` with a rim, open at the top and bottom, as a well is.
+fn well(sides: u32) -> Mesh {
+    let (outer, inner, height) = (96.0, 72.0, 80.0);
+    let mut points = Vec::new();
+    for side in 0..sides {
+        let angle = std::f64::consts::TAU * f64::from(side) / f64::from(sides);
+        let (y, x) = angle.sin_cos();
+        points.push([x * outer, y * outer, 0.0]);
+        points.push([x * outer, y * outer, height]);
+        points.push([x * inner, y * inner, height]);
+        points.push([x * inner, y * inner, 0.0]);
+    }
+    let mut triangles = Vec::new();
+    for side in 0..sides {
+        let here = side * 4;
+        let there = ((side + 1) % sides) * 4;
+        for ring in 0..4 {
+            let next = (ring + 1) % 4;
+            triangles.push([here + ring, there + ring, there + next]);
+            triangles.push([here + ring, there + next, here + next]);
+        }
+    }
+    Mesh {
+        parts: vec![part(points, triangles)],
+        ..Mesh::default()
+    }
+}
+
+/// Whether `point` is inside any of `pieces`.
+fn inside(pieces: &[ConvexPiece], point: [f64; 3]) -> bool {
+    pieces.iter().any(|piece| {
+        piece.iter().all(|(normal, far)| {
+            normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2] <= *far
+        })
+    })
+}
+
+#[test]
+fn a_well_can_be_stepped_into() {
+    let pieces = fit_convex(&well(32));
+    assert!(pieces.len() > 4, "{} pieces", pieces.len());
+    assert!(pieces.len() <= 64, "{} pieces", pieces.len());
+    assert!(!inside(&pieces, [0.0, 0.0, 40.0]), "its middle is open");
+    assert!(!inside(&pieces, [55.0, 0.0, 40.0]), "well inside its wall");
+    assert!(inside(&pieces, [84.0, 0.0, 40.0]), "its wall is solid");
+    assert!(inside(&pieces, [0.0, 84.0, 40.0]), "all the way round");
+    assert!(inside(&pieces, [-59.4, -59.4, 40.0]), "and at an angle");
+    assert!(!inside(&pieces, [120.0, 0.0, 40.0]), "outside it");
+}
+
+#[test]
+fn a_box_is_one_piece() {
+    let points = vec![
+        [0.0, 0.0, 0.0],
+        [64.0, 0.0, 0.0],
+        [64.0, 64.0, 0.0],
+        [0.0, 64.0, 0.0],
+        [0.0, 0.0, 64.0],
+        [64.0, 0.0, 64.0],
+        [64.0, 64.0, 64.0],
+        [0.0, 64.0, 64.0],
+    ];
+    let triangles = vec![
+        [0, 2, 1],
+        [0, 3, 2],
+        [4, 5, 6],
+        [4, 6, 7],
+        [0, 1, 5],
+        [0, 5, 4],
+        [1, 2, 6],
+        [1, 6, 5],
+        [2, 3, 7],
+        [2, 7, 6],
+        [3, 0, 4],
+        [3, 4, 7],
+    ];
+    let mesh = Mesh {
+        parts: vec![part(points, triangles)],
+        ..Mesh::default()
+    };
+    let pieces = fit_convex(&mesh);
+    assert_eq!(pieces.len(), 1);
+    assert!(inside(&pieces, [32.0, 32.0, 32.0]), "it's filled");
+}
+
+#[test]
+fn a_mesh_with_no_size_has_no_pieces() {
+    assert!(fit_convex(&Mesh::default()).is_empty());
+}
+
+#[test]
+fn a_placed_mesh_is_collided_with_by_its_pieces() {
+    let mut mesh = well(16);
+    mesh.convex = fit_convex(&mesh);
+    let count = mesh.convex.len();
+    let placement = MeshPlacement {
+        origin: [100.0, 0.0, 0.0],
+        angles: [0.0, 90.0, 0.0],
+        scale: [2.0, 2.0, 1.0],
+        ..in_place()
+    };
+    let placed = place_mesh(&mesh, &placement);
+    assert_eq!(placed.hulls.len(), count);
+    let outward = |point: [f64; 3], brush: &engine_compile::Brush| {
+        brush.faces.iter().all(|face| {
+            let plane = &face.plane;
+            let [x, y, z] = plane.normal;
+            x * point[0] + y * point[1] + z * point[2] <= plane.distance
+        })
+    };
+    let solid = |point: [f64; 3]| placed.hulls.iter().any(|brush| outward(point, brush));
+    assert!(!solid([100.0, 0.0, 40.0]), "its middle is open");
+    assert!(solid([100.0, 168.0, 40.0]), "its wall is where it was put");
+}
+
+#[test]
+fn boxes_an_author_chose_win_over_pieces() {
+    let mut mesh = well(16);
+    mesh.convex = fit_convex(&mesh);
+    mesh.hulls = vec![[0.0, 0.0, 0.0, 8.0, 8.0, 8.0]];
+    assert_eq!(place_mesh(&mesh, &in_place()).hulls.len(), 1);
+}
+
+#[test]
+fn pieces_survive_a_mesh_being_written() {
+    let mut mesh = well(8);
+    mesh.parts[0].normals = vec![[0.0, 0.0, 1.0]; mesh.parts[0].points.len()];
+    mesh.convex = fit_convex(&mesh);
+    let bytes = write_mesh(&mesh);
+    let again = read_mesh(&document_of(&bytes).expect("reads")).expect("a mesh");
+    assert_eq!(again.convex, mesh.convex);
 }
