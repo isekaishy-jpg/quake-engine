@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/qg02_iron_cathedral_trim_metal.png
+    world_size = 256 256
+    repeat = across
     normal = textures/qg02_iron_cathedral_trim_metal_normal.png
     specular = textures/qg02_iron_cathedral_trim_metal_specular.png
     specular_strength = 1

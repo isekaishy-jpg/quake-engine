@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/metal.png
+    world_size = 256 256
+    repeat = none
     normal = textures/metal_normal.png
     specular = textures/metal_specular.png
     gloss = 48

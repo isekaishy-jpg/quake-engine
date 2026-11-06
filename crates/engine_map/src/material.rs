@@ -60,6 +60,9 @@ pub struct Material {
     pub shading: Shading,
     /// How it uses alpha.
     pub alpha: AlphaMode,
+    /// How many world units one repeat covers, across and down, if it's set.
+    /// Without it that's one unit to a pixel.
+    pub world_size: Option<[f32; 2]>,
     /// The images of slots 1 onwards.
     pub slots: Vec<SlotImage>,
     /// The slot of its normal map.

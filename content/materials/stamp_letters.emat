@@ -2,4 +2,6 @@ format 1 material
 
 surface {
     base = textures/stamp_letters.png
+    world_size = 256 256
+    repeat = both
 }

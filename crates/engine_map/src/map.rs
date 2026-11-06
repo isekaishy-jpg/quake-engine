@@ -74,6 +74,22 @@ pub struct Texture {
     pub material: Option<Arc<Material>>,
 }
 
+impl Texture {
+    /// How many texels one repeat covers, across and down, if it has a size at
+    /// all. A texel is a world unit on a surface at its usual scale, so this is
+    /// what sets how big a surface looks, not how many pixels it has.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss, reason = "picture sizes are small")]
+    pub fn tile_size(&self) -> Option<[f32; 2]> {
+        let set = self.material.as_ref().and_then(|m| m.world_size);
+        let picture = self
+            .mips
+            .first()
+            .map(|mip| [mip.width as f32, mip.height as f32]);
+        set.or(picture)
+    }
+}
+
 /// One texture axis: a texel coordinate is `dot(point, axis) + offset`.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct TexelAxis {

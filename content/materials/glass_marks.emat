@@ -2,4 +2,6 @@ format 1 material
 
 surface {
     base = textures/glass_marks.png
+    world_size = 256 256
+    repeat = none
 }

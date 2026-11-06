@@ -164,7 +164,7 @@ fn texel_axes(face: &BrushFace) -> [TexelAxis; 2] {
 /// area nearest its shape, so trim and panels fall right with no aligning.
 fn hotspot_axes(polygon: &[Point], face: &BrushFace, texture: &Texture) -> Option<[TexelAxis; 2]> {
     let hotspots = &texture.material.as_ref()?.hotspots;
-    let mip = texture.mips.first()?;
+    let tile = texture.tile_size()?;
     let (u, v) = base_axes(face.plane.normal);
     let extent = |axis: Point| {
         polygon
@@ -187,7 +187,7 @@ fn hotspot_axes(polygon: &[Point], face: &BrushFace, texture: &Texture) -> Optio
     let best = hotspots
         .iter()
         .min_by(|a, b| misfit(a).total_cmp(&misfit(b)))?;
-    let fit = |axis: Point, low: f64, size: f64, start: f32, end: f32, texels: u32| {
+    let fit = |axis: Point, low: f64, size: f64, start: f32, end: f32, texels: f32| {
         let from = f64::from(start) * f64::from(texels);
         let span = f64::from(end - start) * f64::from(texels);
         let scale = span / size;
@@ -198,8 +198,8 @@ fn hotspot_axes(polygon: &[Point], face: &BrushFace, texture: &Texture) -> Optio
         }
     };
     Some([
-        fit(u, low_u, width, best[0], best[2], mip.width),
-        fit(v, low_v, height, best[1], best[3], mip.height),
+        fit(u, low_u, width, best[0], best[2], tile[0]),
+        fit(v, low_v, height, best[1], best[3], tile[1]),
     ])
 }
 
@@ -564,9 +564,9 @@ impl Builder<'_> {
     /// Adds a triangle of a mesh.
     fn add_triangle(&mut self, triangle: &PlacedTriangle) -> Option<()> {
         let texture = self.texture_of(&triangle.material);
-        let image = self.map.textures.get(texture as usize)?.mips.first();
-        let size = image.map_or((64.0, 64.0), |mip| {
-            (f64::from(mip.width), f64::from(mip.height))
+        let tile = self.map.textures.get(texture as usize)?.tile_size();
+        let size = tile.map_or((64.0, 64.0), |tile| {
+            (f64::from(tile[0]), f64::from(tile[1]))
         });
         let across = triangle.uvs.map(|uv| uv[0] * size.0);
         let down = triangle.uvs.map(|uv| uv[1] * size.1);

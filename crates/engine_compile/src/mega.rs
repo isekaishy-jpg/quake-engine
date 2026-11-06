@@ -108,13 +108,11 @@ fn scaled(value: u8, share: f32) -> u8 {
 
 /// A surface's share of the base image at a point.
 fn share_of(texture: &Texture, axes: &[TexelAxis; 2], point: Vec3) -> Option<(f32, f32)> {
-    let base = texture.mips.first()?;
-    #[expect(clippy::cast_precision_loss, reason = "image sizes are small")]
-    let share = (
-        axes[0].project(point) / base.width as f32,
-        axes[1].project(point) / base.height as f32,
-    );
-    Some(share)
+    let tile = texture.tile_size()?;
+    Some((
+        axes[0].project(point) / tile[0],
+        axes[1].project(point) / tile[1],
+    ))
 }
 
 /// Writes what a surface's other maps hold at a point into the texel at `to`
@@ -173,10 +171,13 @@ fn color_at(
     let Some(base) = texture.mips.first() else {
         return [0, 0, 0, 255];
     };
-    let mut color = texel(base, s, t);
     // Layers repeat at their own size, over the same share of the base.
+    let Some(tile) = texture.tile_size() else {
+        return [0, 0, 0, 255];
+    };
+    let (u, v) = (s / tile[0], t / tile[1]);
     #[expect(clippy::cast_precision_loss, reason = "image sizes are small")]
-    let (u, v) = (s / base.width as f32, t / base.height as f32);
+    let mut color = texel(base, u * base.width as f32, v * base.height as f32);
     let image_of = |slot: u8| {
         material
             .slots

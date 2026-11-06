@@ -2,5 +2,7 @@ format 1 material
 
 surface {
     base = textures/grate.png
+    world_size = 256 256
+    repeat = both
     kind = hidden
 }

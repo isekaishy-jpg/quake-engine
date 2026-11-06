@@ -2,5 +2,7 @@ format 1 material
 
 surface {
     base = textures/water.png
+    world_size = 256 256
+    repeat = both
     kind = liquid
 }

@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/qg01_ashen_abbey_floor_flags.png
+    world_size = 232 232
+    repeat = both
     normal = textures/qg01_ashen_abbey_floor_flags_normal.png
     specular = textures/qg01_ashen_abbey_floor_flags_specular.png
     specular_strength = 1

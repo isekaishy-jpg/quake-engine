@@ -2,11 +2,12 @@
 
 use std::fs;
 use std::path::PathBuf;
+use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{MaterialLibrary, compile, placeholder_texture, read_map_text};
 use engine_core::math::Vec3;
-use engine_map::{AlphaMode, PAINT_MASK, Shading, TextureKind};
+use engine_map::{AlphaMode, Material, MipLevel, PAINT_MASK, Shading, Texture, TextureKind};
 
 /// A one pixel PNG.
 fn pixel() -> Vec<u8> {
@@ -184,4 +185,28 @@ fn a_tile_too_far_out_is_refused() {
     let error = library.prepare(&mut working).expect_err("too far");
     assert!(error.to_string().contains("past"), "{error}");
     let _gone = fs::remove_dir_all(root);
+}
+
+/// A material can say how much of the world a repeat covers, so that its pictures
+/// can change size without a surface changing size.
+#[test]
+fn world_size_sets_how_big_a_repeat_is() {
+    let texture = Texture {
+        material: Some(Arc::new(Material {
+            world_size: Some([256.0, 128.0]),
+            ..Material::default()
+        })),
+        mips: vec![MipLevel {
+            width: 1024,
+            height: 1024,
+            rgba: Vec::new(),
+        }],
+        ..Texture::default()
+    };
+    assert_eq!(texture.tile_size(), Some([256.0, 128.0]));
+    let plain = Texture {
+        material: None,
+        ..texture
+    };
+    assert_eq!(plain.tile_size(), Some([1024.0, 1024.0]));
 }

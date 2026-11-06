@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/panel.png
+    world_size = 256 256
+    repeat = both
     emissive = textures/panel_glow.png
     emissive_strength = 1.5
 }

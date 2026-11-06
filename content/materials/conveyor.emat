@@ -2,5 +2,7 @@ format 1 material
 
 surface {
     base = textures/metal.png
+    world_size = 256 256
+    repeat = none
     scroll = 0 0.5
 }

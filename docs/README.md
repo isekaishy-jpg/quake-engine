@@ -13,6 +13,7 @@
   - [Shadow rendering](research/shadow-rendering.md): lamps, curved surfaces and moving lights, for design later
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
+  - [Texture standard](texture-standard.md): what a texture has to be, to hand to whoever makes them
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
   - [0001: engine architecture and the road to playing Quake](proposals/0001-architecture.md)
@@ -131,6 +132,7 @@
     - [0101: baking big maps](proposals/0101-baking-big-maps.md)
     - [0102: frames that keep up](proposals/0102-frames-that-keep-up.md)
     - [0103: levels that load](proposals/0103-levels-that-load.md)
+    - [0104: a texture standard](proposals/0104-a-texture-standard.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

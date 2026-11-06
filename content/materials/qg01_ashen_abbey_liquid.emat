@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/qg01_ashen_abbey_liquid.png
+    world_size = 232 232
+    repeat = both
     shading = lit
     alpha = opaque
     kind = liquid

@@ -488,3 +488,24 @@ fn a_material_gets_maps_from_its_picture() {
     let pool = fs::read_to_string(root.join("materials/wall_pool.emat")).expect("reads");
     assert_eq!(pool, flowing);
 }
+
+/// Materials are checked against the texture standard, and what's right says
+/// nothing.
+#[test]
+fn check_textures_says_whats_wrong() {
+    let root = content("check_textures");
+    fs::create_dir_all(root.join("materials")).expect("directory");
+    fs::create_dir_all(root.join("textures")).expect("directory");
+    let image = engine_compile::encode_png(64, 64, &[128; 64 * 64 * 4]).expect("encodes");
+    fs::write(root.join("textures/wall.png"), &image).expect("writes");
+    let good = "format 1 material\n\nsurface {\n    base = textures/wall.png\n    world_size = 64 64\n    repeat = both\n}\n";
+    fs::write(root.join("materials/good.emat"), good).expect("writes");
+    let bare = "format 1 material\n\nsurface {\n    base = textures/wall.png\n}\n";
+    fs::write(root.join("materials/bare.emat"), bare).expect("writes");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "check_textures", &json!({})).expect("runs");
+    assert!(answer.get("good").is_none(), "{answer}");
+    let problems = answer["bare"].to_string();
+    assert!(problems.contains("world_size"), "{problems}");
+    assert!(problems.contains("repeats"), "{problems}");
+}

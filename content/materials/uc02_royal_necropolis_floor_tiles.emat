@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/uc02_royal_necropolis_floor_tiles.png
+    world_size = 256 256
+    repeat = both
     normal = textures/uc02_royal_necropolis_floor_tiles_normal.png
     specular = textures/uc02_royal_necropolis_floor_tiles_specular.png
     specular_strength = 1

@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/qg02_iron_cathedral_ceiling_coffer.png
+    world_size = 256 256
+    repeat = both
     normal = textures/qg02_iron_cathedral_ceiling_coffer_normal.png
     specular = textures/qg02_iron_cathedral_ceiling_coffer_specular.png
     specular_strength = 1

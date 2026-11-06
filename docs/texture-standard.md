@@ -1,0 +1,76 @@
+# Texture standard
+
+What a texture has to be to go in the engine. Give this to whoever makes textures, a person or a model, along with the request, and check what comes back with `check_textures`.
+
+Why it exists: the first packs came with a dark line along every picture's edge, and nothing said what a picture had to be.
+
+## A set
+
+A set is the pictures of one surface, and a material that says how they're used.
+
+| File | Holds | Needed |
+|---|---|---|
+| `textures/<name>.png` | Colour, with alpha if the surface needs it | Always |
+| `textures/<name>_normal.png` | A tangent space normal map, Y up | For anything with relief |
+| `textures/<name>_specular.png` | Specular colour, with gloss in alpha | For anything that shines |
+| `materials/<name>.emat` | How they're used | Always |
+
+`<name>` is `<pack>_<kind>`, in lower case with underscores, such as `qg03_elder_crypt_wall_blocks`. A pack's id is two letters, two digits, then its name.
+
+## Pictures
+
+- **Format:** PNG, 8 bits a channel. RGB, or RGBA where alpha means something.
+- **Size:** square or not, each side a power of two, from 64 to 2048. A surface seen close up wants 1024.
+- **Sharpness:** 2 to 4 pixels for each world unit, on anything a player can walk up to. So a tile 256 units across is 512 to 1024 pixels.
+- **All of a set is one size.**
+- **No border.** Nothing drawn along an edge: no line, frame or vignette. The last row and column are ordinary picture.
+- **No baked light.** No shadows from a light, or highlights, in colour. Crevices can be dark, as they would be in any light.
+- **Colour is sRGB.** Normals and specular are data, not colour.
+
+## How it repeats
+
+Every set says one of these, in its material, and what it says is checked.
+
+| `repeat` | Means | What's checked |
+|---|---|---|
+| `both` | It tiles in both directions | Opposite edges meet, in shape and in tone |
+| `across` | It tiles side to side only, as a trim does | Left and right edges meet |
+| `none` | It's shown whole, as a door or a panel is | Nothing at its edges |
+
+For `both` and `across`, opposite edges have to meet as if the picture went on. Mortar, cracks and planks that reach an edge carry on at the other side, at the same place and in the same tone. Don't get there by blending or mirroring edges: make it tile from the start. If something is meant to fall on the edge, like a plate's join, it falls on all four sides in the same way, and the set is still `both`.
+
+A strong one-off feature, such as a big stain, shows at every repeat. Keep those for layers and decals.
+
+## The material
+
+```text
+format 1 material
+
+surface {
+    base = textures/uc01_blight_sewers_wall_blocks.png
+    normal = textures/uc01_blight_sewers_wall_blocks_normal.png
+    specular = textures/uc01_blight_sewers_wall_blocks_specular.png
+    world_size = 256 256
+    repeat = both
+}
+```
+
+`world_size` is how many world units one repeat covers, across and down. It's what sets a surface's size in a level, whatever size its pictures are, so a set can go up in resolution and no level changes. A brick is about 32 by 16 units, a door 64 by 112, and a player 56 tall.
+
+## Asking a model for textures
+
+Say all of this in the request:
+
+1. The pack and kinds wanted, and how each repeats.
+2. Pixel size and `world_size` for each.
+3. No border, no baked light, no mirrored edges, and that edges have to meet.
+4. Colour only, unless the model can make true normal and specular maps. Those can be worked out with `derive_maps`.
+5. That it'll be checked with `check_textures`, and what fails goes back.
+
+## Checking
+
+```bash
+target/release/engine-tool content - check_textures "{\"prefix\":\"uc01\"}"
+```
+
+This lists what's wrong with each material. An empty list is a pass. A real ledge or join on a repeat line can read as a step, so look at those and decide.

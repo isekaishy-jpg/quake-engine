@@ -482,14 +482,10 @@ fn make_vertex(
 
 /// A face's texture size in texels, as floats.
 fn texture_size(map: &Map, face: &Face) -> [f32; 2] {
-    #[expect(
-        clippy::cast_precision_loss,
-        reason = "texture sizes are far below 2^24"
-    )]
     map.textures
         .get(face.texture as usize)
-        .and_then(|texture| texture.mips.first())
-        .map_or([1.0, 1.0], |mip| [mip.width as f32, mip.height as f32])
+        .and_then(Texture::tile_size)
+        .unwrap_or([1.0, 1.0])
 }
 
 /// Builds the GPU data of `map`, or `None` if its light won't fit the atlas.

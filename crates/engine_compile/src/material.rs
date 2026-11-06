@@ -142,6 +142,12 @@ fn flatten_layers(material: &mut Material, mips: Vec<MipLevel>) -> Vec<MipLevel>
     mip_chain(base.width, base.height, rgba)
 }
 
+/// How much of the world a material's repeat covers, if it says.
+fn world_size_of(block: &Block) -> Option<[f32; 2]> {
+    let size = numbers(block, "world_size", [0.0; 2]);
+    (size[0] > 0.0 && size[1] > 0.0).then_some(size)
+}
+
 /// A material's hotspot areas.
 #[expect(clippy::cast_possible_truncation, reason = "materials store f32")]
 fn hotspots_of(block: &Block) -> Vec<[f32; 4]> {
@@ -373,6 +379,7 @@ impl<'a> MaterialLibrary<'a> {
             mega: block.get("mega").and_then(Value::flag) == Some(true),
             detail_fade: block.get("fade").and_then(Value::flag) == Some(true),
             hotspots: hotspots_of(block),
+            world_size: world_size_of(block),
             scroll: numbers(block, "scroll", [0.0; 2]),
             flipbook: numbers(block, "flipbook", [0.0; 3]),
             triplanar: block

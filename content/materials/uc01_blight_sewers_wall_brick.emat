@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/uc01_blight_sewers_wall_brick.png
+    world_size = 232 232
+    repeat = both
     normal = textures/uc01_blight_sewers_wall_brick_normal.png
     specular = textures/uc01_blight_sewers_wall_brick_specular.png
     specular_strength = 1

@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use engine_compile::{DeriveSettings, decode_png, derive_maps, encode_png};
+use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
 use engine_format::{Block, Value};
 use serde_json::{Value as Json, json};
 
@@ -340,6 +340,64 @@ pub(crate) fn derive_material_maps(session: &Session, args: &Json) -> Result<Jso
         }
     }
     Ok(json!({ "derived": done }))
+}
+
+/// What's wrong with one material, by the texture standard.
+fn material_problems(session: &Session, name: &str) -> Result<Vec<String>, String> {
+    let path = session
+        .content
+        .join("materials")
+        .join(format!("{name}.emat"));
+    let text = std::fs::read_to_string(&path).map_err(|error| format!("{name}: {error}"))?;
+    let mut problems = Vec::new();
+    if material_field(&text, "world_size").is_none() {
+        problems.push("it doesn't say its world_size".to_owned());
+    }
+    let repeat = match material_field(&text, "repeat").map(Repeat::from_text) {
+        Some(Some(repeat)) => repeat,
+        Some(None) => {
+            problems.push("its repeat isn't both, across or none".to_owned());
+            Repeat::None
+        }
+        None => {
+            problems.push("it doesn't say how it repeats".to_owned());
+            Repeat::None
+        }
+    };
+    let picture = |path: &str| {
+        let bytes = std::fs::read(session.content.join(path)).map_err(|error| error.to_string())?;
+        decode_png(&bytes).map_err(|error| error.to_string())
+    };
+    let Some(base) = material_field(&text, "base") else {
+        problems.push("it has no base picture".to_owned());
+        return Ok(problems);
+    };
+    let (width, height, rgba) = picture(base)?;
+    problems.extend(check_picture(width, height, &rgba, repeat));
+    for key in ["normal", "specular"] {
+        if let Some(path) = material_field(&text, key) {
+            let (other_width, other_height, _) = picture(path)?;
+            if (other_width, other_height) != (width, height) {
+                problems.push(format!("its {key} map is a different size"));
+            }
+        }
+    }
+    Ok(problems)
+}
+
+/// `check_textures`: what's wrong with materials, by the texture standard.
+pub(crate) fn check_textures(session: &Session, args: &Json) -> Result<Json, String> {
+    let prefix = args.get("prefix").and_then(Json::as_str).unwrap_or("");
+    let mut found = serde_json::Map::new();
+    for name in names_in(session, "materials", ".emat") {
+        if name.starts_with(prefix) {
+            let problems = material_problems(session, &name)?;
+            if !problems.is_empty() {
+                found.insert(name, json!(problems));
+            }
+        }
+    }
+    Ok(Json::Object(found))
 }
 
 pub(crate) fn write_material(session: &Session, args: &Json) -> Result<Json, String> {

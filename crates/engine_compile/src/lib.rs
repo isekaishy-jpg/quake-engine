@@ -20,6 +20,7 @@ mod ray_grid;
 mod source;
 mod stamp;
 mod texture;
+mod texture_check;
 mod tiles;
 mod tree;
 mod visibility;
@@ -44,3 +45,4 @@ pub use source::{
     StampSource, TileSource, WaterSource, WorkingMap, read_map,
 };
 pub use texture::placeholder_texture;
+pub use texture_check::{Repeat, check_picture};

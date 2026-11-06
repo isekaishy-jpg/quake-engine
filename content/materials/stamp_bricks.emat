@@ -2,4 +2,6 @@ format 1 material
 
 surface {
     base = textures/stamp_bricks.png
+    world_size = 256 256
+    repeat = none
 }

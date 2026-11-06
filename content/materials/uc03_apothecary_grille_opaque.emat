@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/uc03_apothecary_grille_opaque.png
+    world_size = 256 256
+    repeat = none
     normal = textures/uc03_apothecary_grille_opaque_normal.png
     specular = textures/uc03_apothecary_grille_opaque_specular.png
     specular_strength = 1

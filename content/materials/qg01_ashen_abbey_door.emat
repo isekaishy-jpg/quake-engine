@@ -2,6 +2,8 @@ format 1 material
 
 surface {
     base = textures/qg01_ashen_abbey_door.png
+    world_size = 256 256
+    repeat = none
     normal = textures/qg01_ashen_abbey_door_normal.png
     specular = textures/qg01_ashen_abbey_door_specular.png
     specular_strength = 1
