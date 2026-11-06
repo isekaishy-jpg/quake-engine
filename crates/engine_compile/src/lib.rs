@@ -15,6 +15,7 @@ mod material;
 mod mega;
 mod mesh;
 mod nav;
+mod ray_grid;
 mod source;
 mod stamp;
 mod texture;
@@ -35,6 +36,7 @@ pub use mesh::{
     LoadedMesh, Mesh, MeshPart, PlacedMesh, PlacedTriangle, occluders_of, place_mesh, read_mesh,
     read_occlusion, resolve_meshes, write_occlusion,
 };
+pub use ray_grid::RayGrid;
 pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,
     StampSource, TileSource, WaterSource, WorkingMap, read_map,

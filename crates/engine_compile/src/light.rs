@@ -6,6 +6,7 @@
 
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 
 use engine_core::math::Vec3;
 use engine_map::{
@@ -18,6 +19,7 @@ use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
 use crate::mega::bake_mega;
 use crate::mesh::PlacedMesh;
 use crate::nav::build_nav;
+use crate::ray_grid::RayGrid;
 use crate::source::{PaintStroke, WorkingMap};
 use crate::tree::{Child, PlaneSet, TreeBuilder};
 use crate::visibility::bake_visibility;
@@ -44,6 +46,13 @@ const MAX_BOUNCE_SOURCES: usize = 1024;
 /// The most a tile keeps for that. A point gathers from nine tiles, so this is
 /// about as many as a map without tiles has, however many tiles there are.
 const MAX_TILE_BOUNCE_SOURCES: usize = 128;
+
+/// How many items a thread takes at a time.
+const PARALLEL_BATCH: usize = 16;
+
+/// How far apart, in samples, bounced light is worked out. It's soft, so what's
+/// between can be drawn from what's round it, and it's most of a bake.
+const BOUNCE_STRIDE: usize = 2;
 
 /// How many probes apart a grid sits, in world units.
 const PROBE_SPACING: f64 = 128.0;
@@ -92,6 +101,21 @@ struct Glass {
     image: Arc<Vec<MipLevel>>,
 }
 
+impl Glass {
+    /// Its low and high corners.
+    fn bounds(&self) -> (Point, Point) {
+        let mut low = [f64::INFINITY; 3];
+        let mut high = [f64::NEG_INFINITY; 3];
+        for point in &self.points {
+            for axis in 0..3 {
+                low[axis] = low[axis].min(point[axis]);
+                high[axis] = high[axis].max(point[axis]);
+            }
+        }
+        (low, high)
+    }
+}
+
 /// What light can hit.
 struct Scene<'a> {
     /// Solid brushes, as a tree.
@@ -102,8 +126,14 @@ struct Scene<'a> {
     planes: PlaneSet,
     /// See-through surfaces.
     glass: Vec<Glass>,
+    /// Where the glass is.
+    glass_grid: RayGrid,
     /// Meshes, which block light by their triangles.
     meshes: Vec<MeshShadow>,
+    /// Where the meshes are.
+    mesh_grid: RayGrid,
+    /// How high the world goes. Nothing above can stop the sun.
+    top: f64,
     /// How far stamped faces lift their samples, by their first point.
     lifts: HashMap<u32, Vec3>,
     /// The fixed lights.
@@ -194,7 +224,10 @@ impl MeshShadow {
 
 /// Whether anything solid is between `a` and `b`: brushes or meshes.
 fn shadowed(scene: &Scene<'_>, a: Point, b: Point) -> bool {
-    blocked(scene, scene.root, a, b) || scene.meshes.iter().any(|mesh| mesh.hit(a, b))
+    blocked(scene, scene.root, a, b)
+        || scene
+            .mesh_grid
+            .any_near(a, b, |index| scene.meshes[index].hit(a, b))
 }
 
 /// Whether `child` has solid anywhere between `a` and `b`.
@@ -252,10 +285,11 @@ fn texel(image: &[MipLevel], u: f64, v: f64) -> [f64; 4] {
 /// colour. Dark lead between the panes stops it, as any solid would.
 fn through_glass(scene: &Scene<'_>, a: Point, b: Point) -> [f64; 3] {
     let mut out = [1.0; 3];
-    for glass in &scene.glass {
+    scene.glass_grid.any_near(a, b, |index| {
+        let glass = &scene.glass[index];
         let (front, back) = (glass.plane.side(a), glass.plane.side(b));
         if (front > 0.0) == (back > 0.0) {
-            continue;
+            return false;
         }
         let share = front / (front - back);
         let hit = [
@@ -271,7 +305,7 @@ fn through_glass(scene: &Scene<'_>, a: Point, b: Point) -> [f64; 3] {
             dot(cross(edge, reach), glass.plane.normal) >= -1e-6
         });
         if !inside {
-            continue;
+            return false;
         }
         let size = glass.image.first().map_or([1.0, 1.0], |mip| {
             [f64::from(mip.width), f64::from(mip.height)]
@@ -282,7 +316,8 @@ fn through_glass(scene: &Scene<'_>, a: Point, b: Point) -> [f64; 3] {
         for (part, tint) in out.iter_mut().zip(color) {
             *part *= tint;
         }
-    }
+        false
+    });
     out
 }
 
@@ -374,7 +409,10 @@ fn light_on(
     let mut seen = [0.0; 3];
     for offset in DISC.iter().take(samples) {
         let source = if light.sun {
-            add_scaled(start, direction, SUN_DISTANCE)
+            // Only as far as the top of the world: a longer ray has to cross
+            // the whole map's planes for nothing.
+            let reach = (scene.top + 64.0 - start[2]) / direction[2].max(1e-3);
+            add_scaled(start, direction, reach.clamp(64.0, SUN_DISTANCE))
         } else {
             light.origin
         };
@@ -1082,6 +1120,73 @@ fn bounced_at(
     total
 }
 
+/// The places along a row of `count` samples where bounced light is worked out:
+/// every so often, and the two at each end. A row's end hangs off its face and
+/// is often in a wall, and drawing the next one from that would darken corners.
+fn bounce_stops(count: usize) -> Vec<usize> {
+    let inside = 1..count.saturating_sub(1);
+    let mut stops: Vec<usize> = std::iter::once(0)
+        .chain(inside.step_by(BOUNCE_STRIDE))
+        .collect();
+    for end in [count.saturating_sub(2), count.saturating_sub(1)] {
+        if stops.last().is_some_and(|last| *last < end) {
+            stops.push(end);
+        }
+    }
+    stops
+}
+
+/// The stop before `at`, and how far along it is to the next.
+fn between_stops(stops: &[usize], at: usize) -> (usize, f64) {
+    let index = stops.partition_point(|stop| *stop <= at).saturating_sub(1);
+    let index = index.min(stops.len().saturating_sub(2));
+    let (Some(low), Some(high)) = (stops.get(index), stops.get(index + 1)) else {
+        return (0, 0.0);
+    };
+    #[expect(clippy::cast_precision_loss, reason = "faces are small")]
+    let share = (at - low) as f64 / (high - low) as f64;
+    (index, share)
+}
+
+/// The light bounced onto each sample of a face.
+fn bounced_face(
+    scene: &Scene<'_>,
+    sources: &BounceField,
+    bake: &FaceBake,
+    gain: f64,
+) -> Vec<[f64; 3]> {
+    let (width, height) = (bake.light.width as usize, bake.light.height as usize);
+    let columns = bounce_stops(width);
+    let rows = bounce_stops(height);
+    let mut known = Vec::with_capacity(columns.len() * rows.len());
+    for row in &rows {
+        for column in &columns {
+            let point = bake.points[row * width + column];
+            known.push(bounced_at(scene, sources, point, bake.normal, gain));
+        }
+    }
+    let read = |column: usize, row: usize| {
+        known[row.min(rows.len() - 1) * columns.len() + column.min(columns.len() - 1)]
+    };
+    let mut out = Vec::with_capacity(bake.points.len());
+    for y in 0..height {
+        let (row, down) = between_stops(&rows, y);
+        for x in 0..width {
+            let (column, across) = between_stops(&columns, x);
+            let mut color = [0.0; 3];
+            for (part, value) in color.iter_mut().enumerate() {
+                let top =
+                    read(column, row)[part] * (1.0 - across) + read(column + 1, row)[part] * across;
+                let bottom = read(column, row + 1)[part] * (1.0 - across)
+                    + read(column + 1, row + 1)[part] * across;
+                *value = top * (1.0 - down) + bottom * down;
+            }
+            out.push(color);
+        }
+    }
+    out
+}
+
 /// A colour on the lightmap's scale, from 0 to 255.
 #[expect(
     clippy::cast_possible_truncation,
@@ -1114,17 +1219,40 @@ fn direction_bytes(direction: Point) -> [u8; 3] {
 /// Runs `work` over `items` on every core, in order.
 pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R + Sync) -> Vec<R> {
     let threads = std::thread::available_parallelism().map_or(1, usize::from);
-    let size = items.len().div_ceil(threads.max(1)).max(1);
-    std::thread::scope(|scope| {
-        let handles: Vec<_> = items
-            .chunks(size)
-            .map(|chunk| scope.spawn(|| chunk.iter().map(&work).collect::<Vec<R>>()))
+    // Each thread takes the next few as it's free. Handing each a fixed share
+    // leaves the rest waiting on whichever got the part of a map with the most
+    // going on.
+    let next = AtomicUsize::new(0);
+    let mut done: Vec<(usize, Vec<R>)> = std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..threads.max(1))
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut mine = Vec::new();
+                    loop {
+                        let first = next.fetch_add(PARALLEL_BATCH, Ordering::Relaxed);
+                        let Some(batch) = items.get(first..) else {
+                            return mine;
+                        };
+                        if batch.is_empty() {
+                            return mine;
+                        }
+                        let batch = &batch[..batch.len().min(PARALLEL_BATCH)];
+                        mine.push((first, batch.iter().map(&work).collect::<Vec<R>>()));
+                    }
+                })
+            })
             .collect();
         handles
             .into_iter()
-            .flat_map(|handle| handle.join().unwrap_or_default())
+            .flat_map(|handle| {
+                handle
+                    .join()
+                    .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+            })
             .collect()
-    })
+    });
+    done.sort_by_key(|(first, _)| *first);
+    done.into_iter().flat_map(|(_, batch)| batch).collect()
 }
 
 /// Bakes `probes` over the world's bounds, for moving things.
@@ -1318,17 +1446,24 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             image,
         });
     }
+    let meshes: Vec<MeshShadow> = working
+        .placed
+        .iter()
+        .filter(|mesh| !mesh.only_seen)
+        .filter_map(MeshShadow::of)
+        .collect();
     let scene = Scene {
         tree,
         root,
         planes,
+        glass_grid: RayGrid::new(glass.iter().map(Glass::bounds)),
         glass,
-        meshes: working
-            .placed
-            .iter()
-            .filter(|mesh| !mesh.only_seen)
-            .filter_map(MeshShadow::of)
-            .collect(),
+        mesh_grid: RayGrid::new(meshes.iter().map(|mesh| (mesh.low, mesh.high))),
+        meshes,
+        top: map
+            .models
+            .first()
+            .map_or(0.0, |world| f64::from(world.maxs.z)),
         lifts: map
             .light_lifts
             .iter()
@@ -1344,13 +1479,11 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let sources = bounce_sources(&bakes, spacing, f64::from(shared.tile_size));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
-            bake.points
-                .iter()
-                .map(|point| {
-                    let light = bounced_at(&scene, &sources, *point, bake.normal, bounce_gain);
-                    light.map(|part| part + ambient)
-                })
-                .collect()
+            let mut light = bounced_face(&scene, &sources, bake, bounce_gain);
+            for color in &mut light {
+                *color = color.map(|part| part + ambient);
+            }
+            light
         })
     });
     let probes = bake_probes(&scene, shared, &sources, bounce_gain, ambient);

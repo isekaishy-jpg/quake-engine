@@ -3,6 +3,8 @@
 use engine_core::math::Vec3;
 use engine_map::{ClipChild, Contents, Map, NAV_WAYS, NavGrid, NavPlace};
 
+use crate::light::in_parallel;
+
 /// How far apart places are.
 const SPACING: f32 = 16.0;
 
@@ -118,19 +120,23 @@ pub(crate) fn build_nav(map: &Map, size: usize) -> NavGrid {
         columns: Vec::with_capacity((size[0] * size[1] + 1) as usize),
         places: Vec::new(),
     };
-    for y in 0..size[1] {
+    let rows: Vec<u32> = (0..size[1]).collect();
+    let found = in_parallel(&rows, |y| {
+        let mut row = Vec::with_capacity(size[0] as usize);
         for x in 0..size[0] {
-            grid.columns
-                .push(u32::try_from(grid.places.len()).unwrap_or(0));
             #[expect(clippy::cast_precision_loss, reason = "grids are small")]
-            let (px, py) = (low.x + x as f32 * SPACING, low.y + y as f32 * SPACING);
-            for floor in hull.floors(px, py, high.z + 64.0, low.z - 64.0) {
-                let point = Vec3::new(px, py, floor);
-                if !harmful(map, point) && hull.has_room(point) {
-                    grid.places.push(NavPlace::at(point));
-                }
-            }
+            let (px, py) = (low.x + x as f32 * SPACING, low.y + *y as f32 * SPACING);
+            let floors = hull.floors(px, py, high.z + 64.0, low.z - 64.0);
+            let standing = floors.into_iter().map(|floor| Vec3::new(px, py, floor));
+            let places = standing.filter(|point| !harmful(map, *point) && hull.has_room(*point));
+            row.push(places.map(NavPlace::at).collect::<Vec<_>>());
         }
+        row
+    });
+    for column in found.into_iter().flatten() {
+        grid.columns
+            .push(u32::try_from(grid.places.len()).unwrap_or(0));
+        grid.places.extend(column);
     }
     grid.columns
         .push(u32::try_from(grid.places.len()).unwrap_or(0));
@@ -147,7 +153,11 @@ fn link_places(grid: &mut NavGrid, hull: &Hull<'_>) {
             grid.columns[column]..grid.columns[column + 1]
         })
     };
-    for y in 0..height {
+    let rows: Vec<i32> = (0..height).collect();
+    let shared: &NavGrid = grid;
+    let linked = in_parallel(&rows, |y| {
+        let (grid, y) = (shared, *y);
+        let mut row = Vec::new();
         for x in 0..width {
             let Some(here) = in_column(grid, x, y) else {
                 continue;
@@ -171,8 +181,13 @@ fn link_places(grid: &mut NavGrid, hull: &Hull<'_>) {
                         links[way] = other;
                     }
                 }
-                grid.places[place as usize].links = links;
+                row.push(links);
             }
         }
+        row
+    });
+    // Rows come back in order, and places are kept in that order.
+    for (place, links) in grid.places.iter_mut().zip(linked.into_iter().flatten()) {
+        place.links = links;
     }
 }

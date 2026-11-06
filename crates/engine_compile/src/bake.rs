@@ -18,7 +18,7 @@ use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 17;
+const BAKE_VERSION: u64 = 18;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]

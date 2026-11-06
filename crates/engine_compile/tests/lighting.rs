@@ -168,6 +168,59 @@ fn light_goes_through_a_mesh_only_to_be_seen() {
     assert!(blocked < clear * 0.5, "{blocked} against {clear}");
 }
 
+/// Faces are shared out among threads as they come free, and each still gets
+/// its own light back.
+#[test]
+fn a_map_of_many_faces_keeps_each_ones_light() {
+    let mut text = ROOM.to_owned();
+    for index in 0..60 {
+        let x = -240 + index * 8;
+        text += &format!(
+            "brush {{ material = post{index} cuboid = {x} -40 -256 {} 40 200 }}\n",
+            x + 4
+        );
+    }
+    text += "entity lamp { type = light origin = -249 0 0 intensity = 300 }\n";
+    let map = baked(&text, &[]);
+    let brightest = |name: &str| {
+        let number = map.textures.iter().position(|texture| texture.name == name);
+        map.faces
+            .iter()
+            .filter(|face| Some(face.texture as usize) == number)
+            .filter_map(|face| layer_light(&map, face, 0))
+            .map(|(most, _)| most)
+            .fold(0.0, f32::max)
+    };
+    let (near, far) = (brightest("post0"), brightest("post59"));
+    assert!(near > far + 1.0, "{near} against {far}");
+}
+
+/// Bounced light is worked out on a coarser grid, and what's between is drawn
+/// from it, so a wide wall's shading has no steps in it.
+#[test]
+fn bounced_light_runs_smoothly_along_a_wall() {
+    let lamp = "entity lamp { type = light origin = 0 0 240 intensity = 900 }\n";
+    let map = baked(&format!("{ROOM}{lamp}"), &[]);
+    let face = face_of(&map, "east");
+    let light = face.light.expect("lit");
+    let layer = light
+        .styles
+        .iter()
+        .position(|style| *style == BOUNCE_STYLE)
+        .expect("a bounced layer");
+    let count = (light.width * light.height) as usize;
+    let first = light.first_sample as usize + layer * count;
+    let samples = &map.light[first..first + count];
+    let width = light.width as usize;
+    let row = &samples[width * (light.height as usize / 2)..][..width];
+    // Each end of a row hangs off the face, and really does fall away.
+    let row = &row[2..width - 2];
+    let bright: Vec<i32> = row.iter().map(|sample| i32::from(sample[0])).collect();
+    let steps: Vec<i32> = bright.windows(2).map(|pair| pair[1] - pair[0]).collect();
+    let largest = steps.iter().map(|step| step.abs()).max().expect("samples");
+    assert!(largest <= 12, "{bright:?}");
+}
+
 #[test]
 fn a_spot_only_lights_its_cone() {
     let wide = format!("{ROOM}entity lamp {{ type = light origin = 0 0 200 intensity = 600 }}\n");
