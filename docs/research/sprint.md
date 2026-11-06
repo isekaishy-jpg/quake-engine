@@ -45,10 +45,25 @@ Earlier items unblock later ones.
 
 | Round | Status |
 |---|---|
-| Circular code quality review, fixing until nothing's left | todo |
-| Bug review and fix until none are left | todo |
-| Performance sweeps for big items | todo |
-| Report to the human | todo |
+| Circular code quality review, fixing until nothing's left | done |
+| Bug review and fix until none are left | done |
+| Performance sweeps for big items | done |
+| Report to the human | done, in [review 0017](../reviews/0017-the-sprint.md) |
+
+## Next
+
+What came up along the way and was never on the list. Each is real work for the workflow.
+
+| Item | From | Size |
+|---|---|---|
+| Skeletal animation, morphs and level of detail for meshes, with attach points on bones | Item 8 | Large |
+| A visual graph editor for effects | Item 13 | Large |
+| Mesh particles | Item 13 | Medium |
+| Scores and intermission as scripts, and the mouse in scripted menus | Item 17 | Medium |
+| Fog by zone | Item 15 | Small |
+| A closed door stopping sound, and loops moving between muffled and clear | Item 28 | Small |
+| Trains as a way for a path to go | Item 21 | Small |
+| Stairs and upper floors on the floor plan, a screen reader, and pictures on the tools | Item 18 | For going over with the human |
 
 ## Log
 
@@ -81,3 +96,6 @@ Newest last. One line for each thing finished, with its commit.
 - Item 25: 612c3f3
 - Item 26: e348f46
 - Item 27: 3496f41
+- Item 28: f2eb416
+- Bugs: 39e9c29 and a06034f
+- Performance and quality: d2c786d
