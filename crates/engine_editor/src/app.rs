@@ -19,14 +19,14 @@ use engine_platform::{
 use engine_render::{
     Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, TileStreamer, View,
 };
-use engine_tools::{Plan, Session, Square, is_plan_map, prefab_names, run};
+use engine_tools::{CELL, Plan, Session, Square, is_plan_map, prefab_names, run};
 use serde_json::{Value, json};
 
 use crate::easy::{
     Brush, Easy, LOOKS, PlanClick, PlanView, TOOLS, big_button, draw_plan, plan_keys, word_for,
 };
 use crate::panels::{ACCENT, apply_contrast, apply_style};
-use crate::ui_bridge::{UiInput, UiTextures, ui_frame};
+use engine_editor::ui_bridge::{UiInput, UiTextures, ui_frame};
 
 /// How often the service runs.
 const SERVICE_STEP: Duration = Duration::from_millis(8);
@@ -404,6 +404,10 @@ impl Editor {
             .and_then(|thing| thing.bounds);
         if let Some((low, high)) = start {
             self.camera.origin = (low + high) * 0.5 + Vec3::new(0.0, 0.0, 32.0);
+        } else if let Some((x, y)) = self.easy.plan.floor.first() {
+            #[expect(clippy::cast_possible_truncation, reason = "a square's place fits f32")]
+            let middle = |at: i32| (f64::from(at) + 0.5) as f32 * CELL as f32;
+            self.camera.origin = Vec3::new(middle(*x), middle(*y), 64.0);
         }
     }
 
@@ -841,7 +845,7 @@ impl Editor {
             }
             if ui.button("Play").clicked() {
                 let _saved = self.operate("save", &json!({}));
-                run_op = Some("playtest");
+                run_op = Some("play");
             }
             if let Some(name) = run_op {
                 let _result = self.operate(name, &json!({}));
@@ -909,8 +913,9 @@ impl Editor {
     /// Saves, lights the level, and plays it.
     fn play_easily(&mut self) {
         self.save_easily();
-        let _compiled = self.operate("compile", &json!({}));
-        let _played = self.operate("playtest", &json!({}));
+        if self.operate("compile", &json!({})).is_ok() {
+            let _played = self.operate("play", &json!({}));
+        }
     }
 
     /// The top of the easy view.
@@ -960,6 +965,7 @@ impl Editor {
             if big_button(ui, "Advanced", false, 90.0) {
                 self.easy.on = false;
                 self.context.set_zoom_factor(1.0);
+                self.frame_start_position();
             }
         });
     }
@@ -1002,6 +1008,8 @@ impl Editor {
         for line in [
             "Arrows: move",
             "Space: use the tool",
+            "Tab: go through the buttons",
+            "Esc: back to the plan",
             "1 to 0: choose a tool",
             "U: undo",
             "P: play",
@@ -1041,7 +1049,9 @@ impl Editor {
             });
         egui::Panel::right("easy_next")
             .default_size(230.0)
-            .show(root, |ui| self.easy_next(ui));
+            .show(root, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.easy_next(ui));
+            });
         if self.easy.seeing {
             egui::Panel::bottom("easy_walk").show(root, |ui| self.easy_walk(ui));
         }
@@ -1486,8 +1496,9 @@ impl PlatformApp for Editor {
         #[expect(clippy::cast_possible_truncation, reason = "a frame's time fits f32")]
         let seconds = frame.delta.as_secs_f64().min(0.1) as f32;
         self.camera.fly(self.keys, seconds);
-        let raw = self.input.take(self.size, frame.now.as_secs_f64());
         let context = self.context.clone();
+        let scale = context.pixels_per_point();
+        let raw = self.input.take(self.size, frame.now.as_secs_f64(), scale);
         let output = context.run_ui(raw, |ui| self.build_ui(ui));
         let primitives = context.tessellate(output.shapes, output.pixels_per_point);
         if self.stale {
@@ -1537,7 +1548,7 @@ impl PlatformApp for Editor {
             reason = "the view is inside the window"
         )]
         let area = self.view_rect.is_positive().then(|| {
-            let rect = self.view_rect;
+            let rect = self.view_rect * context.pixels_per_point();
             [
                 rect.min.x as u32,
                 rect.min.y as u32,

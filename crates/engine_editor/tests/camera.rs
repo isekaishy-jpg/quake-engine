@@ -106,3 +106,24 @@ fn looking_stops_at_straight_up() {
     view.look(0.0, -100_000.0);
     assert!((view.pitch + 89.0).abs() < 0.001);
 }
+
+/// A step goes along the floor even when the camera looks down, and a turn alone stays put.
+#[test]
+fn a_step_stays_on_the_floor() {
+    let mut camera = camera();
+    camera.pitch = 40.0;
+    camera.step(100.0, 0.0);
+    assert!(
+        (camera.origin.x - 100.0).abs() < 0.01,
+        "{:?}",
+        camera.origin
+    );
+    assert!(camera.origin.z.abs() < 0.01, "{:?}", camera.origin);
+    camera.step(0.0, 90.0);
+    assert!((camera.yaw - 90.0).abs() < 0.01);
+    assert!(
+        (camera.origin.x - 100.0).abs() < 0.01,
+        "{:?}",
+        camera.origin
+    );
+}

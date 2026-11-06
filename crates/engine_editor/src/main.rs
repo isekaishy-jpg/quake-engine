@@ -7,7 +7,6 @@
 mod app;
 mod easy;
 mod panels;
-mod ui_bridge;
 
 use std::path::Path;
 use std::process::ExitCode;

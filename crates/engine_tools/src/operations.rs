@@ -187,6 +187,10 @@ pub const OPERATIONS: &[OperationInfo] = &[
         help: "Runs the game on the saved map and takes a screenshot. path, optional commands: a list of console lines.",
     },
     OperationInfo {
+        name: "play",
+        help: "Opens the game on the saved map for someone to play, and leaves it open.",
+    },
+    OperationInfo {
         name: "playtest",
         help: "Runs a real server on the saved map for some seconds, and reports. Optional seconds.",
     },
@@ -271,6 +275,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "validate" => validate(session),
         "compile" => bake(session),
         "shot" => GameRunner::from_environment(session)?.shot(args),
+        "play" => GameRunner::from_environment(session)?.play(),
         "playtest" => GameRunner::from_environment(session)?.playtest(args),
         other => Err(format!("unknown operation {other}")),
     }

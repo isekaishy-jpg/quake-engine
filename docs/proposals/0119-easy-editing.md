@@ -17,9 +17,9 @@ The human's bar: without an agent, anyone can quickly make maps, including peopl
 - **Plain things.** Start, Light, Door, Health, Ammo, Enemy, Fire and Water, each one click, in a list of ten big buttons with a word each.
 - **What's next.** A panel says, in words, what's still missing, and what the chosen tool does. Play can't be pressed until the level can be played, and then it says so.
 - **What it's made of.** Six named looks change the whole level at once.
-- **No hard hands needed.** Everything is a single click, with no drag, no held key, no right button, and no time limit. Arrows, Space, the number keys, U and P do it all without a mouse. Walking round in 3D is four buttons.
+- **No hard hands needed.** Everything is a single click, with no drag, no held key, no right button, and no time limit. Arrows, Space, the number keys, U and P work the plan without a mouse, and Tab and Esc reach every other button. Walking round in 3D is four buttons.
 - **Eyes.** Bigger and Smaller scale everything up to three times. Plain colours gives white on black.
-- **Play is one press:** it saves, naming a new level itself, lights it, and runs it.
+- **Play is one press:** it saves, naming a new level itself, lights it, and opens the game, which stays open until it's closed. Nothing has to be set up: the game is looked for beside the editor, and its data in the usual Steam folders. `ENGINE_GAME` and `ENGINE_BASEDIR` still say otherwise.
 - **It's the same map.** `plan_paint`, `plan_thing`, `plan_look` and `plan_read` are ordinary operations, so an agent can do all of this, and the plan makes ordinary brushes and entities in the map file. What someone builds by hand beside it is left alone. Advanced mode has everything it had, and is one button away in both directions.
 - A new level opens easy, and a level made another way opens advanced.
 
@@ -32,4 +32,16 @@ The human's bar: without an agent, anyone can quickly make maps, including peopl
 
 ## Review
 
-A level of two rooms, a door, a pool, a fire, an enemy and three lights was made through the operations, baked in 0.3 s and played. The plan and the 3D view were looked at in the editor. No person with a disability has tried it, and only they can say whether it works for them. That needs a person.
+The first commit of this work, 26c7282, went in before its checks were done, and was marked finished too early. Going through the real window afterwards found five faults, all fixed in the commit after it:
+
+- **Play didn't play.** It used `playtest`, which ran the game for five seconds, closed it, and froze the editor meanwhile. Without `ENGINE_GAME` and `ENGINE_BASEDIR` set, it did nothing at all. A new `play` operation opens the game and leaves it, and finds it unaided. The Play button in Advanced had the same fault and uses it too.
+- **Doors never opened.** A named entity is a target, and a door that's a target waits to be fired. What a plan puts down has no name now. The test called `a_door_blocks_the_way_through_and_opens` only checked that a door compiled, and is renamed for what it does.
+- **Bigger did nothing.** The bridge to `egui` treated points as pixels, so the scale never reached the screen. Sizes, the pointer, clipping and the 3D view all follow it now.
+- **Walls narrowed openings,** by reaching past their square at both ends, which showed as pillars at a door. They only reach past at outer corners now.
+- **Advanced opened inside a wall** on a level with no start. It looks from the first square now.
+
+Checked in the real window, with posted keys and clicks: painting and things by keyboard alone, keys after clicks, Tab to a button and Space to press it, Esc back to the plan, P opening the game with nothing set, the game still open after the editor closed, Bigger with clicks landing true, Plain colours, Advanced, and the 3D view at a bigger size. In the game: a level of two rooms, a door, a pool, a fire, an enemy and three lights baked in 0.3 s, and the door rose and let the player through into the pool.
+
+The bright green pool is the Sewer look's own liquid, which glows by its material. It's the art, not a fault.
+
+The wall and target tests fail with their fixes taken out, as do the size tests. No person with a disability has tried any of this, and only they can say whether it works for them. That needs a person.

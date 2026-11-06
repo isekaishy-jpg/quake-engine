@@ -11,7 +11,7 @@ use engine_format::{Block, Value};
 use serde_json::{Value as Json, json};
 
 use crate::json::numbers;
-use crate::session::{ID_FIELD, Session};
+use crate::session::Session;
 
 /// How wide a square of the plan is, in world units.
 pub const CELL: f64 = 128.0;
@@ -181,43 +181,29 @@ fn edges(x: i32, y: i32) -> [f64; 4] {
     [x * CELL, y * CELL, (x + 1.0) * CELL, (y + 1.0) * CELL]
 }
 
-/// The walls round what's painted.
+/// The walls round what's painted. A wall only reaches past its square at an outer
+/// corner, where the next wall meets it. Anywhere else it would stick into an opening
+/// and narrow it.
 fn walls(plan: &Plan, wall: &str) -> Vec<Block> {
     let open = |x: i32, y: i32| plan.squares.contains_key(&(x, y));
+    let reach = |x: i32, y: i32| if open(x, y) { 0.0 } else { THICK };
     let (low, high) = (-POOL_DEPTH - THICK, ROOM_HEIGHT + THICK);
     let mut out = Vec::new();
     for (x, y) in plan.squares.keys().copied() {
         let [left, bottom, right, top] = edges(x, y);
+        let (south, north) = (bottom - reach(x, y - 1), top + reach(x, y + 1));
+        let (west, east) = (left - reach(x - 1, y), right + reach(x + 1, y));
         if !open(x - 1, y) {
-            out.push(brush(
-                wall,
-                [left - THICK, bottom - THICK, low, left, top + THICK, high],
-            ));
+            out.push(brush(wall, [left - THICK, south, low, left, north, high]));
         }
         if !open(x + 1, y) {
-            out.push(brush(
-                wall,
-                [right, bottom - THICK, low, right + THICK, top + THICK, high],
-            ));
+            out.push(brush(wall, [right, south, low, right + THICK, north, high]));
         }
         if !open(x, y - 1) {
-            out.push(brush(
-                wall,
-                [
-                    left - THICK,
-                    bottom - THICK,
-                    low,
-                    right + THICK,
-                    bottom,
-                    high,
-                ],
-            ));
+            out.push(brush(wall, [west, bottom - THICK, low, east, bottom, high]));
         }
         if !open(x, y + 1) {
-            out.push(brush(
-                wall,
-                [left - THICK, top, low, right + THICK, top + THICK, high],
-            ));
+            out.push(brush(wall, [west, top, low, east, top + THICK, high]));
         }
     }
     out
@@ -248,7 +234,8 @@ fn door(plan: &Plan, x: i32, y: i32, picture: &str) -> Block {
             ROOM_HEIGHT,
         ]
     };
-    let mut block = Block::named("entity", &format!("door_{x}_{y}"));
+    // A name would make it a target, and a target only opens when something fires it.
+    let mut block = Block::new("entity");
     block.set("type", Value::Text("func_door".to_owned()));
     block.set("angle", Value::Number(-1.0));
     block.set("wait", Value::Number(3.0));
@@ -270,7 +257,7 @@ fn thing(plan: &Plan, name: &str, x: i32, y: i32) -> Option<Block> {
         "fire" => 8.0,
         _ => 32.0,
     };
-    let mut block = Block::named("entity", &format!("{name}_{x}_{y}"));
+    let mut block = Block::new("entity");
     block.set("type", Value::Text(kind.to_owned()));
     block.set("origin", numbers(&[middle_x, middle_y, height]));
     block.set(MADE, Value::Flag(true));
@@ -467,8 +454,7 @@ pub(crate) fn plan_look(session: &mut Session, args: &Json) -> Result<Json, Stri
 #[must_use]
 pub fn is_plan_map(session: &Session) -> bool {
     let blocks = &session.document.blocks;
-    blocks.is_empty()
-        || blocks.iter().all(|block| {
-            block.kind == "plan" || block.get(MADE).is_some() || block.get(ID_FIELD).is_none()
-        })
+    blocks
+        .iter()
+        .all(|block| block.kind == "plan" || block.get(MADE).is_some())
 }

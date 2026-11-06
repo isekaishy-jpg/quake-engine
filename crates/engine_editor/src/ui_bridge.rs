@@ -13,11 +13,11 @@ use engine_render::{Renderer, UiBatch, UiFrame};
 
 /// Input gathered between frames.
 #[derive(Debug, Default)]
-pub(crate) struct UiInput {
+pub struct UiInput {
     /// Events waiting for `egui`.
     events: Vec<Event>,
     /// The pointer, in pixels.
-    pub(crate) pointer: (f32, f32),
+    pub pointer: (f32, f32),
     /// Which modifiers are down.
     modifiers: Modifiers,
 }
@@ -99,7 +99,7 @@ fn key_text(name: &str, shift: bool) -> Option<String> {
 
 impl UiInput {
     /// Takes in an engine input event.
-    pub(crate) fn event(&mut self, event: &InputEvent) {
+    pub fn event(&mut self, event: &InputEvent) {
         match event {
             InputEvent::Pointer { x, y } => {
                 #[expect(clippy::cast_possible_truncation, reason = "pixels fit f32")]
@@ -165,14 +165,24 @@ impl UiInput {
         }
     }
 
-    /// What `egui` gets this frame.
-    pub(crate) fn take(&mut self, size: (u32, u32), time: f64) -> RawInput {
+    /// What `egui` gets this frame. It works in points, and `scale` is how many pixels
+    /// make a point, so a bigger scale shows less of everything, larger.
+    pub fn take(&mut self, size: (u32, u32), time: f64, scale: f32) -> RawInput {
         #[expect(clippy::cast_precision_loss, reason = "window sizes are small")]
-        let screen = Vec2::new(size.0 as f32, size.1 as f32);
+        let screen = Vec2::new(size.0 as f32, size.1 as f32) / scale;
+        let mut events = std::mem::take(&mut self.events);
+        for event in &mut events {
+            match event {
+                Event::PointerMoved(pos) | Event::PointerButton { pos, .. } => {
+                    *pos = (pos.to_vec2() / scale).to_pos2();
+                }
+                _ => {}
+            }
+        }
         RawInput {
             screen_rect: Some(Rect::from_min_size(Pos2::ZERO, screen)),
             time: Some(time),
-            events: std::mem::take(&mut self.events),
+            events,
             ..RawInput::default()
         }
     }
@@ -180,7 +190,7 @@ impl UiInput {
 
 /// Textures `egui` has given us, as pictures on the renderer.
 #[derive(Debug, Default)]
-pub(crate) struct UiTextures {
+pub struct UiTextures {
     /// CPU copies, so partial updates can be applied.
     images: HashMap<TextureId, (usize, usize, Vec<u8>)>,
     /// Picture numbers.
@@ -189,7 +199,7 @@ pub(crate) struct UiTextures {
 
 impl UiTextures {
     /// Applies what changed.
-    pub(crate) fn update(&mut self, delta: &TexturesDelta, renderer: &mut Renderer) {
+    pub fn update(&mut self, delta: &TexturesDelta, renderer: &mut Renderer) {
         for (id, changes) in &delta.set {
             for change in changes {
                 self.apply(*id, change);
@@ -247,7 +257,7 @@ fn color_parts(color: Color32) -> [f32; 4] {
     [red, green, blue, alpha].map(|part| f32::from(part) / 255.0)
 }
 
-/// Clip space from pixels, with y up as the world shader has it.
+/// Clip space from points, with y up as the world shader has it.
 fn clip_vertex(vertex: &Vertex, size: (f32, f32)) -> [f32; 8] {
     let [red, green, blue, alpha] = color_parts(vertex.color);
     [
@@ -263,16 +273,17 @@ fn clip_vertex(vertex: &Vertex, size: (f32, f32)) -> [f32; 8] {
 }
 
 /// Turns what `egui` drew into triangles for the renderer.
-pub(crate) fn ui_frame(
+pub fn ui_frame(
     context: &Context,
     primitives: &[ClippedPrimitive],
     textures: &UiTextures,
     size: (u32, u32),
 ) -> UiFrame {
-    let _pixels = context;
+    let scale = context.pixels_per_point();
     let mut frame = UiFrame::default();
     #[expect(clippy::cast_precision_loss, reason = "window sizes are small")]
     let float_size = (size.0 as f32, size.1 as f32);
+    let in_points = (float_size.0 / scale, float_size.1 / scale);
     for ClippedPrimitive {
         clip_rect,
         primitive,
@@ -287,7 +298,7 @@ pub(crate) fn ui_frame(
         let first = u32::try_from(frame.vertices.len() / 8).unwrap_or(0);
         for index in &mesh.indices {
             if let Some(vertex) = mesh.vertices.get(*index as usize) {
-                frame.vertices.extend(clip_vertex(vertex, float_size));
+                frame.vertices.extend(clip_vertex(vertex, in_points));
             }
         }
         #[expect(
@@ -296,10 +307,10 @@ pub(crate) fn ui_frame(
             reason = "clamped to the window"
         )]
         let clip = [
-            clip_rect.min.x.clamp(0.0, float_size.0) as u32,
-            clip_rect.min.y.clamp(0.0, float_size.1) as u32,
-            clip_rect.max.x.clamp(0.0, float_size.0) as u32,
-            clip_rect.max.y.clamp(0.0, float_size.1) as u32,
+            (clip_rect.min.x * scale).clamp(0.0, float_size.0) as u32,
+            (clip_rect.min.y * scale).clamp(0.0, float_size.1) as u32,
+            (clip_rect.max.x * scale).clamp(0.0, float_size.0) as u32,
+            (clip_rect.max.y * scale).clamp(0.0, float_size.1) as u32,
         ];
         frame.batches.push(UiBatch {
             picture,

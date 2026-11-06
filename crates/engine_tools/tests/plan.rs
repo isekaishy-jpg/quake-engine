@@ -2,7 +2,8 @@
 
 use std::path::PathBuf;
 
-use engine_tools::{Session, run};
+use engine_compile::{compile_text, placeholder_texture};
+use engine_tools::{CELL, Session, is_plan_map, run};
 use serde_json::{Value, json};
 
 /// A session with nothing in it.
@@ -91,6 +92,67 @@ fn a_wall_only_goes_where_a_room_ends() {
     );
 }
 
+/// The cuboids of the walls in the map, as left, bottom, right and top.
+fn wall_edges(session: &Session) -> Vec<[f64; 4]> {
+    let map = text(session);
+    let mut out = Vec::new();
+    let mut wall = false;
+    for line in map.lines() {
+        if line.contains("material") {
+            wall = line.contains("wall_blocks");
+        }
+        if wall && line.contains("cuboid") {
+            let (_, numbers) = line.split_once('=').expect("a value");
+            let numbers: Vec<f64> = numbers
+                .split(|c: char| !(c.is_ascii_digit() || c == '-' || c == '.'))
+                .filter_map(|word| word.parse().ok())
+                .collect();
+            out.push([numbers[0], numbers[1], numbers[3], numbers[4]]);
+        }
+    }
+    out
+}
+
+#[test]
+fn no_wall_stands_in_a_square_that_is_open() {
+    // Two rooms and a corridor one square wide between them.
+    let mut session = session();
+    let room: Vec<[i32; 2]> = (0..3)
+        .flat_map(|x| (0..3).map(move |y| [x, y]))
+        .chain((4..7).flat_map(|x| (0..3).map(move |y| [x, y])))
+        .chain([[3, 1]])
+        .collect();
+    let _rooms = paint(&mut session, &room, "floor");
+    let walls = wall_edges(&session);
+    assert!(!walls.is_empty());
+    for [x, y] in room {
+        let (left, bottom) = (f64::from(x) * CELL, f64::from(y) * CELL);
+        let (right, top) = (left + CELL, bottom + CELL);
+        for wall in &walls {
+            let inside = wall[0] < right && wall[2] > left && wall[1] < top && wall[3] > bottom;
+            assert!(!inside, "{wall:?} stands in square {x} {y}");
+        }
+    }
+}
+
+#[test]
+fn every_outer_corner_is_closed() {
+    let mut session = session();
+    let _room = paint(&mut session, &[[0, 0]], "floor");
+    let walls = wall_edges(&session);
+    for corner in [
+        [-1.0, -1.0],
+        [-1.0, CELL + 1.0],
+        [CELL + 1.0, -1.0],
+        [CELL + 1.0, CELL + 1.0],
+    ] {
+        let covered = walls.iter().any(|wall| {
+            wall[0] < corner[0] && corner[0] < wall[2] && wall[1] < corner[1] && corner[1] < wall[3]
+        });
+        assert!(covered, "nothing at {corner:?}");
+    }
+}
+
 #[test]
 fn clearing_a_square_takes_what_was_on_it() {
     let mut session = small_level();
@@ -126,7 +188,7 @@ fn a_pool_has_water_in_it() {
 }
 
 #[test]
-fn a_door_blocks_the_way_through_and_opens() {
+fn a_door_is_a_model_of_its_own() {
     let mut session = session();
     let _room = paint(&mut session, &[[0, 0], [1, 0], [2, 0]], "floor");
     let _door = put(&mut session, [1, 0], "door");
@@ -134,6 +196,30 @@ fn a_door_blocks_the_way_through_and_opens() {
     let answer = run(&mut session, "validate", &json!({})).expect("validates");
     assert_eq!(answer["models"], json!(2), "a door's a model of its own");
     assert_eq!(answer["missing_materials"], json!([]), "{answer}");
+}
+
+/// A named entity is a target, and a door that's a target waits to be fired and never
+/// opens for someone walking up to it.
+#[test]
+fn nothing_a_plan_puts_down_is_a_target() {
+    let mut session = session();
+    let _room = paint(&mut session, &[[0, 0], [1, 0], [2, 0]], "floor");
+    for (cell, thing) in [([0, 0], "start"), ([1, 0], "door"), ([2, 0], "enemy")] {
+        let _put = put(&mut session, cell, thing);
+    }
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(&text(&session), &mut source).expect("compiles");
+    let door = map
+        .entities
+        .iter()
+        .find(|entity| format!("{entity:?}").contains("func_door"));
+    assert!(door.is_some(), "the door's there");
+    for entity in &map.entities {
+        let shown = format!("{entity:?}");
+        if !shown.contains("worldspawn") {
+            assert!(!shown.contains("targetname"), "{shown}");
+        }
+    }
 }
 
 #[test]
@@ -179,4 +265,15 @@ fn what_someone_built_by_hand_is_left_alone() {
         text(&session).matches("\"mine\"").count() + text(&session).matches("= mine").count(),
         1
     );
+}
+
+#[test]
+fn only_a_plan_opens_on_the_plan() {
+    let mut new = session();
+    assert!(is_plan_map(&new), "a new level");
+    let _room = paint(&mut new, &[[0, 0]], "floor");
+    assert!(is_plan_map(&new), "what a plan made");
+    let args = json!({ "cuboid": [500, 500, 0, 564, 564, 64], "material": "mine" });
+    let _brush = run(&mut new, "add_brush", &args).expect("adds");
+    assert!(!is_plan_map(&new), "something built by hand");
 }

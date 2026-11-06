@@ -17,7 +17,7 @@
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one
   - [Water](water.md): how a level sets it
-  - [Zones](zones.md): named parts of a map
+  - [Making a level](editor.md), [Zones](zones.md): named parts of a map
   - [Texture standard](texture-standard.md): what a texture has to be, to hand to whoever makes them
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.

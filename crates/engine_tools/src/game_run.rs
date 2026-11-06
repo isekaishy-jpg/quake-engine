@@ -1,7 +1,7 @@
 //! Running the real game from the tools, so a map can be seen and played.
 
 use std::io::Write;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::time::Duration;
 
@@ -14,6 +14,35 @@ const START_WAIT: Duration = Duration::from_millis(2500);
 
 /// How long a map gets to load.
 const LOAD_WAIT: Duration = Duration::from_millis(2500);
+
+/// The game's program, which is built beside the tools.
+const GAME: &str = if cfg!(windows) {
+    "quake-engine.exe"
+} else {
+    "quake-engine"
+};
+
+/// Where the game's data usually is, for whoever hasn't said.
+const USUAL_DATA: [&str; 2] = [
+    "C:/Program Files (x86)/Steam/steamapps/common/Quake",
+    "C:/Program Files/Steam/steamapps/common/Quake",
+];
+
+/// The first of `places` that has the game's data in it.
+#[must_use]
+pub fn data_in<P: AsRef<Path>>(places: &[P]) -> Option<PathBuf> {
+    places
+        .iter()
+        .map(AsRef::as_ref)
+        .find(|place| place.join("id1").join("pak0.pak").is_file())
+        .map(Path::to_owned)
+}
+
+/// The game beside the program that's running, if it's there.
+fn game_beside_this_program() -> Option<PathBuf> {
+    let game = std::env::current_exe().ok()?.parent()?.join(GAME);
+    game.is_file().then_some(game)
+}
 
 /// What's needed to run the game.
 #[derive(Clone, Debug)]
@@ -29,26 +58,72 @@ pub struct GameRunner {
 }
 
 impl GameRunner {
-    /// Reads `ENGINE_GAME` and `ENGINE_BASEDIR` for a saved map.
+    /// What runs `map` from `content`, with `program` and the data in `base`.
+    #[must_use]
+    pub fn new(program: PathBuf, base: PathBuf, content: PathBuf, map: String) -> Self {
+        Self {
+            program,
+            base,
+            content,
+            map,
+        }
+    }
+
+    /// Finds the game for a saved map. `ENGINE_GAME` and `ENGINE_BASEDIR` say where,
+    /// and without them the game beside this program and the usual data are used, so
+    /// nobody has to set anything to play what they made.
     ///
     /// # Errors
     ///
-    /// Returns a message if they aren't set or the map isn't saved.
+    /// Returns a message, in plain words, if there's no game, no data, or no saved map.
     pub fn from_environment(session: &Session) -> Result<Self, String> {
-        let program = std::env::var_os("ENGINE_GAME").ok_or("set ENGINE_GAME to the game")?;
-        let base = std::env::var_os("ENGINE_BASEDIR").ok_or("set ENGINE_BASEDIR to game data")?;
+        let program = std::env::var_os("ENGINE_GAME")
+            .map(PathBuf::from)
+            .or_else(game_beside_this_program)
+            .ok_or("Can't find the game. Build it, or set ENGINE_GAME.")?;
+        let base = std::env::var_os("ENGINE_BASEDIR")
+            .map(PathBuf::from)
+            .or_else(|| data_in(&USUAL_DATA))
+            .ok_or("Can't find the game's data. Install it, or set ENGINE_BASEDIR.")?;
         let path = session.path.as_ref().ok_or("save the map first")?;
         let map = path
             .file_stem()
             .and_then(|stem| stem.to_str())
             .ok_or("the map has no name")?
             .to_owned();
-        Ok(Self {
-            program: program.into(),
-            base: base.into(),
-            content: session.content.clone(),
-            map,
-        })
+        Ok(Self::new(program, base, session.content.clone(), map))
+    }
+
+    /// The command that opens the game on the map for someone to play, with sound.
+    #[must_use]
+    pub fn play_command(&self) -> Command {
+        let mut command = Command::new(&self.program);
+        let _command = command
+            .arg("-basedir")
+            .arg(&self.base)
+            .arg("-content")
+            .arg(&self.content)
+            .arg("-window")
+            .args(["+map", &self.map])
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null());
+        command
+    }
+
+    /// `play`: opens the game on the map and leaves it for someone to play. It stays
+    /// open until they close it, and this returns at once.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if the game can't start.
+    pub fn play(&self) -> Result<Json, String> {
+        let mut child = self
+            .play_command()
+            .spawn()
+            .map_err(|error| format!("couldn't start the game: {error}"))?;
+        let _waiter = std::thread::spawn(move || child.wait());
+        Ok(json!({ "map": self.map }))
     }
 
     /// Starts the game, windowed and silent, loaded on the map.
