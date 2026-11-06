@@ -160,6 +160,60 @@ entity lamp {{ type = light origin = -200 0 0 intensity = 800 }}
         .1
 }
 
+/// The sun stops at the top of the world, and a mesh taller than any brush is
+/// still in its way.
+#[test]
+fn the_sun_finds_a_mesh_above_every_brush() {
+    let tower = "format 1 mesh
+part roof {
+    material = stone
+    points = -600 -600 500  600 -600 500  600 600 500  -600 600 500
+    uvs = 0 0  1 0  1 1  0 1
+    triangles = 0 1 2  0 2 3  2 1 0  3 2 0
+}
+hull { cuboid = -600 -600 499 600 600 500 }
+";
+    let open_sky = "format 1 map
+entity world { type = worldspawn sun_intensity = 200 }
+sky { sun_direction = 0 0 1 }
+brush { material = ground cuboid = -512 -512 -64 512 512 0 }
+";
+    let bright = |text: &str, meshes: bool| {
+        let mut working = read_map(&from_text(text).expect("parses")).expect("reads");
+        if meshes {
+            let mesh = read_mesh(&from_text(tower).expect("parses")).expect("a mesh");
+            let mut read = |_: &str| {
+                Ok(LoadedMesh {
+                    mesh: Arc::new(mesh.clone()),
+                    occluders: Vec::new(),
+                })
+            };
+            resolve_meshes(&mut working, &mut read).expect("placed");
+        }
+        let mut source = |name: &str| placeholder_texture(name);
+        let mut map = compile(&working, &mut source).expect("compiles");
+        let mut images = |path: &str| -> Result<Arc<Vec<MipLevel>>, CompileError> {
+            Err(CompileError::Bad(path.to_owned()))
+        };
+        let mut input = BakeInput {
+            working: &working,
+            images: &mut images,
+        };
+        bake_light(&mut map, &mut input).expect("bakes");
+        layer_light(&map, face_of(&map, "ground"), 0).map_or(0.0, |layer| layer.0)
+    };
+    let clear = bright(open_sky, false);
+    let roofed = bright(
+        &format!(
+            "{open_sky}mesh {{ source = roof }}
+"
+        ),
+        true,
+    );
+    assert!(clear > 20.0, "{clear}");
+    assert!(roofed < clear * 0.2, "{roofed} against {clear}");
+}
+
 /// Light goes through what's only seen, as it wouldn't through anything else.
 #[test]
 fn light_goes_through_a_mesh_only_to_be_seen() {
