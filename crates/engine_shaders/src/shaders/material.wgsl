@@ -21,6 +21,34 @@ struct MaterialParams {
     // x how much it mirrors, y how far flow moves it, z flow cycles a second,
     // w the slot of its flow map, or -1.
     extra: vec4<f32>,
+    // What its shader was given: eight numbers.
+    shader_params: array<vec4<f32>, 2>,
+    // The slots of the images its shader was given, or -1.
+    shader_slots: vec4<i32>,
+}
+
+// What surface code sees of a surface, and can change, ahead of its light.
+struct Surface {
+    // Its colour and alpha.
+    base: vec4<f32>,
+    // Which way it faces, in the world, with bumps.
+    normal: vec3<f32>,
+    // Light of its own, which is added after everything else.
+    emissive: vec3<f32>,
+    // Where it is in its pictures.
+    uv: vec2<f32>,
+    // Where it is in the world.
+    world: vec3<f32>,
+}
+
+// One of the eight numbers a material gave its shader.
+fn shader_param(index: i32) -> f32 {
+    return material.shader_params[index / 4][index % 4];
+}
+
+// The seconds since the level began.
+fn shader_time() -> f32 {
+    return frame.params.x;
 }
 
 @group(1) @binding(2) var slot1: texture_2d<f32>;
@@ -45,6 +73,12 @@ fn read_slot(slot: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32
         case 7: { return textureSampleGrad(slot7, surface_sampler, uv, dx, dy); }
         default: { return textureSampleGrad(surface, surface_sampler, uv, dx, dy); }
     }
+}
+
+// One of the images a material gave its shader, which has to be read outside
+// anything that varies across a surface.
+fn shader_image(index: i32, uv: vec2<f32>) -> vec4<f32> {
+    return read_slot(material.shader_slots[index], uv, dpdx(uv), dpdy(uv));
 }
 
 // A small hash, for hexagon tiles.
@@ -199,9 +233,9 @@ fn flowing(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
 }
 
 fn material_color(in: VertexOut) -> vec4<f32> {
-    var uv0 = in.uv;
+    var uv0 = shader_uv(in.uv, in.world);
     if !PLAIN {
-        uv0 = moved_uv(in.uv);
+        uv0 = moved_uv(uv0);
     }
     let dx = dpdx(in.uv);
     let dy = dpdy(in.uv);
@@ -274,6 +308,16 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         );
     }
 
+    var coded: Surface;
+    coded.base = base;
+    coded.normal = normal;
+    coded.emissive = vec3<f32>(0.0);
+    coded.uv = uv;
+    coded.world = in.world;
+    coded = shader_surface(coded);
+    base = coded.base;
+    normal = coded.normal;
+
     // Where baked light comes from, so bumps and shine answer it too.
     let stored = textureSampleLevel(light_direction, lightmap_sampler, in.light_uv, 0.0);
     var baked_from = vec3<f32>(0.0);
@@ -337,6 +381,8 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         color = color + read_slot(material.slots_a.z, uv, dx, dy).rgb * material.more.y;
     }
 
+    color = color + coded.emissive;
+
     // An opaque surface's alpha says how much the final pass mirrors it.
     var alpha = 1.0 - material.extra.x;
     if material.flags.y != 0 {
@@ -368,7 +414,7 @@ struct MaskedOut {
 // its cutoff here, which keeps thin edges from crawling.
 @fragment
 fn fs_masked(in: VertexOut) -> MaskedOut {
-    let shaded = material_color(in);
+    let shaded = shader_whole(in);
     let coverage = clamp(
         (shaded.a - material.more.z) / max(fwidth(shaded.a), 0.0001) + 0.5,
         0.0,
@@ -386,5 +432,5 @@ fn fs_masked(in: VertexOut) -> MaskedOut {
 
 @fragment
 fn fs_material(in: VertexOut) -> @location(0) vec4<f32> {
-    return material_color(in);
+    return shader_whole(in);
 }

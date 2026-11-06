@@ -1,5 +1,6 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
+mod pipeline_cache;
 mod pipelines;
 mod post;
 mod record;
@@ -8,11 +9,14 @@ mod smaa;
 mod upload;
 
 use std::cell::RefCell;
+use std::collections::HashMap;
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
 use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Sprite};
+use engine_shaders::BUILT_IN;
 use pipelines::make_pass;
 use upload::{depth_image, device_image, host_buffer, uniform_buffer};
 use vulkane::safe::{
@@ -94,32 +98,6 @@ const TEXTURE_MAX_LOD: f32 = 3.0;
 
 /// The smallest mip level materials reach.
 const MATERIAL_MAX_LOD: f32 = 16.0;
-
-/// The world shader.
-const WORLD_SHADER: &str = concat!(
-    include_str!("../shaders/frame.wgsl"),
-    include_str!("../shaders/world.wgsl"),
-    include_str!("../shaders/material.wgsl"),
-    include_str!("../shaders/sky.wgsl"),
-);
-
-/// The overlay shader.
-const ALIAS_SHADER: &str = concat!(
-    include_str!("../shaders/frame.wgsl"),
-    include_str!("../shaders/alias.wgsl"),
-);
-
-/// The shader of sprites and particles.
-const SPRITE_SHADER: &str = include_str!("../shaders/sprite.wgsl");
-
-/// The final pass's shader.
-const POST_SHADER: &str = concat!(
-    include_str!("../shaders/frame.wgsl"),
-    include_str!("../shaders/post.wgsl"),
-);
-
-/// The canvas's shader.
-const CANVAS_SHADER: &str = include_str!("../shaders/canvas.wgsl");
 
 /// What [`Backend`] needs to draw a loaded map.
 pub(crate) struct Scene<'a> {
@@ -222,6 +200,8 @@ struct GpuMap {
     indices_stale: [bool; FRAMES],
     /// Each texture's descriptor set, by map texture index.
     texture_sets: Vec<Option<DescriptorSet>>,
+    /// Each texture's place in `Pipelines::surfaces`.
+    texture_shaders: Vec<usize>,
     /// The cloud image's set, if the map has a sky sphere.
     sky_set: Option<DescriptorSet>,
     /// Whether each texture's set is a material's.
@@ -324,32 +304,45 @@ struct Layouts {
     particle: PipelineLayout,
 }
 
+/// What draws surfaces with one shader.
+struct SurfacePipelines {
+    /// The shader's code, by which it's found again.
+    code: String,
+    /// Whether it can follow the depth pass.
+    after_depth_safe: bool,
+    /// What's opaque.
+    opaque: GraphicsPipeline,
+    /// What's opaque, with its depth already drawn.
+    after_depth: GraphicsPipeline,
+    /// What has holes.
+    masked: GraphicsPipeline,
+    /// What's see-through.
+    blended: GraphicsPipeline,
+}
+
+impl SurfacePipelines {
+    /// The pipeline for `kind`.
+    fn get(&self, kind: BatchKind) -> &GraphicsPipeline {
+        match kind {
+            BatchKind::Sky | BatchKind::Material => &self.opaque,
+            BatchKind::Masked => &self.masked,
+            BatchKind::Blended => &self.blended,
+        }
+    }
+}
+
 /// The pipelines.
 struct Pipelines {
     /// Depth alone, ahead of what's expensive to shade.
     depth_only: GraphicsPipeline,
-    /// Materials whose depth is already drawn.
-    material_after_depth: GraphicsPipeline,
-    /// Those with nothing unusual about them, which is most surfaces.
+    /// Surfaces with nothing unusual about them, which is most.
     plain_after_depth: GraphicsPipeline,
-    /// Lit surfaces.
-    solid: GraphicsPipeline,
-    /// Lit surfaces with holes.
-    cutout: GraphicsPipeline,
-    /// Liquids.
-    liquid: GraphicsPipeline,
-    /// Masked materials.
-    masked: GraphicsPipeline,
-    /// Sky.
-    sky: GraphicsPipeline,
     /// The sky sphere, drawn behind everything.
     sky_sphere: GraphicsPipeline,
     /// Faces showing the sky sphere.
     sky_window: GraphicsPipeline,
-    /// Opaque and masked materials.
-    material: GraphicsPipeline,
-    /// See-through materials.
-    blended: GraphicsPipeline,
+    /// Each shader in use, the standard one first.
+    surfaces: Vec<SurfacePipelines>,
     /// Alias models.
     alias: GraphicsPipeline,
     /// Outlines of models, as a pushed-out hull.
@@ -360,24 +353,17 @@ struct Pipelines {
     particle: GraphicsPipeline,
 }
 
-impl Pipelines {
-    /// The pipeline for `kind`.
-    fn get(&self, kind: BatchKind) -> &GraphicsPipeline {
-        match kind {
-            BatchKind::Solid => &self.solid,
-            BatchKind::Cutout => &self.cutout,
-            BatchKind::Liquid => &self.liquid,
-            BatchKind::Sky => &self.sky,
-            BatchKind::Material => &self.material,
-            BatchKind::Masked => &self.masked,
-            BatchKind::Blended => &self.blended,
-        }
-    }
-}
-
 /// Everything Vulkan. Fields drop in order, so each comes before what it
 /// depends on.
 pub(crate) struct Backend {
+    /// Pipelines kept between runs.
+    saved_pipelines: pipeline_cache::PipelineCacheHolder,
+    /// What's gone wrong with shaders since this was last asked.
+    shader_problems: Vec<String>,
+    /// The code of the engine's own shaders, by name.
+    built_in_shaders: HashMap<String, String>,
+    /// The code of the final pass.
+    post_code: String,
     /// The window target, once it has a size.
     window: Option<WindowTarget>,
     /// The wanted window size.
@@ -528,7 +514,11 @@ fn pick_device(
 
 impl Backend {
     /// Sets up the device, passes and pipelines.
-    pub(crate) fn new(target: Target, size: (u32, u32)) -> Result<Self, RenderError> {
+    pub(crate) fn new(
+        target: Target,
+        size: (u32, u32),
+        saved_pipelines: Option<PathBuf>,
+    ) -> Result<Self, RenderError> {
         let window = match target {
             Target::Window(window) => Some(window),
             Target::Offscreen => None,
@@ -666,6 +656,7 @@ impl Backend {
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
         };
+        let saved_pipelines = pipeline_cache::open(&device, &physical, saved_pipelines.as_deref());
         let scene_pass = post::make_scene_pass(&device, 1)?;
         let pipelines = Self::make_pipelines(&device, &layouts, &scene_pass, 1)?;
         let texture_sampler = Sampler::new_mipmapped(
@@ -721,12 +712,19 @@ impl Backend {
         let frame_done = [Fence::new(&device)?, Fence::new(&device)?];
         let available = [Semaphore::binary(&device)?, Semaphore::binary(&device)?];
         let post_pipeline =
-            Self::make_post_pipeline(&device, &post_layout, &present_pass, 1, "fs_post")?;
+            Self::make_post_pipeline(&device, &post_layout, &present_pass, 1, "fs_post", "")?;
         let ray_pass = post::make_ray_pass(&device)?;
         let ray_pipeline =
-            Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays")?;
+            Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays", "")?;
         let smaa = smaa::Smaa::new(&device)?;
         let mut backend = Self {
+            saved_pipelines,
+            shader_problems: Vec::new(),
+            built_in_shaders: BUILT_IN
+                .iter()
+                .map(|(name, code)| ((*name).to_owned(), (*code).to_owned()))
+                .collect(),
+            post_code: String::new(),
             surface,
             window: None,
             wanted_size: size,
@@ -885,6 +883,17 @@ impl Backend {
             self.present_mode = mode;
             self.resized = true;
         }
+    }
+
+    /// Replaces the engine's own shader called `name` with `code`.
+    pub(crate) fn set_built_in_shader(&mut self, name: &str, code: &str) {
+        self.built_in_shaders
+            .insert(name.to_owned(), code.to_owned());
+    }
+
+    /// What's gone wrong with shaders since this was last asked.
+    pub(crate) fn take_shader_problems(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.shader_problems)
     }
 
     /// Makes the samplers for `filter`, and points everything at them.
@@ -1352,5 +1361,6 @@ impl Backend {
 impl Drop for Backend {
     fn drop(&mut self) {
         let _ignored = self.device.wait_idle();
+        self.saved_pipelines.save(&self.physical);
     }
 }

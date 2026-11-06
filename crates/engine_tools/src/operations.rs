@@ -146,6 +146,10 @@ pub const OPERATIONS: &[OperationInfo] = &[
         help: "Checks materials and their pictures against the texture standard. prefix: which, or all.",
     },
     OperationInfo {
+        name: "check_shaders",
+        help: "Compiles every shader in the content, and says what's wrong with any that don't.",
+    },
+    OperationInfo {
         name: "validate",
         help: "Compiles the map in memory and reports problems.",
     },
@@ -218,6 +222,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "prefabs" => Ok(json!({ "prefabs": prefab_names(&session.content) })),
         "derive_maps" => features::derive_material_maps(session, args),
         "check_textures" => features::check_textures(session, args),
+        "check_shaders" => features::check_shaders(session, args),
         "add_block" => features::add_block(session, args),
         "set_block" => features::set_block(session, args),
         "place_mesh" => features::place_mesh(session, args),

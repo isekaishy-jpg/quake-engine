@@ -565,7 +565,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         check(unsafe {
             create(
                 device.inner.handle,
-                0, // pipelineCache
+                device.inner.pipeline_cache.load(std::sync::atomic::Ordering::Relaxed),
                 1,
                 &info,
                 std::ptr::null(),

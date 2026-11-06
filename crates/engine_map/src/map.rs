@@ -312,6 +312,8 @@ pub struct Map {
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.
     pub fog: Option<Fog>,
+    /// Code for the final pass, if it has its own.
+    pub post_shader: Option<Arc<crate::ShaderCode>>,
     /// How its light comes out.
     pub look: Look,
     /// Where each sample's light comes from, as bytes. Empty unless the map

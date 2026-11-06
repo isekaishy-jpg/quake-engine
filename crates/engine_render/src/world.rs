@@ -56,19 +56,13 @@ impl Vertex {
 /// How a batch is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum BatchKind {
-    /// Lit, opaque.
-    Solid,
-    /// Lit, with holes.
-    Cutout,
-    /// A moving liquid.
-    Liquid,
     /// Sky.
     Sky,
-    /// An opaque material.
+    /// An opaque surface.
     Material,
-    /// A material with holes.
+    /// A surface with holes that follow its alpha.
     Masked,
-    /// A see-through material, drawn after everything else.
+    /// A see-through surface, drawn after everything else.
     Blended,
 }
 
@@ -209,7 +203,8 @@ struct LightPlace {
 pub(crate) fn uses_material(texture: &Texture) -> bool {
     texture.material.as_ref().is_some_and(|material| {
         matches!(texture.kind, TextureKind::Solid | TextureKind::Cutout)
-            || (texture.kind == TextureKind::Liquid && material.alpha == AlphaMode::Blend)
+            || (texture.kind == TextureKind::Liquid
+                && (material.alpha == AlphaMode::Blend || material.shader.is_some()))
     })
 }
 
@@ -225,13 +220,11 @@ fn batch_kind(texture: &Texture) -> Option<BatchKind> {
             AlphaMode::Opaque => BatchKind::Material,
         });
     }
-    match texture.kind {
-        TextureKind::Solid => Some(BatchKind::Solid),
-        TextureKind::Cutout => Some(BatchKind::Cutout),
-        TextureKind::Liquid => Some(BatchKind::Liquid),
-        TextureKind::Sky => Some(BatchKind::Sky),
-        TextureKind::Hidden => None,
-    }
+    Some(if texture.kind == TextureKind::Sky {
+        BatchKind::Sky
+    } else {
+        BatchKind::Material
+    })
 }
 
 /// The middle of a face's corners.

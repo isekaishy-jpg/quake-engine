@@ -6,7 +6,7 @@ use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasModel, BOUNCE_STYLE, Fog, Look, Map, Material, MipLevel, PixelForm, Pool, ProbeGrid,
-    RayStencil, STENCIL_GRID, Sky, Sprite, TextureKind,
+    RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -30,6 +30,7 @@ use crate::material::{
 use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
+use crate::surface::built_in_for;
 use crate::world::{BatchKind, uses_material};
 use crate::world::{TileImage, VertexPatch, shadow_groups};
 use crate::world::{Vertex, WorldMesh};
@@ -117,12 +118,15 @@ fn slot_format(material: &Material, number: u8) -> Format {
     if let Some(format) = image.and_then(|mips| compiled_format(mips)) {
         return format;
     }
+    let [first, second] = material.shader_images;
     let data = [
         material.normal,
         material.specular,
         material.height,
         material.detail,
         material.flow,
+        first,
+        second,
     ];
     let mask = material.layers.iter().any(|layer| layer.mask == number);
     if mask || data.contains(&Some(number)) {
@@ -628,7 +632,7 @@ impl Backend {
         let indices = [index_buffer()?, index_buffer()?];
 
         let sets = u32::try_from(map.textures.len() + 2).unwrap_or(u32::MAX);
-        let material_count = map.textures.iter().filter(|t| t.material.is_some()).count();
+        let material_count = map.textures.len();
         let images = sets.saturating_mul(8);
         let pool = DescriptorPool::new(
             &self.device,
@@ -672,11 +676,10 @@ impl Backend {
         // Every opaque face of the world, then every moving model, for shadows.
         let opaque_batch = |batch: &Option<u32>| {
             batch.is_some_and(|batch| {
-                let kind = mesh.batches[batch as usize].kind;
-                !matches!(
-                    kind,
-                    BatchKind::Sky | BatchKind::Blended | BatchKind::Liquid
-                )
+                let batch = &mesh.batches[batch as usize];
+                let liquid = map.textures.get(batch.texture as usize);
+                let liquid = liquid.is_some_and(|texture| texture.kind == TextureKind::Liquid);
+                !liquid && !matches!(batch.kind, BatchKind::Sky | BatchKind::Blended)
             })
         };
         let groups = shadow_groups(map, mesh, opaque_batch);
@@ -752,10 +755,13 @@ impl Backend {
         let mut textures = Vec::with_capacity(map.textures.len());
         let mut material_sets = Vec::with_capacity(map.textures.len());
         let mut texture_sets = Vec::with_capacity(map.textures.len());
+        let mut texture_shaders = Vec::with_capacity(map.textures.len());
+        let plain_material = Material::default();
         for texture in &map.textures {
             if texture.kind == TextureKind::Hidden {
                 material_sets.push(false);
                 texture_sets.push(None);
+                texture_shaders.push(0);
                 continue;
             }
             let levels: Vec<(u32, u32, &[u8])> = texture
@@ -765,30 +771,32 @@ impl Backend {
                 .collect();
             let format = compiled_format(&texture.mips).unwrap_or(Format::R8G8B8A8_SRGB);
             let image = self.upload_image(&levels, format)?;
-            if let (Some(material), Some(params)) = (&texture.material, &mut material_params)
-                && uses_material(texture)
-            {
-                let set = pool.allocate(&self.material_layout)?;
-                set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-                set.write_sampler(1, &self.material_sampler);
-                let mut uploaded = Vec::with_capacity(material.slots.len());
-                for (number, slot) in (1_u8..).zip(&material.slots) {
-                    let levels: Vec<(u32, u32, &[u8])> = slot
-                        .iter()
-                        .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
-                        .collect();
-                    uploaded.push(self.upload_image(&levels, slot_format(material, number))?);
-                }
-                for binding in 0..7_u32 {
-                    let view = uploaded
-                        .get(binding as usize)
-                        .map_or(&blank.view, |image| &image.view);
-                    set.write_sampled_image(
-                        binding + 2,
-                        view,
-                        ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-                    );
-                }
+            let own = texture.material.as_ref().filter(|_| uses_material(texture));
+            let material = own.map_or(&plain_material, |material| material.as_ref());
+            texture_shaders.push(self.shader_of(texture, material)?);
+            let set = pool.allocate(&self.material_layout)?;
+            set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            let sampler = if own.is_some() {
+                &self.material_sampler
+            } else {
+                &self.texture_sampler
+            };
+            set.write_sampler(1, sampler);
+            let mut uploaded = Vec::with_capacity(material.slots.len());
+            for (number, slot) in (1_u8..).zip(&material.slots) {
+                let levels: Vec<(u32, u32, &[u8])> = slot
+                    .iter()
+                    .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
+                    .collect();
+                uploaded.push(self.upload_image(&levels, slot_format(material, number))?);
+            }
+            for binding in 0..7_u32 {
+                let view = uploaded
+                    .get(binding as usize)
+                    .map_or(&blank.view, |image| &image.view);
+                set.write_sampled_image(binding + 2, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+            }
+            if let Some(params) = &mut material_params {
                 let offset = next_params * MATERIAL_PARAMS_STRIDE;
                 let bytes = material_params_of(material);
                 params.memory.map()?.as_slice_mut()[offset..offset + bytes.len()]
@@ -801,18 +809,11 @@ impl Backend {
                     MATERIAL_PARAMS_BYTES as u64,
                 );
                 next_params += 1;
-                material_sets.push(true);
-                texture_sets.push(Some(set));
-                textures.push(image);
-                textures.extend(uploaded);
-                continue;
             }
-            let set = pool.allocate(&self.texture_layout)?;
-            set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
-            set.write_sampler(1, &self.texture_sampler);
-            material_sets.push(false);
+            material_sets.push(own.is_some());
             texture_sets.push(Some(set));
             textures.push(image);
+            textures.extend(uploaded);
         }
         let sky_set = match &map.sky {
             Some(sky) => {
@@ -837,8 +838,10 @@ impl Backend {
             None => None,
         };
         self.load_stencils(map)?;
+        self.use_post_shader(map.post_shader.as_deref())?;
         self.map = Some(GpuMap {
             sky_set,
+            texture_shaders,
             material_sets,
             vertices,
             indices,
@@ -860,6 +863,19 @@ impl Backend {
             paint_atlas,
         });
         Ok(())
+    }
+
+    /// The place of `texture`'s shader, with `material` being what draws it.
+    fn shader_of(&mut self, texture: &Texture, material: &Material) -> Result<usize, RenderError> {
+        if let Some(shader) = &material.shader {
+            return self.surface_for(&shader.name, &shader.code);
+        }
+        let Some(name) = built_in_for(texture) else {
+            return Ok(0);
+        };
+        let code = self.built_in_shaders.get(name).cloned();
+        let code = code.unwrap_or_default();
+        self.surface_for(name, &code)
     }
 
     /// A device-local buffer holding `bytes`.

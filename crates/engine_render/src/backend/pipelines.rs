@@ -1,5 +1,8 @@
 //! The render passes and pipelines.
 
+use engine_shaders::{
+    ALIAS_SHADER, BROKEN, CANVAS_SHADER, SPRITE_SHADER, safe_after_depth, surface_source,
+};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, BufferUsage, CullMode,
     DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, Format, FrontFace,
@@ -10,8 +13,7 @@ use vulkane::safe::{
 
 use super::upload::host_buffer;
 use super::{
-    ALIAS_SHADER, Backend, CANVAS_SHADER, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts,
-    Pipelines, SPRITE_SHADER, WORLD_SHADER,
+    Backend, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts, Pipelines, SurfacePipelines,
 };
 use crate::alias::POSE_CORNER_BYTES;
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
@@ -226,57 +228,58 @@ impl Backend {
         Ok((sprite, particle))
     }
 
-    /// The pipelines, most of which differ only in their fragment stage.
-    pub(super) fn make_pipelines(
+    /// What draws surfaces with `code`, if it compiles.
+    pub(super) fn make_surface_pipelines(
         device: &Device,
         layouts: &Layouts,
         pass: &RenderPass,
         samples: u32,
-    ) -> Result<Pipelines, RenderError> {
-        let spirv = vulkane::safe::naga::compile_wgsl(WORLD_SHADER)
+        code: &str,
+    ) -> Result<SurfacePipelines, RenderError> {
+        let spirv = vulkane::safe::naga::compile_wgsl(&surface_source(code))
             .map_err(|error| RenderError(error.to_string()))?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
-        let bindings = [VertexInputBinding {
-            binding: 0,
-            stride: u32::try_from(Vertex::SIZE).unwrap_or(0),
-            input_rate: InputRate::VERTEX,
-        }];
-        let attribute = |location, format, offset| VertexInputAttribute {
-            location,
-            binding: 0,
-            format,
-            offset,
-        };
-        let attributes = [
-            attribute(0, Format::R32G32B32_SFLOAT, 0),
-            attribute(1, Format::R32G32_SFLOAT, 12),
-            attribute(2, Format::R32G32_SFLOAT, 20),
-            attribute(3, Format::R32_SFLOAT, 28),
-            attribute(4, Format::R8G8B8A8_UINT, 32),
-        ];
-        let pipeline = |entry| {
-            GraphicsPipelineBuilder::new(&layouts.world, pass)
-                .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-                .stage(GraphicsShaderStage::Fragment, &shader, entry)
-                .vertex_input(&bindings, &attributes)
-                .dynamic_viewport_scissor()
-                .cull_mode(CullMode::NONE)
-                .depth_test(true, true)
-                .samples(samples)
-                .build(device)
-        };
-        let material = |blended: bool, entry: &str| {
+        let (bindings, attributes) = world_vertices();
+        let surface = |entry: &'static str| {
             GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
                 .stage(GraphicsShaderStage::Fragment, &shader, entry)
                 .vertex_input(&bindings, &attributes)
                 .dynamic_viewport_scissor()
                 .cull_mode(CullMode::NONE)
-                .depth_test(true, !blended)
-                .alpha_blending(blended)
                 .samples(samples)
-                .build(device)
         };
+        Ok(SurfacePipelines {
+            code: code.to_owned(),
+            after_depth_safe: safe_after_depth(code),
+            opaque: surface("fs_material")
+                .depth_test(true, true)
+                .build(device)?,
+            // What's been through the depth pass needn't write depth again.
+            // Writing it would hold back the test that skips what's hidden, as
+            // this shader can discard.
+            after_depth: surface("fs_material")
+                .depth_test(true, false)
+                .build(device)?,
+            masked: surface("fs_masked").depth_test(true, true).build(device)?,
+            blended: surface("fs_material")
+                .depth_test(true, false)
+                .alpha_blending(true)
+                .build(device)?,
+        })
+    }
+
+    /// The pipelines, with the standard surface as the only one so far.
+    pub(super) fn make_pipelines(
+        device: &Device,
+        layouts: &Layouts,
+        pass: &RenderPass,
+        samples: u32,
+    ) -> Result<Pipelines, RenderError> {
+        let spirv = vulkane::safe::naga::compile_wgsl(&surface_source(""))
+            .map_err(|error| RenderError(error.to_string()))?;
+        let shader = ShaderModule::from_spirv(device, &spirv)?;
+        let (bindings, attributes) = world_vertices();
         let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass, samples)?;
         let depth_only = GraphicsPipelineBuilder::new(&layouts.world, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
@@ -288,36 +291,23 @@ impl Backend {
             .color_writes(false)
             .samples(samples)
             .build(device)?;
-        // What's been through the depth pass needn't write depth again. Writing
-        // it would hold back the test that skips what's hidden, as this shader
-        // can discard.
-        let after_depth = |shader: &ShaderModule| {
-            GraphicsPipelineBuilder::new(&layouts.material, pass)
-                .stage(GraphicsShaderStage::Vertex, shader, "vs_main")
-                .stage(GraphicsShaderStage::Fragment, shader, "fs_material")
-                .vertex_input(&bindings, &attributes)
-                .dynamic_viewport_scissor()
-                .cull_mode(CullMode::NONE)
-                .depth_test(true, false)
-                .samples(samples)
-                .build(device)
-        };
-        let material_after_depth = after_depth(&shader)?;
         let plain_source =
-            WORLD_SHADER.replace("const PLAIN: bool = false;", "const PLAIN: bool = true;");
+            surface_source("").replace("const PLAIN: bool = false;", "const PLAIN: bool = true;");
         let plain_spirv = vulkane::safe::naga::compile_wgsl(&plain_source)
             .map_err(|error| RenderError(error.to_string()))?;
         let plain_shader = ShaderModule::from_spirv(device, &plain_spirv)?;
-        let plain_after_depth = after_depth(&plain_shader)?;
+        let plain_after_depth = GraphicsPipelineBuilder::new(&layouts.material, pass)
+            .stage(GraphicsShaderStage::Vertex, &plain_shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &plain_shader, "fs_material")
+            .vertex_input(&bindings, &attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, false)
+            .samples(samples)
+            .build(device)?;
         Ok(Pipelines {
             depth_only,
-            material_after_depth,
             plain_after_depth,
-            solid: pipeline("fs_solid")?,
-            cutout: pipeline("fs_cutout")?,
-            liquid: pipeline("fs_liquid")?,
-            masked: material(false, "fs_masked")?,
-            sky: pipeline("fs_sky")?,
             sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_sky_sphere")
                 .stage(GraphicsShaderStage::Fragment, &shader, "fs_sky_sphere")
@@ -326,9 +316,18 @@ impl Backend {
                 .depth_test(false, false)
                 .samples(samples)
                 .build(device)?,
-            sky_window: pipeline("fs_sky_window")?,
-            material: material(false, "fs_material")?,
-            blended: material(true, "fs_material")?,
+            sky_window: GraphicsPipelineBuilder::new(&layouts.world, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+                .stage(GraphicsShaderStage::Fragment, &shader, "fs_sky_window")
+                .vertex_input(&bindings, &attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(true, true)
+                .samples(samples)
+                .build(device)?,
+            surfaces: vec![Self::make_surface_pipelines(
+                device, layouts, pass, samples, "",
+            )?],
             alias: Self::make_alias_pipeline(
                 device,
                 &layouts.alias,
@@ -349,4 +348,70 @@ impl Backend {
             particle,
         })
     }
+
+    /// The place of the shader with `code`, making its pipelines if it's new. If
+    /// it won't compile, that's noted, and it shows green.
+    pub(super) fn surface_for(&mut self, name: &str, code: &str) -> Result<usize, RenderError> {
+        let code = if code.trim().is_empty() && !name.is_empty() {
+            self.shader_problems
+                .push(format!("{name}: there's no such shader"));
+            BROKEN
+        } else {
+            code
+        };
+        let known = |surfaces: &[SurfacePipelines], code: &str| {
+            surfaces.iter().position(|surface| surface.code == code)
+        };
+        if let Some(found) = known(&self.pipelines.surfaces, code) {
+            return Ok(found);
+        }
+        let made = Self::make_surface_pipelines(
+            &self.device,
+            &self.layouts,
+            &self.scene_pass,
+            self.samples,
+            code,
+        );
+        let surface = match made {
+            Ok(surface) => surface,
+            Err(error) => {
+                self.shader_problems.push(format!("{name}: {error}"));
+                if let Some(found) = known(&self.pipelines.surfaces, BROKEN) {
+                    return Ok(found);
+                }
+                Self::make_surface_pipelines(
+                    &self.device,
+                    &self.layouts,
+                    &self.scene_pass,
+                    self.samples,
+                    BROKEN,
+                )?
+            }
+        };
+        self.pipelines.surfaces.push(surface);
+        Ok(self.pipelines.surfaces.len() - 1)
+    }
+}
+
+/// How world vertices are laid out.
+fn world_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 5]) {
+    let bindings = [VertexInputBinding {
+        binding: 0,
+        stride: u32::try_from(Vertex::SIZE).unwrap_or(0),
+        input_rate: InputRate::VERTEX,
+    }];
+    let attribute = |location, format, offset| VertexInputAttribute {
+        location,
+        binding: 0,
+        format,
+        offset,
+    };
+    let attributes = [
+        attribute(0, Format::R32G32B32_SFLOAT, 0),
+        attribute(1, Format::R32G32_SFLOAT, 12),
+        attribute(2, Format::R32G32_SFLOAT, 20),
+        attribute(3, Format::R32_SFLOAT, 28),
+        attribute(4, Format::R8G8B8A8_UINT, 32),
+    ];
+    (bindings, attributes)
 }

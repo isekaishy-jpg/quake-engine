@@ -261,7 +261,8 @@ pub fn read_packed(bytes: &[u8]) -> Option<(u64, Vec<MipLevel>)> {
 pub fn picture_roles(document: &Document) -> Vec<(String, Role)> {
     let role_of = |key: &str| match key {
         "normal" => Role::Normal,
-        "specular" | "height" | "flow" | "mask" | "detail" => Role::Data,
+        "specular" | "height" | "flow" | "mask" | "detail" | "shader_image_a"
+        | "shader_image_b" => Role::Data,
         _ => Role::Colour,
     };
     let mut found = Vec::new();

@@ -85,6 +85,10 @@ pub fn play_map(
         return Err(error);
     }
     let pictures = textures.library.pixel_pictures();
+    let mut map = map;
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn");
+    let post = world.and_then(|world| world.text("post_shader"));
+    map.post_shader = post.map(|name| textures.library.shader(name));
     Ok(PlayMap {
         map,
         hash,

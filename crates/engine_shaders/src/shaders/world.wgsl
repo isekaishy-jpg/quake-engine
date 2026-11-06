@@ -34,7 +34,7 @@ struct VertexOut {
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;
-    let world = in.position + model_offset.xyz;
+    let world = shader_vertex(in.position + model_offset.xyz);
     out.clip = frame.view_projection * vec4<f32>(world, 1.0);
     out.world = world;
     out.uv = in.uv;
@@ -270,46 +270,4 @@ fn scene_color(color: vec3<f32>) -> vec3<f32> {
 // The depth pass only wants depth, but a pipeline has to have a fragment stage.
 @fragment
 fn fs_depth() {
-}
-
-@fragment
-fn fs_solid(in: VertexOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(surface, surface_sampler, in.uv);
-    let lit = texel.rgb * light(in);
-    return vec4<f32>(scene_color(mix(texel.rgb, lit, texel.a)), 1.0);
-}
-
-@fragment
-fn fs_cutout(in: VertexOut) -> @location(0) vec4<f32> {
-    let texel = textureSample(surface, surface_sampler, in.uv);
-    let lit = texel.rgb * light(in);
-    if texel.a < 0.5 {
-        discard;
-    }
-    return vec4<f32>(scene_color(lit), 1.0);
-}
-
-@fragment
-fn fs_liquid(in: VertexOut) -> @location(0) vec4<f32> {
-    let size = vec2<f32>(textureDimensions(surface, 0));
-    let texels = in.uv * size;
-    let time = frame.params.x;
-    let warped = texels + 8.0 * sin(texels.yx * 0.125 + time);
-    let texel = textureSample(surface, surface_sampler, warped / size);
-    return vec4<f32>(scene_color(texel.rgb), 1.0);
-}
-
-@fragment
-fn fs_sky(in: VertexOut) -> @location(0) vec4<f32> {
-    var direction = in.world - frame.eye.xyz;
-    direction.z = direction.z * 3.0;
-    let flat_direction = normalize(direction).xy * (6.0 * 63.0);
-    let time = frame.params.x;
-    let back_uv = fract((flat_direction + time * 8.0) / 128.0);
-    let front_uv = fract((flat_direction + time * 16.0) / 128.0);
-    let back = textureSampleLevel(
-        surface, surface_sampler, vec2<f32>(0.5 + back_uv.x * 0.5, back_uv.y), 0.0);
-    let front = textureSampleLevel(
-        surface, surface_sampler, vec2<f32>(front_uv.x * 0.5, front_uv.y), 0.0);
-    return vec4<f32>(scene_color(mix(back.rgb, front.rgb, front.a)), 1.0);
 }

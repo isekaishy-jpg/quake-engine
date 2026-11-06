@@ -200,6 +200,8 @@ impl<'a> Default for DeviceCreateInfo<'a> {
 
 /// Internal state shared between [`Device`] and its child handles.
 pub(crate) struct DeviceInner {
+    /// The pipeline cache new pipelines use, or 0 for none. A patch of ours.
+    pub(crate) pipeline_cache: std::sync::atomic::AtomicU64,
     pub(crate) handle: VkDevice,
     pub(crate) dispatch: VkDeviceDispatchTable,
     /// Keep the parent instance alive as long as any device child is alive.
@@ -245,6 +247,14 @@ pub struct Device {
 }
 
 impl Device {
+    /// Has every pipeline built from now on use `cache`. A patch of ours, so that
+    /// each place that builds one needn't pass it along.
+    pub fn use_pipeline_cache(&self, cache: &super::PipelineCache) {
+        self.inner
+            .pipeline_cache
+            .store(cache.raw(), std::sync::atomic::Ordering::Relaxed);
+    }
+
     /// Create a logical [`Device`] from a [`PhysicalDeviceGroup`].
     /// Internally calls `vkCreateDevice` with a
     /// `VkDeviceGroupDeviceCreateInfo` chain listing every physical
@@ -404,6 +414,7 @@ impl Device {
 
         Ok(Self {
             inner: Arc::new(DeviceInner {
+                pipeline_cache: std::sync::atomic::AtomicU64::new(0),
                 handle,
                 dispatch,
                 instance: Arc::clone(&physical.instance),

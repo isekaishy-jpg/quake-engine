@@ -8,11 +8,12 @@ use vulkane::safe::{
     ImageLayout, ImageUsage, PipelineLayout, RenderPass, RenderPassCreateInfo, ShaderModule,
 };
 
-use engine_map::{Map, ProbeGrid};
+use engine_map::{Map, ProbeGrid, ShaderCode};
+use engine_shaders::post_source;
 
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
-use super::{Backend, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER, SCENE_FORMAT};
+use super::{Backend, DEPTH_FORMAT, FRAME_SIZE, GpuImage, SCENE_FORMAT};
 use crate::error::RenderError;
 
 /// Where a scene is drawn before the final pass.
@@ -126,12 +127,14 @@ impl Backend {
         pass: &RenderPass,
         samples: u32,
         entry: &str,
+        code: &str,
     ) -> Result<GraphicsPipeline, RenderError> {
         // Depth isn't resolved, so with samples it's read as it was drawn.
+        let source = post_source(code);
         let source = if samples > 1 {
-            POST_SHADER.replace("texture_depth_2d", "texture_depth_multisampled_2d")
+            source.replace("texture_depth_2d", "texture_depth_multisampled_2d")
         } else {
-            POST_SHADER.to_owned()
+            source
         };
         let spirv = vulkane::safe::naga::compile_wgsl(&source)
             .map_err(|error| RenderError(error.to_string()))?;
@@ -236,6 +239,9 @@ impl Backend {
         self.samples = samples;
         self.scene_target = None;
         self.scene_pass = make_scene_pass(&self.device, samples)?;
+        // A map's textures know shaders by their place, so that has to stay.
+        let surfaces = self.pipelines.surfaces.iter().skip(1);
+        let codes: Vec<String> = surfaces.map(|surface| surface.code.clone()).collect();
         self.pipelines =
             Self::make_pipelines(&self.device, &self.layouts, &self.scene_pass, samples)?;
         self.post_pipeline = Self::make_post_pipeline(
@@ -244,6 +250,7 @@ impl Backend {
             &self.present_pass,
             samples,
             "fs_post",
+            &self.post_code,
         )?;
         self.ray_pipeline = Self::make_post_pipeline(
             &self.device,
@@ -251,7 +258,50 @@ impl Backend {
             &self.ray_pass,
             samples,
             "fs_rays",
+            "",
         )?;
+        for code in codes {
+            let surface = Self::make_surface_pipelines(
+                &self.device,
+                &self.layouts,
+                &self.scene_pass,
+                samples,
+                &code,
+            )?;
+            self.pipelines.surfaces.push(surface);
+        }
+        Ok(())
+    }
+
+    /// Draws the final pass with `shader`, or with none. If it won't compile
+    /// that's noted, and there's none.
+    pub(super) fn use_post_shader(
+        &mut self,
+        shader: Option<&ShaderCode>,
+    ) -> Result<(), RenderError> {
+        let code = shader.map_or("", |shader| shader.code.as_str());
+        if code == self.post_code {
+            return Ok(());
+        }
+        let made = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.present_pass,
+            self.samples,
+            "fs_post",
+            code,
+        );
+        match made {
+            Ok(pipeline) => {
+                self.post_pipeline = pipeline;
+                code.clone_into(&mut self.post_code);
+            }
+            Err(error) => {
+                let name = shader.map_or("", |shader| shader.name.as_str());
+                self.shader_problems.push(format!("{name}: {error}"));
+                return self.use_post_shader(None);
+            }
+        }
         Ok(())
     }
 

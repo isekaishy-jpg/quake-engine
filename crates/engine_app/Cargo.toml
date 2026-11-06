@@ -12,6 +12,7 @@ name = "quake-engine"
 path = "src/main.rs"
 
 [dependencies]
+engine_shaders.workspace = true
 engine_assets.workspace = true
 engine_audio.workspace = true
 engine_client.workspace = true

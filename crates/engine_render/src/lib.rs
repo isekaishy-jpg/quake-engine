@@ -17,6 +17,7 @@ mod matrix;
 mod renderer;
 mod sprite;
 mod streamer;
+mod surface;
 mod visible;
 mod world;
 

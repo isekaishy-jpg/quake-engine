@@ -6,6 +6,7 @@ use std::cell::Cell;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::Map;
+use engine_shaders::SHADOW_SHADER;
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CompareOp, CullMode, Device,
     Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, Image,
@@ -42,9 +43,6 @@ const POSE_RANGE: f32 = 255.0;
 
 /// How far a figure's shadow reaches at least, for one that's left.
 const GONE_REACH: f32 = 64.0;
-
-/// The shaders.
-const SHADOW_SHADER: &str = include_str!("../shaders/shadow.wgsl");
 
 /// Some of what shadows are drawn from.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

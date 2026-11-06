@@ -870,6 +870,7 @@ dependencies = [
  "engine_platform",
  "engine_render",
  "engine_server",
+ "engine_shaders",
  "engine_ui",
  "fixture_quake",
  "png",
@@ -1025,6 +1026,7 @@ version = "0.0.0-alpha"
 dependencies = [
  "engine_core",
  "engine_map",
+ "engine_shaders",
  "vulkane",
 ]
 
@@ -1051,6 +1053,13 @@ dependencies = [
  "engine_sim",
  "engine_test_maps",
  "serde",
+]
+
+[[package]]
+name = "engine_shaders"
+version = "0.0.0-alpha"
+dependencies = [
+ "naga",
 ]
 
 [[package]]
@@ -1082,6 +1091,7 @@ dependencies = [
  "engine_format",
  "engine_map",
  "engine_script",
+ "engine_shaders",
  "serde_json",
 ]
 

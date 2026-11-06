@@ -610,7 +610,7 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     if frame.stencil_params.x > 0.5 {
         color = color + textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0).rgb;
     }
-    return vec4<f32>(to_screen(color, noise), 1.0);
+    return vec4<f32>(to_screen(shader_post(color, in.uv), noise), 1.0);
 }
 
 // Light in the air, for the final pass to add. It's soft, so a quarter of the

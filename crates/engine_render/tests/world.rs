@@ -27,7 +27,7 @@ fn a_quad_becomes_two_triangles() {
     let mesh = build_world(&square_map()).expect("mesh");
     assert_eq!(mesh.vertices.len(), 4);
     assert_eq!(mesh.face_indices[0], [0, 1, 2, 0, 2, 3]);
-    assert_eq!(mesh.batches[0].kind, BatchKind::Solid);
+    assert_eq!(mesh.batches[0].kind, BatchKind::Material);
 }
 
 #[test]

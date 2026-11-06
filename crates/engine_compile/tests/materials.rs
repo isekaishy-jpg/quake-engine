@@ -211,3 +211,71 @@ fn world_size_sets_how_big_a_repeat_is() {
     };
     assert_eq!(plain.tile_size(), Some([1024.0, 1024.0]));
 }
+
+#[test]
+fn an_instance_takes_what_it_doesnt_say_from_its_parent() {
+    let parent = "format 1 material\nsurface {\n base = textures/0.png\n normal = textures/1.png\n gloss = 12\n shader = ripple\n shader_params = 1 2\n}\n";
+    let child =
+        "format 1 material\nsurface {\n parent = rock\n gloss = 40\n shader_params = 3\n}\n";
+    let (filesystem, root) = container("instance", &[("rock", parent), ("wet_rock", child)]);
+    fs::create_dir_all(root.join("shaders")).expect("directory");
+    fs::write(root.join("shaders").join("ripple.wgsl"), "// ripples").expect("write");
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("wet_rock")
+        .expect("loads");
+    let material = texture.material.expect("a material");
+    assert_eq!(material.gloss, 40.0, "its own");
+    assert_eq!(material.normal, Some(1), "from its parent");
+    assert_eq!(material.shader_params[..2], [3.0, 0.0], "its own numbers");
+    let shader = material.shader.as_ref().expect("a shader");
+    assert_eq!(shader.name, "ripple");
+    assert_eq!(shader.code, "// ripples");
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_shader_that_isnt_there_has_no_code() {
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n shader = lost\n}\n";
+    let (filesystem, root) = container("lost", &[("wall", text)]);
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("wall")
+        .expect("loads");
+    let material = texture.material.expect("a material");
+    assert_eq!(material.shader.as_ref().expect("named").code, "");
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_material_cant_be_its_own_parent() {
+    let one = "format 1 material\nsurface {\n parent = two\n}\n";
+    let two = "format 1 material\nsurface {\n parent = one\n}\n";
+    let (filesystem, root) = container("circle", &[("one", one), ("two", two)]);
+    let error = MaterialLibrary::new(&filesystem)
+        .load("one")
+        .expect_err("refused");
+    assert!(error.to_string().contains("circle"), "{error}");
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_missing_parent_is_refused() {
+    let text = "format 1 material\nsurface {\n parent = nothing\n}\n";
+    let (filesystem, root) = container("orphan", &[("wall", text)]);
+    let error = MaterialLibrary::new(&filesystem)
+        .load("wall")
+        .expect_err("refused");
+    assert!(error.to_string().contains("no parent"), "{error}");
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_shaders_images_take_slots() {
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n shader_image_a = textures/1.png\n shader_image_b = textures/2.png\n}\n";
+    let (filesystem, root) = container("images", &[("wall", text)]);
+    let texture = MaterialLibrary::new(&filesystem)
+        .load("wall")
+        .expect("loads");
+    let material = texture.material.expect("a material");
+    assert_eq!(material.shader_images, [Some(1), Some(2)]);
+    fs::remove_dir_all(&root).expect("clean up");
+}

@@ -11,8 +11,8 @@ use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
     Material, MaterialLayer, MipLevel, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT,
-    RayStencil, Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
-    TextureKind, TileLight,
+    RayStencil, ShaderCode, Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame,
+    SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
@@ -297,6 +297,191 @@ fn a_compressed_texture_draws_its_colour() {
     let [r, g, b, _] = centre(&capture);
     assert!(r > g && g > b, "red over green over blue: {r} {g} {b}");
     assert!(r > 0, "it drew");
+}
+
+/// The centre of the square, drawn with a material whose shader has `code`.
+fn with_shader(renderer: &mut Renderer, code: &str, params: [f32; 8]) -> [u8; 4] {
+    let mut built = map(1);
+    built.textures[0].material = Some(Arc::new(Material {
+        shader: Some(Arc::new(ShaderCode {
+            name: "test".to_owned(),
+            code: code.to_owned(),
+        })),
+        shader_params: params,
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    centre(&capture)
+}
+
+/// What green a broken shader shows.
+const GREEN: [u8; 3] = [0, 255, 0];
+
+#[test]
+fn surface_code_changes_a_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let code = "fn shader_surface(surface: Surface) -> Surface {
+        var out = surface;
+        out.base = vec4<f32>(shader_param(0), 0.0, shader_param(1), 1.0);
+        return out;
+    }";
+    let [r, g, b, _] = with_shader(
+        &mut renderer,
+        code,
+        [1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    );
+    assert_eq!([r, g, b], [255, 0, 0], "the first number");
+    let [r, g, b, _] = with_shader(
+        &mut renderer,
+        code,
+        [0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    );
+    assert_eq!(
+        [r, g, b],
+        [0, 0, 255],
+        "an instance only differs in its numbers"
+    );
+    assert!(renderer.take_shader_problems().is_empty());
+}
+
+#[test]
+fn a_shader_can_be_the_whole_of_a_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let code = "fn shader_whole(in: VertexOut) -> vec4<f32> {
+        return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+    }";
+    let [r, g, b, _] = with_shader(&mut renderer, code, [0.0; 8]);
+    assert_eq!([r, g, b], [0, 0, 255]);
+}
+
+#[test]
+fn a_broken_shader_shows_green_and_says_why() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let [r, g, b, _] = with_shader(&mut renderer, "fn shader_whole( nonsense", [0.0; 8]);
+    assert_eq!([r, g, b], GREEN);
+    let problems = renderer.take_shader_problems();
+    assert_eq!(problems.len(), 1, "{problems:?}");
+    assert!(problems[0].starts_with("test: "), "{problems:?}");
+}
+
+#[test]
+fn a_missing_shader_shows_green_and_says_so() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let [r, g, b, _] = with_shader(&mut renderer, "", [0.0; 8]);
+    assert_eq!([r, g, b], GREEN);
+    assert_eq!(renderer.take_shader_problems().len(), 1);
+}
+
+#[test]
+fn shaders_survive_a_change_of_samples() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let code = "fn shader_whole(in: VertexOut) -> vec4<f32> {
+        return vec4<f32>(0.0, 0.0, 1.0, 1.0);
+    }";
+    let _first = with_shader(&mut renderer, code, [0.0; 8]);
+    renderer.set_antialiasing(4).expect("samples");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let [r, g, b, _] = centre(&capture);
+    assert_eq!([r, g, b], [0, 0, 255]);
+}
+
+#[test]
+fn moving_vertices_moves_a_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let code = "fn shader_vertex(world: vec3<f32>) -> vec3<f32> {
+        return world + vec3<f32>(100000.0, 0.0, 0.0);
+    }";
+    let [r, g, b, _] = with_shader(&mut renderer, code, [0.0; 8]);
+    let plain = with_shader(
+        &mut renderer,
+        "fn shader_uv(uv: vec2<f32>, world: vec3<f32>) -> vec2<f32> { return uv; }",
+        [0.0; 8],
+    );
+    assert_ne!(
+        [r, g, b],
+        [plain[0], plain[1], plain[2]],
+        "it left the view"
+    );
+}
+
+#[test]
+fn the_final_pass_can_have_code_of_its_own() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.post_shader = Some(Arc::new(ShaderCode {
+        name: "test".to_owned(),
+        code: "fn shader_post(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+            return vec3<f32>(0.0, 0.0, 1.0);
+        }"
+        .to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let [r, g, b, _] = centre(&capture);
+    assert_eq!([r, g, b], [0, 0, 255]);
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert_ne!(centre(&capture)[..3], [0, 0, 255], "the next map has none");
+}
+
+#[test]
+fn broken_final_pass_code_is_left_out_and_noted() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.post_shader = Some(Arc::new(ShaderCode {
+        name: "test".to_owned(),
+        code: "fn shader_post( nonsense".to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    assert_eq!(renderer.take_shader_problems().len(), 1);
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    assert_eq!(centre(&capture)[0], 255, "drawn as it is");
+}
+
+#[test]
+fn pipelines_are_kept_for_the_next_run_and_a_bad_file_is_ignored() {
+    let path = std::env::temp_dir().join(format!("engine-pipes-{}.cache", std::process::id()));
+    let _gone = std::fs::remove_file(&path);
+    let saved = Some(path.clone());
+    let Ok(first) = Renderer::keeping_pipelines(Target::Offscreen, (64, 64), saved.clone()) else {
+        return;
+    };
+    drop(first);
+    let bytes = std::fs::read(&path).expect("kept");
+    assert_eq!(&bytes[..4], b"EPIP");
+    std::fs::write(&path, &bytes[..bytes.len() / 2]).expect("cut short");
+    let second = Renderer::keeping_pipelines(Target::Offscreen, (64, 64), saved);
+    drop(second.expect("a file cut short is only ignored"));
+    assert_eq!(std::fs::read(&path).expect("kept").len(), bytes.len());
+    std::fs::remove_file(&path).expect("clean up");
 }
 
 #[test]

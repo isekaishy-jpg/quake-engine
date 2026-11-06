@@ -36,20 +36,6 @@ pub(super) struct Recorder<'a> {
     outline_hull: bool,
 }
 
-/// Whether `batch` goes through the depth pass: what's solid all over. A detail
-/// that fades can discard pixels, so its depth can't be known ahead of it.
-fn depth_first(map: &Map, batch: &Batch) -> bool {
-    let fades = map
-        .textures
-        .get(batch.texture as usize)
-        .and_then(|texture| texture.material.as_ref())
-        .is_some_and(|material| material.detail_fade);
-    matches!(
-        batch.kind,
-        BatchKind::Solid | BatchKind::Liquid | BatchKind::Material
-    ) && !fades
-}
-
 /// Whether `batch`'s material does nothing the plain shader leaves out.
 fn plain_material(map: &Map, batch: &Batch) -> bool {
     let material = map
@@ -57,7 +43,8 @@ fn plain_material(map: &Map, batch: &Batch) -> bool {
         .get(batch.texture as usize)
         .and_then(|texture| texture.material.as_ref());
     material.is_some_and(|material| {
-        material.shading == Shading::Lit
+        material.shader.is_none()
+            && material.shading == Shading::Lit
             && !material.triplanar
             && !material.hex_tiling
             && material.flow.is_none()
@@ -166,6 +153,22 @@ impl Backend {
 }
 
 impl Recorder<'_> {
+    /// Whether `batch` goes through the depth pass: what's solid all over. A detail
+    /// that fades can discard pixels, so its depth can't be known ahead of it, and
+    /// nor can that of a shader that moves its surface.
+    fn depth_first(&self, map: &Map, batch: &Batch) -> bool {
+        let fades = map
+            .textures
+            .get(batch.texture as usize)
+            .and_then(|texture| texture.material.as_ref())
+            .is_some_and(|material| material.detail_fade);
+        let shader = self.map.texture_shaders.get(batch.texture as usize);
+        let surface = shader.and_then(|shader| self.pipelines.surfaces.get(*shader));
+        batch.kind == BatchKind::Material
+            && !fades
+            && surface.is_some_and(|surface| surface.after_depth_safe)
+    }
+
     /// Records everything in `scene`.
     pub(super) fn record(
         &self,
@@ -232,7 +235,7 @@ impl Recorder<'_> {
         rec.bind_index_buffer(&self.indices.buffer, 0, INDEX_TYPE_U32);
         let wanted = |batch: u32| {
             let found = scene.mesh.batches.get(batch as usize);
-            found.is_some_and(|batch| depth_first(scene.map, batch))
+            found.is_some_and(|batch| self.depth_first(scene.map, batch))
         };
         rec.push_constants(
             layout,
@@ -299,27 +302,30 @@ impl Recorder<'_> {
             let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
                 return;
             };
-            let after_depth = batch.kind == BatchKind::Material && depth_first(scene.map, batch);
+            let after_depth = self.depth_first(scene.map, batch);
             let plain = after_depth && plain_material(scene.map, batch);
-            if bound != Some((batch.kind, after_depth, plain)) {
-                if batch.kind == BatchKind::Sky && map.sky_set.is_some() {
+            let shader = map.texture_shaders.get(texture as usize).copied();
+            let shader = shader.unwrap_or(0);
+            let Some(surface) = self.pipelines.surfaces.get(shader) else {
+                return;
+            };
+            let window = batch.kind == BatchKind::Sky && map.sky_set.is_some();
+            if bound != Some((batch.kind, after_depth, plain, shader)) {
+                if window {
                     rec.bind_graphics_pipeline(&self.pipelines.sky_window);
                 } else if plain {
                     rec.bind_graphics_pipeline(&self.pipelines.plain_after_depth);
                 } else if after_depth {
-                    rec.bind_graphics_pipeline(&self.pipelines.material_after_depth);
+                    rec.bind_graphics_pipeline(&surface.after_depth);
                 } else {
-                    rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
+                    rec.bind_graphics_pipeline(surface.get(batch.kind));
                 }
-                bound = Some((batch.kind, after_depth, plain));
+                bound = Some((batch.kind, after_depth, plain, shader));
             }
-            let set_layout = if matches!(
-                batch.kind,
-                BatchKind::Material | BatchKind::Masked | BatchKind::Blended
-            ) {
-                &self.layouts.material
-            } else {
+            let set_layout = if window {
                 layout
+            } else {
+                &self.layouts.material
             };
             let set = match (&map.sky_set, batch.kind) {
                 (Some(sky), BatchKind::Sky) => sky,

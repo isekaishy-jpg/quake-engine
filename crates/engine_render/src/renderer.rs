@@ -1,5 +1,6 @@
 //! The public renderer.
 
+use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine_core::canvas::{Image, Quad};
@@ -176,10 +177,36 @@ impl Renderer {
     ///
     /// Returns [`RenderError`] if no suitable device is found, or setup fails.
     pub fn new(target: Target, size: (u32, u32)) -> Result<Self, RenderError> {
+        Self::keeping_pipelines(target, size, None)
+    }
+
+    /// A renderer that keeps built pipelines in the file at `saved`, so a next
+    /// run needn't build them again.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if no suitable device is found, or setup fails.
+    pub fn keeping_pipelines(
+        target: Target,
+        size: (u32, u32),
+        saved: Option<PathBuf>,
+    ) -> Result<Self, RenderError> {
         Ok(Self {
-            backend: Backend::new(target, size)?,
+            backend: Backend::new(target, size, saved)?,
             loaded: None,
         })
+    }
+
+    /// Replaces the engine's own shader called `name` with `code`, for maps
+    /// loaded from now on.
+    pub fn set_built_in_shader(&mut self, name: &str, code: &str) {
+        self.backend.set_built_in_shader(name, code);
+    }
+
+    /// What's gone wrong with shaders since this was last asked. Each shows
+    /// green, or for the final pass isn't used.
+    pub fn take_shader_problems(&mut self) -> Vec<String> {
+        self.backend.take_shader_problems()
     }
 
     /// The GPU in use.

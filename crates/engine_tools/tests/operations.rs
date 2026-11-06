@@ -509,3 +509,27 @@ fn check_textures_says_whats_wrong() {
     assert!(problems.contains("world_size"), "{problems}");
     assert!(problems.contains("repeats"), "{problems}");
 }
+
+#[test]
+fn check_shaders_says_whats_wrong() {
+    let root = content("check_shaders");
+    fs::create_dir_all(root.join("shaders")).expect("directory");
+    let good = "fn shader_uv(uv: vec2<f32>, world: vec3<f32>) -> vec2<f32> { return uv * 2.0; }";
+    fs::write(root.join("shaders/good.wgsl"), good).expect("writes");
+    let post = "fn shader_post(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> { return color; }";
+    fs::write(root.join("shaders/post.wgsl"), post).expect("writes");
+    fs::write(root.join("shaders/bad.wgsl"), "fn shader_uv(").expect("writes");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "check_shaders", &json!({})).expect("runs");
+    assert!(answer.get("good").is_none(), "{answer}");
+    assert!(answer.get("post").is_none(), "{answer}");
+    assert!(answer.get("bad").is_some(), "{answer}");
+}
+
+#[test]
+fn the_shaders_that_come_with_the_engine_compile() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "check_shaders", &json!({})).expect("runs");
+    assert_eq!(answer, json!({}));
+}

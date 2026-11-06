@@ -65,7 +65,12 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_format",
             "engine_map",
             "engine_script",
+            "engine_shaders",
         ],
+    },
+    CrateRule {
+        name: "engine_shaders",
+        may_depend_on: &[],
     },
     CrateRule {
         name: "engine_editor",
@@ -137,7 +142,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
     },
     CrateRule {
         name: "engine_render",
-        may_depend_on: &["engine_core", "engine_map"],
+        may_depend_on: &["engine_core", "engine_map", "engine_shaders"],
     },
     CrateRule {
         name: "engine_audio",
@@ -167,6 +172,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_platform",
             "engine_render",
             "engine_script",
+            "engine_shaders",
             "engine_server",
             "engine_sim",
             "engine_ui",
@@ -218,6 +224,10 @@ pub const BACKEND_RULES: &[BackendRule] = &[
     BackendRule {
         dependency: "vulkane",
         owner: "engine_render",
+    },
+    BackendRule {
+        dependency: "naga",
+        owner: "engine_shaders",
     },
     BackendRule {
         dependency: "box3d-rust",

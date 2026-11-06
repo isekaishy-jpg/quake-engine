@@ -3,6 +3,7 @@
 
 use std::cell::Cell;
 
+use engine_shaders::SMAA_SHADER;
 use vulkane::safe::{
     AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, ClearValue, CullMode,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorSetLayout,
@@ -15,9 +16,6 @@ use vulkane::safe::{
 use super::GpuImage;
 use super::upload::device_image;
 use crate::error::RenderError;
-
-/// The shaders.
-const SMAA_SHADER: &str = include_str!("../shaders/smaa.wgsl");
 
 /// The format of both images.
 const FORMAT: Format = Format::R8G8B8A8_UNORM;

@@ -17,6 +17,7 @@ members = [
     "crates/engine_physics",
     "crates/engine_platform",
     "crates/engine_render",
+    "crates/engine_shaders",
     "crates/engine_script",
     "crates/engine_server",
     "crates/engine_sim",
@@ -59,6 +60,7 @@ engine_audio = { path = "crates/engine_audio" }
 engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
 engine_format = { path = "crates/engine_format" }
+engine_shaders = { path = "crates/engine_shaders" }
 engine_compile = { path = "crates/engine_compile" }
 engine_tools = { path = "crates/engine_tools" }
 engine_editor = { path = "crates/engine_editor" }
@@ -98,6 +100,8 @@ qbsp = { version = "=0.17.0", default-features = false }
 # Proposal 0044: what saved games are made of, and how they're written.
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "float_roundtrip"] }
+# Proposal 0107: checking shaders with no GPU, private to `engine_shaders`.
+naga = { version = "=29.0.4", default-features = false, features = ["wgsl-in"] }
 # Proposal 0106: squeezing what a pack holds, private to `engine_assets`.
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 # Proposal 0106: block compression for compiled textures, private to `engine_compile`.

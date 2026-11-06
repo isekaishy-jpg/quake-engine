@@ -35,6 +35,7 @@ use engine_platform::{
 };
 use engine_render::{PostSettings, Renderer, Target, TextureFilter, TileStreamer};
 use engine_server::{FairSettings, Level, SeatInfo, Server};
+use engine_shaders::built_in_shaders;
 use engine_ui::ConsoleView;
 use fixture_quake::{
     GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
@@ -357,6 +358,10 @@ impl World {
         if let Some(renderer) = &mut self.renderer {
             self.tile_streamer = TileStreamer::new(&map);
             renderer.load_map(map)?;
+            let problems = renderer.take_shader_problems();
+            if !problems.is_empty() {
+                self.load_warning = Some(problems.join("\n"));
+            }
         }
         // An old bake is ignored, which leaves the level bright and flat.
         let name = &self.level.name;
@@ -884,7 +889,14 @@ impl PlatformApp for Engine {
     fn started(&mut self, window: Window) -> Result<(), AppError> {
         let target = Target::Window(window.native()?);
         self.window = Some(window);
-        self.world.renderer = Some(Renderer::new(target, self.size)?);
+        let saved = Some(self.world.user_directory.join("pipelines.cache"));
+        let mut renderer = Renderer::keeping_pipelines(target, self.size, saved)?;
+        for name in built_in_shaders() {
+            if let Ok(bytes) = self.world.filesystem.read(&format!("shaders/{name}.wgsl")) {
+                renderer.set_built_in_shader(name, &String::from_utf8_lossy(&bytes));
+            }
+        }
+        self.world.renderer = Some(renderer);
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add(&format!("exec {STARTUP_SCRIPT}"));

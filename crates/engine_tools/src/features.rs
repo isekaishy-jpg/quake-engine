@@ -2,6 +2,7 @@
 //! meshes, decals, stamps, paint, splines, and a map's own script and materials
 //! (proposal 0091).
 
+use engine_shaders::{check_post_code, check_surface_code};
 use std::path::PathBuf;
 
 use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
@@ -395,6 +396,24 @@ pub(crate) fn check_textures(session: &Session, args: &Json) -> Result<Json, Str
             if !problems.is_empty() {
                 found.insert(name, json!(problems));
             }
+        }
+    }
+    Ok(Json::Object(found))
+}
+
+/// `check_shaders`: what's wrong with shaders, as the compiler sees them.
+pub(crate) fn check_shaders(session: &Session, _args: &Json) -> Result<Json, String> {
+    let mut found = serde_json::Map::new();
+    for name in names_in(session, "shaders", ".wgsl") {
+        let path = session.content.join("shaders").join(format!("{name}.wgsl"));
+        let code = std::fs::read_to_string(&path).map_err(|error| format!("{name}: {error}"))?;
+        let checked = if code.contains("fn shader_post") {
+            check_post_code(&code)
+        } else {
+            check_surface_code(&code)
+        };
+        if let Err(problem) = checked {
+            found.insert(name, json!(problem));
         }
     }
     Ok(Json::Object(found))

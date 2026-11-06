@@ -6,8 +6,8 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
-    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, PAINT_MASK, Shading,
-    SlotImage, Texture, TextureKind, mip_chain,
+    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MipLevel, PAINT_MASK,
+    SHADER_PARAMS, ShaderCode, Shading, SlotImage, Texture, TextureKind, mip_chain,
 };
 
 use crate::error::CompileError;
@@ -79,6 +79,23 @@ fn numbers<const N: usize>(block: &Block, key: &str, default: [f32; N]) -> [f32;
             let value = value as f32;
             *slot = value;
         }
+    }
+    out
+}
+
+/// The numbers a material gives its shader: as many as it has, and 0 for the
+/// rest.
+fn shader_params(block: &Block) -> [f32; SHADER_PARAMS] {
+    let mut out = [0.0; SHADER_PARAMS];
+    let Some(value) = block.get("shader_params") else {
+        return out;
+    };
+    let one = value.number().map(|one| vec![one]);
+    let many = value.numbers().map(|many| many.to_vec());
+    for (slot, number) in out.iter_mut().zip(many.or(one).unwrap_or_default()) {
+        #[expect(clippy::cast_possible_truncation, reason = "materials store f32")]
+        let number = number as f32;
+        *slot = number;
     }
     out
 }
@@ -196,6 +213,29 @@ impl std::fmt::Debug for MaterialLibrary<'_> {
         f.debug_struct("MaterialLibrary")
             .field("images", &self.images.len())
             .finish_non_exhaustive()
+    }
+}
+
+/// How many parents a material can have above it.
+const MAX_INHERITANCE: usize = 8;
+
+/// Gives `document`'s surface what `parent`'s has and it doesn't. Its own layers,
+/// if it has any, replace the parent's.
+fn inherit(document: &mut Document, parent: &Document) {
+    let surface = document
+        .blocks
+        .iter_mut()
+        .find(|block| block.kind == "surface");
+    let (Some(surface), Some(from)) = (surface, parent.blocks_of("surface").next()) else {
+        return;
+    };
+    for (key, value) in &from.fields {
+        if surface.get(key).is_none() {
+            surface.fields.push((key.clone(), value.clone()));
+        }
+    }
+    if surface.children.is_empty() {
+        surface.children.clone_from(&from.children);
     }
 }
 
@@ -467,6 +507,13 @@ impl<'a> MaterialLibrary<'a> {
             },
             ..Material::default()
         };
+        let shader_name = block.get("shader").and_then(Value::text);
+        material.shader = shader_name.map(|name| filler.library.shader(name));
+        material.shader_params = shader_params(block);
+        material.shader_images = [
+            filler.field(block, "shader_image_a")?,
+            filler.field(block, "shader_image_b")?,
+        ];
         material.normal = filler.field(block, "normal")?;
         material.specular = filler.field(block, "specular")?;
         material.emissive = filler.field(block, "emissive")?;
@@ -542,11 +589,52 @@ impl<'a> MaterialLibrary<'a> {
     /// The texture of `name`, with pictures as they were compiled if `compiled`
     /// says so.
     fn load_as(&mut self, name: &str, compiled: bool) -> Result<Texture, CompileError> {
+        match self.document_named(name, 0)? {
+            Some(document) => self.read_as(name, &document, compiled),
+            None => Ok(placeholder_texture(name)),
+        }
+    }
+
+    /// The document of the material `name`, with what it inherits filled in, or
+    /// `None` if there's no such material.
+    fn document_named(&self, name: &str, depth: usize) -> Result<Option<Document>, CompileError> {
         let Ok(bytes) = self.filesystem.read(&format!("materials/{name}.emat")) else {
-            return Ok(placeholder_texture(name));
+            return Ok(None);
         };
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| CompileError::Bad(format!("{name} isn't text")))?;
-        self.read_as(name, &from_text(text)?, compiled)
+        let mut document = from_text(text)?;
+        let parent = document
+            .blocks_of("surface")
+            .next()
+            .and_then(|block| block.get("parent"))
+            .and_then(Value::text)
+            .map(str::to_owned);
+        if let Some(parent) = parent {
+            if depth >= MAX_INHERITANCE {
+                return Err(CompileError::Bad(format!(
+                    "{name}: parents go too deep, or round in a circle"
+                )));
+            }
+            let Some(from) = self.document_named(&parent, depth + 1)? else {
+                return Err(CompileError::Bad(format!(
+                    "{name}: there's no parent {parent}"
+                )));
+            };
+            inherit(&mut document, &from);
+        }
+        Ok(Some(document))
+    }
+
+    /// The shader called `name`. One that's missing has no code, and shows as
+    /// missing where it's drawn.
+    #[must_use]
+    pub fn shader(&self, name: &str) -> Arc<ShaderCode> {
+        let bytes = self.filesystem.read(&format!("shaders/{name}.wgsl")).ok();
+        let code = bytes.and_then(|bytes| String::from_utf8(bytes).ok());
+        Arc::new(ShaderCode {
+            name: name.to_owned(),
+            code: code.unwrap_or_default(),
+        })
     }
 }

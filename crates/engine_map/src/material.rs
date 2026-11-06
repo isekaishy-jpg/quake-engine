@@ -49,6 +49,21 @@ pub struct MaterialLayer {
 /// The mask of a layer that reads the map's paint, not an image.
 pub const PAINT_MASK: u8 = 15;
 
+/// A shader, as a surface or a level names it (proposal 0107).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ShaderCode {
+    /// Its name.
+    pub name: String,
+    /// Its code, which is empty if it's missing.
+    pub code: String,
+}
+
+/// The most numbers a material can give its shader.
+pub const SHADER_PARAMS: usize = 8;
+
+/// The most images a material can give its shader.
+pub const SHADER_IMAGES: usize = 2;
+
 /// One image: its mips, largest first.
 pub type SlotImage = Arc<Vec<MipLevel>>;
 
@@ -56,6 +71,12 @@ pub type SlotImage = Arc<Vec<MipLevel>>;
 /// own image, in slot 0.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Material {
+    /// Its shader, if it has one of its own.
+    pub shader: Option<Arc<ShaderCode>>,
+    /// The numbers it gives its shader.
+    pub shader_params: [f32; SHADER_PARAMS],
+    /// The slots of the images it gives its shader.
+    pub shader_images: [Option<u8>; SHADER_IMAGES],
     /// How it answers light.
     pub shading: Shading,
     /// How it uses alpha.
