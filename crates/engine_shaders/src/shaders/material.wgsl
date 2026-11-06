@@ -135,15 +135,23 @@ struct SurfaceFrame {
     bitangent: vec3<f32>,
 }
 
-fn surface_frame(world: vec3<f32>, uv: vec2<f32>) -> SurfaceFrame {
+fn surface_frame(world: vec3<f32>, uv: vec2<f32>, smooth_normal: vec3<f32>) -> SurfaceFrame {
     let dp1 = dpdx(world);
     let dp2 = dpdy(world);
     let duv1 = dpdx(uv);
     let duv2 = dpdy(uv);
     var out: SurfaceFrame;
     var normal = normalize(cross(dp2, dp1));
-    if dot(normal, frame.eye.xyz - world) < 0.0 {
+    let flipped = dot(normal, frame.eye.xyz - world) < 0.0;
+    if flipped {
         normal = -normal;
+    }
+    // A mesh says which way it faces, and that's what makes it look round.
+    if dot(smooth_normal, smooth_normal) > 0.01 {
+        normal = normalize(smooth_normal);
+        if flipped {
+            normal = -normal;
+        }
     }
     out.normal = normal;
     let perp2 = cross(dp2, normal);
@@ -263,7 +271,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     }
     let dx = dpdx(in.uv);
     let dy = dpdy(in.uv);
-    let surface_at = surface_frame(in.world, in.uv);
+    let surface_at = surface_frame(in.world, in.uv, in.normal);
     let to_eye = normalize(frame.eye.xyz - in.world);
     var uv = uv0;
     var features = 0;

@@ -32,11 +32,13 @@ pub struct Vertex {
     pub light_step: f32,
     /// The style of each layer.
     pub styles: [u8; 4],
+    /// Which way it faces, in steps of 1/127, or zeros for a flat face.
+    pub normal: [i8; 4],
 }
 
 impl Vertex {
     /// The size in bytes.
-    pub const SIZE: usize = 36;
+    pub const SIZE: usize = 40;
 
     /// Appends this vertex's bytes.
     pub(crate) fn write(&self, out: &mut Vec<u8>) {
@@ -50,6 +52,7 @@ impl Vertex {
             out.extend_from_slice(&value.to_le_bytes());
         }
         out.extend_from_slice(&self.styles);
+        out.extend(self.normal.map(i8::to_ne_bytes).into_iter().flatten());
     }
 }
 
@@ -419,19 +422,22 @@ fn copy_light(
 fn make_vertex(
     map: &Map,
     face: &Face,
-    point: Vec3,
+    point: (usize, Vec3),
     place: Option<LightPlace>,
     neutral: [u32; 2],
     atlas_size: u32,
     detail: bool,
 ) -> Vertex {
     let size = texture_size(map, face);
+    let (number, point) = point;
     let s = face.axes[0].project(point);
     let t = face.axes[1].project(point);
+    let [x, y, z] = map.normals.get(number).copied().unwrap_or([0; 3]);
     let mut vertex = Vertex {
         position: [point.x, point.y, point.z],
         uv: [s / size[0], t / size[1]],
         styles: [Face::NO_STYLE; 4],
+        normal: [x, y, z, 0],
         ..Vertex::default()
     };
     #[expect(
@@ -550,9 +556,16 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
                 per_batch.push(Vec::new());
             }
             let first = u32::try_from(mesh.vertices.len()).ok()?;
-            for &point in map.face_points(face) {
+            let numbered = (face.first_point as usize..).zip(map.face_points(face));
+            for (number, &point) in numbered {
                 mesh.vertices.push(make_vertex(
-                    map, face, point, places[at], neutral, atlas_size, false,
+                    map,
+                    face,
+                    (number, point),
+                    places[at],
+                    neutral,
+                    atlas_size,
+                    false,
                 ));
             }
             mesh.face_vertices[at] = (first, face.point_count);
@@ -695,7 +708,9 @@ fn patch_of(
     let found = map.faces.get(face as usize)?;
     let (first, _) = *mesh.face_vertices.get(face as usize)?;
     let mut bytes = Vec::with_capacity(found.point_count as usize * Vertex::SIZE);
-    for &point in map.face_points(found) {
+    let numbered = (found.first_point as usize..).zip(map.face_points(found));
+    for (number, &point) in numbered {
+        let point = (number, point);
         let vertex = make_vertex(map, found, point, place, [0, 0], mesh.atlas_size, detail);
         vertex.write(&mut bytes);
     }

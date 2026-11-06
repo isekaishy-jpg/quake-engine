@@ -12,6 +12,7 @@ mod derive;
 mod effects;
 mod error;
 mod geometry;
+mod gltf_import;
 mod light;
 mod material;
 mod mega;
@@ -36,6 +37,7 @@ pub use content_pack::{PlayMap, pack_content, play_map};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
+pub use gltf_import::{ImportedModel, import_gltf, write_mesh};
 pub use light::{BakeInput, ImageReader, bake_light, light_tracks};
 pub use material::{MaterialLibrary, decode_png, document_of};
 pub use mesh::{

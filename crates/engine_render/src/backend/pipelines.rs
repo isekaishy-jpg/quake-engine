@@ -394,7 +394,7 @@ impl Backend {
 }
 
 /// How world vertices are laid out.
-fn world_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 5]) {
+fn world_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 6]) {
     let bindings = [VertexInputBinding {
         binding: 0,
         stride: u32::try_from(Vertex::SIZE).unwrap_or(0),
@@ -412,6 +412,7 @@ fn world_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 5]) {
         attribute(2, Format::R32G32_SFLOAT, 20),
         attribute(3, Format::R32_SFLOAT, 28),
         attribute(4, Format::R8G8B8A8_UINT, 32),
+        attribute(5, Format::R8G8B8A8_SNORM, 36),
     ];
     (bindings, attributes)
 }

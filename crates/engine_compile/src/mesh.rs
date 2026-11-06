@@ -1,6 +1,7 @@
 //! Meshes: reading them, placing them, and the volume they shade (proposal
 //! 0078).
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_format::{Block, Document, Value, to_text};
@@ -21,6 +22,9 @@ pub struct MeshPart {
     pub points: Vec<Point>,
     /// Each corner's place on the material, from 0 to 1 across.
     pub uvs: Vec<[f64; 2]>,
+    /// Which way each corner faces. With none, they're worked out from its
+    /// shape, smooth except where it turns sharply.
+    pub normals: Vec<Point>,
     /// Its triangles, as corners.
     pub triangles: Vec<[u32; 3]>,
 }
@@ -42,6 +46,8 @@ pub struct PlacedTriangle {
     pub points: [Point; 3],
     /// Their places on the material.
     pub uvs: [[f64; 2]; 3],
+    /// Which way they face.
+    pub normals: [Point; 3],
     /// Its material.
     pub material: String,
 }
@@ -82,6 +88,7 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
     for block in document.blocks_of("part") {
         let points = groups::<3>(block, "points");
         let uvs = groups::<2>(block, "uvs");
+        let normals = groups::<3>(block, "normals");
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -97,6 +104,11 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 "a mesh's triangle has no such corner".to_owned(),
             ));
         }
+        if !normals.is_empty() && normals.len() != points.len() {
+            return Err(CompileError::Bad(
+                "a mesh's normals aren't one for each corner".to_owned(),
+            ));
+        }
         mesh.parts.push(MeshPart {
             name: block.name.clone().unwrap_or_default(),
             material: block
@@ -106,6 +118,7 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 .to_owned(),
             points,
             uvs,
+            normals,
             triangles,
         });
     }
@@ -169,6 +182,17 @@ impl Transform {
         out
     }
 
+    /// Which way `normal` faces once placed. A stretched surface leans the other
+    /// way from how it was stretched.
+    fn turn(&self, normal: Point) -> Point {
+        let mut out = [0.0; 3];
+        for ((axis, part), scale) in self.axes.iter().zip(normal).zip(self.scale) {
+            let scale = if scale == 0.0 { 1.0 } else { scale };
+            out = add_scaled(out, *axis, part / scale);
+        }
+        normalized(out).unwrap_or(normal)
+    }
+
     /// Whether this turns surfaces inside out.
     fn mirrors(&self) -> bool {
         self.scale.iter().filter(|scale| **scale < 0.0).count() % 2 == 1
@@ -226,6 +250,48 @@ impl Transform {
     }
 }
 
+/// The cosine of the sharpest turn that's still drawn smooth.
+const SMOOTH_TURN: f64 = 0.766;
+
+/// Which way each corner of each triangle of `part` faces. Triangles meeting at
+/// a corner are smoothed together, unless they turn sharply. It goes by where
+/// corners are, as a mesh often has two at one place for its UVs.
+fn smooth_normals(part: &MeshPart) -> Vec<[Point; 3]> {
+    let facing: Vec<(Point, f64)> = part
+        .triangles
+        .iter()
+        .map(|triangle| {
+            let [a, b, c] = triangle.map(|corner| part.points[corner as usize]);
+            let area = cross(add_scaled(b, a, -1.0), add_scaled(c, a, -1.0));
+            let size = dot(area, area).sqrt();
+            (normalized(area).unwrap_or([0.0, 0.0, 1.0]), size)
+        })
+        .collect();
+    let place = |corner: u32| part.points[corner as usize].map(f64::to_bits);
+    let mut meeting: HashMap<[u64; 3], Vec<usize>> = HashMap::new();
+    for (number, triangle) in part.triangles.iter().enumerate() {
+        for corner in triangle {
+            meeting.entry(place(*corner)).or_default().push(number);
+        }
+    }
+    part.triangles
+        .iter()
+        .zip(&facing)
+        .map(|(triangle, (own, _))| {
+            triangle.map(|corner| {
+                let mut sum = [0.0; 3];
+                for other in meeting.get(&place(corner)).into_iter().flatten() {
+                    let (normal, size) = facing[*other];
+                    if dot(normal, *own) >= SMOOTH_TURN {
+                        sum = add_scaled(sum, normal, size);
+                    }
+                }
+                normalized(sum).unwrap_or(*own)
+            })
+        })
+        .collect()
+}
+
 /// `mesh` where `placement` puts it.
 #[must_use]
 pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
@@ -235,14 +301,21 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
         ..PlacedMesh::default()
     };
     for part in &mesh.parts {
-        for triangle in &part.triangles {
+        let worked_out = part.normals.is_empty().then(|| smooth_normals(part));
+        for (number, triangle) in part.triangles.iter().enumerate() {
             let mut corners = triangle.map(|corner| corner as usize);
+            let mut normals = worked_out.as_ref().map_or_else(
+                || corners.map(|corner| part.normals[corner]),
+                |normals| normals[number],
+            );
             if transform.mirrors() {
                 corners.swap(1, 2);
+                normals.swap(1, 2);
             }
             placed.triangles.push(PlacedTriangle {
                 points: corners.map(|corner| transform.apply(part.points[corner])),
                 uvs: corners.map(|corner| part.uvs[corner]),
+                normals: normals.map(|normal| transform.turn(normal)),
                 material: part.material.clone(),
             });
         }

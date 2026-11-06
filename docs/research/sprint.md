@@ -19,7 +19,7 @@ Earlier items unblock later ones.
 | 5 | Packing: compiled textures, BC compression, one `.epak` container | [Note](texture-standard.md) | done |
 | 6 | Shader system: container, cache, surface code, instances, one way of drawing | [Note](effects-water-shaders.md) | done |
 | 7 | Metal, roughness, specular and gloss together | [Note](texture-standard.md) | done |
-| 8 | Full meshes: format, normals, drawing path, glTF import | [Note](mesh-support.md) | todo |
+| 8 | Full meshes: format, normals, drawing path, glTF import | [Note](mesh-support.md) | done |
 | 9 | Mesh light: generated light map UVs, probes for props, one face per flat polygon | [Note](mesh-support.md) | todo |
 | 10 | Mesh collision: generated convex shapes | [Note](mesh-support.md) | todo |
 | 11 | Baked shadows: several rays per sample, more than one sharp light, joins at an angle, light order and layer limits | [Note](shadow-rendering.md) | todo |

@@ -258,6 +258,9 @@ pub struct Map {
     pub textures: Vec<Texture>,
     /// Every face's points.
     pub points: Vec<Vec3>,
+    /// Which way points face, in steps of 1/127, by their place in `points`. It
+    /// stops at the last that has one, and all zeros means the face is flat.
+    pub normals: Vec<[i8; 3]>,
     /// The faces.
     pub faces: Vec<Face>,
     /// The models. The first is the world.

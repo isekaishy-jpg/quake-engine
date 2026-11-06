@@ -13,6 +13,8 @@
   - [Shadow rendering](research/shadow-rendering.md): lamps, curved surfaces and moving lights, for design later
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
+  - [Meshes](meshes.md): bringing models in, and placing them
+  - [Shaders](shaders.md): writing one
   - [Texture standard](texture-standard.md): what a texture has to be, to hand to whoever makes them
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
@@ -137,6 +139,7 @@
     - [0106: packing](proposals/0106-packing.md)
     - [0107: shaders](proposals/0107-shaders.md)
     - [0108: metal and roughness](proposals/0108-metal-and-roughness.md)
+    - [0109: meshes](proposals/0109-meshes.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

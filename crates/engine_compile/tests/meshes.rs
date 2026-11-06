@@ -1,0 +1,227 @@
+//! What a mesh knows about which way it faces, and bringing models in.
+
+use std::fs;
+use std::path::PathBuf;
+
+use engine_compile::{
+    Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known, document_of, import_gltf,
+    place_mesh, read_geometry, read_map_text, read_mesh, write_geometry, write_mesh,
+};
+use engine_format::from_text;
+use engine_map::{Map, Texture};
+
+/// A placement that leaves a mesh as it is.
+fn in_place() -> MeshPlacement {
+    MeshPlacement {
+        source: "test".to_owned(),
+        origin: [0.0; 3],
+        angles: [0.0; 3],
+        scale: [1.0; 3],
+        only_seen: false,
+    }
+}
+
+/// A part with `points` and `triangles`.
+fn part(points: Vec<[f64; 3]>, triangles: Vec<[u32; 3]>) -> MeshPart {
+    MeshPart {
+        uvs: vec![[0.0; 2]; points.len()],
+        points,
+        triangles,
+        ..MeshPart::default()
+    }
+}
+
+/// Two squares meeting along `x = 0`, one flat and one turned up by `degrees`.
+fn folded(degrees: f64) -> Mesh {
+    let (sin, cos) = degrees.to_radians().sin_cos();
+    let points = vec![
+        [-1.0, 0.0, 0.0],
+        [0.0, 0.0, 0.0],
+        [0.0, 1.0, 0.0],
+        [-1.0, 1.0, 0.0],
+        [cos, 0.0, sin],
+        [cos, 1.0, sin],
+    ];
+    let triangles = vec![[0, 1, 2], [0, 2, 3], [1, 4, 5], [1, 5, 2]];
+    Mesh {
+        parts: vec![part(points, triangles)],
+        ..Mesh::default()
+    }
+}
+
+/// How far `normal` is from straight up, as its cosine.
+fn upness(normal: [f64; 3]) -> f64 {
+    normal[2]
+}
+
+#[test]
+fn a_gentle_fold_is_smooth_and_a_sharp_one_isnt() {
+    let gentle = place_mesh(&folded(20.0), &in_place());
+    let at_the_fold = gentle.triangles[0].normals[1];
+    assert!(upness(at_the_fold) < 0.999, "leans: {at_the_fold:?}");
+    let sharp = place_mesh(&folded(80.0), &in_place());
+    let at_the_fold = sharp.triangles[0].normals[1];
+    assert!(upness(at_the_fold) > 0.999, "stays flat: {at_the_fold:?}");
+}
+
+#[test]
+fn normals_in_a_file_are_used() {
+    let text = "format 1 mesh\npart {\n material = stone\n points = 0 0 0 1 0 0 0 1 0\n uvs = 0 0 1 0 0 1\n normals = 1 0 0 1 0 0 1 0 0\n triangles = 0 1 2\n}\n";
+    let mesh = read_mesh(&from_text(text).expect("reads")).expect("a mesh");
+    let placed = place_mesh(&mesh, &in_place());
+    assert_eq!(placed.triangles[0].normals, [[1.0, 0.0, 0.0]; 3]);
+}
+
+#[test]
+fn a_mesh_with_too_few_normals_is_refused() {
+    let text = "format 1 mesh\npart {\n material = stone\n points = 0 0 0 1 0 0 0 1 0\n uvs = 0 0 1 0 0 1\n normals = 1 0 0\n triangles = 0 1 2\n}\n";
+    assert!(read_mesh(&from_text(text).expect("reads")).is_err());
+}
+
+#[test]
+fn stretching_leans_a_normal_the_other_way() {
+    let mut mesh = folded(0.0);
+    mesh.parts[0].normals = vec![[0.6, 0.0, 0.8]; 6];
+    let placement = MeshPlacement {
+        scale: [1.0, 1.0, 4.0],
+        ..in_place()
+    };
+    let placed = place_mesh(&mesh, &placement);
+    let [x, _, z] = placed.triangles[0].normals[0];
+    assert!(x > z, "squashed against the stretch: {x} {z}");
+}
+
+/// Plain textures.
+struct Plain;
+
+impl TextureSource for Plain {
+    fn texture(&mut self, name: &str) -> Texture {
+        Texture {
+            name: name.to_owned(),
+            ..Texture::default()
+        }
+    }
+}
+
+/// `mesh` as the only thing in a map.
+fn map_with(mesh: &Mesh) -> Map {
+    let text = "format 1 map\nentity world { type = worldspawn }\nbrush { material = wall cuboid = -64 -64 -32 64 64 -16 }\n";
+    let mut working = read_map_text(text).expect("reads");
+    working.placed = vec![place_mesh(mesh, &in_place())];
+    compile(&working, &mut Plain).expect("compiles")
+}
+
+#[test]
+fn a_map_keeps_which_way_its_meshes_face() {
+    let mut mesh = folded(20.0);
+    mesh.parts[0].material = "stone".to_owned();
+    let map = map_with(&mesh);
+    assert!(map.normals.iter().any(|normal| *normal != [0; 3]));
+    let bytes = write_geometry(&map, 3);
+    let geometry = read_geometry(&bytes, 3).expect("reads");
+    let text = "format 1 map\nentity world { type = worldspawn }\nbrush { material = wall cuboid = -64 -64 -32 64 64 -16 }\n";
+    let mut working = read_map_text(text).expect("reads");
+    working.placed = vec![place_mesh(&mesh, &in_place())];
+    let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
+    assert_eq!(map.normals, again.normals);
+}
+
+/// One triangle, in glTF's axes, with a normal, as a `.glb`.
+fn triangle_glb() -> Vec<u8> {
+    let floats: [f32; 9 + 9 + 6] = [
+        0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, // Corners.
+        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, // Normals.
+        0.0, 0.0, 1.0, 0.0, 0.0, 1.0, // UVs.
+    ];
+    let blob: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
+    let json = format!(
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
+        "nodes":[{{"mesh":0,"name":"Thing","translation":[0,0,2]}}],
+        "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2}},"material":0}}]}}],
+        "materials":[{{"name":"Dull Gold","alphaMode":"MASK","pbrMetallicRoughness":{{"baseColorFactor":[1,0.5,0,1],"metallicFactor":1,"roughnessFactor":0.25}}}}],
+        "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}},
+        {{"bufferView":1,"componentType":5126,"count":3,"type":"VEC3"}},
+        {{"bufferView":2,"componentType":5126,"count":3,"type":"VEC2"}}],
+        "bufferViews":[{{"buffer":0,"byteOffset":0,"byteLength":36}},
+        {{"buffer":0,"byteOffset":36,"byteLength":36}},
+        {{"buffer":0,"byteOffset":72,"byteLength":24}}],
+        "buffers":[{{"byteLength":{}}}]}}"#,
+        blob.len()
+    );
+    let mut json = json.into_bytes();
+    while json.len() % 4 != 0 {
+        json.push(b' ');
+    }
+    let total = u32::try_from(12 + 8 + json.len() + 8 + blob.len()).expect("small");
+    let mut out = Vec::new();
+    out.extend_from_slice(b"glTF");
+    out.extend_from_slice(&2_u32.to_le_bytes());
+    out.extend_from_slice(&total.to_le_bytes());
+    let length = u32::try_from(json.len()).expect("small");
+    out.extend_from_slice(&length.to_le_bytes());
+    out.extend_from_slice(b"JSON");
+    out.extend_from_slice(&json);
+    let length = u32::try_from(blob.len()).expect("small");
+    out.extend_from_slice(&length.to_le_bytes());
+    out.extend_from_slice(b"BIN\0");
+    out.extend_from_slice(&blob);
+    out
+}
+
+/// A file holding `bytes`.
+fn file(name: &str, bytes: &[u8]) -> PathBuf {
+    let path = std::env::temp_dir().join(format!("engine-mesh-{}-{name}", std::process::id()));
+    fs::write(&path, bytes).expect("write");
+    path
+}
+
+#[test]
+fn a_gltf_model_comes_in_with_our_axes_and_scale() {
+    let path = file("axes.glb", &triangle_glb());
+    let model = import_gltf(&path, "thing", 10.0).expect("imports");
+    let part = &model.mesh.parts[0];
+    assert_eq!(part.name, "thing");
+    // Y is up there and Z is here. Its node moved it two metres towards the eye.
+    assert_eq!(part.points[0], [0.0, -20.0, 0.0]);
+    assert_eq!(part.points[2], [0.0, -20.0, 10.0]);
+    assert_eq!(part.normals[0], [0.0, -1.0, 0.0]);
+    assert_eq!(part.triangles, [[0, 1, 2]]);
+    fs::remove_file(&path).expect("clean up");
+}
+
+#[test]
+fn a_gltf_material_says_metal_and_roughness() {
+    let path = file("material.glb", &triangle_glb());
+    let model = import_gltf(&path, "thing", 1.0).expect("imports");
+    let (name, text) = &model.materials[0];
+    assert_eq!(name, "thing_dull_gold");
+    assert_eq!(model.mesh.parts[0].material, *name);
+    assert!(text.contains("metallic = 1"), "{text}");
+    assert!(text.contains("roughness = 0.25"), "{text}");
+    assert!(text.contains("alpha = mask"), "{text}");
+    let colour = text.lines().find(|line| line.contains("base = "));
+    assert!(colour.expect("a base").contains("255_128_0_255"), "{text}");
+    assert_eq!(model.pictures.len(), 1, "one plain picture");
+    fs::remove_file(&path).expect("clean up");
+}
+
+#[test]
+fn a_file_with_nothing_to_draw_is_refused() {
+    let path = file(
+        "empty.gltf",
+        br#"{"asset":{"version":"2.0"},"scenes":[{"nodes":[]}]}"#,
+    );
+    let error = import_gltf(&path, "thing", 1.0).expect_err("refused");
+    assert!(error.to_string().contains("nothing"), "{error}");
+    fs::remove_file(&path).expect("clean up");
+}
+
+#[test]
+fn a_mesh_written_reads_back() {
+    let path = file("round.glb", &triangle_glb());
+    let model = import_gltf(&path, "thing", 1.0).expect("imports");
+    let bytes = write_mesh(&model.mesh);
+    let again = read_mesh(&document_of(&bytes).expect("reads")).expect("a mesh");
+    assert_eq!(again, model.mesh);
+    fs::remove_file(&path).expect("clean up");
+}

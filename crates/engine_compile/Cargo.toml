@@ -16,6 +16,7 @@ engine_assets.workspace = true
 engine_core.workspace = true
 engine_format.workspace = true
 engine_map.workspace = true
+gltf.workspace = true
 png.workspace = true
 rusty_dds.workspace = true
 

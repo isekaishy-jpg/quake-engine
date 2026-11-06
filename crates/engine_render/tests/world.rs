@@ -205,3 +205,21 @@ fn positive_pitch_looks_down_and_yaw_turns_left() {
     let target = project(&left, Vec3::new(0.0, 100.0, 0.0));
     assert!(target[0].abs() < 1e-4);
 }
+
+#[test]
+fn a_vertex_says_which_way_a_mesh_faces() {
+    let mut built = map(1);
+    built.normals = vec![[0, 0, 127]; built.points.len()];
+    let mesh = build_world(&built).expect("builds");
+    assert!(
+        mesh.vertices
+            .iter()
+            .all(|vertex| vertex.normal == [0, 0, 127, 0])
+    );
+}
+
+#[test]
+fn a_vertex_on_a_flat_face_says_nothing() {
+    let mesh = build_world(&map(1)).expect("builds");
+    assert!(mesh.vertices.iter().all(|vertex| vertex.normal == [0; 4]));
+}

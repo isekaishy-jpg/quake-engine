@@ -25,6 +25,12 @@ use crate::source::{Brush, BrushFace, DecalSource, StampSource, WorkingMap, read
 use crate::stamp::stamp_piece;
 use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
+/// A direction, as a map keeps it.
+#[expect(clippy::cast_possible_truncation, reason = "held to a byte")]
+fn packed_normal(normal: Point) -> [i8; 3] {
+    normal.map(|part| (part * 127.0).round().clamp(-127.0, 127.0) as i8)
+}
+
 /// Supplies textures for materials.
 pub trait TextureSource {
     /// The texture of `material`.
@@ -280,6 +286,7 @@ fn decal_triangles(decal: &DecalSource, faces: &[VisibleFace<'_>]) -> Vec<Placed
         for pair in lifted[1..].windows(2) {
             let points = [lifted[0], pair[0], pair[1]];
             out.push(PlacedTriangle {
+                normals: [[0.0; 3]; 3],
                 points,
                 uvs: points.map(uv),
                 material: decal.material.clone(),
@@ -583,6 +590,10 @@ impl Builder<'_> {
         self.map
             .points
             .extend(triangle.points.iter().map(|p| vec3(*p)));
+        self.map.normals.resize(first_point as usize, [0; 3]);
+        self.map
+            .normals
+            .extend(triangle.normals.iter().map(|normal| packed_normal(*normal)));
         self.map.faces.push(Face {
             first_point,
             point_count: 3,
@@ -849,6 +860,7 @@ fn compile_with(
         let count = u32::try_from(geometry.models.len()).unwrap_or(u32::MAX);
         builder.known_models = Some((count, 0));
         builder.map.points = geometry.points;
+        builder.map.normals = geometry.normals;
         builder.map.faces = geometry.faces;
         builder.map.models = geometry.models;
         builder.map.light_lifts = geometry.light_lifts;

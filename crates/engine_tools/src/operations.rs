@@ -150,6 +150,10 @@ pub const OPERATIONS: &[OperationInfo] = &[
         help: "Compiles every shader in the content, and says what's wrong with any that don't.",
     },
     OperationInfo {
+        name: "import_gltf",
+        help: "Brings a glTF model in, as a mesh with its materials and pictures. path: the .gltf or .glb. name: what to call it. Optional scale: world units to a metre, 32 if not given.",
+    },
+    OperationInfo {
         name: "validate",
         help: "Compiles the map in memory and reports problems.",
     },
@@ -223,6 +227,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "derive_maps" => features::derive_material_maps(session, args),
         "check_textures" => features::check_textures(session, args),
         "check_shaders" => features::check_shaders(session, args),
+        "import_gltf" => features::import_gltf(session, args),
         "add_block" => features::add_block(session, args),
         "set_block" => features::set_block(session, args),
         "place_mesh" => features::place_mesh(session, args),

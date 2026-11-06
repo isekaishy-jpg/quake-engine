@@ -230,6 +230,10 @@ pub const BACKEND_RULES: &[BackendRule] = &[
         owner: "engine_shaders",
     },
     BackendRule {
+        dependency: "gltf",
+        owner: "engine_compile",
+    },
+    BackendRule {
         dependency: "box3d-rust",
         owner: "engine_physics",
     },

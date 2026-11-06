@@ -3,7 +3,7 @@
 //! (proposal 0091).
 
 use engine_shaders::{check_post_code, check_surface_code};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
 use engine_format::{Block, Value};
@@ -399,6 +399,47 @@ pub(crate) fn check_textures(session: &Session, args: &Json) -> Result<Json, Str
         }
     }
     Ok(Json::Object(found))
+}
+
+/// `import_gltf`: brings a model in: its mesh, materials and pictures.
+pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String> {
+    let path = args
+        .get("path")
+        .and_then(Json::as_str)
+        .ok_or("import_gltf needs a path")?;
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("import_gltf needs a name")?;
+    let scale = args.get("scale").and_then(Json::as_f64).unwrap_or(32.0);
+    let model = engine_compile::import_gltf(Path::new(path), name, scale)
+        .map_err(|error| error.to_string())?;
+    let write = |file: PathBuf, bytes: &[u8]| -> Result<(), String> {
+        if let Some(folder) = file.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+        }
+        std::fs::write(&file, bytes).map_err(|error| format!("{}: {error}", file.display()))
+    };
+    let file = session.content.join("meshes").join(format!("{name}.emesh"));
+    write(file, &engine_compile::write_mesh(&model.mesh))?;
+    for (material, text) in &model.materials {
+        let file = format!("{material}.emat");
+        write(
+            session.content.join("materials").join(file),
+            text.as_bytes(),
+        )?;
+    }
+    for (path, png) in &model.pictures {
+        write(session.content.join(path), png)?;
+    }
+    let triangles: usize = model.mesh.parts.iter().map(|p| p.triangles.len()).sum();
+    Ok(json!({
+        "mesh": name,
+        "parts": model.mesh.parts.len(),
+        "triangles": triangles,
+        "materials": model.materials.iter().map(|(name, _)| name).collect::<Vec<_>>(),
+        "pictures": model.pictures.len(),
+    }))
 }
 
 /// `check_shaders`: what's wrong with shaders, as the compiler sees them.

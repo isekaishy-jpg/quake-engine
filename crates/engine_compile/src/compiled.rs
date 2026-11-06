@@ -15,6 +15,8 @@ pub struct Geometry {
     pub(crate) textures: Vec<String>,
     /// Every face's corners.
     pub(crate) points: Vec<Vec3>,
+    /// Which way corners face.
+    pub(crate) normals: Vec<[i8; 3]>,
     /// The faces, without their light.
     pub(crate) faces: Vec<Face>,
     /// The models.
@@ -99,6 +101,13 @@ impl Reader<'_> {
     /// The next point.
     fn point(&mut self) -> Option<Vec3> {
         Some(Vec3::new(self.float()?, self.float()?, self.float()?))
+    }
+
+    /// The next direction, as a map keeps it.
+    fn normal(&mut self) -> Option<[i8; 3]> {
+        let (three, rest) = self.0.split_first_chunk::<3>()?;
+        self.0 = rest;
+        Some(three.map(|part| i8::from_ne_bytes([part])))
     }
 
     /// How many of something follow, so long as there are that many bytes left
@@ -320,6 +329,11 @@ pub fn write_geometry(map: &Map, hash: u64) -> Vec<u8> {
         out.point(*lift);
     }
     write_tree(&mut out, &map.tree);
+    out.count(map.normals.len());
+    for normal in &map.normals {
+        out.0
+            .extend(normal.map(i8::to_ne_bytes).into_iter().flatten());
+    }
     let names: Vec<&str> = map.textures.iter().map(|t| t.name.as_str()).collect();
     let mut document = Document::new("geometry");
     let mut block = Block::new("source");
@@ -364,5 +378,8 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
         geometry.light_lifts.push((input.number()?, input.point()?));
     }
     geometry.tree = read_tree(&mut input)?;
+    for _ in 0..input.count(3)? {
+        geometry.normals.push(input.normal()?);
+    }
     Some(geometry)
 }

@@ -32,6 +32,7 @@ fn both_sides(corners: [Point; 4], material: &str) -> [PlacedTriangle; 4] {
     let [a, b, c, d] = corners;
     let (uv_a, uv_b, uv_c, uv_d) = ([0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]);
     let triangle = |points, uvs| PlacedTriangle {
+        normals: [[0.0; 3]; 3],
         points,
         uvs,
         material: material.to_owned(),
