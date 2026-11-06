@@ -2,7 +2,8 @@
 
 use engine_core::math::Vec3;
 use engine_map::{
-    Face, FaceLight, Leaf, Map, MipLevel, Model, RESIDENT, TexelAxis, Texture, TextureKind, Tree,
+    Face, FaceLight, Leaf, Look, Map, MipLevel, Model, RESIDENT, TexelAxis, Texture, TextureKind,
+    Tree,
 };
 
 /// A map of `models` models, each one 128 unit square at z = 0, facing up.
@@ -34,6 +35,11 @@ pub(crate) fn map(models: u32) -> Map {
             ],
             leaf_faces: vec![0],
             ..Tree::default()
+        },
+        // Light as it was on a picture in gamma space, which is easy to reason about.
+        look: Look {
+            light_curve: 2.2,
+            exposure: 1.0,
         },
         ..Map::default()
     };

@@ -39,11 +39,17 @@ use crate::world::{BatchKind, WorldMesh};
 /// The colour format of every target. UNORM keeps the original's sums.
 const COLOR_FORMAT: Format = Format::B8G8R8A8_UNORM;
 
+/// What a scene is drawn in: linear light, with room for more than a screen shows.
+const SCENE_FORMAT: Format = Format::R16G16B16A16_SFLOAT;
+
 /// The depth format.
 const DEPTH_FORMAT: Format = Format::D32_SFLOAT;
 
 /// The colour behind everything, seen with no map loaded.
 const CLEAR_COLOR: [f32; 4] = [0.02, 0.02, 0.03, 1.0];
+
+/// The same in a scene, which holds linear light.
+const SCENE_CLEAR_COLOR: [f32; 4] = [0.001_548, 0.001_548, 0.002_322, 1.0];
 
 /// The `r_aa` setting that's SMAA.
 const SMAA_SETTING: u8 = 2;
@@ -63,7 +69,7 @@ const FRAME_SIZE: usize =
 const EXTRA_BYTES: usize = EXTRA_FLOATS * 4;
 
 /// Floats of stencil and capsule values in the frame uniforms.
-const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 12 + 4 + 8;
+const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 12 + 4 + 8 + 4;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -1055,7 +1061,7 @@ impl Backend {
             &self.scene_pass,
             &target.framebuffer,
             &[
-                ClearValue::Color(CLEAR_COLOR),
+                ClearValue::Color(SCENE_CLEAR_COLOR),
                 ClearValue::DepthStencil {
                     depth: 1.0,
                     stencil: 0,

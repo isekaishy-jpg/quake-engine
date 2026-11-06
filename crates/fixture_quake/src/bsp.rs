@@ -5,8 +5,8 @@ use std::fmt;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    Animation, ClipChild, ClipNode, Contents, Entity, Face, FaceLight, Leaf, Map, MipLevel, Model,
-    Node, NodeChild, Plane, RESIDENT, TexelAxis, Texture, TextureKind, Tree,
+    Animation, ClipChild, ClipNode, Contents, Entity, Face, FaceLight, Leaf, Look, Map, MipLevel,
+    Model, Node, NodeChild, Plane, RESIDENT, TexelAxis, Texture, TextureKind, Tree,
 };
 use qbsp::data::models::BspFace;
 use qbsp::data::nodes::{BspLeaf, BspLeafContentFlags, BspNodeRef};
@@ -553,6 +553,11 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
         .collect();
 
     Ok(Map {
+        // The original's light, on pictures in gamma space, as it always looked.
+        look: Look {
+            light_curve: 2.2,
+            exposure: 1.0,
+        },
         textures,
         points,
         faces,

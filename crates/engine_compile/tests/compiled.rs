@@ -3,7 +3,7 @@
 use engine_compile::{
     TextureSource, compile, compile_known, read_geometry, read_map_text, write_geometry,
 };
-use engine_map::{Map, MipLevel, Texture, TextureKind};
+use engine_map::{Look, Map, MipLevel, Texture, TextureKind};
 
 /// A map with a little of everything geometry has: faces of two materials, a
 /// moving part with its own model, and a piece of hull.
@@ -102,4 +102,27 @@ entity world { type = worldspawn }
     let map = compile(&working, &mut Plain::default()).expect("compiles");
     let nodes = map.tree.clip_nodes.len();
     assert!(nodes < 4000, "{nodes} clip nodes");
+}
+
+/// A level can say how its light comes out, and the usual look is what's left.
+#[test]
+fn a_level_sets_its_look() {
+    let text = "format 1 map
+entity world { type = worldspawn light_curve = 2.2 exposure = 1.5 }
+";
+    let working = read_map_text(text).expect("reads");
+    let map = compile(&working, &mut Plain::default()).expect("compiles");
+    assert!((map.look.light_curve - 2.2).abs() < 1e-6);
+    assert!((map.look.exposure - 1.5).abs() < 1e-6);
+    let usual = compile(
+        &read_map_text(
+            "format 1 map
+entity world { type = worldspawn }
+",
+        )
+        .expect("reads"),
+        &mut Plain::default(),
+    )
+    .expect("compiles");
+    assert_eq!(usual.look, Look::default());
 }

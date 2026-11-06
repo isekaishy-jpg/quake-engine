@@ -118,11 +118,11 @@ fn sky_color(direction_in: vec3<f32>) -> vec3<f32> {
 
 @fragment
 fn fs_sky_sphere(in: SkyOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(raised(sky_color(in.direction)), 1.0);
+    return vec4<f32>(scene_color(to_linear(sky_color(in.direction))), 1.0);
 }
 
 // A face that's a window onto the sky.
 @fragment
 fn fs_sky_window(in: VertexOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(raised(sky_color(in.world - frame.eye.xyz)), 1.0);
+    return vec4<f32>(scene_color(to_linear(sky_color(in.world - frame.eye.xyz))), 1.0);
 }

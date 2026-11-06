@@ -26,7 +26,7 @@ pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
 pub use emitter::Emitter;
 pub use live::{LiveLightSource, along_path};
 pub use map::{
-    Animation, Entity, Face, FaceLight, Map, MegaImage, MegaMaps, MipLevel, Model, TexelAxis,
+    Animation, Entity, Face, FaceLight, Look, Map, MegaImage, MegaMaps, MipLevel, Model, TexelAxis,
     Texture, TextureKind,
 };
 pub use material::{

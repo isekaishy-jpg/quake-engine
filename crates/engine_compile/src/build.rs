@@ -7,8 +7,8 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Map, Model, ModelOccluder, Node, NodeChild,
-    OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
+    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, Model, ModelOccluder, Node,
+    NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -929,6 +929,7 @@ fn compile_with(
     #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
     let reach = reach.map(|reach| reach as f32);
     builder.map.wake_reach = reach.unwrap_or(size * 1.5);
+    builder.map.look = look_of(working);
     builder.map.live_lights = working
         .entities
         .iter()
@@ -965,6 +966,24 @@ fn compile_with(
     cut_cells(&mut builder.map, &mut builder.planes, size);
     builder.planes_to_map();
     Ok(finished(builder.map))
+}
+
+/// How a working map says its light comes out.
+#[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
+fn look_of(working: &WorkingMap) -> Look {
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn");
+    let field = |key: &str| {
+        let fields = world.into_iter().flat_map(|world| &world.fields);
+        let found = fields
+            .filter(|(name, _)| name == key)
+            .find_map(|(_, value)| value.number());
+        found.map(|value| value as f32)
+    };
+    let usual = Look::default();
+    Look {
+        light_curve: field("light_curve").unwrap_or(usual.light_curve),
+        exposure: field("exposure").unwrap_or(usual.exposure),
+    }
 }
 
 /// A built map, with what has no picture hidden.

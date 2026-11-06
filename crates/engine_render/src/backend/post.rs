@@ -12,7 +12,7 @@ use engine_map::{Map, ProbeGrid};
 
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
-use super::{Backend, COLOR_FORMAT, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER};
+use super::{Backend, DEPTH_FORMAT, FRAME_SIZE, GpuImage, POST_SHADER, SCENE_FORMAT};
 use crate::error::RenderError;
 
 /// Where a scene is drawn before the final pass.
@@ -53,7 +53,7 @@ pub(super) fn make_ray_pass(device: &Device) -> Result<RenderPass, RenderError> 
         device,
         RenderPassCreateInfo {
             color_attachments: &[AttachmentDescription {
-                format: COLOR_FORMAT,
+                format: SCENE_FORMAT,
                 load_op: AttachmentLoadOp::DONT_CARE,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
@@ -69,7 +69,7 @@ pub(super) fn make_ray_pass(device: &Device) -> Result<RenderPass, RenderError> 
 /// the others, and depth stays as it is.
 pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPass, RenderError> {
     let resolved = AttachmentDescription {
-        format: COLOR_FORMAT,
+        format: SCENE_FORMAT,
         load_op: AttachmentLoadOp::DONT_CARE,
         store_op: AttachmentStoreOp::STORE,
         initial_layout: ImageLayout::UNDEFINED,
@@ -84,7 +84,7 @@ pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPas
         device,
         RenderPassCreateInfo {
             color_attachments: &[AttachmentDescription {
-                format: COLOR_FORMAT,
+                format: SCENE_FORMAT,
                 load_op: AttachmentLoadOp::CLEAR,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
@@ -151,7 +151,7 @@ impl Backend {
         let image = Image::new_2d(
             &self.device,
             Image2dCreateInfo {
-                format: COLOR_FORMAT,
+                format: SCENE_FORMAT,
                 width: size.0,
                 height: size.1,
                 usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
@@ -199,7 +199,7 @@ impl Backend {
                 .iter()
                 .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                 .collect();
-            images.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
+            images.push(self.upload_image(&levels, Format::R8G8B8A8_SRGB)?);
         }
         self.stencil_images = images;
         self.probe_image = match &map.probes {
@@ -270,7 +270,7 @@ impl Backend {
         let color = Image::new_2d_multisampled(
             &self.device,
             Image2dCreateInfo {
-                format: COLOR_FORMAT,
+                format: SCENE_FORMAT,
                 width: size.0,
                 height: size.1,
                 usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
@@ -293,7 +293,7 @@ impl Backend {
             let image = Image::new_2d(
                 &self.device,
                 Image2dCreateInfo {
-                    format: COLOR_FORMAT,
+                    format: SCENE_FORMAT,
                     width: size.0,
                     height: size.1,
                     usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,

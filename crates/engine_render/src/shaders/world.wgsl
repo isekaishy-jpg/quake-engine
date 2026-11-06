@@ -256,13 +256,15 @@ fn light(in: VertexOut) -> vec3<f32> {
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
     let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster);
-    return keep_hue(2.0 * (shaded + moving), 2.0);
+    // A curve above 1 makes dim light dimmer, which is the murk of the old look:
+    // 2.2 is what light did to a picture before scenes were linear.
+    return pow(keep_hue(2.0 * (shaded + moving), 2.0), vec3<f32>(frame.color_params.x));
 }
 
-// The brightness setting, as `BuildGammaTable` does for the palette. What's too
-// bright to show comes down as a whole, so that it keeps its colour.
-fn raised(color: vec3<f32>) -> vec3<f32> {
-    return pow(max(keep_hue(color, 1.0), vec3<f32>(0.0)), vec3<f32>(frame.params.w));
+// A colour on its way into the scene, which holds linear light, and has room for
+// more than a screen can show. The final pass brings it to the screen.
+fn scene_color(color: vec3<f32>) -> vec3<f32> {
+    return max(color, vec3<f32>(0.0));
 }
 
 // The depth pass only wants depth, but a pipeline has to have a fragment stage.
@@ -274,7 +276,7 @@ fn fs_depth() {
 fn fs_solid(in: VertexOut) -> @location(0) vec4<f32> {
     let texel = textureSample(surface, surface_sampler, in.uv);
     let lit = texel.rgb * light(in);
-    return vec4<f32>(raised(mix(texel.rgb, lit, texel.a)), 1.0);
+    return vec4<f32>(scene_color(mix(texel.rgb, lit, texel.a)), 1.0);
 }
 
 @fragment
@@ -284,7 +286,7 @@ fn fs_cutout(in: VertexOut) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
-    return vec4<f32>(raised(lit), 1.0);
+    return vec4<f32>(scene_color(lit), 1.0);
 }
 
 @fragment
@@ -294,7 +296,7 @@ fn fs_liquid(in: VertexOut) -> @location(0) vec4<f32> {
     let time = frame.params.x;
     let warped = texels + 8.0 * sin(texels.yx * 0.125 + time);
     let texel = textureSample(surface, surface_sampler, warped / size);
-    return vec4<f32>(raised(texel.rgb), 1.0);
+    return vec4<f32>(scene_color(texel.rgb), 1.0);
 }
 
 @fragment
@@ -309,5 +311,5 @@ fn fs_sky(in: VertexOut) -> @location(0) vec4<f32> {
         surface, surface_sampler, vec2<f32>(0.5 + back_uv.x * 0.5, back_uv.y), 0.0);
     let front = textureSampleLevel(
         surface, surface_sampler, vec2<f32>(front_uv.x * 0.5, front_uv.y), 0.0);
-    return vec4<f32>(raised(mix(back.rgb, front.rgb, front.a)), 1.0);
+    return vec4<f32>(scene_color(mix(back.rgb, front.rgb, front.a)), 1.0);
 }

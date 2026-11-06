@@ -5,8 +5,8 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, BOUNCE_STYLE, Fog, Map, Pool, ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite,
-    TextureKind,
+    AliasModel, BOUNCE_STYLE, Fog, Look, Map, Material, Pool, ProbeGrid, RayStencil, STENCIL_GRID,
+    Sky, Sprite, TextureKind,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -98,6 +98,24 @@ pub(super) fn host_buffer(
         MemoryPropertyFlags::HOST_VISIBLE | MemoryPropertyFlags::HOST_COHERENT,
     )?;
     Ok(GpuBuffer { buffer, memory })
+}
+
+/// How slot `number` of `material` is held: colours as sRGB, which reads back as
+/// linear light, and what's a measure of something as it is.
+fn slot_format(material: &Material, number: u8) -> Format {
+    let data = [
+        material.normal,
+        material.specular,
+        material.height,
+        material.detail,
+        material.flow,
+    ];
+    let mask = material.layers.iter().any(|layer| layer.mask == number);
+    if mask || data.contains(&Some(number)) {
+        Format::R8G8B8A8_UNORM
+    } else {
+        Format::R8G8B8A8_SRGB
+    }
 }
 
 /// A uniform buffer that only the GPU writes, by copying.
@@ -229,6 +247,8 @@ pub(super) struct FrameExtras<'a> {
     masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
+    /// How the map's light comes out.
+    look: Look,
     /// Bodies of liquid.
     pools: &'a [Pool],
     /// How many samples a pixel the scene has.
@@ -343,7 +363,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
             pool.look.caustics,
         ]);
         let at = base + MAX_POOLS * 8 + index * 4;
-        out[at..at + 3].copy_from_slice(&pool.look.color);
+        out[at..at + 3].copy_from_slice(&pool.look.color.map(linear));
     }
     let base = base + MAX_POOLS * 12;
     #[expect(clippy::cast_precision_loss, reason = "eight at most")]
@@ -363,7 +383,18 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         out[base + 8..base + 11].copy_from_slice(&size);
         out[base + 11] = f32::from(u8::from(post.fog_grid));
     }
+    out[base + 12] = extra.look.light_curve;
+    out[base + 13] = extra.look.exposure;
     out
+}
+
+/// A colour as it's shown, in linear light, as `to_linear` does in the shaders.
+fn linear(color: f32) -> f32 {
+    if color <= 0.04045 {
+        color / 12.92
+    } else {
+        ((color + 0.055) / 1.055).powf(2.4)
+    }
 }
 
 /// The final pass's part of the frame uniforms.
@@ -375,12 +406,12 @@ fn post_values(
     let mut out = [0.0; POST_BYTES / 4];
     out[..16].copy_from_slice(&inverse(matrix).unwrap_or([0.0; 16]));
     if let Some(fog) = fog {
-        out[16..19].copy_from_slice(&fog.color);
+        out[16..19].copy_from_slice(&fog.color.map(linear));
         out[19] = fog.density;
         out[20] = fog.height;
         out[21] = fog.falloff;
     }
-    out[24..27].copy_from_slice(&post.outline_color);
+    out[24..27].copy_from_slice(&post.outline_color.map(linear));
     out[27] = f32::from(post.outline);
     out[28] = f32::from(post.edge_smoothing);
     out[29] = post.outline_width;
@@ -502,7 +533,7 @@ impl Backend {
         let mut images = Vec::with_capacity(pictures.len());
         let mut image_sets = Vec::with_capacity(pictures.len());
         for picture in pictures {
-            let image = self.upload_image(&[*picture], Format::R8G8B8A8_UNORM)?;
+            let image = self.upload_image(&[*picture], Format::R8G8B8A8_SRGB)?;
             let set = pool.allocate(&self.texture_layout)?;
             set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
             set.write_sampler(1, &self.texture_sampler);
@@ -718,7 +749,7 @@ impl Backend {
                 .iter()
                 .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                 .collect();
-            let image = self.upload_image(&levels, Format::R8G8B8A8_UNORM)?;
+            let image = self.upload_image(&levels, Format::R8G8B8A8_SRGB)?;
             if let (Some(material), Some(params)) = (&texture.material, &mut material_params)
                 && uses_material(texture)
             {
@@ -726,12 +757,12 @@ impl Backend {
                 set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
                 set.write_sampler(1, &self.material_sampler);
                 let mut uploaded = Vec::with_capacity(material.slots.len());
-                for slot in &material.slots {
+                for (number, slot) in (1_u8..).zip(&material.slots) {
                     let levels: Vec<(u32, u32, &[u8])> = slot
                         .iter()
                         .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                         .collect();
-                    uploaded.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
+                    uploaded.push(self.upload_image(&levels, slot_format(material, number))?);
                 }
                 for binding in 0..7_u32 {
                     let view = uploaded
@@ -1073,6 +1104,7 @@ impl Backend {
             under_sky: scene.is_some_and(|scene| scene.map.open_above(view.origin)),
             samples: self.samples,
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
+            look: scene.map_or_else(Look::default, |scene| scene.map.look),
         };
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         let slot = self.slot;

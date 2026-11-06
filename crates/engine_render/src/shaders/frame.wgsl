@@ -61,4 +61,13 @@ struct Frame {
     // along each axis, with w 1 if fog reads them.
     probe_origin: vec4<f32>,
     probe_size: vec4<f32>,
+    // x what baked light is raised to, y how much light reaches the eye.
+    color_params: vec4<f32>,
+}
+
+// A colour as it's shown, in the linear light scenes are drawn in.
+fn to_linear(color: vec3<f32>) -> vec3<f32> {
+    let low = color / 12.92;
+    let high = pow((max(color, vec3<f32>(0.0)) + vec3<f32>(0.055)) / 1.055, vec3<f32>(2.4));
+    return select(high, low, color <= vec3<f32>(0.04045));
 }

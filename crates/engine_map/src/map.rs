@@ -158,6 +158,26 @@ impl Face {
     pub const NO_STYLE: u8 = 255;
 }
 
+/// How a map's light comes out.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Look {
+    /// What baked light is raised to. 1 is true linear light, which looks washed
+    /// out with the soft bounced light levels have, and higher makes dim light
+    /// dimmer: 2.2 is the murky look of light on a picture in gamma space.
+    pub light_curve: f32,
+    /// How much light reaches the eye.
+    pub exposure: f32,
+}
+
+impl Default for Look {
+    fn default() -> Self {
+        Self {
+            light_curve: 1.8,
+            exposure: 1.0,
+        }
+    }
+}
+
 /// A map's mega texture, as it's kept in a bake.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct MegaImage {
@@ -276,6 +296,8 @@ pub struct Map {
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.
     pub fog: Option<Fog>,
+    /// How its light comes out.
+    pub look: Look,
     /// Where each sample's light comes from, as bytes. Empty unless the map
     /// was baked with directions.
     pub light_directions: Vec<[u8; 3]>,

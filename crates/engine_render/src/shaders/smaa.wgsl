@@ -31,7 +31,8 @@ fn clamped(at: vec2<i32>) -> vec2<i32> {
 
 fn luma_at(at: vec2<i32>) -> f32 {
     let color = textureLoad(source, clamped(at), 0).rgb;
-    return dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+    // Edges go by how they look, and scenes hold linear light.
+    return sqrt(dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)));
 }
 
 // The red channel says there's an edge on a pixel's left, and green on its top.

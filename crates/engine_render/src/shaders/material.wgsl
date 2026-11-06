@@ -353,7 +353,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
             }
         }
     }
-    return vec4<f32>(raised(color), alpha);
+    return vec4<f32>(scene_color(color), alpha);
 }
 
 struct MaskedOut {

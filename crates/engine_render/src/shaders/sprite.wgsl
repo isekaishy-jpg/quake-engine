@@ -55,7 +55,7 @@ fn fs_sprite(in: SpriteOut) -> @location(0) vec4<f32> {
     if texel.a < 0.5 {
         discard;
     }
-    return vec4<f32>(pow(texel.rgb, vec3<f32>(frame.params.w)), 1.0);
+    return vec4<f32>(texel.rgb, 1.0);
 }
 
 struct ParticleIn {
@@ -88,5 +88,5 @@ fn vs_particle(in: ParticleIn) -> ParticleOut {
 
 @fragment
 fn fs_particle(in: ParticleOut) -> @location(0) vec4<f32> {
-    return vec4<f32>(pow(in.color, vec3<f32>(frame.params.w)), 1.0);
+    return vec4<f32>(pow(in.color, vec3<f32>(2.2)), 1.0);
 }

@@ -27,8 +27,23 @@ fn vs_post(@builtin(vertex_index) index: u32) -> PostOut {
     return out;
 }
 
+// How bright a colour looks. Scenes hold linear light.
 fn luma(color: vec3<f32>) -> f32 {
-    return dot(color, vec3<f32>(0.299, 0.587, 0.114));
+    return sqrt(dot(color, vec3<f32>(0.299, 0.587, 0.114)));
+}
+
+// Linear light as a screen shows it. What's too bright comes down as a whole, so
+// that it keeps its colour, and `gamma` is the player's brightness, as
+// `BuildGammaTable` was for the palette. The noise, under a step of the screen's
+// bytes, stops dark gradients banding.
+fn to_screen(light: vec3<f32>, noise: f32) -> vec3<f32> {
+    let bright = light * frame.color_params.y;
+    let peak = max(bright.r, max(bright.g, bright.b));
+    let held = max(bright / max(peak, 1.0), vec3<f32>(0.0));
+    let raised = pow(held, vec3<f32>(frame.params.w));
+    let low = raised * 12.92;
+    let high = 1.055 * pow(raised, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+    return select(high, low, raised <= vec3<f32>(0.0031308)) + (noise - 0.5) / 255.0;
 }
 
 fn load_color(at: vec2<i32>) -> vec3<f32> {
@@ -184,7 +199,7 @@ fn probe_light(point: vec3<f32>) -> vec3<f32> {
     let second = vec2<f32>(across, (high * size.y + local.y + 0.5) / rows);
     let below = textureSampleLevel(probe_slices, scene_sampler, first, 0.0).rgb;
     let above = textureSampleLevel(probe_slices, scene_sampler, second, 0.0).rgb;
-    return mix(below, above, local.z - low);
+    return pow(mix(below, above, local.z - low), vec3<f32>(frame.color_params.x));
 }
 
 // Fog lit by the bake, marched along the view. It's brightest by lights.
@@ -595,7 +610,7 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     if frame.stencil_params.x > 0.5 {
         color = color + textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0).rgb;
     }
-    return vec4<f32>(color, 1.0);
+    return vec4<f32>(to_screen(color, noise), 1.0);
 }
 
 // Light in the air, for the final pass to add. It's soft, so a quarter of the
