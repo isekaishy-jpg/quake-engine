@@ -68,6 +68,8 @@ External servers, relay and NAT traversal, Linux dedicated servers, Theora video
 
 ### Real sound features
 
+Done by [proposal 0129](../proposals/0129-real-sound.md).
+
 What increment 5 does to sound is a port with fixes on top, not an audio design. Volume falloff, stereo, ambient levels and mixing should become real features, researched properly against what's normal now, which should cover and go past these stopgaps.
 
 | Today's stopgap | What should replace it |
@@ -81,6 +83,8 @@ What increment 5 does to sound is a port with fixes on top, not an audio design.
 | Fixed levels from 1996 | Settings the player can change, per bus |
 
 ### Entity culling
+
+Done by [proposal 0088](../proposals/0088-visibility-and-entity-culling.md).
 
 Every client is sent every entity, so a cheating client can see through walls, and traffic is higher than it has to be. `SV_WriteEntitiesToClient` in WinQuake and `SV_WritePacketEntities` in QuakeWorld send only what's in the client's fat PVS. To add to an increment, in this order:
 

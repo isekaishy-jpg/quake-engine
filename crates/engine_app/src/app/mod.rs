@@ -230,8 +230,10 @@ pub(crate) struct World {
     pub(crate) bots: Vec<Bot>,
     /// How many bots have been made, for names and seeds.
     bots_made: u32,
-    /// The map's collision, for bots.
+    /// The map's collision, for bots and for what's heard through walls.
     collision: Option<Rc<CollisionWorld>>,
+    /// How long until the room round the listener is measured again.
+    room_wait: f64,
 }
 
 impl World {
@@ -685,6 +687,7 @@ impl Engine {
                 bots: Vec::new(),
                 bots_made: 0,
                 collision: None,
+                room_wait: 0.0,
             },
             clock: TickClock::new(rate, MAX_CATCH_UP),
             last_service: None,

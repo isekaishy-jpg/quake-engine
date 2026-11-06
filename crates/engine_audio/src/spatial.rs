@@ -23,12 +23,103 @@ impl Default for Listener {
     }
 }
 
-/// The volume in the left and right ears. The fade with distance is
-/// `SND_Spatialize`'s, but where that adds to the near ear, which doubles a
-/// sound beside the listener, this shares the same power between the ears. So
-/// a sound is as loud whichever way the listener turns.
+/// How a kind of sound fades with distance, up to where it falls silent.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Fade {
+    /// Falls away quickly and then slowly, as sound does in air. Halfway out it's about
+    /// a quarter as loud, where a straight line would leave half.
+    #[default]
+    Natural,
+    /// A straight line, from `SND_Spatialize`, which keeps far off weapons and the loops
+    /// that mark a place in earshot.
+    Straight,
+}
+
+impl Fade {
+    /// The kind of fade for the sound called `name`. Gunfire is what a player has to hear
+    /// from across a level.
+    #[must_use]
+    pub fn of(name: &str) -> Self {
+        if name.starts_with("weapons/") {
+            Self::Straight
+        } else {
+            Self::Natural
+        }
+    }
+
+    /// How much is left at `share` of the way out to silence.
+    #[must_use]
+    pub fn at(self, share: f32) -> f32 {
+        let left = (1.0 - share).max(0.0);
+        match self {
+            Self::Straight => left,
+            Self::Natural => left * left.sqrt() / (1.0 + share.max(0.0)),
+        }
+    }
+}
+
+/// How a room sounds, from how far it is to its surfaces.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct Room {
+    /// How big it is, from 0 for a cupboard to 1 for a cathedral.
+    pub size: f32,
+    /// How much of it is open to the sky, from 0 to 1, which sends nothing back.
+    pub open: f32,
+}
+
+/// The distance past which a room counts as big as it gets.
+const BIGGEST_ROOM: f32 = 1024.0;
+
+impl Room {
+    /// The room round a listener, from how far rays go in each direction. `None` is a ray
+    /// that met nothing, or the sky.
+    #[must_use]
+    pub fn from_rays(rays: &[Option<f32>]) -> Self {
+        let hits: Vec<f32> = rays.iter().flatten().copied().collect();
+        if rays.is_empty() {
+            return Self::default();
+        }
+        #[expect(clippy::cast_precision_loss, reason = "a handful of rays")]
+        let open = 1.0 - hits.len() as f32 / rays.len() as f32;
+        #[expect(clippy::cast_precision_loss, reason = "a handful of rays")]
+        let mean = hits.iter().sum::<f32>() / hits.len().max(1) as f32;
+        Self {
+            size: (mean / BIGGEST_ROOM).clamp(0.0, 1.0),
+            open,
+        }
+    }
+
+    /// How long the room rings, as the reverb's feedback, from 0 to 1.
+    #[must_use]
+    pub fn feedback(self) -> f32 {
+        0.45 + 0.42 * self.size
+    }
+
+    /// How much of what's heard comes back from the room, as an amplitude. Hard walls close
+    /// by give a little, a hall gives more, and the open air gives nothing.
+    #[must_use]
+    pub fn send(self) -> f32 {
+        (0.12 + 0.28 * self.size) * (1.0 - self.open)
+    }
+}
+
+/// The volume in the left and right ears, on a straight line. See [`volumes_by`].
 #[must_use]
 pub fn stereo_volumes(
+    source: Vec3,
+    listener: &Listener,
+    volume: f32,
+    attenuation: f32,
+) -> (f32, f32) {
+    volumes_by(Fade::Straight, source, listener, volume, attenuation)
+}
+
+/// The volume in the left and right ears. The range is `SND_Spatialize`'s, but where that
+/// adds to the near ear, which doubles a sound beside the listener, this shares the same
+/// power between the ears. So a sound is as loud whichever way the listener turns.
+#[must_use]
+pub fn volumes_by(
+    fade: Fade,
     source: Vec3,
     listener: &Listener,
     volume: f32,
@@ -41,11 +132,10 @@ pub fn stereo_volumes(
     } else {
         0.0
     };
-    let fade = volume * (1.0 - distance * attenuation / NOMINAL_CLIP_DISTANCE);
-    let fade = fade.max(0.0);
+    let left = volume * fade.at(distance * attenuation / NOMINAL_CLIP_DISTANCE);
     (
-        fade * (1.0 - dot).max(0.0).sqrt(),
-        fade * (1.0 + dot).max(0.0).sqrt(),
+        left * (1.0 - dot).max(0.0).sqrt(),
+        left * (1.0 + dot).max(0.0).sqrt(),
     )
 }
 

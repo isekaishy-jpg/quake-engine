@@ -1,8 +1,51 @@
 //! What's heard.
 
+use engine_audio::Room;
+use engine_core::math::Vec3;
+use engine_physics::CollisionWorld;
 use fixture_quake::music_file;
 
 use super::World;
+
+/// How often the room round the listener is measured, in seconds.
+const ROOM_SECONDS: f64 = 0.25;
+
+/// How far a ray goes looking for the room's walls.
+const ROOM_REACH: f32 = 2048.0;
+
+/// The ways a room is looked at, from a listener.
+const ROOM_RAYS: [(f32, f32, f32); 10] = [
+    (1.0, 0.0, 0.0),
+    (-1.0, 0.0, 0.0),
+    (0.0, 1.0, 0.0),
+    (0.0, -1.0, 0.0),
+    (0.0, 0.0, 1.0),
+    (0.0, 0.0, -1.0),
+    (0.7, 0.7, 0.0),
+    (-0.7, 0.7, 0.0),
+    (0.7, -0.7, 0.0),
+    (-0.7, -0.7, 0.0),
+];
+
+/// Whether a straight line from the listener reaches `place`. With no world, it does.
+fn heard_from(world: Option<&CollisionWorld>, listener: Vec3, place: Vec3) -> bool {
+    world.is_none_or(|world| world.with(&[]).trace(listener, place).fraction >= 1.0)
+}
+
+/// How the room round `origin` sounds, from how far it is to what's there. What a ray
+/// doesn't reach, it takes to be open.
+fn room_round(world: &CollisionWorld, origin: Vec3) -> Room {
+    let view = world.with(&[]);
+    let rays: Vec<Option<f32>> = ROOM_RAYS
+        .iter()
+        .map(|(x, y, z)| {
+            let end = origin + Vec3::new(*x, *y, *z) * ROOM_REACH;
+            let fraction = view.trace(origin, end).fraction;
+            (fraction < 1.0).then_some(fraction * ROOM_REACH)
+        })
+        .collect();
+    Room::from_rays(&rays)
+}
 
 /// The sound levels the console sets.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -34,6 +77,7 @@ impl World {
         for effect in client.take_effects() {
             self.effects.start(&effect);
         }
+        let (world, listener) = (self.collision.clone(), self.listener.origin);
         let mut sounds = client.take_sounds();
         sounds.extend(self.effects.take_sounds());
         let static_sounds = client.take_static_sounds();
@@ -43,7 +87,8 @@ impl World {
                 .sounds
                 .clip(&sound.name, &self.filesystem, &mut self.audio);
             if let Some(clip) = clip {
-                self.audio.start(&sound, clip);
+                let behind = !sound.own && !heard_from(world.as_deref(), listener, sound.origin);
+                self.audio.start_behind(&sound, clip, behind);
             }
         }
         for sound in static_sounds {
@@ -98,6 +143,21 @@ impl World {
             self.audio.set_muted(muted);
         }
         let origin = self.listener.origin;
+        if let Some(client) = &self.client {
+            self.audio.follow(|entity| client.entity_origin(entity));
+        }
+        let world = self.collision.clone();
+        #[expect(clippy::cast_possible_truncation, reason = "a frame fits f32")]
+        self.audio.occlude(seconds as f32, |place| {
+            !heard_from(world.as_deref(), origin, place)
+        });
+        self.room_wait -= seconds;
+        if self.room_wait <= 0.0 {
+            self.room_wait = ROOM_SECONDS;
+            if let Some(world) = world.as_deref() {
+                self.audio.set_room(room_round(world, origin));
+            }
+        }
         let levels = self
             .ambience
             .as_mut()

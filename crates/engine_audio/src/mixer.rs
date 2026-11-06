@@ -6,8 +6,8 @@ use engine_core::math::Vec3;
 use engine_core::sound::{Clip, SoundStart, StaticSound};
 
 use crate::error::AudioError;
-use crate::output::{Output, Prepared, Voice};
-use crate::spatial::{Listener, stereo_volumes};
+use crate::output::{Bus, Output, Prepared, Voice};
+use crate::spatial::{Fade, Listener, Room, stereo_volumes, volumes_by};
 
 /// How many sounds can start from entities at once. The original had 8.
 const DYNAMIC_CHANNELS: usize = 128;
@@ -23,6 +23,23 @@ const MAX_SKIP: f64 = 0.1;
 
 /// The most one ear gets from one channel, from `SND_PaintChannelFrom8`.
 const FULL_VOLUME: f32 = 1.0;
+
+/// How much of a sound comes through a wall.
+const THROUGH_A_WALL: f32 = 0.35;
+
+/// How long a sound takes to go behind a wall or come out, in seconds.
+const OCCLUSION_SECONDS: f32 = 0.15;
+
+/// How loud a sound has to be in an ear to push everything else down.
+const DUCK_THRESHOLD: f32 = 0.6;
+
+/// How far music and ambience go down under a loud sound.
+const DUCKED: f32 = 0.5;
+
+/// How long they take to go down, and to come back, in seconds.
+const DUCK_ATTACK: f32 = 0.05;
+/// See [`DUCK_ATTACK`].
+const DUCK_RELEASE: f32 = 0.6;
 
 /// A clip the mixer holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -54,6 +71,10 @@ struct Channel {
     channel: u8,
     /// Whether it's the listener's own.
     own: bool,
+    /// How it fades with distance.
+    fade: Fade,
+    /// How much of it gets past what's in the way, from [`THROUGH_A_WALL`] to 1.
+    clear: f32,
     /// Seconds until it ends, which never comes for a loop.
     remaining: f64,
     /// Whether it started since the last update.
@@ -70,7 +91,8 @@ impl Channel {
         let (left, right) = if self.own {
             (self.volume, self.volume)
         } else {
-            stereo_volumes(self.origin, listener, self.volume, self.attenuation)
+            let volume = self.volume * self.clear;
+            volumes_by(self.fade, self.origin, listener, volume, self.attenuation)
         };
         self.ears = (left.min(FULL_VOLUME), right.min(FULL_VOLUME));
     }
@@ -154,6 +176,12 @@ pub struct Audio {
     water_share: f32,
     /// Picks how far a repeated sound skips.
     seed: u32,
+    /// How the room round the listener sounds.
+    room: Room,
+    /// How far music and ambience are turned down, from 1 for not at all.
+    ducking: f32,
+    /// How loud sounds are.
+    effects_volume: f32,
 }
 
 impl Audio {
@@ -187,6 +215,9 @@ impl Audio {
             ambient_level: 0.3,
             water_share: 0.5,
             seed: 1,
+            room: Room::default(),
+            ducking: 1.0,
+            effects_volume: 1.0,
         }
     }
 
@@ -245,6 +276,12 @@ impl Audio {
 
     /// Starts `sound` playing `clip`, unless it can't be heard from here.
     pub fn start(&mut self, sound: &SoundStart, clip: ClipId) {
+        self.start_behind(sound, clip, false);
+    }
+
+    /// Starts `sound`, which is `blocked` from the listener by something solid, so it's
+    /// muffled from the first moment.
+    pub fn start_behind(&mut self, sound: &SoundStart, clip: ClipId, blocked: bool) {
         let Some(loaded) = self.clips.get(clip.0) else {
             return;
         };
@@ -265,6 +302,8 @@ impl Audio {
             entity: sound.entity,
             channel: sound.channel,
             own: sound.own,
+            fade: Fade::of(&sound.name),
+            clear: if blocked { THROUGH_A_WALL } else { 1.0 },
             remaining: if looping { f64::INFINITY } else { seconds },
             fresh: true,
             ears: (0.0, 0.0),
@@ -287,7 +326,8 @@ impl Audio {
         }
         if let (Some(output), Some(loaded)) = (&mut self.output, self.clips.get(clip.0)) {
             let (left, right) = channel.ears;
-            channel.voice = output.play(&loaded.prepared, offset, left, right);
+            let bus = if blocked { Bus::Muffled } else { Bus::Effects };
+            channel.voice = output.play(&loaded.prepared, bus, offset, left, right);
         }
         self.channels[index] = Some(channel);
     }
@@ -328,6 +368,85 @@ impl Audio {
         self.zone_sound.level / 255.0
     }
 
+    /// Moves sounds to where what made them is now, as `place_of` says, by entity. A sound
+    /// whose entity has gone stays where it was last.
+    pub fn follow(&mut self, place_of: impl Fn(u64) -> Option<Vec3>) {
+        for channel in self.channels.iter_mut().flatten() {
+            if !channel.own
+                && let Some(place) = place_of(channel.entity)
+            {
+                channel.origin = place;
+            }
+        }
+    }
+
+    /// Works out what's behind something, with `blocked` saying if a place can't be seen
+    /// from the listener, and moves each sound on by `seconds` towards that.
+    pub fn occlude(&mut self, seconds: f32, blocked: impl Fn(Vec3) -> bool) {
+        let step = (1.0 - THROUGH_A_WALL) * seconds / OCCLUSION_SECONDS;
+        for channel in self.channels.iter_mut().flatten() {
+            if channel.own {
+                continue;
+            }
+            let wanted = if blocked(channel.origin) {
+                THROUGH_A_WALL
+            } else {
+                1.0
+            };
+            let change = (wanted - channel.clear).clamp(-step, step);
+            channel.clear += change;
+        }
+    }
+
+    /// Sets how the room round the listener sounds.
+    pub fn set_room(&mut self, room: Room) {
+        self.room = room;
+        if let Some(output) = &mut self.output {
+            output.set_room(room);
+        }
+    }
+
+    /// How the room round the listener sounds.
+    #[must_use]
+    pub const fn room(&self) -> Room {
+        self.room
+    }
+
+    /// How far music and ambience are turned down under what's loud, from 1 for not at all.
+    #[must_use]
+    pub const fn ducking(&self) -> f32 {
+        self.ducking
+    }
+
+    /// Turns music and ambience down under whatever's loud now, so that it stays clear.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a frame's fade needs no more than f32"
+    )]
+    fn update_ducking(&mut self, seconds: f64) {
+        let loudest = self
+            .channels
+            .iter()
+            .flatten()
+            .map(|channel| channel.ears.0.max(channel.ears.1))
+            .fold(0.0, f32::max);
+        let wanted = if loudest >= DUCK_THRESHOLD {
+            DUCKED
+        } else {
+            1.0
+        };
+        let time = if wanted < self.ducking {
+            DUCK_ATTACK
+        } else {
+            DUCK_RELEASE
+        };
+        let step = (1.0 - DUCKED) * seconds as f32 / time;
+        self.ducking += (wanted - self.ducking).clamp(-step, step);
+        if let Some(output) = &mut self.output {
+            output.set_ducking(self.ducking, self.effects_volume);
+        }
+    }
+
     /// `S_Update`: moves on by `seconds`, heard from `listener`, in a leaf
     /// with these levels of water and sky out of 255.
     pub fn update(&mut self, listener: Listener, seconds: f64, levels: [u8; 2]) {
@@ -351,6 +470,7 @@ impl Audio {
         self.update_statics(&listener);
         self.update_ambients(seconds, levels);
         self.update_zone_sound(seconds);
+        self.update_ducking(seconds);
     }
 
     /// Fades a zone's sound, down to nothing before another takes over.
@@ -382,10 +502,9 @@ impl Audio {
         match (&mut sound.voice, sound.clip, &mut self.output) {
             (Some(voice), _, _) => voice.set_volumes(volume, volume),
             (None, Some(clip), Some(output)) if volume > 0.0 => {
-                sound.voice = self
-                    .clips
-                    .get(clip.0)
-                    .and_then(|loaded| output.play(&loaded.prepared, 0.0, volume, volume));
+                sound.voice = self.clips.get(clip.0).and_then(|loaded| {
+                    output.play(&loaded.prepared, Bus::Ambience, 0.0, volume, volume)
+                });
             }
             _ => {}
         }
@@ -411,10 +530,9 @@ impl Audio {
                     group.voice = None;
                 }
                 (None, true, Some(output)) => {
-                    group.voice = self
-                        .clips
-                        .get(group.clip.0)
-                        .and_then(|clip| output.play(&clip.prepared, 0.0, left, right));
+                    group.voice = self.clips.get(group.clip.0).and_then(|clip| {
+                        output.play(&clip.prepared, Bus::Ambience, 0.0, left, right)
+                    });
                 }
                 (None, _, _) => {}
             }
@@ -446,10 +564,9 @@ impl Audio {
             match (&mut ambient.voice, &mut self.output) {
                 (Some(voice), _) => voice.set_volumes(volume, volume),
                 (None, Some(output)) if volume > 0.0 => {
-                    ambient.voice = self
-                        .clips
-                        .get(clip.0)
-                        .and_then(|loaded| output.play(&loaded.prepared, 0.0, volume, volume));
+                    ambient.voice = self.clips.get(clip.0).and_then(|loaded| {
+                        output.play(&loaded.prepared, Bus::Ambience, 0.0, volume, volume)
+                    });
                 }
                 (None, _) => {}
             }
@@ -527,6 +644,7 @@ impl Audio {
 
     /// Sets how loud sound effects are, from 0 to 1.
     pub fn set_volume(&mut self, volume: f32) {
+        self.effects_volume = volume;
         if let Some(output) = &mut self.output {
             output.set_effects_volume(volume);
         }

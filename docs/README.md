@@ -164,6 +164,7 @@
     - [0126: how your own shots ease](proposals/0126-own-shots.md)
     - [0127: mice that report 8,000 times a second](proposals/0127-fast-mice.md)
     - [0128: online numbers, on the networks we can make](proposals/0128-network-numbers.md)
+    - [0129: real sound](proposals/0129-real-sound.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

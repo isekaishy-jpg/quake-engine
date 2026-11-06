@@ -6,16 +6,21 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use engine_core::sound::Clip;
+use kira::effect::compressor::CompressorBuilder;
+use kira::effect::filter::{FilterBuilder, FilterMode};
+use kira::effect::reverb::{ReverbBuilder, ReverbHandle};
 use kira::effect::{Effect, EffectBuilder};
 use kira::info::Info;
 use kira::sound::FromFileError;
 use kira::sound::static_sound::{StaticSoundData, StaticSoundHandle, StaticSoundSettings};
 use kira::sound::streaming::{StreamingSoundData, StreamingSoundHandle};
-use kira::track::{TrackBuilder, TrackHandle};
-use kira::{AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Panning, Tween};
+use kira::track::{MainTrackBuilder, SendTrackBuilder, SendTrackHandle, TrackBuilder, TrackHandle};
+use kira::{
+    AudioManager, AudioManagerSettings, Decibels, DefaultBackend, Frame, Mix, Panning, Tween,
+};
 
 use crate::error::AudioError;
-use crate::spatial::amplitude_and_pan;
+use crate::spatial::{Room, amplitude_and_pan};
 
 /// The most sound effects that can play at once.
 const MAX_VOICES: usize = 1024;
@@ -29,6 +34,29 @@ const FADE: Duration = Duration::from_millis(30);
 /// How long everything takes to fade when muted. Fades run in decibels, so a
 /// short one drops most of the way at once, which crackles.
 const MUTE_FADE: Duration = Duration::from_millis(250);
+
+/// How long a room takes to change, as walking through a door doesn't flip it.
+const ROOM_CHANGE: Duration = Duration::from_millis(400);
+
+/// How low sound through a wall goes, in hertz.
+const MUFFLED_CUTOFF: f64 = 900.0;
+
+/// Where the limiter on the output starts, in decibels.
+const LIMITER_THRESHOLD: f64 = -4.0;
+
+/// How hard the limiter holds what's over it.
+const LIMITER_RATIO: f64 = 16.0;
+
+/// Which bus a sound goes through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Bus {
+    /// What's happening.
+    Effects,
+    /// What's happening behind something.
+    Muffled,
+    /// The sound of the place, which gives way to what's happening.
+    Ambience,
+}
 
 /// A change over `duration`.
 fn tween(duration: Duration) -> Tween {
@@ -137,8 +165,20 @@ pub(crate) struct Output {
     manager: AudioManager<DefaultBackend>,
     /// Sound effects.
     effects: TrackHandle,
+    /// Sound effects behind something.
+    muffled: TrackHandle,
+    /// The sound of the place.
+    ambience: TrackHandle,
+    /// What comes back from the room, which is kept so that it isn't removed.
+    _room: SendTrackHandle,
+    /// The reverb on the room's track.
+    reverb: ReverbHandle,
     /// The music playing.
     music: Option<StreamingSoundHandle<FromFileError>>,
+    /// How loud music is set.
+    music_volume: f32,
+    /// How far things are turned down under what's loud.
+    ducking: f32,
     /// The longest gap between the audio thread's turns, in microseconds.
     longest_gap: Arc<AtomicU32>,
 }
@@ -146,17 +186,46 @@ pub(crate) struct Output {
 impl Output {
     /// Opens the default device, if there is one.
     pub(crate) fn open() -> Option<Self> {
-        let mut manager =
-            AudioManager::<DefaultBackend>::new(AudioManagerSettings::default()).ok()?;
+        // A limiter on the output, so that many loud sounds at once don't clip.
+        let limiter = CompressorBuilder::new()
+            .threshold(LIMITER_THRESHOLD)
+            .ratio(LIMITER_RATIO)
+            .attack_duration(Duration::from_millis(2))
+            .release_duration(Duration::from_millis(120));
+        let settings = AudioManagerSettings {
+            main_track_builder: MainTrackBuilder::new().with_effect(limiter),
+            ..AudioManagerSettings::default()
+        };
+        let mut manager = AudioManager::<DefaultBackend>::new(settings).ok()?;
         let longest_gap = Arc::new(AtomicU32::new(0));
+        let mut room = SendTrackBuilder::new();
+        let reverb = room.add_effect(ReverbBuilder::new().damping(0.6).mix(Mix::WET));
+        let room = manager.add_send_track(room).ok()?;
         let track = TrackBuilder::new()
             .sound_capacity(MAX_VOICES)
+            .with_send(&room, Decibels(-14.0))
             .with_effect(GapWatchBuilder(Arc::clone(&longest_gap)));
         let effects = manager.add_sub_track(track).ok()?;
+        let muffle = FilterBuilder::new()
+            .mode(FilterMode::LowPass)
+            .cutoff(MUFFLED_CUTOFF);
+        let muffled = TrackBuilder::new()
+            .sound_capacity(MAX_VOICES)
+            .with_send(&room, Decibels(-14.0))
+            .with_effect(muffle);
+        let muffled = manager.add_sub_track(muffled).ok()?;
+        let ambience = TrackBuilder::new().sound_capacity(MAX_VOICES);
+        let ambience = manager.add_sub_track(ambience).ok()?;
         Some(Self {
             manager,
             effects,
+            muffled,
+            ambience,
+            _room: room,
+            reverb,
             music: None,
+            music_volume: 1.0,
+            ducking: 1.0,
             longest_gap,
         })
     }
@@ -165,6 +234,7 @@ impl Output {
     pub(crate) fn play(
         &mut self,
         clip: &Prepared,
+        bus: Bus,
         offset: f64,
         left: f32,
         right: f32,
@@ -175,19 +245,53 @@ impl Output {
             .start_position(offset)
             .volume(decibels(amplitude))
             .panning(Panning(pan));
-        self.effects.play(data).ok().map(Voice)
+        let track = match bus {
+            Bus::Effects => &mut self.effects,
+            Bus::Muffled => &mut self.muffled,
+            Bus::Ambience => &mut self.ambience,
+        };
+        track.play(data).ok().map(Voice)
     }
 
     /// Sets how loud sound effects are.
     pub(crate) fn set_effects_volume(&mut self, volume: f32) {
         self.effects.set_volume(decibels(volume), tween(SMOOTHING));
+        self.muffled.set_volume(decibels(volume), tween(SMOOTHING));
+        self.ambience
+            .set_volume(decibels(volume * self.ducking), tween(SMOOTHING));
     }
 
     /// Sets how loud music is.
     pub(crate) fn set_music_volume(&mut self, volume: f32) {
+        self.music_volume = volume;
+        self.apply_music_volume();
+    }
+
+    /// Sets how far music and ambience are turned down under what's loud.
+    pub(crate) fn set_ducking(&mut self, ducking: f32, effects_volume: f32) {
+        if (ducking - self.ducking).abs() < 0.005 {
+            return;
+        }
+        self.ducking = ducking;
+        self.ambience
+            .set_volume(decibels(effects_volume * ducking), tween(SMOOTHING));
+        self.apply_music_volume();
+    }
+
+    /// Sets how loud music plays, for how it's set and what's turning it down.
+    fn apply_music_volume(&mut self) {
         if let Some(music) = &mut self.music {
+            let volume = self.music_volume * self.ducking;
             music.set_volume(decibels(volume), tween(SMOOTHING));
         }
+    }
+
+    /// Sets how the room sounds.
+    pub(crate) fn set_room(&mut self, room: Room) {
+        self.reverb
+            .set_feedback(f64::from(room.feedback()), tween(ROOM_CHANGE));
+        self._room
+            .set_volume(decibels(room.send() / 0.4), tween(ROOM_CHANGE));
     }
 
     /// Silences everything, or lets it back.

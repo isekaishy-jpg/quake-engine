@@ -12,4 +12,4 @@ mod spatial;
 
 pub use error::AudioError;
 pub use mixer::{Audio, ClipId, PlayingSound};
-pub use spatial::{Listener, amplitude_and_pan, stereo_volumes};
+pub use spatial::{Fade, Listener, Room, amplitude_and_pan, stereo_volumes, volumes_by};

@@ -2,7 +2,9 @@
 
 use std::sync::Arc;
 
-use engine_audio::{Audio, ClipId, Listener, amplitude_and_pan, stereo_volumes};
+use engine_audio::{
+    Audio, ClipId, Fade, Listener, Room, amplitude_and_pan, stereo_volumes, volumes_by,
+};
 use engine_core::math::Vec3;
 use engine_core::sound::{Clip, SoundStart, StaticSound};
 
@@ -367,4 +369,151 @@ fn water_has_its_own_share_of_the_ambient_level() {
     audio.set_water_share(1.0);
     audio.update(listener(), 10.0, [255, 255]);
     assert!((audio.ambient_volumes()[0] - 0.3).abs() < 1e-4);
+}
+
+#[test]
+fn natural_fade_falls_quickly_then_slowly_and_ends_where_a_straight_line_does() {
+    let (near, half, far) = (
+        Fade::Natural.at(0.1),
+        Fade::Natural.at(0.5),
+        Fade::Natural.at(0.9),
+    );
+    assert!(near > 0.7 && near < 1.0, "{near}");
+    assert!(half < 0.3, "{half}");
+    assert!(far > 0.0 && far < 0.05, "{far}");
+    assert!(Fade::Natural.at(1.0).abs() < 1e-6);
+    assert!(Fade::Natural.at(1.5).abs() < 1e-6);
+    assert!((Fade::Straight.at(0.5) - 0.5).abs() < 1e-6);
+}
+
+#[test]
+fn gunfire_carries_further_than_other_sounds() {
+    assert_eq!(Fade::of("weapons/rocket1i.wav"), Fade::Straight);
+    assert_eq!(Fade::of("soldier/pain1.wav"), Fade::Natural);
+    let ears = |fade| volumes_by(fade, Vec3::new(500.0, 0.0, 0.0), &listener(), 1.0, 1.0);
+    assert!(ears(Fade::Straight).0 > ears(Fade::Natural).0 * 1.5);
+}
+
+/// A sound at `x` along from the listener, from entity 5.
+fn sound_at(x: f32) -> SoundStart {
+    let mut started = sound(5, 1);
+    started.origin = Vec3::new(x, 0.0, 0.0);
+    started.volume = 1.0;
+    started.attenuation = 1.0;
+    started
+}
+
+#[test]
+fn a_sound_follows_what_made_it() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 10, false);
+    audio.update(listener(), 0.0, [0, 0]);
+    audio.start(&sound_at(100.0), clip);
+    audio.update(listener(), 0.01, [0, 0]);
+    let near = audio.playing()[0].left;
+    audio.follow(|entity| (entity == 5).then_some(Vec3::new(600.0, 0.0, 0.0)));
+    audio.update(listener(), 0.01, [0, 0]);
+    let far = audio.playing()[0].left;
+    assert!(far < near * 0.5, "{far} of {near}");
+}
+
+#[test]
+fn a_sound_whose_maker_has_gone_stays_where_it_was() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 10, false);
+    audio.update(listener(), 0.0, [0, 0]);
+    audio.start(&sound_at(100.0), clip);
+    audio.update(listener(), 0.01, [0, 0]);
+    let before = audio.playing()[0].left;
+    audio.follow(|_| None);
+    audio.update(listener(), 0.01, [0, 0]);
+    assert!((audio.playing()[0].left - before).abs() < 1e-6);
+}
+
+#[test]
+fn a_wall_muffles_a_sound_soon_after_it_gets_in_the_way() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 10, false);
+    audio.update(listener(), 0.0, [0, 0]);
+    audio.start(&sound_at(100.0), clip);
+    audio.update(listener(), 0.01, [0, 0]);
+    let clear = audio.playing()[0].left;
+    audio.occlude(0.02, |_| true);
+    audio.update(listener(), 0.01, [0, 0]);
+    let going = audio.playing()[0].left;
+    assert!(
+        going < clear && going > clear * 0.5,
+        "it eases: {going} of {clear}"
+    );
+    audio.occlude(1.0, |_| true);
+    audio.update(listener(), 0.01, [0, 0]);
+    let behind = audio.playing()[0].left;
+    assert!((behind / clear - 0.35).abs() < 0.01, "{behind} of {clear}");
+    audio.occlude(1.0, |_| false);
+    audio.update(listener(), 0.01, [0, 0]);
+    assert!((audio.playing()[0].left - clear).abs() < 1e-5);
+}
+
+#[test]
+fn a_listeners_own_sound_has_no_wall_in_the_way() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 10, false);
+    let mut own = sound_at(0.0);
+    own.own = true;
+    audio.update(listener(), 0.0, [0, 0]);
+    audio.start(&own, clip);
+    audio.occlude(1.0, |_| true);
+    audio.update(listener(), 0.01, [0, 0]);
+    assert!((audio.playing()[0].left - 1.0).abs() < 1e-6);
+}
+
+#[test]
+fn a_sound_that_starts_behind_a_wall_is_quiet_from_the_start() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 10, false);
+    audio.update(listener(), 0.0, [0, 0]);
+    audio.start_behind(&sound_at(100.0), clip, true);
+    let behind = audio.playing()[0].left;
+    let mut open = Audio::silent();
+    let other = self::clip(&mut open, 10, false);
+    open.update(listener(), 0.0, [0, 0]);
+    open.start(&sound_at(100.0), other);
+    assert!(behind < open.playing()[0].left * 0.5);
+}
+
+#[test]
+fn loud_sounds_push_the_rest_down_and_it_comes_back() {
+    let mut audio = Audio::silent();
+    let clip = clip(&mut audio, 1, false);
+    audio.update(listener(), 0.0, [0, 0]);
+    assert!((audio.ducking() - 1.0).abs() < 1e-6);
+    let mut loud = sound_at(0.0);
+    loud.own = true;
+    audio.start(&loud, clip);
+    for _ in 0..10 {
+        audio.update(listener(), 0.016, [0, 0]);
+    }
+    assert!(audio.ducking() < 0.55, "{}", audio.ducking());
+    for _ in 0..200 {
+        audio.update(listener(), 0.016, [0, 0]);
+    }
+    assert!(audio.ducking() > 0.99, "{}", audio.ducking());
+}
+
+#[test]
+fn a_big_room_rings_longer_than_a_small_one_and_the_open_not_at_all() {
+    let small = Room::from_rays(&[Some(100.0); 6]);
+    let big = Room::from_rays(&[Some(900.0); 6]);
+    let open = Room::from_rays(&[None; 6]);
+    assert!(big.feedback() > small.feedback());
+    assert!(big.send() > small.send());
+    assert!(open.send().abs() < 1e-6);
+    assert!(Room::from_rays(&[]).open.abs() < 1e-6);
+}
+
+#[test]
+fn a_room_half_open_sends_half_as_much_back() {
+    let closed = Room::from_rays(&[Some(400.0), Some(400.0)]);
+    let half = Room::from_rays(&[Some(400.0), None]);
+    assert!((half.send() - closed.send() * 0.5).abs() < 1e-6);
 }
