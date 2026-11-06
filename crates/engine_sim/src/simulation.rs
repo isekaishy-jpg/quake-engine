@@ -1234,6 +1234,11 @@ impl Simulation {
             if !(everything || stepped || flying) || entity.solid == Solid::Not {
                 continue;
             }
+            // Players touch triggers as they move. What's stored for one here stays at
+            // the middle of the world, where it would touch whatever's there.
+            if self.slot(other).is_some() {
+                continue;
+            }
             let low = entity.origin + entity.mins;
             let high = entity.origin + entity.maxs;
             for (id, trigger_low, trigger_high) in &triggers {

@@ -39,7 +39,7 @@ pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough, PAINT_MASK,
     SHADER_IMAGES, SHADER_PARAMS, ShaderCode, Shading, SlotImage, mip_chain,
 };
-pub use nav::{LINKS, NAV_WAYS, NavGrid, NavPlace, Spline};
+pub use nav::{LINKS, NAV_WAYS, NavGrid, NavLeap, NavLeaps, NavPlace, NavStep, NavWay, Spline};
 pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, chunks_of};
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook};

@@ -28,12 +28,185 @@ pub(crate) const NONE: u32 = u32::MAX;
 /// How far off the walkable grid a point can start or end, in cells.
 pub(crate) const SEARCH_REACH: i32 = 3;
 
+/// How near a place has to be for a search for the nearest to stop looking further out.
+pub(crate) const NEAR_ENOUGH: f32 = 48.0;
+
 /// How many places a search looks at before giving up, so a goal nothing
 /// reaches can't walk a whole world.
 const SEARCH_BUDGET: usize = 60_000;
 
 /// How far apart points of a line are checked, as a share of a cell.
 const LINE_STEP: f32 = 0.5;
+
+/// How something gets to a place on its way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum NavWay {
+    /// On foot, along links.
+    Walk,
+    /// Off an edge, down to what's below.
+    Drop,
+    /// Over a gap, or up onto something.
+    Jump,
+    /// Into water or out of it.
+    Swim,
+    /// Carried up by a lift.
+    Lift,
+}
+
+impl NavWay {
+    /// What a script calls it.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Walk => "walk",
+            Self::Drop => "drop",
+            Self::Jump => "jump",
+            Self::Swim => "swim",
+            Self::Lift => "lift",
+        }
+    }
+
+    /// How much further than it is this seems, so that a walk that isn't much longer
+    /// is better than a leap.
+    const fn extra_cost(self) -> f32 {
+        match self {
+            Self::Walk => 0.0,
+            Self::Drop => 32.0,
+            Self::Jump => 96.0,
+            Self::Swim => 192.0,
+            Self::Lift => 256.0,
+        }
+    }
+
+    /// Its number in a file.
+    const fn code(self) -> u32 {
+        match self {
+            Self::Walk => 0,
+            Self::Drop => 1,
+            Self::Jump => 2,
+            Self::Swim => 3,
+            Self::Lift => 4,
+        }
+    }
+
+    /// The way numbered `code`.
+    const fn from_code(code: u32) -> Option<Self> {
+        Some(match code {
+            0 => Self::Walk,
+            1 => Self::Drop,
+            2 => Self::Jump,
+            3 => Self::Swim,
+            4 => Self::Lift,
+            _ => return None,
+        })
+    }
+}
+
+/// A way from one place to another that isn't a walk. They go one way only.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavLeap {
+    /// The place it starts.
+    pub from: Vec3,
+    /// The place it ends.
+    pub to: Vec3,
+    /// How it's done.
+    pub way: NavWay,
+}
+
+/// A grid's leaps, in order of where they start. There are far fewer of these than
+/// places, so a grid in chunks holds them all too.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct NavLeaps(Vec<NavLeap>);
+
+/// Puts two points in order.
+fn point_order(a: Vec3, b: Vec3) -> Ordering {
+    a.x.total_cmp(&b.x)
+        .then(a.y.total_cmp(&b.y))
+        .then(a.z.total_cmp(&b.z))
+}
+
+impl NavLeaps {
+    /// These leaps, ready to look up.
+    #[must_use]
+    pub fn new(mut leaps: Vec<NavLeap>) -> Self {
+        leaps.sort_by(|a, b| point_order(a.from, b.from));
+        Self(leaps)
+    }
+
+    /// How many there are.
+    #[must_use]
+    pub const fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// Whether there are none.
+    #[must_use]
+    pub const fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// All of them.
+    #[must_use]
+    pub fn all(&self) -> &[NavLeap] {
+        &self.0
+    }
+
+    /// The leaps that start at `point`.
+    #[must_use]
+    pub fn from(&self, point: Vec3) -> &[NavLeap] {
+        let first = self
+            .0
+            .partition_point(|leap| point_order(leap.from, point) == Ordering::Less);
+        let rest = &self.0[first..];
+        let count = rest.partition_point(|leap| point_order(leap.from, point) == Ordering::Equal);
+        &rest[..count]
+    }
+
+    /// Them as bytes.
+    #[must_use]
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(self.0.len() * 28);
+        for leap in &self.0 {
+            for value in [
+                leap.from.x,
+                leap.from.y,
+                leap.from.z,
+                leap.to.x,
+                leap.to.y,
+                leap.to.z,
+            ] {
+                out.extend_from_slice(&value.to_le_bytes());
+            }
+            out.extend_from_slice(&leap.way.code().to_le_bytes());
+        }
+        out
+    }
+
+    /// Leaps from bytes, if they make them.
+    #[must_use]
+    pub fn from_bytes(bytes: &[u8]) -> Option<Self> {
+        let (words, _) = bytes.as_chunks::<4>();
+        let mut leaps = Vec::with_capacity(words.len() / 7);
+        for leap in words.as_chunks::<7>().0 {
+            let float = |at: usize| f32::from_le_bytes(leap[at]);
+            leaps.push(NavLeap {
+                from: Vec3::new(float(0), float(1), float(2)),
+                to: Vec3::new(float(3), float(4), float(5)),
+                way: NavWay::from_code(u32::from_le_bytes(leap[6]))?,
+            });
+        }
+        Some(Self::new(leaps))
+    }
+}
+
+/// One point of a way, and how it's reached.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct NavStep {
+    /// Where.
+    pub point: Vec3,
+    /// How to get there from the point before.
+    pub way: NavWay,
+}
 
 /// A place something can stand.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -68,6 +241,8 @@ pub struct NavGrid {
     pub columns: Vec<u32>,
     /// The places, column by column.
     pub places: Vec<NavPlace>,
+    /// The ways between places that aren't walks.
+    pub leaps: NavLeaps,
 }
 
 /// A place in a search, by how good it looks.
@@ -109,6 +284,9 @@ pub(crate) trait Walk {
 
     /// The place nearest `point`.
     fn nearest_place(&self, point: Vec3) -> Option<Self::Place>;
+
+    /// The leaps that start at `point`.
+    fn leaps_from(&self, point: Vec3) -> &[NavLeap];
 }
 
 /// Whether something can walk straight from `from` to `to`, staying on the grid
@@ -154,10 +332,10 @@ fn step_towards<W: Walk>(walk: &W, here: W::Place, point: Vec3) -> Option<W::Pla
     (closest <= walk.spacing() * 0.75).then_some(best)
 }
 
-/// The places from `start` to `goal`, by A*, or `None` if there's no way
-/// within [`SEARCH_BUDGET`].
-fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<W::Place>> {
-    let mut came_from: HashMap<W::Place, W::Place> = HashMap::new();
+/// The places from `start` to `goal` and how each is reached, by A*, or `None` if
+/// there's no way within [`SEARCH_BUDGET`].
+fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<(W::Place, NavWay)>> {
+    let mut came_from: HashMap<W::Place, (W::Place, NavWay)> = HashMap::new();
     let mut cost: HashMap<W::Place, f32> = HashMap::new();
     let target = walk.point(goal);
     let mut open = BinaryHeap::new();
@@ -169,12 +347,14 @@ fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<W::P
     let mut visited = 0;
     while let Some(Open { place, .. }) = open.pop() {
         if place == goal {
-            let mut route = vec![goal];
+            let mut route = Vec::new();
             let mut at = goal;
             while at != start {
-                at = *came_from.get(&at)?;
-                route.push(at);
+                let (before, way) = *came_from.get(&at)?;
+                route.push((at, way));
+                at = before;
             }
+            route.push((start, NavWay::Walk));
             route.reverse();
             return Some(route);
         }
@@ -184,12 +364,17 @@ fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<W::P
         }
         let here = walk.point(place);
         let so_far = cost.get(&place).copied().unwrap_or(f32::MAX);
-        for link in walk.links(place).into_iter().flatten() {
+        let walks = walk.links(place).into_iter().flatten();
+        let leaps = walk.leaps_from(here).iter().filter_map(|leap| {
+            let landing = walk.nearest_place(leap.to)?;
+            Some((landing, leap.way))
+        });
+        for (link, way) in walks.map(|link| (link, NavWay::Walk)).chain(leaps) {
             let there = walk.point(link);
-            let next = so_far + (there - here).length();
+            let next = so_far + (there - here).length() + way.extra_cost();
             if next < cost.get(&link).copied().unwrap_or(f32::MAX) {
                 cost.insert(link, next);
-                came_from.insert(link, place);
+                came_from.insert(link, (place, way));
                 open.push(Open {
                     score: next + (there - target).length(),
                     place: link,
@@ -202,23 +387,44 @@ fn search<W: Walk>(walk: &W, start: W::Place, goal: W::Place) -> Option<Vec<W::P
 
 /// The way from `from` to `to`, with its corners cut where that's walkable, or
 /// `None` if there's no way. It starts and ends at the places nearest them.
-pub(crate) fn find_path_on<W: Walk>(walk: &W, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+pub(crate) fn find_route_on<W: Walk>(walk: &W, from: Vec3, to: Vec3) -> Option<Vec<NavStep>> {
     let (start, goal) = (walk.nearest_place(from)?, walk.nearest_place(to)?);
     let route = search(walk, start, goal)?;
-    let mut kept = vec![start];
+    let step = |(place, way): (W::Place, NavWay)| NavStep {
+        point: walk.point(place),
+        way,
+    };
+    let mut kept = vec![step((start, NavWay::Walk))];
     let mut at = 0;
     while at + 1 < route.len() {
-        let mut furthest = at + 1;
-        for later in (at + 2..route.len()).rev() {
-            if walks_straight(walk, route[at], route[later]) {
+        let next = at + 1;
+        if route[next].1 != NavWay::Walk {
+            kept.push(step(route[next]));
+            at = next;
+            continue;
+        }
+        // Corners are only cut along a walk, up to the next leap.
+        let walked = route[next..]
+            .iter()
+            .position(|(_, way)| *way != NavWay::Walk)
+            .map_or(route.len(), |leap| next + leap);
+        let mut furthest = next;
+        for later in (next + 1..walked).rev() {
+            if walks_straight(walk, route[at].0, route[later].0) {
                 furthest = later;
                 break;
             }
         }
-        kept.push(route[furthest]);
+        kept.push(step(route[furthest]));
         at = furthest;
     }
-    Some(kept.iter().map(|place| walk.point(*place)).collect())
+    Some(kept)
+}
+
+/// The points of [`find_route_on`].
+pub(crate) fn find_path_on<W: Walk>(walk: &W, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
+    let route = find_route_on(walk, from, to)?;
+    Some(route.iter().map(|step| step.point).collect())
 }
 
 impl NavGrid {
@@ -265,7 +471,8 @@ impl NavGrid {
                     }
                 }
             }
-            if best.is_some() {
+            // A place far above or below is no good while a nearer column could do better.
+            if closest <= NEAR_ENOUGH {
                 break;
             }
         }
@@ -278,6 +485,12 @@ impl NavGrid {
     #[must_use]
     pub fn find_path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         find_path_on(self, from, to)
+    }
+
+    /// As [`Self::find_path`], saying how each point is reached.
+    #[must_use]
+    pub fn find_route(&self, from: Vec3, to: Vec3) -> Option<Vec<NavStep>> {
+        find_route_on(self, from, to)
     }
 }
 
@@ -300,6 +513,10 @@ impl Walk for NavGrid {
 
     fn nearest_place(&self, point: Vec3) -> Option<u32> {
         self.nearest(point)
+    }
+
+    fn leaps_from(&self, point: Vec3) -> &[NavLeap] {
+        self.leaps.from(point)
     }
 }
 

@@ -12,7 +12,7 @@ use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map};
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{CRISP_STYLES, Face, FaceLight, Map, SideFiles, TileLight};
+use engine_map::{CRISP_STYLES, Face, FaceLight, Map, NavWay, SideFiles, TileLight};
 
 /// How far from a beat a path can end, for a beat that's only near the grid.
 const NEAR: f32 = 96.0;
@@ -396,8 +396,16 @@ fn the_ember_keep_plays_from_start_to_end() {
 #[ignore = "needs the level baked"]
 fn the_ember_keep_has_no_way_round_its_doors() {
     let map = level("ember_keep");
-    // Without the lift, the gantry can't be reached from the floor of the Forge.
-    assert!(!joined(&map, [2704.0, 720.0, 24.0], [3016.0, 264.0, 280.0]));
+    // The gantry is only reached from the floor of the Forge by its lift.
+    let (floor, gantry) = (
+        Vec3::new(2704.0, 720.0, 24.0),
+        Vec3::new(3016.0, 264.0, 280.0),
+    );
+    let route = map.find_route(PLAYER, floor, gantry).expect("a way up");
+    assert!(
+        route.iter().any(|step| step.way == NavWay::Lift),
+        "{route:?}"
+    );
     // The Crypt's upper passage only meets the hall at its one-way door, and the
     // Sanctum isn't reached from it at all.
     assert!(!joined(

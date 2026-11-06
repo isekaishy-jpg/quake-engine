@@ -743,6 +743,30 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "find_route",
+            lua.create_function(
+                move |lua, (from, to, width): (Vector, Vector, Option<f32>)| {
+                    let simulation = sim.borrow();
+                    let width = width.unwrap_or(PLAYER_WIDTH);
+                    let route = simulation
+                        .map()
+                        .find_route(width, to_vec3(from), to_vec3(to));
+                    let Some(steps) = route else {
+                        return Ok(None);
+                    };
+                    let list = lua.create_table()?;
+                    for (index, step) in steps.into_iter().enumerate() {
+                        let entry = lua.create_table()?;
+                        entry.set("point", from_vec3(step.point))?;
+                        entry.set("way", step.way.name())?;
+                        list.set(index + 1, entry)?;
+                    }
+                    Ok(Some(list))
+                },
+            )?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "find_path",
             lua.create_function(
                 move |lua, (from, to, width): (Vector, Vector, Option<f32>)| {

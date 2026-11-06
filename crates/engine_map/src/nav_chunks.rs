@@ -7,7 +7,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use engine_core::math::Vec3;
 
-use crate::nav::{LINKS, NAV_WAYS, NONE, NavGrid, SEARCH_REACH, Walk, find_path_on};
+use crate::nav::{
+    LINKS, NAV_WAYS, NEAR_ENOUGH, NONE, NavGrid, NavLeap, NavLeaps, NavStep, SEARCH_REACH, Walk,
+    find_path_on, find_route_on,
+};
 
 /// How many columns a chunk has each way, in a real map.
 pub const CHUNK_COLUMNS: u32 = 128;
@@ -207,6 +210,8 @@ pub struct ChunkedNav {
     prefix: String,
     /// Where its files are.
     files: Option<SideFiles>,
+    /// The ways between places that aren't walks.
+    leaps: NavLeaps,
     /// The most recent chunks.
     kept: Mutex<Kept>,
 }
@@ -219,8 +224,16 @@ impl ChunkedNav {
             shape,
             prefix,
             files: None,
+            leaps: NavLeaps::default(),
             kept: Mutex::default(),
         }
+    }
+
+    /// The same grid with `leaps`.
+    #[must_use]
+    pub fn with_leaps(mut self, leaps: NavLeaps) -> Self {
+        self.leaps = leaps;
+        self
     }
 
     /// Its shape.
@@ -298,6 +311,12 @@ impl ChunkedNav {
     #[must_use]
     pub fn find_path(&self, from: Vec3, to: Vec3) -> Option<Vec<Vec3>> {
         find_path_on(self, from, to)
+    }
+
+    /// As [`Self::find_path`], saying how each point is reached.
+    #[must_use]
+    pub fn find_route(&self, from: Vec3, to: Vec3) -> Option<Vec<NavStep>> {
+        find_route_on(self, from, to)
     }
 
     /// Where a column is.
@@ -382,11 +401,16 @@ impl Walk for ChunkedNav {
                     }
                 }
             }
-            if best.is_some() {
+            // A place far above or below is no good while a nearer column could do better.
+            if closest <= NEAR_ENOUGH {
                 break;
             }
         }
         best
+    }
+
+    fn leaps_from(&self, point: Vec3) -> &[NavLeap] {
+        self.leaps.from(point)
     }
 }
 
@@ -396,6 +420,7 @@ impl Clone for ChunkedNav {
             shape: self.shape,
             prefix: self.prefix.clone(),
             files: self.files.clone(),
+            leaps: self.leaps.clone(),
             kept: Mutex::default(),
         }
     }

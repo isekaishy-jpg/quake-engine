@@ -8,7 +8,7 @@ use std::sync::Arc;
 use common::room;
 use engine_core::math::Vec3;
 use engine_core::player::UserCommand;
-use engine_map::{Entity, Map, NavGrid, NavPlace, Spline};
+use engine_map::{Entity, Map, NavGrid, NavLeaps, NavPlace, Spline};
 use engine_net::{ClientMessage, Loopback, ServerMessage, Snapshot, Transport, loopback};
 use engine_physics::CollisionWorld;
 use engine_server::{Level, Server};
@@ -257,6 +257,7 @@ fn scripts_find_paths_and_follow_splines() {
         size: [3, 1],
         columns: vec![0, 1, 2, 3],
         places: vec![first, second, third],
+        leaps: NavLeaps::default(),
     });
     map.splines.push(Spline {
         name: "line".to_owned(),

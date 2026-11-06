@@ -651,6 +651,25 @@ fn a_trigger_once_fires_its_message_and_is_gone() {
     assert_eq!(game.prints, ["hello"]);
 }
 
+/// A player's stored entity stays at the middle of the world, and when a level asks for
+/// everything to touch again it mustn't touch what's there. That sent a lift up the moment
+/// a player joined, from the far end of a level.
+#[test]
+fn a_player_far_away_does_not_touch_what_is_at_the_middle_of_the_world() {
+    let trigger = (Vec3::new(-32.0, -32.0, -32.0), Vec3::new(32.0, 32.0, 32.0));
+    let entities: &[&[(&str, &str)]] = &[&[
+        ("classname", "trigger_once"),
+        ("model", "*1"),
+        ("message", "hello"),
+    ]];
+    let map = map(&[trigger], entities);
+    let mut game = Game::new(&map, at_floor(300.0, 0.0));
+    game.wait(0.5);
+    game.server.exec("engine.force_retouch()").expect("asks");
+    game.wait(0.5);
+    assert!(game.prints.is_empty(), "{:?}", game.prints);
+}
+
 #[test]
 fn triggers_are_not_drawn_or_solid() {
     let trigger = (

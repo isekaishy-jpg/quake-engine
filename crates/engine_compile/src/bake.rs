@@ -11,14 +11,14 @@ use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
 use engine_map::{
     CHUNK_COLUMNS, CRISP_STYLES, ChunkedNav, Face, FaceLight, LightTiles, Map, MegaMaps, NavGrid,
-    NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TexelAxis, TileLight, chunks_of,
+    NavLeaps, NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TexelAxis, TileLight, chunks_of,
 };
 
 use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 24;
+const BAKE_VERSION: u64 = 25;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -303,6 +303,7 @@ fn read_nav(bytes: &[u8]) -> Option<NavGrid> {
         size,
         columns: columns?,
         places,
+        leaps: NavLeaps::default(),
     })
 }
 
@@ -378,6 +379,7 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         } else {
             block.set("nav", Value::Bytes(write_nav(nav)));
         }
+        block.set("nav_leaps", Value::Bytes(nav.leaps.to_bytes()));
     }
     if let Some(nav) = &map.nav_large {
         if tiled {
@@ -385,6 +387,7 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         } else {
             block.set("nav_large", Value::Bytes(write_nav(nav)));
         }
+        block.set("nav_large_leaps", Value::Bytes(nav.leaps.to_bytes()));
     }
     let mut starts = Vec::with_capacity(map.tree.leaves.len() * 4);
     for leaf in &map.tree.leaves {
@@ -592,17 +595,34 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
                 u32::try_from(map.tree.leaves.len().saturating_sub(1)).unwrap_or(0);
         }
     }
-    map.nav = bytes_of(light, "nav").and_then(read_nav);
-    map.nav_large = bytes_of(light, "nav_large").and_then(read_nav);
+    let leaps_of = |name: &str| {
+        bytes_of(light, name)
+            .and_then(NavLeaps::from_bytes)
+            .unwrap_or_default()
+    };
+    let with_leaps = |mut nav: NavGrid, name: &str| {
+        nav.leaps = leaps_of(name);
+        nav
+    };
+    map.nav = bytes_of(light, "nav")
+        .and_then(read_nav)
+        .map(|nav| with_leaps(nav, "nav_leaps"));
+    map.nav_large = bytes_of(light, "nav_large")
+        .and_then(read_nav)
+        .map(|nav| with_leaps(nav, "nav_large_leaps"));
     map.light_tiles = bytes_of(light, "light_cells").map(|bytes| {
         let (words, _) = bytes.as_chunks::<4>();
         let numbers: Vec<i32> = words.iter().map(|word| i32::from_le_bytes(*word)).collect();
         LightTiles::new(map.tile_size, numbers.as_chunks::<2>().0.to_vec())
     });
-    for (hull, name) in ["nav_shape", "nav_large_shape"].into_iter().enumerate() {
+    let shapes = [
+        ("nav_shape", "nav_leaps"),
+        ("nav_large_shape", "nav_large_leaps"),
+    ];
+    for (hull, (name, leaps)) in shapes.into_iter().enumerate() {
         map.nav_chunks[hull] = bytes_of(light, name)
             .and_then(read_shape)
-            .map(|shape| ChunkedNav::new(shape, nav_prefix(hull)));
+            .map(|shape| ChunkedNav::new(shape, nav_prefix(hull)).with_leaps(leaps_of(leaps)));
     }
     let paint = bytes_of(light, "paint").unwrap_or_default();
     map.paint = paint.as_chunks::<4>().0.to_vec();

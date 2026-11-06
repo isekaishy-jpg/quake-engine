@@ -615,19 +615,85 @@ function engine.seeded(entity, step)
 	return value / 4294967296
 end
 
+-- Takes a step. A corner that lands exactly on the seam between two surfaces finds no
+-- ground under it, as it would at the edge of a drop, and a shorter step gets past.
+local function step_along(entity, yaw, distance)
+	local id = rawget(entity, "_id")
+	return engine.walkmove(id, yaw, distance) or engine.walkmove(id, yaw, distance * 0.6)
+end
+
 -- Walks an entity up to `distance` towards `goal`, along the way the map's nav
 -- says, for a monster or NPC to call from its think. Returns whether there's a
 -- way to go. It finds a way that fits the entity's own width. With no nav it
 -- goes straight, as a map with no bake has none.
 function engine.walk_to(entity, goal, distance)
+	-- In the air there's nothing to do but land.
+	if entity.leaping then
+		if bit32.band(entity.flags, FL_ONGROUND) == 0 and entity.velocity.z ~= 0 then
+			return true, true
+		end
+		entity.leaping = false
+	end
 	local width = entity.maxs.x - entity.mins.x
-	local path = engine.find_path(entity.origin, goal, width)
+	local route = engine.find_route(entity.origin, goal, width)
 	local next_point = goal
-	if path then
-		next_point = path[2] or path[1]
+	local way = "walk"
+	if route then
+		local step = route[2] or route[1]
+		-- Walking won't go right to an edge, so a leap starts from close by.
+		local after = route[3]
+		local leaps = after and after.way ~= "walk" and after.way ~= "lift"
+		if leaps and vector.magnitude(step.point - entity.origin) < 40 then
+			step = after
+		end
+		next_point = step.point
+		way = step.way
 	end
 	local from = entity.origin
 	local yaw = math.deg(math.atan2(next_point.y - from.y, next_point.x - from.x))
 	entity.ideal_yaw = yaw
-	return engine.walkmove(rawget(entity, "_id"), yaw, distance), path ~= nil
+	if way == "lift" then
+		-- Up at the top, it walks off. Until then it's waiting.
+		if from.z >= next_point.z - 18 then
+			return step_along(entity, yaw, distance), true
+		end
+		if engine.call_lift then
+			engine.call_lift(entity, from)
+		end
+		return true, true
+	end
+	if way ~= "walk" then
+		engine.leap(entity, next_point)
+		return true, true
+	end
+	if pointcontents(from) == CONTENT_WATER then
+		-- Afloat, a straight line is clear, and walking needs ground.
+		local step = next_point - from
+		local length = vector.magnitude(step)
+		if length > 0 then
+			setorigin(entity, from + step * math.min(distance / length, 1))
+		end
+		return true, route ~= nil
+	end
+	return step_along(entity, yaw, distance), route ~= nil
+end
+
+-- Throws an entity in an arc that lands on `point`, off an edge, over a gap or in and
+-- out of water. It goes up first, as going straight at somewhere lower would only press
+-- it into the ledge it's on.
+function engine.leap(entity, point)
+	local gravity = 800
+	local from = entity.origin
+	local flat = vector.create(point.x - from.x, point.y - from.y, 0)
+	-- A place can be right at an edge, and landing there leaves it hanging.
+	local reach = vector.magnitude(flat)
+	if reach > 0 then
+		flat = flat * ((reach + 32) / reach)
+	end
+	local rise = point.z - from.z
+	local up = math.sqrt(2 * gravity * (math.max(rise, 0) + 24))
+	local seconds = (up + math.sqrt(up * up - 2 * gravity * rise)) / gravity
+	entity.velocity = flat * (1 / seconds) + vector.create(0, 0, up)
+	entity.flags = bit32.band(entity.flags, bit32.bnot(FL_ONGROUND))
+	entity.leaping = true
 end

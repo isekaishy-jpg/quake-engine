@@ -85,6 +85,21 @@ function plat_trigger_use(self, _other)
 	plat_go_down(self)
 end
 
+-- Sends the lift `entity` is on up, for what isn't a player and doesn't set off the
+-- trigger on it.
+function engine.call_lift(entity, place)
+	for _, plat in find_all("classname", "plat") do
+		local near =
+			vector.magnitude(vector.create(plat.origin.x - place.x, plat.origin.y - place.y, 0))
+		local middle = (plat.absmin + plat.absmax) * 0.5
+		local across = vector.magnitude(vector.create(middle.x - place.x, middle.y - place.y, 0))
+		if (near < 128 or across < 128) and plat.state == STATE_BOTTOM then
+			plat_go_up(plat)
+			return
+		end
+	end
+end
+
 function plat_crush(self, other)
 	T_Damage(other, self, self, 1)
 	if self.state == STATE_UP then

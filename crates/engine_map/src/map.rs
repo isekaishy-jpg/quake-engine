@@ -7,7 +7,7 @@ use engine_core::math::Vec3;
 use crate::emitter::Emitter;
 use crate::live::LiveLightSource;
 use crate::material::Material;
-use crate::nav::{NavGrid, Spline};
+use crate::nav::{NavGrid, NavStep, Spline};
 use crate::nav_chunks::ChunkedNav;
 use crate::occluder::ModelOccluder;
 use crate::pool::Pool;
@@ -415,6 +415,16 @@ impl Map {
         }
         let hull = usize::from(matches!(Model::hull_for(width), Some((1, _))));
         self.nav_chunks.get(hull)?.as_ref()?.find_path(from, to)
+    }
+
+    /// As [`Self::find_path`], saying how each point is reached.
+    #[must_use]
+    pub fn find_route(&self, width: f32, from: Vec3, to: Vec3) -> Option<Vec<NavStep>> {
+        if let Some(nav) = self.nav_for(width) {
+            return nav.find_route(from, to);
+        }
+        let hull = usize::from(matches!(Model::hull_for(width), Some((1, _))));
+        self.nav_chunks.get(hull)?.as_ref()?.find_route(from, to)
     }
 
     /// The tile `point` is in, and where it is in that tile. With no tiles it's

@@ -156,6 +156,7 @@
     - [0119: making levels the easy way](proposals/0119-easy-editing.md)
     - [0120: wear in the real levels](proposals/0120-wear.md)
     - [0121: level faults](proposals/0121-level-faults.md)
+    - [0122: paths that drop, jump, swim and ride](proposals/0122-paths-that-leap.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

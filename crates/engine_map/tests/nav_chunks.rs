@@ -4,7 +4,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
-use engine_map::{ChunkedNav, NAV_WAYS, NavChunk, NavGrid, NavPlace, NavShape, chunks_of};
+use engine_map::{
+    ChunkedNav, NAV_WAYS, NavChunk, NavGrid, NavLeaps, NavPlace, NavShape, chunks_of,
+};
 
 /// How many columns a chunk has here, so a small grid has several.
 const CHUNK: u32 = 8;
@@ -44,6 +46,7 @@ fn grid(width: u32, depth: u32, wall: u32, gap: u32) -> NavGrid {
         size: [width, depth],
         columns,
         places,
+        leaps: NavLeaps::default(),
     }
 }
 
