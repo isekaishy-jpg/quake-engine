@@ -13,7 +13,7 @@ Earlier items unblock later ones.
 | # | Item | From | Status |
 |---|---|---|---|
 | 1 | Measure a frame on the CPU and GPU, worst frames and hitches, and fix what's found | Open questions | done |
-| 2 | Loading: stop compiling a map from text at each load | Review 0016 | todo |
+| 2 | Loading: stop compiling a map from text at each load | Review 0016 | done |
 | 3 | Texture standard: world size, sizes, delivery spec, sets, naming, import checks | [Note](texture-standard.md) | todo |
 | 4 | Linear colour, with the murky look kept on purpose | [Note](texture-standard.md) | todo |
 | 5 | Packing: compiled textures, BC compression, one `.epak` container | [Note](texture-standard.md) | todo |

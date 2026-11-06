@@ -5,7 +5,8 @@ use std::sync::Arc;
 
 use engine_assets::FileSystem;
 use engine_compile::{
-    MaterialLibrary, apply_bake, attach_side_files, compile, document_of, map_hash, read_map,
+    MaterialLibrary, apply_bake, attach_side_files, compile, compile_known, document_of, map_hash,
+    read_geometry, read_map,
 };
 use engine_map::{SideFiles, Texture};
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
@@ -51,12 +52,18 @@ pub(crate) fn load_level(
             Texture::default()
         })
     };
-    let mut map = compile(&working, &mut textures)?;
+    let hash = map_hash(&document, &used);
+    let kept = filesystem.read(&format!("maps/{name}.egeo")).ok();
+    let geometry = kept.and_then(|bytes| read_geometry(&bytes, hash));
+    let mut map = match geometry {
+        Some(geometry) => compile_known(&working, &mut textures, geometry)?,
+        None => compile(&working, &mut textures)?,
+    };
     if let Some(error) = failure {
         return Err(error.into());
     }
     if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
-        apply_bake(&mut map, &baked, map_hash(&document, &used))?;
+        apply_bake(&mut map, &baked, hash)?;
         let source = Arc::clone(filesystem);
         let files: SideFiles = Arc::new(move |path| source.read(path).ok());
         attach_side_files(&mut map, name, &files);

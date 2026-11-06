@@ -76,7 +76,6 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | Joins between faces at an angle | Sample sharing covers faces on one plane. A shadow crossing a fold or a curve's facets isn't matched |
 | Lamp shadows and curved surfaces | Thin things bake as blocks under lamps, and curves show bands and sawtooth by their facets, whether brushes or meshes. See [Shadow rendering](../research/shadow-rendering.md) |
 | Moving lights' shadows | Sawtooth and bands still show at a large window size, on any surface near a moving light. Shadow maps at this size can't remove them, and the way forward is the human's call |
-| Map loading | 3.7 seconds of Vesper Deep's 5 is compiling the map from its text at each load |
 | Vesper Deep's foundry lava | Its two channels are under the foundry's floor, so they can't be seen. A level fault, not fixed yet |
 | Enemies that seem broken | The test only covers where they start. Anything wrong once they move, or with the stand-ins in the city, hasn't been found |
 | Water's reflections | Screen-space reflections on water show a fine stipple, from their per-pixel jitter. This belongs with the water work |

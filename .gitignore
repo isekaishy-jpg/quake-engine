@@ -6,6 +6,7 @@
 # Compiled output.
 *.ebake
 *.ebin
+*.egeo
 
 # Engine art and fonts, kept out of the repository until they're in use.
 /content/ui/

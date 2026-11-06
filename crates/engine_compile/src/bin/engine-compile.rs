@@ -16,7 +16,7 @@ use std::time::Instant;
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
     BakeInput, MaterialLibrary, bake_folder, bake_light, compile, map_hash, occluders_of, read_map,
-    side_files, write_bake, write_occlusion,
+    side_files, write_bake, write_geometry, write_occlusion,
 };
 use engine_format::{from_text, to_binary};
 use engine_map::{MipLevel, Texture};
@@ -57,6 +57,9 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     if let Some(error) = failure {
         return Err(error.into());
     }
+    let hash = map_hash(&document, &used);
+    let kept = content.join("maps").join(format!("{name}.egeo"));
+    std::fs::write(&kept, write_geometry(&map, hash))?;
     let mut library = MaterialLibrary::new(filesystem);
     let mut images = |path: &str| -> Result<Arc<Vec<MipLevel>>, engine_compile::CompileError> {
         library.image_at(path)
@@ -67,7 +70,6 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
     };
     bake_light(&mut map, &mut input)?;
     let out = content.join("maps").join(format!("{name}.ebake"));
-    let hash = map_hash(&document, &used);
     std::fs::write(&out, write_bake(&map, hash))?;
     let beside = side_files(&map);
     if !beside.is_empty() {

@@ -3,6 +3,11 @@
 //! brushes go in one at a time. Nothing is split: a brush goes down whichever
 //! sides it reaches, and a chain of its planes at each leaf marks what's inside
 //! it.
+//!
+//! Overlapping brushes reach each other's leaves, and each would multiply the
+//! chains of the last, into tens of millions of nodes that say the same things.
+//! So what's identical is kept once, and a tree is really a graph: nodes never
+//! change, and a brush makes new ones for what it changes.
 
 use std::collections::HashMap;
 
@@ -11,7 +16,7 @@ use engine_map::Contents;
 use crate::geometry::{ON_PLANE, Plane3, Point};
 
 /// A node's child.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(crate) enum Child {
     /// Another node.
     Node(u32),
@@ -142,13 +147,23 @@ fn halve(items: &[Item], chosen: &[usize]) -> Option<(usize, f64, Vec<usize>, Ve
 pub(crate) struct TreeBuilder {
     /// The nodes.
     pub(crate) nodes: Vec<BuildNode>,
+    /// Each node's number, by what it says.
+    known: HashMap<(u32, Child, Child), u32>,
 }
 
 impl TreeBuilder {
-    /// Adds a node.
-    fn push(&mut self, node: BuildNode) -> Child {
-        self.nodes.push(node);
-        Child::Node(u32::try_from(self.nodes.len() - 1).unwrap_or(u32::MAX))
+    /// The node saying `plane` divides `front` from `back`, which is what's
+    /// either side if they're the same.
+    fn node(&mut self, plane: u32, front: Child, back: Child) -> Child {
+        if front == back {
+            return front;
+        }
+        let nodes = &mut self.nodes;
+        let number = self.known.entry((plane, front, back)).or_insert_with(|| {
+            nodes.push(BuildNode { plane, front, back });
+            u32::try_from(nodes.len() - 1).unwrap_or(u32::MAX)
+        });
+        Child::Node(*number)
     }
 
     /// A chain marking what's behind all `planes` as `contents`, and the rest
@@ -159,11 +174,7 @@ impl TreeBuilder {
         }
         let mut child = Child::Leaf(merged(outside, contents));
         for plane in planes.iter().rev() {
-            child = self.push(BuildNode {
-                plane: *plane,
-                front: Child::Leaf(outside),
-                back: child,
-            });
+            child = self.node(*plane, Child::Leaf(outside), child);
         }
         child
     }
@@ -171,7 +182,38 @@ impl TreeBuilder {
     /// A tree of `items`, keeping their order wherever they overlap.
     pub(crate) fn build(&mut self, set: &mut PlaneSet, items: &[Item]) -> Child {
         let all: Vec<usize> = (0..items.len()).collect();
-        self.build_part(set, items, &all, MOST_HALVINGS)
+        let root = self.build_part(set, items, &all, MOST_HALVINGS);
+        self.keep_only(root)
+    }
+
+    /// Drops what's no longer reached from `root`, as brushes leave behind the
+    /// nodes they replace, and returns where `root` went.
+    fn keep_only(&mut self, root: Child) -> Child {
+        let mut moved = vec![u32::MAX; self.nodes.len()];
+        let mut kept = Vec::new();
+        let mut waiting = vec![root];
+        while let Some(child) = waiting.pop() {
+            if let Child::Node(at) = child
+                && moved[at as usize] == u32::MAX
+            {
+                moved[at as usize] = u32::try_from(kept.len()).unwrap_or(u32::MAX);
+                let node = self.nodes[at as usize];
+                kept.push(node);
+                waiting.push(node.front);
+                waiting.push(node.back);
+            }
+        }
+        let new = |child: Child| match child {
+            Child::Node(at) => Child::Node(moved[at as usize]),
+            leaf @ Child::Leaf(_) => leaf,
+        };
+        for node in &mut kept {
+            node.front = new(node.front);
+            node.back = new(node.back);
+        }
+        self.nodes = kept;
+        self.known.clear();
+        new(root)
     }
 
     /// A tree of the `chosen` items, halving space while it helps.
@@ -189,7 +231,7 @@ impl TreeBuilder {
             let mut child = Child::Leaf(Contents::Empty);
             for at in chosen {
                 let item = &items[*at];
-                child = self.insert(child, set, &item.planes, &item.corners, item.contents);
+                child = self.insert(child, set, item, &mut HashMap::new());
             }
             return child;
         };
@@ -201,39 +243,47 @@ impl TreeBuilder {
         });
         let front = self.build_part(set, items, &high, halvings - 1);
         let back = self.build_part(set, items, &low, halvings - 1);
-        self.push(BuildNode { plane, front, back })
+        self.node(plane, front, back)
     }
 
-    /// Inserts a brush under `child`, and returns what replaces it. `corners`
-    /// says which sides of a node the brush reaches.
-    pub(crate) fn insert(
+    /// Inserts `item` under `child`, and returns what replaces it. Its corners
+    /// say which sides of a node it reaches. What's shared is only worked out
+    /// once, in `done`, or a brush would go through it once for each way there.
+    fn insert(
         &mut self,
         child: Child,
         set: &PlaneSet,
-        planes: &[u32],
-        corners: &[Point],
-        contents: Contents,
+        item: &Item,
+        done: &mut HashMap<Child, Child>,
     ) -> Child {
-        let at = match child {
-            Child::Leaf(outside) => return self.chain(outside, planes, contents),
-            Child::Node(at) => at as usize,
+        if let Some(found) = done.get(&child) {
+            return *found;
+        }
+        let new = match child {
+            Child::Leaf(outside) => self.chain(outside, &item.planes, item.contents),
+            Child::Node(at) => {
+                let node = self.nodes[at as usize];
+                let plane = set.planes[node.plane as usize];
+                let (mut in_front, mut behind) = (false, false);
+                for corner in &item.corners {
+                    let side = plane.side(*corner);
+                    in_front |= side > ON_PLANE;
+                    behind |= side < -ON_PLANE;
+                }
+                let front = if in_front {
+                    self.insert(node.front, set, item, done)
+                } else {
+                    node.front
+                };
+                let back = if behind {
+                    self.insert(node.back, set, item, done)
+                } else {
+                    node.back
+                };
+                self.node(node.plane, front, back)
+            }
         };
-        let node = self.nodes[at];
-        let plane = set.planes[node.plane as usize];
-        let sides = corners.iter().map(|corner| plane.side(*corner));
-        let (mut front, mut back) = (false, false);
-        for side in sides {
-            front |= side > ON_PLANE;
-            back |= side < -ON_PLANE;
-        }
-        if front {
-            let new = self.insert(node.front, set, planes, corners, contents);
-            self.nodes[at].front = new;
-        }
-        if back {
-            let new = self.insert(node.back, set, planes, corners, contents);
-            self.nodes[at].back = new;
-        }
-        child
+        done.insert(child, new);
+        new
     }
 }

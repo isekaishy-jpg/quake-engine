@@ -12,6 +12,7 @@ use engine_map::{
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
+use crate::compiled::Geometry;
 use crate::effects::{build_flames, build_live_light, build_stencil};
 use crate::error::CompileError;
 use crate::geometry::{
@@ -525,6 +526,9 @@ struct Builder<'a> {
     materials: HashMap<String, u32>,
     /// The planes of every tree.
     planes: PlaneSet,
+    /// How many models are kept, and how many have been asked for, if geometry
+    /// was kept from an earlier compile.
+    known_models: Option<(u32, u32)>,
 }
 
 impl Builder<'_> {
@@ -637,6 +641,15 @@ impl Builder<'_> {
         stamps: &[StampSource],
     ) -> Result<u32, CompileError> {
         let too_big = || CompileError::Bad("the map is too big".to_owned());
+        if let Some((count, next)) = &mut self.known_models {
+            if *next >= *count {
+                return Err(CompileError::Bad(
+                    "kept geometry has too few models".to_owned(),
+                ));
+            }
+            *next += 1;
+            return Ok(*next - 1);
+        }
         let first_face = u32::try_from(self.map.faces.len()).map_err(|_| too_big())?;
         let (mut low, mut high) = ([f64::INFINITY; 3], [f64::NEG_INFINITY; 3]);
         for visible in self.stamped(visible_faces(brushes), stamps) {
@@ -790,15 +803,56 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
 ///
 /// Returns an error if it can't be built.
 pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<Map, CompileError> {
+    compile_with(working, source, None)
+}
+
+/// Compiles a working map whose geometry is already known, as an earlier compile
+/// left it, which is most of the work of one.
+///
+/// # Errors
+///
+/// Returns an error if it can't be built.
+pub fn compile_known(
+    working: &WorkingMap,
+    source: &mut dyn TextureSource,
+    geometry: Geometry,
+) -> Result<Map, CompileError> {
+    compile_with(working, source, Some(geometry))
+}
+
+/// Compiles a working map, with its geometry if that's known.
+fn compile_with(
+    working: &WorkingMap,
+    source: &mut dyn TextureSource,
+    known: Option<Geometry>,
+) -> Result<Map, CompileError> {
     let mut builder = Builder {
         source,
         map: Map::default(),
         materials: HashMap::new(),
         planes: PlaneSet::default(),
+        known_models: None,
     };
     let flames = working.entities.iter().filter(|e| e.kind == "flame");
     let (flame_faces, emitters) = build_flames(flames);
-    let surfaces = visible_faces(&working.brushes);
+    let known = known.map(|geometry| {
+        // Faces go by a texture's number, so they come in the same order.
+        for name in &geometry.textures {
+            builder.texture_of(name);
+        }
+        let count = u32::try_from(geometry.models.len()).unwrap_or(u32::MAX);
+        builder.known_models = Some((count, 0));
+        builder.map.points = geometry.points;
+        builder.map.faces = geometry.faces;
+        builder.map.models = geometry.models;
+        builder.map.light_lifts = geometry.light_lifts;
+        geometry.tree
+    });
+    let surfaces = if known.is_some() {
+        Vec::new()
+    } else {
+        visible_faces(&working.brushes)
+    };
     let decals = PlacedMesh {
         triangles: working
             .decals
@@ -895,6 +949,10 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         }
         builder.map.sky = Some(built);
     }
+    if let Some(tree) = known {
+        builder.map.tree = tree;
+        return Ok(finished(builder.map));
+    }
     builder.finish();
     let size = working
         .entities
@@ -906,13 +964,17 @@ pub fn compile(working: &WorkingMap, source: &mut dyn TextureSource) -> Result<M
         .max(32.0);
     cut_cells(&mut builder.map, &mut builder.planes, size);
     builder.planes_to_map();
-    let mut map = builder.map;
+    Ok(finished(builder.map))
+}
+
+/// A built map, with what has no picture hidden.
+fn finished(mut map: Map) -> Map {
     for texture in &mut map.textures {
         if texture.mips.is_empty() {
             texture.kind = TextureKind::Hidden;
         }
     }
-    Ok(map)
+    map
 }
 
 /// Reads a map from its text.

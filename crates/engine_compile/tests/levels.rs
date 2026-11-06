@@ -303,6 +303,21 @@ fn light_runs_on_across_joins() {
     }
 }
 
+/// A level's clipping trees stay in proportion to it. Vesper Deep had 75 million
+/// nodes once, from copies of what brushes said where they overlapped.
+#[test]
+#[ignore = "needs the levels baked"]
+fn clip_trees_stay_in_proportion() {
+    for name in ["ember_keep", "vesper_deep"] {
+        let map = level(name);
+        let nodes = map.tree.clip_nodes.len();
+        assert!(
+            nodes < map.faces.len() * 40,
+            "{name} has {nodes} clip nodes"
+        );
+    }
+}
+
 /// The Ember Keep plays through, in its three legs between lifts.
 #[test]
 #[ignore = "needs the level baked"]

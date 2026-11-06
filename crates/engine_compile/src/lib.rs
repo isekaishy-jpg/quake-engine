@@ -6,6 +6,7 @@
 mod bake;
 mod build;
 mod cells;
+mod compiled;
 mod derive;
 mod effects;
 mod error;
@@ -26,7 +27,8 @@ mod visibility;
 pub use bake::{
     apply_bake, attach_side_files, bake_folder, map_hash, side_files, source_hash, write_bake,
 };
-pub use build::{TextureSource, compile, compile_text, read_map_text};
+pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
+pub use compiled::{Geometry, read_geometry, write_geometry};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
