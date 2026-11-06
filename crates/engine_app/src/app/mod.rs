@@ -583,6 +583,7 @@ impl Engine {
         console.register_cvar("ui_scale", "0", saved);
         console.register_cvar("crosshair", "0", saved);
         console.register_cvar("cl_alwaysrun", "1", saved);
+        console.register_cvar("cl_shot_correction", "1", saved);
         console.register_cvar("viewsize", "100", CvarFlags::default());
         console.register_cvar("name", "player", saved);
         console.register_cvar("topcolor", "0", saved);
@@ -840,6 +841,10 @@ impl Engine {
         self.world.crosshair = number(self, "crosshair") != 0.0;
         self.world.gamma = number(self, "gamma").clamp(0.3, 2.0);
         self.world.buttons.always_run = number(self, "cl_alwaysrun") != 0.0;
+        let correction = f64::from(number(self, "cl_shot_correction"));
+        if let Some(client) = &mut self.world.client {
+            client.set_shot_correction(correction);
+        }
         let name = self
             .console
             .cvar("name")

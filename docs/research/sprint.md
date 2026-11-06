@@ -36,7 +36,7 @@ Earlier items unblock later ones.
 | 22 | Door logic | Open questions | done |
 | 23 | Coloured `.lit` light for the original levels | Open questions | done |
 | 24 | Review of the host, worker and cache crates, and tests out of `src` | Open questions | done |
-| 25 | Projectile launch delay and correction | Open questions | todo |
+| 25 | Projectile launch delay and correction | Open questions | done, and the feel of it needs a person |
 | 26 | Input at 8 kHz | Open questions | todo |
 | 27 | Online numbers on a network | Open questions | todo |
 | 28 | Real sound features and entity culling | [Research plan](plan.md) | todo |
@@ -77,3 +77,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 21: 62948dd
 - Item 22: 7ba6352
 - Item 23: ab90233
+- Item 24: 9cb499c

@@ -81,9 +81,9 @@ const MAX_PENDING: usize = 512;
 /// nothing, as `CL_SendMove` does in QuakeWorld.
 const COMMANDS_PER_MOVE: usize = 3;
 
-/// The share of the gap to the present that own shots are eased by, which
-/// halves it, as the record proposes.
-const DEFAULT_CORRECTION: f64 = 0.5;
+/// The share of the gap to the present that own shots are eased by. All of it, so that a
+/// hit looks right, as far as they can ease without looking slow (proposal 0126).
+const DEFAULT_CORRECTION: f64 = 1.0;
 
 /// How long past a round trip a guess waits for the server, in seconds.
 const GUESS_PATIENCE: f64 = 0.15;
@@ -167,6 +167,8 @@ pub struct Client {
     knocks: Vec<(u32, Vec3)>,
     /// How our own blasts knock us, if that's to be predicted.
     blast: Option<BlastRule>,
+    /// The share of the gap own shots are eased by.
+    shot_correction: f64,
     /// Sounds already played for our own shots, and when to stop waiting.
     expected_sounds: Vec<(String, f64)>,
     /// Our own shot as it's shown before the server answers.
@@ -220,6 +222,7 @@ impl Client {
             model_numbers: HashMap::new(),
             knocks: Vec::new(),
             blast: None,
+            shot_correction: DEFAULT_CORRECTION,
             expected_sounds: Vec::new(),
             shown: ShownShot::default(),
             touched: Vec::new(),
@@ -578,8 +581,13 @@ impl Client {
             present: self.present(),
             own: self.own_time(),
             behind,
-            correction: DEFAULT_CORRECTION,
+            correction: self.shot_correction,
         }
+    }
+
+    /// Sets the share of the gap own shots are eased by, from 0 to 1.
+    pub const fn set_shot_correction(&mut self, correction: f64) {
+        self.shot_correction = correction.clamp(0.0, 1.0);
     }
 
     /// Sets how our own blasts knock us, or that they aren't predicted.

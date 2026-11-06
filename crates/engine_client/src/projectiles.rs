@@ -33,6 +33,24 @@ const LAUNCH_DELAY: f64 = 0.008;
 /// How long your own projectile takes to settle into the correction.
 const SETTLE_SECONDS: f64 = 0.4;
 
+/// How much slower than it really is your own projectile can look while it eases. Past
+/// about a fifth, a rocket seen leaving at speed visibly drags (proposal 0126).
+const MOST_SLOWDOWN: f64 = 0.2;
+
+/// The game time to draw your own shot at, which leaves when you fire and then eases
+/// towards what's on your screen. `own` is the time your commands run at, `gap` is how far
+/// behind that your screen is, `age` is how long it's been seen, and `correction` is the
+/// share of the gap to close. It closes no more than [`MOST_SLOWDOWN`] allows.
+#[must_use]
+pub fn own_shot_time(own: f64, gap: f64, age: f64, correction: f64) -> f64 {
+    let gap = gap.max(0.0);
+    let wanted = gap * correction;
+    let most = SETTLE_SECONDS * MOST_SLOWDOWN + LAUNCH_DELAY;
+    let settled = (age / SETTLE_SECONDS).min(1.0);
+    let eased = (wanted.min(most) - LAUNCH_DELAY).max(0.0) * settled;
+    own - LAUNCH_DELAY.min(gap) - eased
+}
+
 /// The times a flight is drawn by.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Timeline {
@@ -208,11 +226,7 @@ impl Flight {
     fn drawn_time(&self, times: &Timeline) -> f64 {
         let age = (times.behind - self.seen_at).max(0.0);
         let drawn = if self.own {
-            // Leaves when you fire, then eases towards what's on your screen.
-            let gap = (times.own - times.behind).max(0.0);
-            let settled = (age / SETTLE_SECONDS).min(1.0);
-            let eased = ((gap * times.correction) - LAUNCH_DELAY).max(0.0) * settled;
-            times.own - LAUNCH_DELAY.min(gap) - eased
+            own_shot_time(times.own, times.own - times.behind, age, times.correction)
         } else {
             // Starts at the muzzle, and catches up with the real thing.
             let gap = (times.present - times.behind).max(0.0);
