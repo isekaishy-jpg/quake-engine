@@ -19,7 +19,9 @@ impl Engine {
             }
             return;
         }
-        if self.world.menu.is_open() {
+        if self.world.script_menu {
+            self.world.menu_key_to_script(&key);
+        } else if self.world.menu.is_open() {
             let text = self.world.console_view.typed(&key);
             let mut menu = std::mem::take(&mut self.world.menu);
             menu.key(

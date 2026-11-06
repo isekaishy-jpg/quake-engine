@@ -8,7 +8,9 @@
 mod builder;
 mod game;
 mod save;
+mod ui_script;
 
 pub use builder::{ScriptValue, run_builder};
 pub use game::{Game, GameRules, Outbox, ScriptError};
 pub use save::{SavedEntity, SavedScripts, SavedValue};
+pub use ui_script::{UiCommand, UiScript, UiState};

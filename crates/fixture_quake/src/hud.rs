@@ -513,6 +513,30 @@ impl Hud {
         }
     }
 
+    /// What [`Self::draw`] does, with something else in place of the status bar.
+    pub fn draw_messages(&self, canvas: &mut Canvas<'_>, playing: bool) {
+        match self.intermission {
+            Intermission::None => {
+                if playing {
+                    self.draw_center(canvas);
+                }
+            }
+            _ => self.draw(canvas, playing),
+        }
+    }
+
+    /// How much health there is.
+    #[must_use]
+    pub const fn health(&self) -> i32 {
+        self.stats[STAT_HEALTH]
+    }
+
+    /// How much armour there is.
+    #[must_use]
+    pub const fn armor(&self) -> i32 {
+        self.stats[STAT_ARMOR]
+    }
+
     /// Draws the words in the middle of the screen, from `SCR_DrawCenterString`.
     fn draw_center(&self, canvas: &mut Canvas<'_>) {
         let holding = self.intermission != Intermission::None;

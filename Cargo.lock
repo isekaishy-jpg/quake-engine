@@ -890,6 +890,7 @@ dependencies = [
  "engine_physics",
  "engine_platform",
  "engine_render",
+ "engine_script",
  "engine_server",
  "engine_shaders",
  "engine_ui",

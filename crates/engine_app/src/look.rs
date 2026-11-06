@@ -2,6 +2,7 @@
 //! goes on with what it has.
 
 use engine_assets::FileSystem;
+use engine_script::UiScript;
 use engine_ui::{FontStyle, KitPiece, UiAnimation, UiKit, UiTheme};
 use serde_json::Value;
 
@@ -29,6 +30,9 @@ const KIT_DENSITY: f32 = 2.0;
 
 /// The moving pictures.
 const ANIMATIONS: [&str; 2] = ["impact-pop", "smear-swipe"];
+
+/// The script of the status bar and menus.
+const UI_SCRIPT: &str = "scripts/ui.luau";
 
 /// The picture shown as the engine starts.
 pub(crate) const SPLASH_PICTURE: &str = "ui/cultist-engine-splash-4k.png";
@@ -86,6 +90,24 @@ pub(crate) fn read_animation(folder: &str, text: &[u8]) -> Option<UiAnimation> {
         frames,
         loops: loops.unwrap_or(false),
     })
+}
+
+/// The status bar and menus, if the content has them and the look they need. One
+/// that fails says so, and the game's own are used.
+#[expect(clippy::print_stderr, reason = "the console isn't up yet")]
+pub(crate) fn load_ui_script(filesystem: &FileSystem, theme: &UiTheme) -> Option<UiScript> {
+    if !theme.has_fonts() {
+        return None;
+    }
+    let bytes = filesystem.read(UI_SCRIPT).ok()?;
+    let source = String::from_utf8(bytes).ok()?;
+    match UiScript::new(UI_SCRIPT, &source) {
+        Ok(script) => Some(script),
+        Err(error) => {
+            eprintln!("{UI_SCRIPT}: {error}");
+            None
+        }
+    }
 }
 
 /// What `filesystem` holds of the engine's own look.

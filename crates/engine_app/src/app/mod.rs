@@ -9,6 +9,7 @@ mod view;
 
 use self::shading::{Flames, StencilGates};
 
+use std::collections::BTreeMap;
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -35,6 +36,7 @@ use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
 use engine_render::{PostSettings, Renderer, Target, TextureFilter, TileStreamer};
+use engine_script::UiScript;
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_shaders::built_in_shaders;
 use engine_ui::ConsoleView;
@@ -47,7 +49,7 @@ use sound::AudioLevels;
 use view::DEFAULT_FOV;
 
 use crate::keys::Keys;
-use crate::look::load_theme;
+use crate::look::{load_theme, load_ui_script};
 use crate::models::ModelBank;
 use crate::options::Options;
 use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
@@ -153,6 +155,12 @@ pub(crate) struct World {
     pub(crate) zones: ZoneTracker,
     /// The engine's own look, if the content has it.
     pub(crate) theme: UiTheme,
+    /// The status bar and menus, if the content has them as a script.
+    pub(crate) ui_script: Option<UiScript>,
+    /// Whether the script's menu is open.
+    pub(crate) script_menu: bool,
+    /// The settings the script wants to know, as they stand.
+    pub(crate) console_settings: BTreeMap<String, f64>,
     /// The title of the zone just entered, and when it was.
     pub(crate) zone_title: Option<(String, f64)>,
     /// The colours particles are given in.
@@ -245,7 +253,7 @@ impl World {
 
     /// Whether the player sees the game itself, with nothing open over it.
     pub(crate) fn is_playing_screen(&self) -> bool {
-        !self.menu.is_open() && !self.console_view.is_open()
+        !self.menu.is_open() && !self.script_menu && !self.console_view.is_open()
     }
 
     /// Whether other people are involved, so the game can't stop for one.
@@ -351,6 +359,7 @@ impl World {
         self.kick = ViewKick::default();
         self.paused = false;
         self.menu.close();
+        self.script_menu = false;
         self.console_view.set_open(false);
         self.console_view.clear_notify();
         self.audio.stop_sounds();
@@ -532,6 +541,7 @@ impl Engine {
         }
         filesystem.mount(Box::new(DirectoryArchive::new(&user_directory)));
         let theme = load_theme(&filesystem);
+        let ui_script = load_ui_script(&filesystem, &theme);
         let has_config = user_directory.join(CONFIG_NAME).is_file();
         let keys = Keys::load(&user_directory);
         let mut console = Console::new();
@@ -630,6 +640,9 @@ impl Engine {
                 effects: Effects::default(),
                 effects_time: 0.0,
                 zones: ZoneTracker::default(),
+                ui_script,
+                script_menu: false,
+                console_settings: BTreeMap::new(),
                 theme,
                 zone_title: None,
                 palette: None,
@@ -692,6 +705,7 @@ impl Engine {
         if self.world.client.is_none()
             && self.world.connecting.is_none()
             && !self.world.menu.is_open()
+            && !self.world.script_menu
             && !self.world.console_view.is_open()
         {
             self.world.console_view.set_open(true);
@@ -814,6 +828,11 @@ impl Engine {
         )]
         let number = |engine: &Self, name: &str| engine.cvar_number(name) as f32;
         self.world.ui_scale = number(self, "ui_scale");
+        let wanted = self.world.ui_script.as_ref().map(UiScript::wanted_settings);
+        for name in wanted.unwrap_or_default() {
+            let value = self.cvar_number(&name);
+            self.world.console_settings.insert(name, value);
+        }
         self.world.crosshair = number(self, "crosshair") != 0.0;
         self.world.gamma = number(self, "gamma").clamp(0.3, 2.0);
         self.world.buttons.always_run = number(self, "cl_alwaysrun") != 0.0;

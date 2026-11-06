@@ -243,6 +243,10 @@ fn togglemenu(console: &mut Console<World>, world: &mut World, _args: &Args) {
         world.console_view.set_open(false);
         return;
     }
+    if world.ui_script.is_some() {
+        world.toggle_script_menu();
+        return;
+    }
     let mut menu = std::mem::take(&mut world.menu);
     menu.toggle(&mut MenuActions { console, world });
     world.menu = menu;

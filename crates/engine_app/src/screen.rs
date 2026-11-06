@@ -1,6 +1,6 @@
 //! What's drawn over the view, and what the menus can reach.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use engine_assets::FileSystem;
 use engine_compile::decode_png;
@@ -9,11 +9,13 @@ use engine_core::canvas::{Canvas, Image, Picture, PictureSource, Quad};
 use engine_core::math::Vec3;
 use engine_core::sound::SoundStart;
 use engine_render::Renderer;
+use engine_script::{UiCommand, UiScript, UiState};
 use engine_ui::{
-    FontStyle, UiTheme, canvas_scale, draw_piece, draw_plaque, draw_rate, draw_text, measure_text,
+    FontStyle, UiTheme, canvas_scale, draw_frame, draw_piece, draw_plaque, draw_rate, draw_text,
+    measure_text,
 };
 use fixture_quake::{
-    BACKGROUND_PICTURE, Intermission, LOADING_PICTURE, MenuHost, PAUSE_PICTURE, PICTURE_WAD,
+    BACKGROUND_PICTURE, Hud, Intermission, LOADING_PICTURE, MenuHost, PAUSE_PICTURE, PICTURE_WAD,
     Palette, SAVE_SLOTS, Wad, load_palette, load_picture,
 };
 
@@ -51,6 +53,81 @@ impl PictureBank {
             self.source = Some((wad, palette));
         }
         self.source.as_ref()
+    }
+}
+
+/// What's told to the status bar and menu script.
+#[expect(clippy::cast_possible_truncation, reason = "a menu's clock")]
+fn ui_state(
+    size: (f32, f32),
+    run_time: f64,
+    in_game: bool,
+    hud: &Hud,
+    script: &UiScript,
+    settings: &BTreeMap<String, f64>,
+) -> UiState {
+    let mut stats = BTreeMap::new();
+    if in_game {
+        stats.insert("health".to_owned(), f64::from(hud.health()));
+        stats.insert("armor".to_owned(), f64::from(hud.armor()));
+        stats.insert("ammo".to_owned(), f64::from(hud.ammo()));
+    }
+    let wanted = script.wanted_settings();
+    UiState {
+        width: size.0,
+        height: size.1,
+        time: run_time as f32,
+        in_game,
+        stats,
+        settings: wanted
+            .iter()
+            .filter_map(|name| Some((name.clone(), *settings.get(name)?)))
+            .collect(),
+    }
+}
+
+/// Carries out what the script asks to draw. What it asks to do waits for
+/// [`World::run_ui`].
+fn draw_ui(canvas: &mut Canvas<'_>, theme: &mut UiTheme, commands: &[UiCommand]) {
+    for command in commands {
+        match command {
+            UiCommand::Picture { name, at } => canvas.picture(name, at[0], at[1]),
+            UiCommand::Stretched { name, place, alpha } => canvas.stretched(name, *place, *alpha),
+            UiCommand::Fill { place, color } => canvas.fill(*place, *color),
+            UiCommand::Frame { name, place, color } => {
+                draw_frame(canvas, theme, name, *place, *color)
+            }
+            UiCommand::Piece { name, place, color } => {
+                draw_piece(canvas, theme, name, *place, *color)
+            }
+            UiCommand::Moving { name, place, age } => {
+                let frame = theme
+                    .animations
+                    .get(name)
+                    .and_then(|moving| moving.frame_at(*age));
+                if let Some(frame) = frame.map(str::to_owned) {
+                    canvas.stretched(&frame, *place, 1.0);
+                }
+            }
+            UiCommand::Text {
+                style,
+                at,
+                size,
+                text,
+                color,
+                align,
+            } => {
+                let style = match style.as_str() {
+                    "bold" => FontStyle::Bold,
+                    "display" => FontStyle::Display,
+                    _ => FontStyle::Regular,
+                };
+                let width = measure_text(canvas, theme, style, *size, text);
+                let place = (at[0] - width * align, at[1], *size);
+                draw_text(canvas, theme, style, place, text, *color);
+            }
+            UiCommand::Run(_) | UiCommand::Sound(_) | UiCommand::Close => {}
+        }
     }
 }
 
@@ -200,6 +277,51 @@ impl PictureSource for PictureLoader<'_> {
 }
 
 impl World {
+    /// What a script's told outside of drawing, when the size doesn't matter.
+    fn ui_state_now(&self, script: &UiScript) -> UiState {
+        ui_state(
+            (0.0, 0.0),
+            self.run_time.as_secs_f64(),
+            self.client.is_some(),
+            &self.hud,
+            script,
+            &self.console_settings,
+        )
+    }
+
+    /// Opens or closes the script's menu.
+    pub(crate) fn toggle_script_menu(&mut self) {
+        self.script_menu = !self.script_menu;
+        if self.script_menu
+            && let Some(script) = &self.ui_script
+        {
+            let state = self.ui_state_now(script);
+            let commands = script.open_menu(&state).unwrap_or_default();
+            self.run_ui(commands);
+        }
+    }
+
+    /// Hands a key to the script's menu.
+    pub(crate) fn menu_key_to_script(&mut self, key: &str) {
+        if let Some(script) = &self.ui_script {
+            let state = self.ui_state_now(script);
+            let commands = script.menu_key(&state, key).unwrap_or_default();
+            self.run_ui(commands);
+        }
+    }
+
+    /// Does what a script asked to, past drawing.
+    fn run_ui(&mut self, commands: Vec<UiCommand>) {
+        for command in commands {
+            match command {
+                UiCommand::Run(line) => self.commands.push(line),
+                UiCommand::Sound(name) => self.play_local(&name),
+                UiCommand::Close => self.script_menu = false,
+                _ => {}
+            }
+        }
+    }
+
     /// What's drawn over the view, on a screen of `size` pixels.
     pub(crate) fn overlay(&mut self, size: (u32, u32)) -> Vec<Quad> {
         let playing = self.is_playing_screen();
@@ -227,7 +349,29 @@ impl World {
                 let (x, y) = (canvas.width() / 2.0 - 4.0, canvas.height() / 2.0 - 4.0);
                 canvas.character(x, y, b'+');
             }
-            self.hud.draw(&mut canvas, playing);
+            match self
+                .ui_script
+                .as_ref()
+                .filter(|script| script.draws_status())
+            {
+                Some(script) => {
+                    self.hud.draw_messages(&mut canvas, playing);
+                    if self.hud.intermission() == Intermission::None {
+                        let state = ui_state(
+                            (canvas.width(), canvas.height()),
+                            run_time,
+                            running,
+                            &self.hud,
+                            script,
+                            &self.console_settings,
+                        );
+                        if let Ok(commands) = script.draw_status(&state) {
+                            draw_ui(&mut canvas, &mut self.theme, &commands);
+                        }
+                    }
+                }
+                None => self.hud.draw(&mut canvas, playing),
+            }
             if self.paused {
                 draw_plaque(&mut canvas, PAUSE_PICTURE);
             }
@@ -259,6 +403,21 @@ impl World {
             keys: &self.bindings,
         };
         self.menu.draw(&mut canvas, run_time, &view);
+        if self.script_menu
+            && let Some(script) = &self.ui_script
+        {
+            let state = ui_state(
+                (canvas.width(), canvas.height()),
+                run_time,
+                running,
+                &self.hud,
+                script,
+                &self.console_settings,
+            );
+            if let Ok(commands) = script.draw_menu(&state) {
+                draw_ui(&mut canvas, &mut self.theme, &commands);
+            }
+        }
         if self.level_pending.is_some() {
             if self.theme.kit.pieces.contains_key("spinner-00") {
                 draw_spinner(&mut canvas, &self.theme, run_time);
