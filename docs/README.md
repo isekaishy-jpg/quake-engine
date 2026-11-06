@@ -155,6 +155,7 @@
     - [0118: the status bar and menus as scripts](proposals/0118-ui-scripts.md)
     - [0119: making levels the easy way](proposals/0119-easy-editing.md)
     - [0120: wear in the real levels](proposals/0120-wear.md)
+    - [0121: level faults](proposals/0121-level-faults.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

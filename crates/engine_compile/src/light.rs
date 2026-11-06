@@ -648,6 +648,9 @@ struct FaceBake {
     area: f64,
     /// How far each sample is from the edge of each crisp shadow, by its style.
     edges: Vec<(u8, Vec<u8>)>,
+    /// Which sharp light each sharp style holds. Faces hand those styles out by how
+    /// much each light gives them, so one style can hold different lights.
+    sharp: Vec<(u8, usize)>,
     /// How far each sample's place on the grid is off the face.
     gaps: Vec<f64>,
     /// Which faces its samples can fall in the same places as.
@@ -659,6 +662,9 @@ struct FaceBake {
     /// Which way each sample faces, for a chart, whose surface isn't flat.
     normals: Option<Vec<Point>>,
 }
+
+/// The value of a sample's edge at a sharp shadow's edge: less is in shadow.
+const SHADOW_EDGE: u8 = 128;
 
 /// What faces have in common when their samples fall in the same places: a plane
 /// and a texture mapping.
@@ -1250,6 +1256,10 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
             (*style, edges)
         })
         .collect();
+    let sharp = crisp
+        .iter()
+        .map(|(style, source)| (*style, std::ptr::from_ref(*source).addr()))
+        .collect();
     Some(FaceBake {
         layers,
         directions,
@@ -1259,6 +1269,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         albedo: albedo_of(map, face),
         area: face_area(map, face),
         edges,
+        sharp,
         gaps,
         sample_grid: sample_grid(face, normal, space.plane.distance),
         corners,
@@ -1353,6 +1364,7 @@ fn bake_chart(
         albedo: albedo_of(map, first),
         area: chart.area,
         edges: Vec::new(),
+        sharp: Vec::new(),
         gaps: vec![0.0; count],
         // Nothing else shares a chart's samples.
         sample_grid: ([i64::MIN, own_grid, 0, 0], [[0; 4]; 2]),
@@ -1516,28 +1528,86 @@ fn copy_sample(bakes: &mut [Option<FaceBake>], from: HeldSample, to: HeldSample)
     let Some(source) = &bakes[from.face] else {
         return;
     };
-    let layers: Vec<[f64; 3]> = source
+    let held: Vec<HeldLayer> = source
         .layers
         .iter()
-        .map(|(_, layer)| layer[from.index])
+        .map(|(style, layer)| {
+            let edge = source.edges.iter().find(|(known, _)| known == style);
+            HeldLayer {
+                holds: source.holds(*style),
+                color: layer[from.index],
+                edge: edge.map(|(_, edges)| edges[from.index]),
+            }
+        })
         .collect();
     let direction = source.directions[from.index];
-    let edges: Vec<(u8, u8)> = source
-        .edges
-        .iter()
-        .map(|(style, edges)| (*style, edges[from.index]))
-        .collect();
     let Some(target) = &mut bakes[to.face] else {
         return;
     };
-    for ((_, layer), color) in target.layers.iter_mut().zip(layers) {
-        layer[to.index] = color;
+    for (_, layer) in &mut target.layers {
+        layer[to.index] = [0.0; 3];
+    }
+    for layer in held {
+        target.take_layer(&layer, to.index);
     }
     target.directions[to.index] = direction;
-    for (style, edge) in edges {
-        let same = target.edges.iter_mut().find(|(known, _)| *known == style);
-        if let Some((_, held)) = same {
-            held[to.index] = edge;
+}
+
+/// What a layer holds: a style's plain light, or one sharp light.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum LayerHolds {
+    /// Everything of a style.
+    Style(u8),
+    /// One sharp light, by its place in memory.
+    Sharp(usize),
+}
+
+/// One layer of one sample, on its way to another face.
+struct HeldLayer {
+    /// What it holds.
+    holds: LayerHolds,
+    /// Its light.
+    color: [f64; 3],
+    /// How far it is from a sharp shadow's edge, if it's sharp.
+    edge: Option<u8>,
+}
+
+impl FaceBake {
+    /// What the layer of `style` holds.
+    fn holds(&self, style: u8) -> LayerHolds {
+        let sharp = self.sharp.iter().find(|(known, _)| *known == style);
+        sharp.map_or(LayerHolds::Style(style), |(_, light)| {
+            LayerHolds::Sharp(*light)
+        })
+    }
+
+    /// Puts `layer` on sample `index`, in the layer that holds the same light. Faces rank
+    /// layers by how much each light gives them, so that can be anywhere. A face with no
+    /// such layer takes it as plain light, as `fit_layers` does.
+    fn take_layer(&mut self, layer: &HeldLayer, index: usize) {
+        let same = (0..self.layers.len()).find(|at| self.holds(self.layers[*at].0) == layer.holds);
+        if let Some(at) = same {
+            let (style, samples) = &mut self.layers[at];
+            samples[index] = layer.color;
+            let edges = self.edges.iter_mut().find(|(known, _)| known == style);
+            if let (Some((_, edges)), Some(edge)) = (edges, layer.edge) {
+                edges[index] = edge;
+            }
+            return;
+        }
+        // In a sharp light's shadow, that sample has none of it to give.
+        if layer.edge.is_some_and(|edge| edge < SHADOW_EDGE) {
+            return;
+        }
+        let plain = (0..self.layers.len())
+            .filter(|at| {
+                let style = self.layers[*at].0;
+                style != BOUNCE_STYLE && matches!(self.holds(style), LayerHolds::Style(_))
+            })
+            .min_by_key(|at| self.layers[*at].0);
+        if let Some(at) = plain.or((!self.layers.is_empty()).then_some(0)) {
+            let sum = &mut self.layers[at].1[index];
+            *sum = std::array::from_fn(|part| sum[part] + layer.color[part]);
         }
     }
 }

@@ -250,7 +250,15 @@ fn steps_at_joins(map: &Map) -> usize {
         }
     }
     let mut planes: HashMap<[i64; 4], Vec<LitFace<'_>>> = HashMap::new();
+    // A decal lies over a surface and doesn't join it.
+    let is_decal = |face: &Face| {
+        let texture = &map.textures[face.texture as usize];
+        texture.material.as_ref().is_some_and(|m| m.decal)
+    };
     for face in map.faces.iter().filter(|face| face.light.is_some()) {
+        if is_decal(face) {
+            continue;
+        }
         let corners = map.face_points(face).to_vec();
         let Some(normal) = normal_of(&corners) else {
             continue;

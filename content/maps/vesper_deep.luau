@@ -1,12 +1,24 @@
 -- The showcase's own entity types, which its prefabs place. What an entity
 -- keeps in a field is saved by its global name, so these are named functions.
 
--- Moves a guard along its route.
+-- Goes to `place`, facing the way it's going, with its legs moving through `count`
+-- frames from `first`. Thinking 20 times a second, a frame lasts two thinks.
+local function step_to(self, place, first, count)
+	local step = place - self.origin
+	if vector.magnitude(step) > 0.1 then
+		self.angles = vector.create(0, math.deg(math.atan2(step.y, step.x)), 0)
+	end
+	setorigin(self, place)
+	self.stride = ((self.stride or 0) + 1) % (count * 2)
+	self.frame = first + math.floor(self.stride / 2)
+end
+
+-- Moves a guard along its route, on the soldier's prowling frames.
 function patrol_walker_think(self)
 	self.share = (self.share + 0.004) % 1
 	local place = engine.spline_point(self.route, self.share)
 	if place then
-		setorigin(self, place)
+		step_to(self, place, 90, 24)
 	end
 	self.nextthink = time() + 0.05
 end
@@ -33,7 +45,9 @@ function seeker_think(self)
 		local step = path[2] - self.origin
 		local length = vector.magnitude(step)
 		if length > 1 then
-			setorigin(self, self.origin + step * math.min(4 / length, 1))
+			step_to(self, self.origin + step * math.min(4 / length, 1), 78, 8)
+		else
+			self.frame = 69
 		end
 	end
 	self.nextthink = time() + 0.05

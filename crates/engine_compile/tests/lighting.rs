@@ -294,6 +294,33 @@ entity lamp { type = light origin = 240 190 90 intensity = 900 crisp = true }
     }
 }
 
+/// Each face ranks its layers by how much of each light it gets, so two faces side by
+/// side can hold the same lights in a different order. What they share has to go by
+/// which light it is, not by where it is on the list.
+#[test]
+fn faces_with_their_layers_in_another_order_still_agree() {
+    let text = "format 1 map
+entity world { type = worldspawn light_spacing = 32 }
+brush { material = left cuboid = -1024 -512 -64 20 512 0 }
+brush { material = right cuboid = 20 -512 -64 1024 512 0 }
+entity one { type = light origin = -500 0 100 intensity = 900 }
+entity two { type = light origin = 500 0 100 intensity = 900 style = 5 }
+";
+    let map = baked(text, &[]);
+    let (left, right) = (face_of(&map, "left"), face_of(&map, "right"));
+    let styles = |face: &Face| face.light.expect("lit").styles;
+    assert_ne!(styles(left), styles(right), "in another order");
+    for style in [0, 5] {
+        let one = column_at(&map, left, 32, style);
+        let other = column_at(&map, right, 32, style);
+        let most = one.iter().zip(&other).map(|(a, b)| a.abs_diff(*b)).max();
+        assert!(
+            most.expect("samples") <= 1,
+            "{style}: {one:?} and {other:?}"
+        );
+    }
+}
+
 /// A wall stands on the join between two floors. What's lit on one side stays
 /// there, though their samples fall in the same places.
 #[test]
