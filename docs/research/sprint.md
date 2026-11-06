@@ -53,3 +53,22 @@ Earlier items unblock later ones.
 ## Log
 
 Newest last. One line for each thing finished, with its commit.
+
+- Item 1: 226d708
+- Item 2: d6e312b
+- Item 3: e500242
+- Item 4: d81da48
+- Item 5: d4bbde9
+- Item 6: b69275a
+- Item 7: 71f8de6
+- Item 8: 99456b9
+- Item 9: 97bbd79
+- Item 10: 12c3641
+- Item 11: b9b296f
+- Item 12: 3f84b4c
+- Item 13: 3d9acf0
+- Item 14: 500aa4e
+- Item 15: 745556c
+- Item 16: f37e544
+- Item 17: 7f0b669
+- Item 18: 26c7282, which went in before its checks, then dc26f87, which fixed Play, doors, Bigger, walls and the Advanced camera
