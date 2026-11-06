@@ -11,4 +11,6 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    layer { base = textures/uc01_blight_sewers_wall_damp.png mask = paint }
+    layer { base = textures/uc01_blight_sewers_rock.png mask = paint }
 }

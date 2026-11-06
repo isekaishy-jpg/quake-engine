@@ -11,4 +11,7 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    hex = true
+    layer { base = textures/qg03_elder_crypt_wall_damp.png mask = paint }
+    layer { base = textures/qg03_elder_crypt_floor_flags.png mask = paint }
 }

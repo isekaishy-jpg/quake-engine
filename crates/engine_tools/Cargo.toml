@@ -18,6 +18,7 @@ path = "src/bin/engine-mcp.rs"
 [dependencies]
 engine_assets.workspace = true
 engine_compile.workspace = true
+engine_core.workspace = true
 engine_format.workspace = true
 engine_map.workspace = true
 engine_shaders.workspace = true

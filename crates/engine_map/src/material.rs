@@ -126,6 +126,10 @@ pub struct Material {
     pub triplanar: bool,
     /// Whether to break up repetition with hexagon tiles.
     pub hex_tiling: bool,
+    /// Whether it only ever lies on solid surfaces, as a decal does. What's see-through
+    /// is drawn one face at a time, far to near, so that each shows through the next.
+    /// This doesn't need that, so all of it can be drawn at once, first.
+    pub decal: bool,
     /// Texture movement, in repeats a second.
     pub scroll: [f32; 2],
     /// Flipbook columns, rows and frames a second, or zeros for none.

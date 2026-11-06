@@ -11,4 +11,6 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    layer { base = textures/uc02_royal_necropolis_wall_damp.png mask = paint }
+    layer { base = textures/uc02_royal_necropolis_rock.png mask = paint }
 }

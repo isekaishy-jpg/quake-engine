@@ -1380,6 +1380,26 @@ fn blended_faces_draw_far_to_near() {
     assert!(centre(&capture)[0] > 100);
 }
 
+/// Decals lie on solid surfaces, so they don't need a draw for each face, which is what
+/// made 800 of them cost more than all the layers in a level.
+#[test]
+fn decals_share_a_draw() {
+    let decal = Arc::new(Material {
+        alpha: AlphaMode::Blend,
+        shading: Shading::Unlit,
+        decal: true,
+        ..Material::default()
+    });
+    let mut built = map(1);
+    let face = built.faces[0].clone();
+    built.faces.push(face);
+    built.textures[0].mips = image_of(2, |_, _| [255, 0, 0, 128]);
+    built.textures[0].material = Some(decal);
+    let mesh = build_world(&built).expect("a mesh");
+    let blended = mesh.batches.iter().filter(|b| b.kind == BatchKind::Blended);
+    assert_eq!(blended.count(), 1, "one draw for all of them");
+}
+
 /// `map` with its one face's light moved out to tile 0, half red in its first
 /// sample's column, with `average` as its colour at a distance.
 fn tiled_map(average: [u8; 3]) -> (Map, TileLight) {

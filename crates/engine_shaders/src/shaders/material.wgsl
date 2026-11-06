@@ -305,7 +305,10 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         height_slot = material.slots_a.w;
         layers = material.flags.w;
     }
-    var below = 0.5;
+    // With no height to join along, the picture's own light and dark do it. Paint is
+    // held at light sample spacing, and this gives its edge the picture's detail, with
+    // what's painted reaching the dark cracks first.
+    var below = sqrt(dot(base.rgb, vec3<f32>(0.3, 0.6, 0.1)));
     if height_slot >= 0 {
         below = read_slot(height_slot, uv, dx, dy).r;
     }
@@ -330,7 +333,14 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     var normal = surface_at.normal;
     if material.slots_a.x >= 0 {
         // Compiled normal maps hold two channels, and the third follows from them.
-        let flat_bump = read_slot(material.slots_a.x, uv, dx, dy).xy * 2.0 - vec2<f32>(1.0);
+        var coded_bump = vec4<f32>(0.0);
+        if (features & 2) != 0 {
+            // The bumps have to move with the picture they belong to.
+            coded_bump = read_hex(material.slots_a.x, uv, dx, dy);
+        } else {
+            coded_bump = read_slot(material.slots_a.x, uv, dx, dy);
+        }
+        let flat_bump = coded_bump.xy * 2.0 - vec2<f32>(1.0);
         let rise = sqrt(max(1.0 - dot(flat_bump, flat_bump), 0.0));
         let bump = vec3<f32>(flat_bump, rise);
         normal = normalize(

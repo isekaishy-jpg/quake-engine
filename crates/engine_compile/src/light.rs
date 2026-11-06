@@ -746,8 +746,73 @@ fn distance_to_line(point: Point, points: &[Point]) -> f64 {
     nearest
 }
 
+/// How wide a cell of a [`PaintField`] is.
+const PAINT_CELL: f64 = 128.0;
+
+/// Strokes by the cells they reach. A level can have thousands of strokes and more than
+/// a million samples, and each sample only meets a few of them.
+struct PaintField<'a> {
+    /// The strokes.
+    strokes: &'a [PaintStroke],
+    /// Which strokes reach each cell.
+    cells: HashMap<[i32; 3], Vec<u32>>,
+}
+
+/// The cell `value` is in, along one axis.
+fn paint_cell(value: f64) -> i32 {
+    #[expect(clippy::cast_possible_truncation, reason = "levels fit an i32")]
+    let cell = (value / PAINT_CELL).floor() as i32;
+    cell
+}
+
+impl<'a> PaintField<'a> {
+    /// Files `strokes` by where they reach.
+    fn new(strokes: &'a [PaintStroke]) -> Self {
+        let mut cells: HashMap<[i32; 3], Vec<u32>> = HashMap::new();
+        for (number, stroke) in (0_u32..).zip(strokes) {
+            let reach = stroke.radius.max(1.0);
+            for pair in stroke.points.windows(2).chain(
+                stroke
+                    .points
+                    .chunks(1)
+                    .take(usize::from(stroke.points.len() == 1)),
+            ) {
+                let (first, last) = (pair[0], pair[pair.len() - 1]);
+                let low: [i32; 3] =
+                    std::array::from_fn(|axis| paint_cell(first[axis].min(last[axis]) - reach));
+                let high: [i32; 3] =
+                    std::array::from_fn(|axis| paint_cell(first[axis].max(last[axis]) + reach));
+                for x in low[0]..=high[0] {
+                    for y in low[1]..=high[1] {
+                        for z in low[2]..=high[2] {
+                            let held = cells.entry([x, y, z]).or_default();
+                            if held.last() != Some(&number) {
+                                held.push(number);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+        Self { strokes, cells }
+    }
+
+    /// How much of each layer is at `point`.
+    fn at(&self, point: Point) -> [u8; 4] {
+        let cell = point.map(paint_cell);
+        let near = self.cells.get(&cell).map_or(&[][..], Vec::as_slice);
+        let strokes = near.iter().map(|number| &self.strokes[*number as usize]);
+        paint_weights(point, strokes)
+    }
+}
+
 /// How much of each layer `strokes` leave at `point`.
 fn paint_at(point: Point, strokes: &[PaintStroke]) -> [u8; 4] {
+    paint_weights(point, strokes.iter())
+}
+
+/// How much of each layer `strokes` leave at `point`.
+fn paint_weights<'a>(point: Point, strokes: impl Iterator<Item = &'a PaintStroke>) -> [u8; 4] {
     let mut weights = [0.0_f64; 4];
     for stroke in strokes {
         let share = 1.0 - distance_to_line(point, &stroke.points) / stroke.radius.max(1.0);
@@ -2139,6 +2204,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let mut directions = Vec::new();
     let mut edges = Vec::new();
     let mut paint = Vec::new();
+    let field = PaintField::new(&working.paint);
     let mut lit_faces = Vec::with_capacity(faces.len());
     for bake in bakes {
         let Some(bake) = bake else {
@@ -2158,7 +2224,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             // Paint is read with the first layer's place.
             if !working.paint.is_empty() {
                 if index == 0 {
-                    paint.extend(bake.points.iter().map(|p| paint_at(*p, &working.paint)));
+                    paint.extend(bake.points.iter().map(|p| field.at(*p)));
                 } else {
                     paint.resize(paint.len() + layer.len(), [0; 4]);
                 }

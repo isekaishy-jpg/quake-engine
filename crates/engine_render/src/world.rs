@@ -201,6 +201,17 @@ struct LightPlace {
     width: u32,
 }
 
+/// Where a batch that's drawn before all other see-through things says it is.
+const BEHIND_EVERYTHING: Vec3 = Vec3::new(1.0e9, 1.0e9, 1.0e9);
+
+/// Whether `face` is a decal, which needs no place in the order of see-through things.
+fn lies_on_surfaces(map: &Map, face: &Face) -> bool {
+    let texture = map.textures.get(face.texture as usize);
+    texture
+        .and_then(|texture| texture.material.as_ref())
+        .is_some_and(|material| material.decal && material.alpha == AlphaMode::Blend)
+}
+
 /// Whether `texture` is drawn through the material pipelines. Upload and
 /// batching must agree on this, or a draw has no material bound.
 pub(crate) fn uses_material(texture: &Texture) -> bool {
@@ -573,7 +584,9 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             };
             // What's see-through is drawn far to near, so each face stands
             // alone.
-            if mesh.batches[batch as usize].kind == BatchKind::Blended {
+            if lies_on_surfaces(map, face) {
+                mesh.batch_centers[batch as usize] = BEHIND_EVERYTHING;
+            } else if mesh.batches[batch as usize].kind == BatchKind::Blended {
                 let shared = mesh.batches[batch as usize].clone();
                 batch = u32::try_from(mesh.batches.len()).ok()?;
                 mesh.batches.push(shared);

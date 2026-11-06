@@ -1111,6 +1111,7 @@ version = "0.0.0-alpha"
 dependencies = [
  "engine_assets",
  "engine_compile",
+ "engine_core",
  "engine_format",
  "engine_map",
  "engine_script",

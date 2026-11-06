@@ -30,7 +30,7 @@ Earlier items unblock later ones.
 | 16 | Engine UI: text, nine-slice, menus, splash, console, animated pictures | Open questions | done |
 | 17 | Status bar and menus as scripts | Open questions | done |
 | 18 | Editor: full pass for anyone to make maps | Open questions | done |
-| 19 | Use layers, masks, paint, decals and hex tiling in the real levels | Review 0016 | todo |
+| 19 | Use layers, masks, paint, decals and hex tiling in the real levels | Review 0016 | done |
 | 20 | Level faults: foundry lava, enemies once they move, real people in the city | Review 0016 | todo |
 | 21 | Paths: jumps, water and lifts | Review 0016 | todo |
 | 22 | Door logic | Open questions | todo |

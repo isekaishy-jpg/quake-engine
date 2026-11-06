@@ -103,3 +103,14 @@ target/release/engine-compile content --pack game.epak
 ```
 
 Run the game on it with `-content game.epak`. See [proposal 0106](proposals/0106-packing.md).
+
+## Decals
+
+A decal is one picture pressed onto surfaces, so it follows different rules from a repeating set.
+
+- **Name:** `decal_` and what it is, as in `decal_stain`, with a material of the same name.
+- **Size:** 512 by 512, showing as 96 to 256 units.
+- **Alpha:** the shape is in the alpha channel, and it must reach 0 by every edge.
+- **Colour:** dark and neutral, so that it goes on any set. Nothing of the set's own colour.
+- **Material:** `alpha = blend` and `decal = true`, which draws all of them at once.
+- **Not for:** anything that has to repeat. `decal_grime`, `decal_stain` and `decal_cracks` are made from noise.

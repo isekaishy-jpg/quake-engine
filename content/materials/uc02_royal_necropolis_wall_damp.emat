@@ -11,4 +11,5 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    hex = true
 }

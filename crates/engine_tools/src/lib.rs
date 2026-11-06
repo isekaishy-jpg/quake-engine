@@ -13,6 +13,7 @@ mod operations;
 mod plan;
 mod prefab;
 mod session;
+mod wear;
 
 pub use game_run::{GameRunner, data_in};
 pub use operations::{OPERATIONS, OperationInfo, run};

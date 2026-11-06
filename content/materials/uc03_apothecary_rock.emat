@@ -11,4 +11,7 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    hex = true
+    layer { base = textures/uc03_apothecary_wall_damp.png mask = paint }
+    layer { base = textures/uc03_apothecary_floor_flags.png mask = paint }
 }

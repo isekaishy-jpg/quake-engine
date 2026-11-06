@@ -5,19 +5,19 @@ use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, bake_light, compile, map_hash, read_map, side_files,
-    write_bake,
+    BakeInput, CompileError, MaterialLibrary, WorkingMap, bake_light, compile, map_hash, read_map,
+    side_files, write_bake,
 };
 use engine_format::{Block, Value, to_binary};
-use engine_map::{MipLevel, Texture};
+use engine_map::{Map, MipLevel, Texture};
 use serde_json::{Value as Json, json};
 
 use crate::features;
 use crate::game_run::GameRunner;
 use crate::json::{block_to_json, move_block, numbers, point_from_json, value_from_json};
-use crate::plan;
 use crate::prefab::{build_prefab, prefab_names};
 use crate::session::{ID_FIELD, Session, id_of};
+use crate::{plan, wear};
 
 /// One operation, for listing.
 #[derive(Clone, Copy, Debug)]
@@ -105,6 +105,10 @@ pub const OPERATIONS: &[OperationInfo] = &[
     OperationInfo {
         name: "paint",
         help: "Adds a stroke of a layer. points, optional layer, radius, strength.",
+    },
+    OperationInfo {
+        name: "wear",
+        help: "Makes the level look used, with paint and decals where its real surfaces meet. Run again to replace it. Optional amount, seed.",
     },
     OperationInfo {
         name: "add_spline",
@@ -264,6 +268,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "add_decal" => features::add_decal(session, args),
         "add_stamp" => features::add_stamp(session, args),
         "paint" => features::paint(session, args),
+        "wear" => wear::wear(session, args),
         "add_spline" => features::add_spline(session, args),
         "append_point" => features::append_point(session, args),
         "set_material" => features::set_material(session, args),
@@ -463,8 +468,9 @@ fn validate(session: &Session) -> Result<Json, String> {
 }
 
 /// `compile`.
-fn bake(session: &Session) -> Result<Json, String> {
-    let path = session.path.as_ref().ok_or("save the map first")?;
+/// The map as it would compile, with what was read to make it and the materials it
+/// uses.
+pub(crate) fn built_map(session: &Session) -> Result<(Map, WorkingMap, String), String> {
     let mut working = read_map(&session.document).map_err(|error| error.to_string())?;
     let filesystem = content_files(session);
     let mut library = MaterialLibrary::new(&filesystem);
@@ -478,10 +484,18 @@ fn bake(session: &Session) -> Result<Json, String> {
             Texture::default()
         })
     };
-    let mut map = compile(&working, &mut textures).map_err(|error| error.to_string())?;
+    let map = compile(&working, &mut textures).map_err(|error| error.to_string())?;
     if let Some(error) = failure {
         return Err(error);
     }
+    Ok((map, working, used))
+}
+
+/// `compile`: bakes the saved map's light, and writes what the game loads.
+fn bake(session: &Session) -> Result<Json, String> {
+    let path = session.path.as_ref().ok_or("save the map first")?;
+    let (mut map, working, used) = built_map(session)?;
+    let filesystem = content_files(session);
     let mut images_library = MaterialLibrary::new(&filesystem);
     let mut images = |image: &str| -> Result<Arc<Vec<MipLevel>>, CompileError> {
         images_library.image_at(image)

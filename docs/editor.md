@@ -72,5 +72,6 @@ The plan is ordinary operations, so anything here can be done without the window
 | `plan_thing` | `cells`, and `thing`: `start`, `light`, `door`, `health`, `ammo`, `enemy`, `fire` |
 | `plan_look` | `look`, the start of a material set's name |
 | `play` | None. Opens the game on the saved map, and leaves it open |
+| `wear` | Optional `amount` from 0 to 1, and `seed`. Makes a level look used, from its real shape, and replaces what it made before |
 
 `playtest` is different from `play`. It runs the game for some seconds and reports whether it stayed up, so it's for checking and not for playing.

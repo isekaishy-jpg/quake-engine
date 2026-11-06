@@ -11,4 +11,7 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    hex = true
+    layer { base = textures/qg02_iron_cathedral_wall_damp.png mask = paint }
+    layer { base = textures/qg02_iron_cathedral_floor_flags.png mask = paint }
 }

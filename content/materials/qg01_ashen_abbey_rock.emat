@@ -11,4 +11,7 @@ surface {
     shading = lit
     alpha = opaque
     kind = solid
+    hex = true
+    layer { base = textures/qg01_ashen_abbey_wall_damp.png mask = paint }
+    layer { base = textures/qg01_ashen_abbey_floor_flags.png mask = paint }
 }

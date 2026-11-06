@@ -494,6 +494,7 @@ impl<'a> MaterialLibrary<'a> {
                 .and_then(Value::flag)
                 .unwrap_or(false),
             hex_tiling: block.get("hex").and_then(Value::flag).unwrap_or(false),
+            decal: block.get("decal").and_then(Value::flag).unwrap_or(false),
             shading: match block.get("shading").and_then(Value::text) {
                 None | Some("lit") => Shading::Lit,
                 Some("cel") => Shading::Cel,

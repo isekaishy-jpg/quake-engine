@@ -1,0 +1,9 @@
+format 1 material
+
+surface {
+    base = textures/decal_cracks.png
+    world_size = 256 256
+    repeat = both
+    alpha = blend
+    decal = true
+}
