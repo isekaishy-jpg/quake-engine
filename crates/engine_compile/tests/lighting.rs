@@ -12,8 +12,8 @@ use engine_compile::{
 use engine_core::math::Vec3;
 use engine_format::from_text;
 use engine_map::{
-    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, Map, Material, MaterialLayer, MipLevel, PAINT_MASK,
-    SideFiles, Texture, TextureKind,
+    AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, Map, Material, MaterialLayer, MipLevel,
+    PAINT_MASK, SideFiles, Texture, TextureKind,
 };
 use engine_physics::CollisionWorld;
 
@@ -116,7 +116,9 @@ fn a_pillar_casts_a_shadow() {
     let (_, clear) =
         layer_light(&baked(&open, &[]), face_of(&baked(&open, &[]), "east"), 0).expect("a layer");
     let shaded_map = baked(&blocked, &[]);
-    let (_, shaded) = layer_light(&shaded_map, face_of(&shaded_map, "east"), 0).expect("a layer");
+    // All in shadow, it has no layer for that light at all.
+    let east = face_of(&shaded_map, "east");
+    let shaded = layer_light(&shaded_map, east, 0).map_or(0.0, |(_, light)| light);
     assert!(shaded < clear * 0.8, "shadow {shaded} against {clear}");
 }
 
@@ -155,9 +157,7 @@ entity lamp {{ type = light origin = -200 0 0 intensity = 800 }}
         images: &mut images,
     };
     bake_light(&mut map, &mut input).expect("bakes");
-    layer_light(&map, face_of(&map, "east"), 0)
-        .expect("a layer")
-        .1
+    layer_light(&map, face_of(&map, "east"), 0).map_or(0.0, |(_, light)| light)
 }
 
 /// The sun stops at the top of the world, and a mesh taller than any brush is
@@ -217,12 +217,11 @@ brush { material = ground cuboid = -512 -512 -64 512 512 0 }
 /// Each sample of `style` along the column of `face` nearest `x`, as red.
 fn column_at(map: &Map, face: &Face, x: i32, style: u8) -> Vec<u8> {
     let light = face.light.expect("lit");
-    let layer = light
-        .styles
-        .iter()
-        .position(|known| *known == style)
-        .expect("a layer");
     let (width, height) = (light.width as usize, light.height as usize);
+    // With none of that light, a face has no layer for it.
+    let Some(layer) = light.styles.iter().position(|known| *known == style) else {
+        return vec![0; height];
+    };
     let first = light.first_sample as usize + layer * width * height;
     let column = usize::try_from((x - light.texel_origin[0]) / 32).expect("on the face");
     (0..height)
@@ -498,7 +497,7 @@ fn a_crisp_light_records_where_its_shadow_ends() {
         let Some(light) = face.light else {
             continue;
         };
-        let Some(layer) = light.styles.iter().position(|s| *s == CRISP_STYLE) else {
+        let Some(layer) = light.styles.iter().position(|s| *s == CRISP_STYLES[0]) else {
             continue;
         };
         let count = (light.width * light.height) as usize;
@@ -1199,28 +1198,6 @@ fn probes_hold_ambient_light() {
     assert!(sample.brightness > 30.0, "{}", sample.brightness);
 }
 
-/// With two crisp lights, the second bakes with its own shadows, and isn't cut
-/// by the first's edge.
-#[test]
-fn only_one_light_is_crisp_on_a_face() {
-    let one = format!(
-        "{ROOM}\nbrush {{ material = pillar cuboid = -32 -32 -256 32 32 256 }}\n\
-         entity lamp {{ type = light origin = -200 0 0 intensity = 900 crisp = true }}\n"
-    );
-    let two = format!(
-        "{one}entity other {{ type = light origin = 200 0 0 intensity = 900 crisp = true }}\n"
-    );
-    let plain = baked(&one, &[]);
-    let both = baked(&two, &[]);
-    let usual = |map: &Map| {
-        let floor = face_of(map, "floor");
-        let light = floor.light.expect("lit");
-        light.styles.iter().filter(|style| **style == 0).count()
-    };
-    assert_eq!(usual(&plain), 0, "one crisp light has no usual layer");
-    assert_eq!(usual(&both), 1, "the second has one");
-}
-
 /// Whether every pair of `points` with a clear line between them is in each
 /// other's visible sets, which is what keeps anything from vanishing.
 fn sets_hold_every_line(map: &Arc<Map>, eyes: &[Vec3], points: &[Vec3]) -> Result<usize, String> {
@@ -1354,4 +1331,227 @@ fn the_showcase_hides_nothing_a_line_reaches() {
     }
     let lines = sets_hold_every_line(&map, &eyes, &surfaces).expect("no line is hidden");
     assert!(lines > 1000, "{lines}");
+}
+
+/// A floor, open above, with `lights` on it, and a thin post `post` wide.
+fn floor_with(post: f64, lights: &str) -> String {
+    format!(
+        "format 1 map
+entity world {{ type = worldspawn light_spacing = 32 }}
+brush {{ material = floor cuboid = -1024 -1024 -32 1024 1024 0 }}
+brush {{ material = post cuboid = 0 0 0 {post} {post} 256 }}
+{lights}
+"
+    )
+}
+
+/// The brightness of every sample of the floor's first layer, with how many
+/// layers it has.
+fn floor_samples(map: &Map) -> (Vec<u32>, usize) {
+    let floor = face_of_top(map);
+    let light = floor.light.expect("lit");
+    let layer = (light.width * light.height) as usize;
+    let first = light.first_sample as usize;
+    let samples = map.light[first..first + layer]
+        .iter()
+        .map(|sample| sample.iter().map(|part| u32::from(*part)).sum())
+        .collect();
+    (samples, light.style_count() as usize)
+}
+
+/// The biggest face looking up, which is the floor.
+fn face_of_top(map: &Map) -> &Face {
+    let up = |face: &&Face| {
+        let points = map.face_points(face);
+        points.iter().all(|point| point.z == 0.0)
+    };
+    map.faces
+        .iter()
+        .filter(up)
+        .max_by_key(|face| face.light.map_or(0, |light| light.width * light.height))
+        .expect("a floor")
+}
+
+#[test]
+fn a_thin_shadow_comes_out_as_how_much_of_a_sample_it_covers() {
+    let lamp = "entity lamp { type = light origin = 96 8 64 light = 900 }";
+    let (shaded, _) = floor_samples(&baked(&floor_with(16.0, lamp), &[]));
+    let (open, _) = floor_samples(&baked(&floor_with(0.25, lamp), &[]));
+    assert_eq!(shaded.len(), open.len());
+    // With one ray a sample, its light is all there or it's none of it.
+    let part_shaded = shaded
+        .iter()
+        .zip(&open)
+        .filter(|(shaded, open)| {
+            **open > 30 && **shaded * 10 > **open * 2 && **shaded * 10 < **open * 8
+        })
+        .count();
+    assert!(
+        part_shaded > 8,
+        "only {part_shaded} samples are part shaded"
+    );
+}
+
+#[test]
+fn light_past_a_faces_layers_is_kept() {
+    let lamps: String = (0..6)
+        .map(|number| {
+            format!(
+                "entity lamp_{number} {{ type = light origin = {} 300 64 light = 400 style = {} }}\n",
+                number * 40,
+                number + 1
+            )
+        })
+        .collect();
+    let map = baked(&floor_with(4.0, &lamps), &[]);
+    let floor = face_of_top(&map);
+    let light = floor.light.expect("lit");
+    assert!(light.style_count() <= 4);
+    // The same lamps, all of one style, so that none is short of a layer.
+    let plain: String = (0..6)
+        .map(|number| {
+            format!(
+                "entity lamp_{number} {{ type = light origin = {} 300 64 light = 400 }}\n",
+                number * 40
+            )
+        })
+        .collect();
+    let whole = baked(&floor_with(4.0, &plain), &[]);
+    let total = |map: &Map| -> u64 {
+        let light = face_of_top(map).light.expect("lit");
+        let layer = (light.width * light.height) as usize;
+        let layers = light.style_count() as usize;
+        map.light[light.first_sample as usize..][..layer * layers]
+            .iter()
+            .flatten()
+            .map(|part| u64::from(*part))
+            .sum()
+    };
+    let (held, all) = (total(&map), total(&whole));
+    assert!(held * 10 > all * 8, "{held} of {all}");
+}
+
+#[test]
+fn which_lights_get_a_layer_doesnt_depend_on_their_order() {
+    let lamp = |number: u32| {
+        format!(
+            "entity lamp_{number} {{ type = light origin = {} 300 64 light = {} style = {} }}\n",
+            number * 40,
+            200 + number * 150,
+            number + 1
+        )
+    };
+    let forward: String = (0..6).map(lamp).collect();
+    let backward: String = (0..6).rev().map(lamp).collect();
+    let one = baked(&floor_with(4.0, &forward), &[]);
+    let other = baked(&floor_with(4.0, &backward), &[]);
+    let styles = |map: &Map| face_of_top(map).light.expect("lit").styles;
+    assert_eq!(styles(&one), styles(&other));
+}
+
+#[test]
+fn each_sharp_light_keeps_an_edge_of_its_own() {
+    let lamps = "entity one { type = light origin = 200 8 96 light = 900 crisp = true }
+entity two { type = light origin = -200 8 96 light = 900 crisp = true }";
+    let map = baked(&floor_with(16.0, lamps), &[]);
+    let light = face_of_top(&map).light.expect("lit");
+    let layer = (light.width * light.height) as usize;
+    let sharp: Vec<usize> = (0..light.style_count() as usize)
+        .filter(|number| CRISP_STYLES.contains(&light.styles[*number]))
+        .collect();
+    assert_eq!(sharp.len(), 2, "styles {:?}", light.styles);
+    for number in sharp {
+        let first = light.first_sample as usize + number * layer;
+        let edges = &map.light_edges[first..first + layer];
+        assert!(
+            edges.iter().any(|edge| *edge < 128),
+            "layer {number} has a shadow"
+        );
+    }
+}
+
+/// The light of `face`'s first layer at `point`, blended between samples as the
+/// GPU does.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    clippy::cast_precision_loss,
+    reason = "a test's small sample numbers"
+)]
+fn blended_at(map: &Map, face: &Face, point: Vec3) -> f32 {
+    let light = face.light.expect("lit");
+    let step = light.texels_per_sample as f32;
+    let place = [0, 1]
+        .map(|axis| (face.axes[axis].project(point) - light.texel_origin[axis] as f32) / step);
+    let [x, y] = place.map(f32::floor);
+    let [across, down] = [place[0] - x, place[1] - y];
+    let sample = |x: f32, y: f32| {
+        let (x, y) = (x as u32, y as u32);
+        let at =
+            light.first_sample + y.min(light.height - 1) * light.width + x.min(light.width - 1);
+        f32::from(map.light[at as usize][0])
+    };
+    let top = sample(x, y) * (1.0 - across) + sample(x + 1.0, y) * across;
+    let bottom = sample(x, y + 1.0) * (1.0 - across) + sample(x + 1.0, y + 1.0) * across;
+    top * (1.0 - down) + bottom * down
+}
+
+/// The biggest face of `map` whose corners all pass `on`.
+fn biggest_face<'a>(map: &'a Map, on: &dyn Fn(Vec3) -> bool) -> &'a Face {
+    map.faces
+        .iter()
+        .filter(|face| map.face_points(face).iter().all(|point| on(*point)))
+        .max_by_key(|face| face.light.map_or(0, |light| light.width * light.height))
+        .expect("a face")
+}
+
+/// Where along `y` a face of `shaded` goes dark, compared with the same in `open`,
+/// with `on` finding it and `at` turning a place along it into a point.
+fn shadow_edge(
+    shaded: &Map,
+    open: &Map,
+    on: &dyn Fn(Vec3) -> bool,
+    at: &dyn Fn(f32) -> Vec3,
+) -> f32 {
+    let (one, other) = (biggest_face(shaded, on), biggest_face(open, on));
+    let mut y = -120.0;
+    while y < 120.0 {
+        let point = at(y);
+        let whole = blended_at(open, other, point).max(1.0);
+        if blended_at(shaded, one, point) / whole < 0.5 {
+            return y;
+        }
+        y += 0.5;
+    }
+    y
+}
+
+#[test]
+fn a_shadow_runs_on_round_a_corner() {
+    // A post throws a shadow along the floor and up a wall, and samples are far
+    // apart. Where its edge falls has to agree on both sides of the join.
+    let text = |post: &str| {
+        format!(
+            "format 1 map
+entity world {{ type = worldspawn light_spacing = 32 }}
+brush {{ material = floor cuboid = -512 -512 -32 256 512 0 }}
+brush {{ material = wall cuboid = 256 -512 -32 288 512 512 }}
+{post}
+entity lamp {{ type = light origin = -128 3 100 light = 1800 }}
+"
+        )
+    };
+    let shaded = baked(
+        &text("brush { material = post cuboid = 0 -11 0 16 13 200 }"),
+        &[],
+    );
+    let open = baked(&text(""), &[]);
+    let floor = |point: Vec3| point.z == 0.0;
+    let wall = |point: Vec3| point.x == 256.0;
+    let on_floor = shadow_edge(&shaded, &open, &floor, &|y| Vec3::new(255.5, y, 0.0));
+    let on_wall = shadow_edge(&shaded, &open, &wall, &|y| Vec3::new(256.0, y, 0.5));
+    assert!(
+        (on_floor - on_wall).abs() < 10.0,
+        "the floor's stops at {on_floor} and the wall's at {on_wall}"
+    );
 }

@@ -10,7 +10,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary, to_text};
 use engine_map::{
-    CHUNK_COLUMNS, CRISP_STYLE, ChunkedNav, Face, FaceLight, LightTiles, Map, MegaMaps, NavGrid,
+    CHUNK_COLUMNS, CRISP_STYLES, ChunkedNav, Face, FaceLight, LightTiles, Map, MegaMaps, NavGrid,
     NavPlace, NavShape, ProbeGrid, RESIDENT, SideFiles, TexelAxis, TileLight, chunks_of,
 };
 
@@ -18,7 +18,7 @@ use crate::error::CompileError;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
-const BAKE_VERSION: u64 = 22;
+const BAKE_VERSION: u64 = 23;
 
 /// A hash of a map's text, with the compiler's own version mixed in.
 #[must_use]
@@ -115,7 +115,7 @@ fn average_of(map: &Map, light: &FaceLight) -> [u8; 3] {
                 break;
             }
             let at = first + number * layer + sample;
-            let shadowed = *style == CRISP_STYLE
+            let shadowed = CRISP_STYLES.contains(style)
                 && map
                     .light_edges
                     .get(at)

@@ -6,8 +6,9 @@ use engine_core::math::Vec3;
 /// from direct light lets moving things block one without the other.
 pub const BOUNCE_STYLE: u8 = 63;
 
-/// The light style whose samples are drawn crisp, by the edges beside them.
-pub const CRISP_STYLE: u8 = 62;
+/// The light styles whose samples are drawn crisp, by the edges beside them. A
+/// face's sharp lights take one each, in turn.
+pub const CRISP_STYLES: [u8; 3] = [62, 61, 60];
 
 /// Baked lights that move through some styles in turn, blended by time.
 #[derive(Clone, Copy, Debug, PartialEq)]

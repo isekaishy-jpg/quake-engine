@@ -57,7 +57,7 @@ fn layer(in: VertexOut, slot: f32, style: u32) -> vec3<f32> {
     let uv = in.light_uv + vec2<f32>(in.light_step * slot, 0.0);
     let sample = textureSampleLevel(lightmap, lightmap_sampler, uv, 0.0);
     var color = sample.rgb;
-    if style == 62u {
+    if style >= 60u && style <= 62u {
         // Alpha says how far the shadow's edge is, which blends between samples
         // far better than light does, so the edge stays sharp.
         color = color * smoothstep(0.46, 0.54, sample.a);

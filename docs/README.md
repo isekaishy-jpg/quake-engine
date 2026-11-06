@@ -142,6 +142,7 @@
     - [0109: meshes](proposals/0109-meshes.md)
     - [0110: mesh light](proposals/0110-mesh-light.md)
     - [0111: mesh collision](proposals/0111-mesh-collision.md)
+    - [0112: baked shadows](proposals/0112-baked-shadows.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -37,7 +37,7 @@ pub use nav::{LINKS, NAV_WAYS, NavGrid, NavPlace, Spline};
 pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, chunks_of};
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook};
-pub use probes::{BOUNCE_STYLE, CRISP_STYLE, LightTrack, ProbeGrid, ProbeSample};
+pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};

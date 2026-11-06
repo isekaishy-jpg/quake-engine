@@ -10,7 +10,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use engine_core::math::Vec3;
 use engine_map::{
-    AlphaMode, BOUNCE_STYLE, CRISP_STYLE, Face, FaceLight, LightTrack, Map, Material, MegaImage,
+    AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material, MegaImage,
     MipLevel, ProbeGrid, RESIDENT, TextureKind,
 };
 
@@ -459,7 +459,7 @@ fn light_on(
 const FIRST_KEYFRAME_STYLE: u8 = 48;
 
 /// The last style free for keyframes.
-const LAST_KEYFRAME_STYLE: u8 = CRISP_STYLE - 1;
+const LAST_KEYFRAME_STYLE: u8 = 59;
 
 /// How many visibility samples cross a light sample, along each side, to find
 /// a crisp shadow's edge.
@@ -646,8 +646,8 @@ struct FaceBake {
     albedo: [f64; 3],
     /// How much surface it has.
     area: f64,
-    /// How far each sample is from the edge of a crisp shadow, if it has any.
-    edges: Option<Vec<u8>>,
+    /// How far each sample is from the edge of each crisp shadow, by its style.
+    edges: Vec<(u8, Vec<u8>)>,
     /// How far each sample's place on the grid is off the face.
     gaps: Vec<f64>,
     /// Which faces its samples can fall in the same places as.
@@ -890,6 +890,260 @@ fn albedo_of(map: &Map, face: &Face) -> [f64; 3] {
     total.map(|part| part / count)
 }
 
+/// What's needed to look around a sample on a face.
+struct SampleSurface<'a> {
+    /// The face's corners.
+    corners: &'a [Point],
+    /// Which way it faces.
+    normal: Point,
+    /// Where its samples are.
+    frame: &'a GridFrame,
+    /// Its samples across.
+    width: usize,
+    /// How far its light is lifted off it, if it is.
+    lift: Option<Point>,
+}
+
+/// Places across a sample's own patch of surface, as shares of the gap to the
+/// next sample. They're spread so no two share a row or a column.
+const SAMPLE_PATCH: [[f64; 2]; 8] = [
+    [-0.44, -0.19],
+    [-0.31, 0.31],
+    [-0.19, -0.44],
+    [-0.06, 0.06],
+    [0.06, -0.06],
+    [0.19, 0.44],
+    [0.31, -0.31],
+    [0.44, 0.19],
+];
+
+/// How much a sample's share of unshaded light has to differ from its
+/// neighbour's before a shadow's edge is taken to pass between them.
+const EDGE_CHANGE: f64 = 0.04;
+
+/// Which samples a shadow's edge passes near, going by how much of each's light
+/// gets through: `seen` of it.
+fn near_edges(seen: &[f64], width: usize) -> Vec<bool> {
+    let mut out = vec![false; seen.len()];
+    for (at, value) in seen.iter().enumerate() {
+        let across = at % width;
+        let mut mark = |other: usize| {
+            if (seen[other] - value).abs() > EDGE_CHANGE {
+                out[at] = true;
+                out[other] = true;
+            }
+        };
+        if across + 1 < width {
+            mark(at + 1);
+        }
+        if at + width < seen.len() {
+            mark(at + width);
+        }
+    }
+    out
+}
+
+/// The light on a sample's patch of surface, not only at its middle, so a thin
+/// shadow comes out as how much of the patch it covers.
+fn light_on_patch(
+    scene: &Scene<'_>,
+    source: &BakeLight,
+    at: usize,
+    surface: &SampleSurface<'_>,
+) -> ([f64; 3], Point) {
+    let (x, y) = (at % surface.width, at / surface.width);
+    #[expect(clippy::cast_precision_loss, reason = "faces are small")]
+    let (x, y) = (x as f64, y as f64);
+    let mut color = [0.0; 3];
+    let mut from = [0.0; 3];
+    for [dx, dy] in SAMPLE_PATCH {
+        let place = add_scaled(
+            add_scaled(surface.frame.start, surface.frame.across, x + dx),
+            surface.frame.down,
+            y + dy,
+        );
+        let place = sample_place(scene, surface.corners, surface.normal, place);
+        let place = surface
+            .lift
+            .map_or(place, |lift| add_scaled(place, lift, 1.0));
+        let (light, direction) = light_on(scene, source, place, surface.normal, true);
+        from = add_scaled(from, direction, light[0] + light[1] + light[2]);
+        for part in 0..3 {
+            color[part] += light[part] / SAMPLE_PATCH.len() as f64;
+        }
+    }
+    (color, from)
+}
+
+/// What one light does to one face.
+struct FaceShare<'a> {
+    /// The light.
+    source: &'a BakeLight,
+    /// Its colour at each sample.
+    colors: Vec<[f64; 3]>,
+    /// Where it comes from at each sample, by how much there is.
+    directions: Vec<Point>,
+    /// How much of it there is in all, which says who keeps a layer.
+    energy: f64,
+}
+
+/// How much light is in `color`.
+fn energy_of(color: [f64; 3]) -> f64 {
+    color[0] + color[1] + color[2]
+}
+
+/// What `source` does to the samples at `points`, or `None` if that's nothing. A
+/// sharp light's shadow is left out, as its edges hold that. Anything else looks
+/// across each sample's patch of surface wherever a shadow's edge is near.
+fn light_of_face<'a>(
+    scene: &Scene<'_>,
+    source: &'a BakeLight,
+    points: &[Point],
+    surface: &SampleSurface<'_>,
+) -> Option<FaceShare<'a>> {
+    let normal = surface.normal;
+    let open: Vec<([f64; 3], Point)> = points
+        .iter()
+        .map(|point| light_on(scene, source, *point, normal, false))
+        .collect();
+    let most = open.iter().map(|(color, _)| energy_of(*color)).sum::<f64>();
+    if most <= 0.0 {
+        return None;
+    }
+    let mut lit = open.clone();
+    if !source.crisp {
+        lit = points
+            .iter()
+            .map(|point| light_on(scene, source, *point, normal, true))
+            .collect();
+        let seen: Vec<f64> = lit
+            .iter()
+            .zip(&open)
+            .map(|((color, _), (whole, _))| energy_of(*color) / energy_of(*whole).max(1e-9))
+            .collect();
+        for (at, near) in near_edges(&seen, surface.width).iter().enumerate() {
+            if *near && energy_of(open[at].0) > 0.0 {
+                lit[at] = light_on_patch(scene, source, at, surface);
+            }
+        }
+    }
+    let mut share = FaceShare {
+        source,
+        colors: Vec::with_capacity(lit.len()),
+        directions: Vec::with_capacity(lit.len()),
+        energy: 0.0,
+    };
+    for (color, direction) in lit {
+        let energy = energy_of(color);
+        share.energy += energy;
+        share.colors.push(color);
+        share.directions.push(direction.map(|part| part * energy));
+    }
+    (share.energy > 0.0).then_some(share)
+}
+
+/// A light layer, and the sharp light it holds, if it's one.
+type FitLayer<'a> = (u8, Vec<[f64; 3]>, Option<&'a BakeLight>);
+
+/// What fits on a face, what's left over from `lights`, in the order of how much
+/// light each gives, and so nothing depends on the order they're in a map. One
+/// layer is for bounced light.
+fn rank_layers<'a>(mut lights: Vec<FaceShare<'a>>) -> (Vec<FitLayer<'a>>, Vec<FaceShare<'a>>) {
+    lights.sort_by(|a, b| b.energy.total_cmp(&a.energy));
+    let room = MAX_LAYERS - 1;
+    let mut layers: Vec<FitLayer<'a>> = Vec::new();
+    let mut spare_crisp = CRISP_STYLES.iter().copied();
+    let mut left = Vec::new();
+    for share in lights {
+        let held = layers.iter().position(|(style, _, sharp)| {
+            sharp.is_none() && !share.source.crisp && *style == share.source.style
+        });
+        if let Some(at) = held {
+            for (sum, color) in layers[at].1.iter_mut().zip(&share.colors) {
+                *sum = std::array::from_fn(|part| sum[part] + color[part]);
+            }
+            continue;
+        }
+        if layers.len() >= room {
+            left.push(share);
+            continue;
+        }
+        if share.source.crisp {
+            match spare_crisp.next() {
+                Some(style) => layers.push((style, share.colors, Some(share.source))),
+                None => left.push(share),
+            }
+        } else {
+            layers.push((share.source.style, share.colors, None));
+        }
+    }
+    (layers, left)
+}
+
+/// A face's layers, where its light comes from, and its sharp lights by style.
+type FittedLayers<'a> = (
+    Vec<(u8, Vec<[f64; 3]>)>,
+    Vec<Point>,
+    Vec<(u8, &'a BakeLight)>,
+);
+
+/// Fits `lights` to the layers a face has. What doesn't get a layer of its own
+/// isn't lost: it joins the plainest one, as light that doesn't change. Returns
+/// the layers, where light comes from, and the sharp lights with their styles.
+fn fit_layers<'a>(
+    scene: &Scene<'_>,
+    lights: Vec<FaceShare<'a>>,
+    points: &[Point],
+    normal: Point,
+) -> FittedLayers<'a> {
+    let mut directions = vec![[0.0; 3]; points.len()];
+    for share in &lights {
+        for (sum, direction) in directions.iter_mut().zip(&share.directions) {
+            *sum = add_scaled(*sum, *direction, 1.0);
+        }
+    }
+    let (mut layers, left) = rank_layers(lights);
+    if !left.is_empty() && layers.iter().all(|(_, _, sharp)| sharp.is_some()) {
+        // Light left over needs somewhere plain to go, so the weakest sharp
+        // light gives way. Its samples then have to hold its shadow.
+        if let Some((_, _, Some(source))) = layers.pop() {
+            let shaded = points
+                .iter()
+                .map(|point| light_on(scene, source, *point, normal, true).0)
+                .collect();
+            layers.push((source.style, shaded, None));
+        }
+    }
+    for share in left {
+        let colors: Vec<[f64; 3]> = if share.source.crisp {
+            points
+                .iter()
+                .map(|point| light_on(scene, share.source, *point, normal, true).0)
+                .collect()
+        } else {
+            share.colors
+        };
+        let plain = layers
+            .iter_mut()
+            .filter(|(_, _, sharp)| sharp.is_none())
+            .min_by_key(|(style, _, _)| *style);
+        if let Some((_, target, _)) = plain {
+            for (sum, color) in target.iter_mut().zip(&colors) {
+                *sum = std::array::from_fn(|part| sum[part] + color[part]);
+            }
+        }
+    }
+    let sharp = layers
+        .iter()
+        .filter_map(|(style, _, sharp)| sharp.map(|source| (*style, source)))
+        .collect();
+    let layers = layers
+        .into_iter()
+        .map(|(style, colors, _)| (style, colors))
+        .collect();
+    (layers, directions, sharp)
+}
+
 /// Lights one face.
 fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<FaceBake> {
     let texture = map.textures.get(face.texture as usize)?;
@@ -910,36 +1164,27 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         .iter()
         .map(|point| shine_at.map_or(*point, |lift| add_scaled(*point, lift, 1.0)))
         .collect();
-    let count = points.len();
-    let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
-    let mut directions = vec![[0.0; 3]; count];
-    let crisp_light = scene.lights.iter().find(|source| source.crisp);
-    let edges =
-        crisp_light.map(|source| crisp_edges(scene, source, map, face, normal, &grid, &light));
+    let surface = SampleSurface {
+        corners: &corners,
+        normal,
+        frame: &grid,
+        width: light.width as usize,
+        lift: shine_at,
+    };
+    let mut lights = Vec::new();
     for source in scene.lights {
-        // A sample has one edge, so only the first crisp light can use it.
-        let crisp = crisp_light.is_some_and(|first| std::ptr::eq(first, source));
-        let style = if crisp { CRISP_STYLE } else { source.style };
-        let at = match layers.iter().position(|(known, _)| *known == style) {
-            Some(at) => at,
-            None if layers.len() + 1 < MAX_LAYERS => {
-                layers.push((style, vec![[0.0; 3]; count]));
-                layers.len() - 1
-            }
-            None => continue,
-        };
-        for (index, point) in lifted.iter().enumerate() {
-            let (color, direction) = light_on(scene, source, *point, normal, !crisp);
-            let energy = color[0] + color[1] + color[2];
-            if energy > 0.0 {
-                let sample = &mut layers[at].1[index];
-                for part in 0..3 {
-                    sample[part] += color[part];
-                }
-                directions[index] = add_scaled(directions[index], direction, energy);
-            }
+        if let Some(found) = light_of_face(scene, source, &lifted, &surface) {
+            lights.push(found);
         }
     }
+    let (layers, directions, crisp) = fit_layers(scene, lights, &lifted, normal);
+    let edges = crisp
+        .iter()
+        .map(|(style, source)| {
+            let edges = crisp_edges(scene, source, map, face, normal, &grid, &light);
+            (*style, edges)
+        })
+        .collect();
     Some(FaceBake {
         layers,
         directions,
@@ -1042,7 +1287,7 @@ fn bake_chart(
         normal: chart.normal,
         albedo: albedo_of(map, first),
         area: chart.area,
-        edges: None,
+        edges: Vec::new(),
         gaps: vec![0.0; count],
         // Nothing else shares a chart's samples.
         sample_grid: ([i64::MIN, own_grid, 0, 0], [[0; 4]; 2]),
@@ -1212,7 +1457,11 @@ fn copy_sample(bakes: &mut [Option<FaceBake>], from: HeldSample, to: HeldSample)
         .map(|(_, layer)| layer[from.index])
         .collect();
     let direction = source.directions[from.index];
-    let edge = source.edges.as_ref().map(|edges| edges[from.index]);
+    let edges: Vec<(u8, u8)> = source
+        .edges
+        .iter()
+        .map(|(style, edges)| (*style, edges[from.index]))
+        .collect();
     let Some(target) = &mut bakes[to.face] else {
         return;
     };
@@ -1220,8 +1469,11 @@ fn copy_sample(bakes: &mut [Option<FaceBake>], from: HeldSample, to: HeldSample)
         layer[to.index] = color;
     }
     target.directions[to.index] = direction;
-    if let (Some(edges), Some(edge)) = (&mut target.edges, edge) {
-        edges[to.index] = edge;
+    for (style, edge) in edges {
+        let same = target.edges.iter_mut().find(|(known, _)| *known == style);
+        if let Some((_, held)) = same {
+            held[to.index] = edge;
+        }
     }
 }
 
@@ -1415,8 +1667,9 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64, tile_size: f64) -> B
             let mut lit = [0.0; 3];
             for (style, samples) in &bake.layers {
                 // A crisp layer holds light as if nothing shaded it.
-                let edge = bake.edges.as_ref().and_then(|edges| edges.get(index));
-                if *style == CRISP_STYLE && edge.is_some_and(|edge| *edge < 128) {
+                let edges = bake.edges.iter().find(|(known, _)| known == style);
+                let edge = edges.and_then(|(_, edges)| edges.get(index));
+                if edge.is_some_and(|edge| *edge < 128) {
                     continue;
                 }
                 for part in 0..3 {
@@ -1898,8 +2151,8 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             light.styles[index] = *style;
             samples.extend(layer.iter().map(|color| to_bytes(*color)));
             directions.extend(bake.directions.iter().map(|d| direction_bytes(*d)));
-            match bake.edges.as_ref().filter(|_| *style == CRISP_STYLE) {
-                Some(found) => edges.extend_from_slice(found),
+            match bake.edges.iter().find(|(known, _)| known == style) {
+                Some((_, found)) => edges.extend_from_slice(found),
                 None => edges.resize(edges.len() + layer.len(), u8::MAX),
             }
             // Paint is read with the first layer's place.

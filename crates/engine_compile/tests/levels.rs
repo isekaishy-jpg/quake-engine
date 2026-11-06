@@ -12,7 +12,7 @@ use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map};
 use engine_core::math::Vec3;
 use engine_format::from_text;
-use engine_map::{CRISP_STYLE, Face, FaceLight, Map, SideFiles, TileLight};
+use engine_map::{CRISP_STYLES, Face, FaceLight, Map, SideFiles, TileLight};
 
 /// How far from a beat a path can end, for a beat that's only near the grid.
 const NEAR: f32 = 96.0;
@@ -220,7 +220,7 @@ fn shown(map: &Map, tiles: &HashMap<u32, TileLight>, face: &Face, point: Vec3) -
             break;
         }
         let red = blended(face, &light, layer, point, &|at| f32::from(samples[at][0]));
-        total += if *style == CRISP_STYLE {
+        total += if CRISP_STYLES.contains(style) {
             let edge = blended(face, &light, layer, point, &|at| f32::from(edges[at]));
             if edge < 128.0 { 0.0 } else { red }
         } else {
