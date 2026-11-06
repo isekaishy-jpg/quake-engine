@@ -123,6 +123,10 @@ level.prefab('broken_wall', (4544, 2272, GROUND), turn=90, length=1184, height=4
              material=LIME, seed=45, holes=4)
 level.prefab('rubble', (3900, 2700, GROUND), radius=200, count=14, size=60, material=LIME, seed=46)
 level.prefab('rubble', (4320, 3050, GROUND), radius=170, count=12, size=52, material=LIME, seed=47)
+# What's left of the great window, with the sun coming through it in shafts.
+level.entity('ray_stencil', name='minster_rays', image='glass_rays', marks='glass_marks',
+             corner=[3888, 3448, GROUND + 420], across=[416, 0, 0], down=[0, 0, -300],
+             light=[4096, 3700, GROUND + 900], strength=0.6, reach=900)
 # The altar, and the stair down behind it.
 level.box(LIME, 3968, 3040, GROUND, 4224, 3136, GROUND + 56)
 level.box(BRONZE, 3952, 3024, GROUND, 4240, 3152, GROUND + 8)
@@ -130,8 +134,8 @@ level.entity('info_player_start', (4096, 160, GROUND + 24), angle=90)
 
 # --- Down under the altar -------------------------------------------------
 level.carve(3968, 3168, GROUND - 160, 4224, 3456, GROUND, floor=PAVE, wall=LIME_DAMP, ceiling=LIME)
-for step in range(9):
-    level.box(PAVE, 3968, 3168 + step * 32, GROUND - 160, 4224, 3200 + step * 32, GROUND - step * 16)
+for step in range(10):
+    level.box(PAVE, 3968, 3168 + step * 28, GROUND - 160, 4224, 3196 + step * 28, GROUND - step * 16)
 level.carve(3840, 3456, GROUND - 160, 4352, 3648, GROUND - 16, floor=PAVE, wall=LIME_DAMP, ceiling=LIME)
 glow(4096, 3550, GROUND - 60, 240, (1, 0.76, 0.5))
 
@@ -196,6 +200,10 @@ for x in (3300, 3760, 4432, 4900, 5300):
 lantern(3180, 4300, TERRACE, 300)
 lantern(5200, 4300, TERRACE, 300)
 
+# The city's name, cut into the terrace wall where everyone sees it.
+level.prefab('carved_sign', (3600, 3376, 210), normal=[0, -1, 0], size=170, depth=12, inner=BRONZE)
+level.prefab('carved_sign', (4600, 3376, 210), normal=[0, -1, 0], size=170, depth=12, inner=BRONZE)
+
 # The Grand Stair down to the city.
 for step in range(16):
     level.box(LIME, 3904, 3392 - (step + 1) * 32, QUAY, 4288, 3392 - step * 32, TERRACE - step * 16)
@@ -221,7 +229,7 @@ for index, (x, y) in enumerate(((3360, 2500), (3560, 2500), (3760, 2500), (4380,
     level.prefab('market_stall', (x, y, QUAY + 4), width=160, depth=96, post=TIMBER, counter=TIMBER,
                  cloth=(COPPER, GREEN, RUST)[index % 3])
 level.prefab('well', (4096, 2260, QUAY + 4), radius=120, height=36, sides=14, material=LIME)
-level.liquid('water', 'water', 4000, 2164, QUAY + 4, 4192, 2356, QUAY + 24)
+level.liquid('water', 'water', 4024, 2188, QUAY + 4, 4168, 2332, QUAY + 24)
 for x, y in ((3240, 1880), (3240, 2680), (4920, 1880), (4920, 2680), (3900, 1880), (4300, 2680)):
     lantern(x, y, QUAY + 4, 360)
 level.prefab('sweeping_light', (4096, 2260, QUAY), reach=420, height=200, radius=620, color=[1, 0.72, 0.42], period=14)
@@ -289,6 +297,7 @@ level.prefab('walkway', (7000 - 56, 3430, 512), length=112, width=358, deck=TIMB
 level.prefab('walkway', (6412, 3844, 512), length=476, width=112, deck=TIMBER, rail=GREEN_TRIM, post=TIMBER, legs=448)
 level.prefab('walkway', (6244, 4012, 512), length=112, width=476, deck=TIMBER, rail=GREEN_TRIM, post=TIMBER,
              legs=448, rails=False)
+level.box(TIMBER, 6244, 3844, 504, 6412, 4012, 512)
 for x, y, z in ((6300, 3100, 320), (6300, 3900, 320), (7000, 3100, 320), (7000, 3900, 512), (6300, 4600, 512)):
     lantern(x - 80, y - 80, z, 300)
 level.entity('item_armor2', (6300, 4600, 520))
@@ -328,8 +337,10 @@ level.prefab('seeker', (3700, 2740, QUAY + 4), goal=[4400, 2760, QUAY + 28])
 level.entity('monster_army', (4096, 3000, QUAY + 28), angle=270)
 level.entity('monster_dog', (3700, 2400, QUAY + 28), angle=0)
 level.entity('monster_dog', (4400, 2300, QUAY + 28), angle=180)
-for x, y, z in ((1000, 4200, 900), (3000, 2400, 900), (5200, 3200, 900), (6800, 1400, 800), (2000, 1500, 800)):
-    level.prefab('rock_spire', (x, y, 1024), radius=110, length=300, material=ROCK, seed=x % 97, down=True)
+# Stone hanging from the roof, which is higher over the middle of the city.
+for x, y, top in ((1000, 4200, 1024), (3000, 2400, 1200), (3500, 1700, 1200), (4700, 2000, 1200), (5200, 3200, 1200),
+                  (2800, 3300, 1200), (6800, 1400, 1024), (6500, 3400, 1136), (1400, 1800, 1120), (1000, 3700, 1024)):
+    level.prefab('rock_spire', (x, y, top), radius=120, length=340, material=ROCK, seed=x % 97, down=True)
 level.prefab('rock_wall', (660, 660, -32), length=6800, height=900, depth=120, material=ROCK, seed=61)
 level.prefab('rock_wall', (660, 5480, -32), length=6800, height=900, depth=-120, material=ROCK, seed=62)
 

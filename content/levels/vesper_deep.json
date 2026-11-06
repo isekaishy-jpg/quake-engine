@@ -1102,6 +1102,48 @@
 {
 "op": "place_prefab",
 "args": {
+"prefab": "carved_sign",
+"at": [
+3600,
+3376,
+210
+],
+"params": {
+"normal": [
+0,
+-1,
+0
+],
+"size": 170,
+"depth": 12,
+"inner": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "carved_sign",
+"at": [
+4600,
+3376,
+210
+],
+"params": {
+"normal": [
+0,
+-1,
+0
+],
+"size": 170,
+"depth": 12,
+"inner": "qg03_elder_crypt_trim_metal"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
 "prefab": "city_house",
 "at": [
 2560,
@@ -2864,8 +2906,8 @@
 1024
 ],
 "params": {
-"radius": 110,
-"length": 300,
+"radius": 120,
+"length": 340,
 "material": "qg03_elder_crypt_rock",
 "seed": 30,
 "down": true
@@ -2879,11 +2921,11 @@
 "at": [
 3000,
 2400,
-1024
+1200
 ],
 "params": {
-"radius": 110,
-"length": 300,
+"radius": 120,
+"length": 340,
 "material": "qg03_elder_crypt_rock",
 "seed": 90,
 "down": true
@@ -2895,15 +2937,69 @@
 "args": {
 "prefab": "rock_spire",
 "at": [
-5200,
-3200,
-1024
+3500,
+1700,
+1200
 ],
 "params": {
-"radius": 110,
-"length": 300,
+"radius": 120,
+"length": 340,
+"material": "qg03_elder_crypt_rock",
+"seed": 8,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+4700,
+2000,
+1200
+],
+"params": {
+"radius": 120,
+"length": 340,
+"material": "qg03_elder_crypt_rock",
+"seed": 44,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+5200,
+3200,
+1200
+],
+"params": {
+"radius": 120,
+"length": 340,
 "material": "qg03_elder_crypt_rock",
 "seed": 59,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+2800,
+3300,
+1200
+],
+"params": {
+"radius": 120,
+"length": 340,
+"material": "qg03_elder_crypt_rock",
+"seed": 84,
 "down": true
 }
 }
@@ -2918,8 +3014,8 @@
 1024
 ],
 "params": {
-"radius": 110,
-"length": 300,
+"radius": 120,
+"length": 340,
 "material": "qg03_elder_crypt_rock",
 "seed": 10,
 "down": true
@@ -2931,15 +3027,51 @@
 "args": {
 "prefab": "rock_spire",
 "at": [
-2000,
-1500,
+6500,
+3400,
+1136
+],
+"params": {
+"radius": 120,
+"length": 340,
+"material": "qg03_elder_crypt_rock",
+"seed": 1,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+1400,
+1800,
+1120
+],
+"params": {
+"radius": 120,
+"length": 340,
+"material": "qg03_elder_crypt_rock",
+"seed": 42,
+"down": true
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_spire",
+"at": [
+1000,
+3700,
 1024
 ],
 "params": {
-"radius": 110,
-"length": 300,
+"radius": 120,
+"length": 340,
 "material": "qg03_elder_crypt_rock",
-"seed": 60,
+"seed": 30,
 "down": true
 }
 }

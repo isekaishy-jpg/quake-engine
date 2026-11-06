@@ -15,7 +15,7 @@ return {
 		-- A band every so often, and dark slits between them.
 		local band = 128
 		local z = band
-		while z < height - 48 do
+		while z < height - 112 do
 			table.insert(out, kit.box(trim, -half - 4, -half - 4, z, half + 4, half + 4, z + 8))
 			for _, side in { -1, 1 } do
 				table.insert(
