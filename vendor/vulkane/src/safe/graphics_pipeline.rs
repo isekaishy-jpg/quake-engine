@@ -183,6 +183,7 @@ pub struct GraphicsPipelineBuilder<'a> {
     depth_test: bool,
     depth_write: bool,
     depth_compare_op: CompareOp,
+    color_writes: bool,
     depth_bias_enable: bool,
     depth_bias_constant: f32,
     depth_bias_slope: f32,
@@ -217,6 +218,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             depth_test: false,
             depth_write: false,
             depth_compare_op: CompareOp::LESS_OR_EQUAL,
+            color_writes: true,
             depth_bias_enable: false,
             depth_bias_constant: 0.0,
             depth_bias_slope: 0.0,
@@ -289,6 +291,12 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
     pub fn alpha_blending(mut self, enable: bool) -> Self {
         self.blend_enable = enable;
+        self
+    }
+
+    /// Whether it writes colour at all, for a depth-only pass. Engine extension.
+    pub fn color_writes(mut self, enable: bool) -> Self {
+        self.color_writes = enable;
         self
     }
 
@@ -499,7 +507,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             dstAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE,
             alphaBlendOp: VkBlendOp::BLEND_OP_ADD,
             // VK_COLOR_COMPONENT_R_BIT | G | B | A = 0xF
-            colorWriteMask: 0xF,
+            colorWriteMask: if self.color_writes { 0xF } else { 0 },
         };
         let color_blend_attachments: Vec<VkPipelineColorBlendAttachmentState> =
             vec![single_blend; self.color_attachment_count as usize];

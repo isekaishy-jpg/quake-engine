@@ -274,7 +274,31 @@ impl Backend {
                 .build(device)
         };
         let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass, samples)?;
+        let depth_only = GraphicsPipelineBuilder::new(&layouts.world, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_depth")
+            .vertex_input(&bindings, &attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .color_writes(false)
+            .samples(samples)
+            .build(device)?;
+        // What's been through the depth pass needn't write depth again. Writing
+        // it would hold back the test that skips what's hidden, as this shader
+        // can discard.
+        let material_after_depth = GraphicsPipelineBuilder::new(&layouts.material, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_material")
+            .vertex_input(&bindings, &attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, false)
+            .samples(samples)
+            .build(device)?;
         Ok(Pipelines {
+            depth_only,
+            material_after_depth,
             solid: pipeline("fs_solid")?,
             cutout: pipeline("fs_cutout")?,
             liquid: pipeline("fs_liquid")?,

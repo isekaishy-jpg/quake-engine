@@ -280,6 +280,10 @@ struct Layouts {
 
 /// The pipelines.
 struct Pipelines {
+    /// Depth alone, ahead of what's expensive to shade.
+    depth_only: GraphicsPipeline,
+    /// Materials whose depth is already drawn.
+    material_after_depth: GraphicsPipeline,
     /// Lit surfaces.
     solid: GraphicsPipeline,
     /// Lit surfaces with holes.

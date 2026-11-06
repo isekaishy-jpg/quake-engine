@@ -22,7 +22,8 @@ struct VertexIn {
 }
 
 struct VertexOut {
-    @builtin(position) clip: vec4<f32>,
+    // The depth pass and what follows it have to agree to the last bit.
+    @builtin(position) @invariant clip: vec4<f32>,
     @location(0) world: vec3<f32>,
     @location(1) uv: vec2<f32>,
     @location(2) light_uv: vec2<f32>,
@@ -101,8 +102,25 @@ struct LiveFrame {
 
 @group(0) @binding(4) var<uniform> live: LiveFrame;
 
-// How much of a light reaches `point`, by its shadow tile.
-fn live_shadow(first_tile: f32, from_light: vec3<f32>, point: vec3<f32>) -> f32 {
+// How many pixels a shadow tile is across, as in the backend.
+const SHADOW_TILE_SIZE: f32 = 512.0;
+
+// How many of a shadow's pixels a surface is looked at from above itself, facing
+// its light and edge on to it. Edge on, one pixel covers far more of a surface.
+const SHADOW_LIFT_FACING: f32 = 1.5;
+const SHADOW_LIFT_EDGE_ON: f32 = 6.0;
+
+// How much of a light reaches `point`, whose surface faces `normal`, by its
+// shadow tile. A pixel of a shadow map covers a patch of surface, and on a
+// surface at a shallow angle that patch dips below what was drawn, so it would
+// shade itself in specks. Looking from just off the surface, by the size of a
+// pixel there, clears that where a fixed bias can't.
+fn live_shadow(
+    first_tile: f32,
+    from_light: vec3<f32>,
+    point: vec3<f32>,
+    normal: vec3<f32>,
+) -> f32 {
     let size = abs(from_light);
     var face = 4;
     if size.x >= size.y && size.x >= size.z {
@@ -119,20 +137,31 @@ fn live_shadow(first_tile: f32, from_light: vec3<f32>, point: vec3<f32>) -> f32 
         face = 5;
     }
     let tile = i32(first_tile) + face;
-    let clip = live.shadows[tile] * vec4<f32>(point, 1.0);
+    // A tile spans 90 degrees, so it's twice its depth across.
+    let pixel = 2.0 * max(size.x, max(size.y, size.z)) / SHADOW_TILE_SIZE;
+    let facing = abs(dot(normal, normalize(from_light)));
+    let edge_on = sqrt(max(1.0 - facing * facing, 0.0));
+    let lift = mix(SHADOW_LIFT_FACING, SHADOW_LIFT_EDGE_ON, edge_on);
+    let lifted = point + normal * pixel * lift;
+    let clip = live.shadows[tile] * vec4<f32>(lifted, 1.0);
     let ndc = clip.xyz / clip.w;
-    let inner = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.004), vec2<f32>(0.996));
+    let inner = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.01), vec2<f32>(0.99));
     let cell = vec2<f32>(f32(tile % 8), f32(tile / 8));
     let uv = (cell + inner) / 8.0;
-    let step_size = 1.0 / 2048.0;
+    // Two pixels apart, so that the blur is wider than a stair step on a surface
+    // nearly edge on. The sampler's own blend leaves no gaps between them.
+    let step_size = 2.0 / (SHADOW_TILE_SIZE * 8.0);
+    // A tent over nine samples, each already blended by the sampler. It has no
+    // noise in it, as noise on a surface reads as specks.
     var total = 0.0;
-    for (var y = -1; y <= 1; y = y + 2) {
-        for (var x = -1; x <= 1; x = x + 2) {
-            let offset = vec2<f32>(f32(x), f32(y)) * step_size * 0.75;
-            total = total + textureSampleCompareLevel(shadow_atlas, shadow_sampler, uv + offset, ndc.z);
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * step_size;
+            let weight = f32((2 - abs(x)) * (2 - abs(y)));
+            total = total + weight * textureSampleCompareLevel(shadow_atlas, shadow_sampler, uv + offset, ndc.z);
         }
     }
-    return total * 0.25;
+    return total / 16.0;
 }
 
 // Moving lights on a surface. A pixel's cluster says which to look at.
@@ -176,7 +205,8 @@ fn live_light(world: vec3<f32>, screen: vec2<f32>) -> vec3<f32> {
                 strength = strength * smoothstep(light.spot.w, light.spot.w + 0.05, along);
             }
             if strength > 0.001 && light.color.w >= 0.0 {
-                strength = strength * live_shadow(light.color.w, -offset, world);
+                let lit_side = normal * sign(dot(normal, toward));
+                strength = strength * live_shadow(light.color.w, -offset, world, lit_side);
             }
             total = total + light.color.rgb * strength;
         }
@@ -226,6 +256,11 @@ fn light(in: VertexOut) -> vec3<f32> {
 // bright to show comes down as a whole, so that it keeps its colour.
 fn raised(color: vec3<f32>) -> vec3<f32> {
     return pow(max(keep_hue(color, 1.0), vec3<f32>(0.0)), vec3<f32>(frame.params.w));
+}
+
+// The depth pass only wants depth, but a pipeline has to have a fragment stage.
+@fragment
+fn fs_depth() {
 }
 
 @fragment

@@ -399,6 +399,12 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f3
             continue;
         }
         let path = (leave - enter) * length(ray);
+        // A ray that stops on an opaque liquid's surface only touches its box,
+        // and rounding says which side of it each pixel lands. Going by that
+        // would flicker as the view moves, so a touch doesn't count.
+        if path < 0.5 {
+            continue;
+        }
         // A view from above meets the surface first, which mirrors the sky.
         let entry = eye + ray * enter;
         if eye.z > high.z && abs(entry.z - high.z) < 1.0 {

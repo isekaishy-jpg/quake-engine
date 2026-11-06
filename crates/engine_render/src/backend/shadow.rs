@@ -23,10 +23,10 @@ use crate::matrix::multiply;
 use crate::world::Vertex;
 
 /// The atlas's side.
-const ATLAS_SIZE: u32 = 2048;
+const ATLAS_SIZE: u32 = 4096;
 
 /// A tile's side.
-const TILE_SIZE: u32 = 256;
+const TILE_SIZE: u32 = 512;
 
 /// Tiles along a side of the atlas.
 const TILES_ACROSS: u32 = ATLAS_SIZE / TILE_SIZE;

@@ -11,7 +11,7 @@ use super::{
 use crate::alias::{POSE_CORNER_BYTES, push_bytes};
 use crate::renderer::View;
 use crate::sprite::{MAX_PARTICLE_DRAWS, ViewAxes, sprite_axes, sprite_push_bytes};
-use crate::world::BatchKind;
+use crate::world::{Batch, BatchKind};
 
 /// The corners of the cube the sky sphere is drawn on.
 const SKY_SPHERE_CORNERS: u32 = 36;
@@ -32,6 +32,20 @@ pub(super) struct Recorder<'a> {
     map: &'a GpuMap,
     /// Whether models get hull outlines.
     outline_hull: bool,
+}
+
+/// Whether `batch` goes through the depth pass: what's solid all over. A detail
+/// that fades can discard pixels, so its depth can't be known ahead of it.
+fn depth_first(map: &Map, batch: &Batch) -> bool {
+    let fades = map
+        .textures
+        .get(batch.texture as usize)
+        .and_then(|texture| texture.material.as_ref())
+        .is_some_and(|material| material.detail_fade);
+    matches!(
+        batch.kind,
+        BatchKind::Solid | BatchKind::Liquid | BatchKind::Material
+    ) && !fades
 }
 
 /// A model's position, as push constant bytes.
@@ -137,6 +151,7 @@ impl Recorder<'_> {
         size: (u32, u32),
     ) {
         self.record_sky(rec, scene, size);
+        self.record_depth(rec, scene, size);
         self.record_world(rec, scene, view, size, false);
         self.record_models(rec, scene);
         self.record_world(rec, scene, view, size, true);
@@ -168,6 +183,55 @@ impl Recorder<'_> {
         rec.bind_graphics_pipeline(&self.pipelines.sky_sphere);
         rec.bind_graphics_descriptor_sets(&self.layouts.world, 0, &[&self.map.frame_set, set]);
         rec.draw(SKY_SPHERE_CORNERS, 1, 0, 0);
+    }
+
+    /// Records the depth of what's solid. Shading is most of a frame's cost, and
+    /// surfaces are drawn by texture, not by distance, so without this whatever
+    /// lies behind what's in view gets shaded too.
+    fn record_depth(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        size: (u32, u32),
+    ) {
+        let map = self.map;
+        let layout = &self.layouts.world;
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&self.pipelines.depth_only);
+        rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set]);
+        rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
+        rec.bind_index_buffer(&map.indices.buffer, 0, INDEX_TYPE_U32);
+        let wanted = |batch: u32| {
+            let found = scene.mesh.batches.get(batch as usize);
+            found.is_some_and(|batch| depth_first(scene.map, batch))
+        };
+        rec.push_constants(
+            layout,
+            ShaderStageFlags::VERTEX,
+            0,
+            &offset_bytes(Vec3::ZERO),
+        );
+        for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
+            if count > 0 && wanted(batch) {
+                rec.draw_indexed(count, 1, first, 0, 0);
+            }
+        }
+        for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
+            let Some(ranges) = scene.mesh.model_ranges.get(instance.model as usize) else {
+                continue;
+            };
+            let bytes = offset_bytes(instance.origin);
+            rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
+            for range in ranges.iter().filter(|range| wanted(range.batch)) {
+                let first = scene.mesh.world_index_count + range.first;
+                rec.draw_indexed(range.count, 1, first, 0, 0);
+            }
+        }
     }
 
     /// Records the world and brush models: what's see-through, or the rest.
@@ -211,13 +275,16 @@ impl Recorder<'_> {
             let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
                 return;
             };
-            if bound != Some(batch.kind) {
+            let after_depth = batch.kind == BatchKind::Material && depth_first(scene.map, batch);
+            if bound != Some((batch.kind, after_depth)) {
                 if batch.kind == BatchKind::Sky && map.sky_set.is_some() {
                     rec.bind_graphics_pipeline(&self.pipelines.sky_window);
+                } else if after_depth {
+                    rec.bind_graphics_pipeline(&self.pipelines.material_after_depth);
                 } else {
                     rec.bind_graphics_pipeline(self.pipelines.get(batch.kind));
                 }
-                bound = Some(batch.kind);
+                bound = Some((batch.kind, after_depth));
             }
             let set_layout = if matches!(
                 batch.kind,
