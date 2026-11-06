@@ -6,6 +6,7 @@
 //! May depend on `engine_core`. See proposal 0008.
 
 mod alias;
+mod effect;
 mod emitter;
 mod light;
 mod live;
@@ -23,6 +24,10 @@ mod tile_light;
 mod tree;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
+pub use effect::{
+    ColorCurve, Curve, EffectDef, EffectPoint, EmitterShape, ParticleBlend, ParticleEmitter,
+    ParticleKind,
+};
 pub use emitter::Emitter;
 pub use live::{LiveLightSource, along_path};
 pub use map::{

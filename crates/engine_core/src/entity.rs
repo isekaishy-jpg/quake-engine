@@ -2,6 +2,14 @@
 
 use crate::math::Vec3;
 
+/// A hash of an effect's name, which is how a server names one.
+#[must_use]
+pub fn effect_id(name: &str) -> u32 {
+    name.bytes().fold(0x811c_9dc5, |hash, byte| {
+        (hash ^ u32::from(byte)).wrapping_mul(0x0100_0193)
+    })
+}
+
 /// The entity effect bit for a muzzle flash, from `EF_MUZZLEFLASH`.
 pub const EFFECT_MUZZLE_FLASH: u8 = 2;
 
@@ -112,6 +120,15 @@ pub enum Effect {
         /// Where a beam ends.
         end: Vec3,
         /// The entity a beam comes from.
+        entity: u64,
+    },
+    /// An effect an author described, by the hash of its name.
+    Named {
+        /// Which one.
+        effect: u32,
+        /// Where it starts.
+        origin: Vec3,
+        /// The entity it follows, or 0 for none.
         entity: u64,
     },
     /// A puff of particles.

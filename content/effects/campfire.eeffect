@@ -1,0 +1,44 @@
+format 1 effect
+
+# Flames, with sparks that burst into embers, and a flickering light.
+emitter flame {
+    blend = add
+    rate = 40
+    shape = ball
+    radius = 10
+    life = 0.5 1.1
+    speed = 30 60
+    spread = 20
+    turbulence = 30
+    size = 0 10 0.6 16 1 2
+    color = 0 1.2 0.5 0.1 0.5 0.5 0.9 0.3 0.05 0.3 1 0.3 0.05 0 0
+}
+emitter sparks {
+    blend = add
+    rate = 6
+    life = 0.6 1.2
+    speed = 80 160
+    spread = 25
+    gravity = 0.25
+    drag = 0.5
+    size = 1.5 0.5
+    color = 0 4 2 0.5 1 1 1 0.3 0 0
+    kind = ribbon
+    on_death = embers
+}
+emitter embers {
+    blend = add
+    burst = 3
+    life = 0.3 0.6
+    speed = 10 30
+    gravity = 0.1
+    size = 2
+    color = 0 2 0.8 0.1 1 1 0.5 0.1 0 0
+}
+emitter glow {
+    kind = light
+    rate = 12
+    life = 0.2 0.3
+    reach = 220
+    color = 0 1.4 0.7 0.25 1 1 1 0.5 0.1 0.6
+}

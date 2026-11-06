@@ -281,6 +281,15 @@ impl Client {
         }
     }
 
+    /// Where the entity `id` is, as of the last snapshot.
+    #[must_use]
+    pub fn entity_origin(&self, id: u64) -> Option<Vec3> {
+        self.entities
+            .iter()
+            .find(|entity| entity.id == id)
+            .map(|entity| entity.origin)
+    }
+
     /// Entities as they should be drawn, `fraction` of the way from the last
     /// snapshot but one to the last.
     #[must_use]

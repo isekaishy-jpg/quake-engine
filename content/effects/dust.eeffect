@@ -1,0 +1,15 @@
+format 1 effect
+
+# Motes that hang in the air, in great numbers, which the GPU looks after.
+emitter motes {
+    gpu = true
+    rate = 2500
+    shape = box
+    half_size = 400 400 200
+    life = 6 6
+    speed = 2 2
+    gravity = 0
+    turbulence = 3
+    size = 0 1.2 1 1.2
+    color = 0 0.8 0.75 0.6 0.25 1 0.8 0.75 0.6 0.05
+}

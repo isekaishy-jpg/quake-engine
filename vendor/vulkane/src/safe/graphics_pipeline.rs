@@ -179,6 +179,8 @@ pub struct GraphicsPipelineBuilder<'a> {
     viewport_width: u32,
     viewport_height: u32,
     blend_enable: bool,
+    blend_adds: bool,
+    blend_covers: bool,
     samples: u32,
     depth_test: bool,
     depth_write: bool,
@@ -214,6 +216,8 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             viewport_width: 1,
             viewport_height: 1,
             blend_enable: false,
+            blend_adds: false,
+            blend_covers: false,
             samples: 1,
             depth_test: false,
             depth_write: false,
@@ -291,6 +295,21 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
     pub fn alpha_blending(mut self, enable: bool) -> Self {
         self.blend_enable = enable;
+        self
+    }
+
+    /// Blending that covers what's there in alpha too, as a solid thing does.
+    /// Engine extension.
+    pub fn covering_blending(mut self, enable: bool) -> Self {
+        self.blend_enable = enable;
+        self.blend_covers = enable;
+        self
+    }
+
+    /// Blending that adds to what's there, by source alpha. Engine extension.
+    pub fn additive_blending(mut self, enable: bool) -> Self {
+        self.blend_enable = enable;
+        self.blend_adds = enable;
         self
     }
 
@@ -499,12 +518,24 @@ impl<'a> GraphicsPipelineBuilder<'a> {
         let single_blend = VkPipelineColorBlendAttachmentState {
             blendEnable: if self.blend_enable { 1 } else { 0 },
             srcColorBlendFactor: VkBlendFactor::BLEND_FACTOR_SRC_ALPHA,
-            dstColorBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA,
+            dstColorBlendFactor: if self.blend_adds {
+                VkBlendFactor::BLEND_FACTOR_ONE
+            } else {
+                VkBlendFactor::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+            },
             colorBlendOp: VkBlendOp::BLEND_OP_ADD,
-            srcAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ZERO,
+            srcAlphaBlendFactor: if self.blend_covers {
+                VkBlendFactor::BLEND_FACTOR_ONE
+            } else {
+                VkBlendFactor::BLEND_FACTOR_ZERO
+            },
             // Source-over must preserve the destination's coverage. Copying
             // source alpha erased opaque scene coverage under transparent fog/UI.
-            dstAlphaBlendFactor: VkBlendFactor::BLEND_FACTOR_ONE,
+            dstAlphaBlendFactor: if self.blend_covers {
+                VkBlendFactor::BLEND_FACTOR_ONE_MINUS_SRC_ALPHA
+            } else {
+                VkBlendFactor::BLEND_FACTOR_ONE
+            },
             alphaBlendOp: VkBlendOp::BLEND_OP_ADD,
             // VK_COLOR_COMPONENT_R_BIT | G | B | A = 0xF
             colorWriteMask: if self.color_writes { 0xF } else { 0 },

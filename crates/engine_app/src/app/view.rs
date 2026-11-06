@@ -4,15 +4,17 @@ use std::collections::HashMap;
 
 use engine_audio::Listener;
 use engine_client::{
-    DrawnEntity, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob, view_idle, view_roll,
+    DrawnEntity, EffectDraw, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob,
+    view_idle, view_roll,
 };
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
 use engine_map::Contents;
+use engine_map::ParticleKind;
 use engine_render::{
-    CapsuleDraw, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor, ParticleDraw,
-    SpriteDraw, View,
+    CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, ParticleColor,
+    ParticleDraw, ParticleShape, SpriteDraw, View,
 };
 use fixture_quake::Intermission;
 
@@ -32,6 +34,8 @@ pub(crate) struct Picture {
     sprites: Vec<SpriteDraw>,
     /// The particles.
     particles: Vec<ParticleDraw>,
+    /// Particles the GPU works out.
+    gpu_particles: Vec<GpuParticles>,
     /// The dynamic lights.
     lights: Vec<LightDraw>,
     /// What's drawn over all of that.
@@ -60,6 +64,7 @@ impl Picture {
             entities: &self.entities,
             sprites: &self.sprites,
             particles: &self.particles,
+            gpu_particles: &self.gpu_particles,
             lights: &self.lights,
             quads: &self.quads,
             stencil_lights: &self.stencil_lights,
@@ -142,7 +147,12 @@ impl World {
         if let Some(client) = &self.client {
             self.effects.set_gravity(client.gravity());
         }
+        let seconds = (time - self.effects_time).max(0.0);
+        self.effects_time = time;
         self.effects.update(time);
+        let client = self.client.as_ref();
+        let place = |entity: u64| client.and_then(|client| client.entity_origin(entity));
+        self.effects.authored_mut().update(seconds, &place);
         let mut sources: Vec<EffectSource> = drawn
             .iter()
             .map(|entity| EffectSource {
@@ -165,21 +175,60 @@ impl World {
             .collect()
     }
 
-    /// The particles to draw, in their colours.
+    /// The particles to draw, in their colours: what covers first, then what
+    /// adds, as the renderer draws them in that order.
     pub(super) fn particle_draws(&self) -> Vec<ParticleDraw> {
-        let Some(palette) = &self.palette else {
-            return Vec::new();
-        };
-        self.effects
-            .particles()
-            .live()
-            .iter()
-            .map(|particle| {
+        let mut out = Vec::new();
+        if let Some(palette) = &self.palette {
+            out.extend(self.effects.particles().live().iter().map(|particle| {
                 let [red, green, blue] = palette.color(particle.color);
                 ParticleDraw {
                     origin: particle.origin,
                     color: ParticleColor { red, green, blue },
+                    ..ParticleDraw::default()
                 }
+            }));
+        }
+        let (authored, _) = self.effects.authored().draws();
+        out.extend(authored.iter().map(authored_draw));
+        out.sort_by_key(|particle| particle.adds);
+        out
+    }
+
+    /// The batches of particles the GPU works out.
+    pub(super) fn gpu_particles(&self) -> Vec<GpuParticles> {
+        let emitters = self.effects.authored().gpu_emitters();
+        emitters
+            .iter()
+            .map(|emitter| GpuParticles {
+                origin: emitter.origin,
+                life: emitter.life,
+                direction: emitter.direction,
+                spread: emitter.spread,
+                color: emitter.color,
+                end_color: emitter.end_color,
+                age: emitter.age,
+                speed: emitter.speed,
+                gravity: emitter.gravity,
+                turbulence: emitter.turbulence,
+                size: emitter.size,
+                radius: emitter.radius,
+                count: emitter.count,
+                adds: emitter.adds,
+            })
+            .collect()
+    }
+
+    /// The lights among effects.
+    pub(super) fn effect_lights(&self) -> Vec<LiveLight> {
+        let (_, lights) = self.effects.authored().draws();
+        lights
+            .iter()
+            .map(|light| LiveLight {
+                origin: light.origin,
+                radius: light.reach,
+                color: light.color,
+                ..LiveLight::default()
             })
             .collect()
     }
@@ -265,6 +314,7 @@ impl World {
             moving = self.map.as_ref().map_or_else(Vec::new, |map| {
                 live_lights(map, origin, time, self.live_light_budget)
             });
+            moving.extend(self.effect_lights());
             if let Some(map) = &self.map {
                 let (flames, sparks) = self.flames.update(map, origin, time, frame_seconds);
                 lights.extend(flames);
@@ -352,6 +402,7 @@ impl World {
             entities: lists.entities,
             sprites: lists.sprites,
             particles: self.particle_draws(),
+            gpu_particles: self.gpu_particles(),
             lights,
             quads: Vec::new(),
             stencil_lights: self.gates.lights().to_vec(),
@@ -359,5 +410,50 @@ impl World {
             capsules,
             live_lights: moving,
         }
+    }
+}
+
+/// How bright a colour in light is, past what a byte can hold.
+fn glow_of(color: [f32; 4]) -> f32 {
+    color[0].max(color[1]).max(color[2]).max(1.0)
+}
+
+/// A byte from a colour between 0 and 1, as the shader's curve expects.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "held to a byte"
+)]
+fn colour_byte(value: f32) -> u8 {
+    (value.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
+}
+
+/// What's drawn of a particle of an effect.
+fn authored_draw(draw: &EffectDraw) -> ParticleDraw {
+    let glow = glow_of(draw.color);
+    let [red, green, blue, alpha] = draw.color;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "held to a byte"
+    )]
+    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
+    ParticleDraw {
+        origin: draw.origin,
+        color: ParticleColor {
+            red: colour_byte(red / glow),
+            green: colour_byte(green / glow),
+            blue: colour_byte(blue / glow),
+        },
+        alpha,
+        size: draw.size,
+        end: draw.end,
+        shape: match draw.kind {
+            ParticleKind::Ribbon | ParticleKind::Beam => ParticleShape::Line,
+            ParticleKind::Decal => ParticleShape::Flat,
+            ParticleKind::Sprite | ParticleKind::Light => ParticleShape::Soft,
+        },
+        glow,
+        adds: draw.adds,
     }
 }

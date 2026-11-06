@@ -24,6 +24,7 @@ use engine_client::{
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
+use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
 use engine_core::player::{USUAL_GRAVITY, UserCommand};
 use engine_core::time::{FpsMeter, TICK_HERTZ, TICK_SECONDS, TickClock, TickRate};
@@ -144,6 +145,8 @@ pub(crate) struct World {
     pub(crate) models: ModelBank,
     /// What the client shows of what's happening.
     pub(crate) effects: Effects,
+    /// The clock of the last update of effects.
+    pub(crate) effects_time: f32,
     /// The colours particles are given in.
     palette: Option<Palette>,
     /// What the player carries into the next level.
@@ -355,6 +358,11 @@ impl World {
         self.effects = Effects::default();
         self.palette = Some(palette);
         self.map = Some(Arc::clone(&map));
+        let authored = self.effects.authored_mut();
+        authored.set_effects(&map.effects);
+        for point in &map.effect_points {
+            authored.start(effect_id(&point.effect), point.origin, None, true);
+        }
         if let Some(renderer) = &mut self.renderer {
             self.tile_streamer = TileStreamer::new(&map);
             renderer.load_map(map)?;
@@ -610,6 +618,7 @@ impl Engine {
                 ambience: None,
                 models: ModelBank::default(),
                 effects: Effects::default(),
+                effects_time: 0.0,
                 palette: None,
                 next_parms: None,
                 next_flags: 0.0,

@@ -36,7 +36,9 @@ use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::RenderError;
 use crate::live::LIVE_BYTES;
 use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
-use crate::sprite::{MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE};
+use crate::sprite::{
+    GPU_PARTICLE_PUSH, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE,
+};
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, WorldMesh};
 
@@ -302,6 +304,8 @@ struct Layouts {
     sprite: PipelineLayout,
     /// Particles'.
     particle: PipelineLayout,
+    /// Those the GPU works out.
+    gpu_particle: PipelineLayout,
 }
 
 /// What draws surfaces with one shader.
@@ -350,7 +354,19 @@ struct Pipelines {
     /// Sprites.
     sprite: GraphicsPipeline,
     /// Particles.
-    particle: GraphicsPipeline,
+    particle: ParticlePipelines,
+}
+
+/// What draws particles.
+struct ParticlePipelines {
+    /// Those in a list, over what's behind.
+    over: GraphicsPipeline,
+    /// Those in a list, adding to what's behind.
+    add: GraphicsPipeline,
+    /// Those the GPU works out, over what's behind.
+    gpu_over: GraphicsPipeline,
+    /// Those the GPU works out, adding to what's behind.
+    gpu_add: GraphicsPipeline,
 }
 
 /// Everything Vulkan. Fields drop in order, so each comes before what it
@@ -655,6 +671,15 @@ impl Backend {
             alias: textured_layout(ALIAS_PUSH_SIZE)?,
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
+            gpu_particle: PipelineLayout::with_push_constants(
+                &device,
+                &[&frame_layout],
+                &[PushConstantRange {
+                    stage_flags: ShaderStageFlags::VERTEX,
+                    offset: 0,
+                    size: GPU_PARTICLE_PUSH,
+                }],
+            )?,
         };
         let saved_pipelines = pipeline_cache::open(&device, &physical, saved_pipelines.as_deref());
         let scene_pass = post::make_scene_pass(&device, 1)?;

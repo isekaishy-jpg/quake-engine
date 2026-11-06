@@ -6,7 +6,7 @@ use std::fmt;
 use std::rc::Rc;
 use std::time::{Duration, Instant};
 
-use engine_core::entity::{Effect, Projectile};
+use engine_core::entity::{Effect, Projectile, effect_id};
 use engine_core::math::Vec3;
 use engine_core::player::Liquid;
 use engine_core::sound::{SoundStart, StaticSound};
@@ -804,6 +804,20 @@ impl Game {
                         kind,
                         origin: to_vec3(origin),
                         end: to_vec3(end),
+                        entity: entity.map_or(0, |id| id_from(id).to_bits()),
+                    });
+                    Ok(())
+                },
+            )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "effect",
+            lua.create_function(
+                move |_, (name, origin, entity): (String, Vector, Option<f64>)| {
+                    out.borrow_mut().effects.push(Effect::Named {
+                        effect: effect_id(&name),
+                        origin: to_vec3(origin),
                         entity: entity.map_or(0, |id| id_from(id).to_bits()),
                     });
                     Ok(())

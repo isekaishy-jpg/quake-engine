@@ -15,8 +15,9 @@ use engine_map::{
     SpriteFrame, SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
-    BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
-    ParticleDraw, PostSettings, Renderer, SpriteDraw, Target, TileStreamer, View, build_world,
+    BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
+    ParticleColor, ParticleDraw, ParticleShape, PostSettings, Renderer, SpriteDraw, Target,
+    TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -729,6 +730,7 @@ fn a_particle_shows_its_colour() {
             green: 0,
             blue: 255,
         },
+        ..ParticleDraw::default()
     }];
     let drawables = Drawables {
         particles: &particles,
@@ -1535,6 +1537,91 @@ fn blue_with_normal(renderer: &mut Renderer, normal: [i8; 3]) -> u8 {
         .capture(&view_from_above(), drawables, 16, 16)
         .expect("capture");
     centre(&capture)[2]
+}
+
+/// The view of the square, with `particles` and `gpu_particles` over it.
+fn with_particles(
+    renderer: &mut Renderer,
+    particles: &[ParticleDraw],
+    gpu_particles: &[GpuParticles],
+) -> [u8; 4] {
+    let drawables = Drawables {
+        particles,
+        gpu_particles,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    centre(&capture)
+}
+
+/// A soft blue particle in the middle of the view.
+fn soft_blue(adds: bool) -> ParticleDraw {
+    ParticleDraw {
+        origin: Vec3::new(64.0, 64.0, 32.0),
+        color: ParticleColor {
+            red: 0,
+            green: 0,
+            blue: 255,
+        },
+        alpha: 255,
+        size: 80.0,
+        shape: ParticleShape::Soft,
+        glow: 1.0,
+        adds,
+        ..ParticleDraw::default()
+    }
+}
+
+#[test]
+fn a_soft_particle_covers_what_is_behind_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let [r, _, b, _] = with_particles(&mut renderer, &[soft_blue(false)], &[]);
+    assert!(b > r, "{r} {b}");
+}
+
+#[test]
+fn a_particle_that_adds_keeps_what_is_behind_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let plain = with_particles(&mut renderer, &[], &[]);
+    let [r, _, b, _] = with_particles(&mut renderer, &[soft_blue(true)], &[]);
+    assert!(b > plain[2], "more blue: {} {b}", plain[2]);
+    assert!(
+        i32::from(r) * 2 > i32::from(plain[0]),
+        "still red: {} {r}",
+        plain[0]
+    );
+}
+
+#[test]
+fn the_gpu_works_out_particles_from_their_numbers() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let plain = with_particles(&mut renderer, &[], &[]);
+    let batch = GpuParticles {
+        origin: Vec3::new(64.0, 64.0, 32.0),
+        life: 2.0,
+        direction: Vec3::new(0.0, 0.0, 1.0),
+        spread: -1.0,
+        color: [0.0, 0.0, 1.0, 1.0],
+        end_color: [0.0, 0.0, 1.0, 1.0],
+        age: 5.0,
+        size: [30.0, 30.0],
+        radius: 8.0,
+        count: 500,
+        ..GpuParticles::default()
+    };
+    let [_, _, b, _] = with_particles(&mut renderer, &[], &[batch]);
+    assert!(b > plain[2], "more blue: {} {b}", plain[2]);
 }
 
 /// A moving light goes by which way a mesh says it faces, not by its triangle, or

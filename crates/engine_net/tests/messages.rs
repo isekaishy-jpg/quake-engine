@@ -243,3 +243,13 @@ fn a_music_message_is_one_track() {
     assert_eq!(ServerMessage::decode(&[9]), None);
     assert_eq!(ServerMessage::decode(&[9, 6, 7]), None);
 }
+
+#[test]
+fn a_named_effect_comes_through() {
+    let message = ServerMessage::Effect(Effect::Named {
+        effect: 1234,
+        origin: Vec3::new(1.0, 2.0, 3.0),
+        entity: 9,
+    });
+    assert_eq!(ServerMessage::decode(&message.encode()), Some(message));
+}

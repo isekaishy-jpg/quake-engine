@@ -13,7 +13,8 @@ use vulkane::safe::{
 
 use super::upload::host_buffer;
 use super::{
-    Backend, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts, Pipelines, SurfacePipelines,
+    Backend, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts, ParticlePipelines, Pipelines,
+    SurfacePipelines,
 };
 use crate::alias::POSE_CORNER_BYTES;
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
@@ -184,7 +185,7 @@ impl Backend {
         layouts: &Layouts,
         pass: &RenderPass,
         samples: u32,
-    ) -> Result<(GraphicsPipeline, GraphicsPipeline), RenderError> {
+    ) -> Result<(GraphicsPipeline, ParticlePipelines), RenderError> {
         let spirv = vulkane::safe::naga::compile_wgsl(SPRITE_SHADER)
             .map_err(|error| RenderError(error.to_string()))?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
@@ -196,35 +197,49 @@ impl Backend {
             .depth_test(true, true)
             .samples(samples)
             .build(device)?;
-        let particle = GraphicsPipelineBuilder::new(&layouts.particle, pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
-            .vertex_input(
-                &[VertexInputBinding {
-                    binding: 0,
-                    stride: u32::try_from(PARTICLE_BYTES).unwrap_or(0),
-                    input_rate: InputRate::INSTANCE,
-                }],
-                &[
-                    VertexInputAttribute {
-                        location: 0,
-                        binding: 0,
-                        format: Format::R32G32B32_SFLOAT,
-                        offset: 0,
-                    },
-                    VertexInputAttribute {
-                        location: 1,
-                        binding: 0,
-                        format: Format::R8G8B8A8_UNORM,
-                        offset: 12,
-                    },
-                ],
-            )
-            .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
-            .depth_test(true, false)
-            .samples(samples)
-            .build(device)?;
+        let attribute = |location, format, offset| VertexInputAttribute {
+            location,
+            binding: 0,
+            format,
+            offset,
+        };
+        let bindings = [VertexInputBinding {
+            binding: 0,
+            stride: u32::try_from(PARTICLE_BYTES).unwrap_or(0),
+            input_rate: InputRate::INSTANCE,
+        }];
+        let attributes = [
+            attribute(0, Format::R32G32B32_SFLOAT, 0),
+            attribute(1, Format::R8G8B8A8_UNORM, 12),
+            attribute(2, Format::R32_SFLOAT, 16),
+            attribute(3, Format::R32G32B32_SFLOAT, 20),
+            attribute(4, Format::R32G32_SFLOAT, 32),
+        ];
+        let listed = || {
+            GraphicsPipelineBuilder::new(&layouts.particle, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
+                .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+                .vertex_input(&bindings, &attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(true, false)
+                .samples(samples)
+        };
+        let worked_out = || {
+            GraphicsPipelineBuilder::new(&layouts.gpu_particle, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_gpu_particle")
+                .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .depth_test(true, false)
+                .samples(samples)
+        };
+        let particle = ParticlePipelines {
+            over: listed().covering_blending(true).build(device)?,
+            add: listed().additive_blending(true).build(device)?,
+            gpu_over: worked_out().covering_blending(true).build(device)?,
+            gpu_add: worked_out().additive_blending(true).build(device)?,
+        };
         Ok((sprite, particle))
     }
 

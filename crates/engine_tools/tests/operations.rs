@@ -533,3 +533,11 @@ fn the_shaders_that_come_with_the_engine_compile() {
     let answer = run(&mut session, "check_shaders", &json!({})).expect("runs");
     assert_eq!(answer, json!({}));
 }
+
+#[test]
+fn the_effects_that_come_with_the_engine_make_sense() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "check_effects", &json!({})).expect("runs");
+    assert_eq!(answer, json!({}));
+}

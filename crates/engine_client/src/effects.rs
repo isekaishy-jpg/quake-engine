@@ -11,6 +11,7 @@ use engine_core::math::{Vec3, view_axes};
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use engine_core::sound::SoundStart;
 
+use crate::effect_system::EffectSystem;
 use crate::particles::{Particles, Trail};
 
 /// The most dynamic lights at once.
@@ -140,6 +141,8 @@ pub struct Effects {
     sounds: Vec<SoundStart>,
     /// Seconds on the same clock as [`Effects::update`].
     time: f32,
+    /// Effects an author described.
+    authored: EffectSystem,
 }
 
 /// The forward direction of `angles`, from `AngleVectors`.
@@ -319,6 +322,14 @@ impl Effects {
             } => self.temp(kind, origin, end, entity),
             // The client's own flights follow these.
             Effect::Launch(_) => {}
+            Effect::Named {
+                effect,
+                origin,
+                entity,
+            } => {
+                let follows = (entity != 0).then_some(entity);
+                self.authored.start(effect, origin, follows, false);
+            }
             Effect::Outline { low, high } => self.particles.outline(low, high, REWOUND_COLOR),
             Effect::Particles {
                 origin,
@@ -407,6 +418,17 @@ impl Effects {
             let _previous = trails.insert(source.id, trail);
         }
         self.trails = trails;
+    }
+
+    /// Effects an author described.
+    #[must_use]
+    pub const fn authored(&self) -> &EffectSystem {
+        &self.authored
+    }
+
+    /// Effects an author described, to change.
+    pub const fn authored_mut(&mut self) -> &mut EffectSystem {
+        &mut self.authored
     }
 
     /// Moves everything on to `time`.

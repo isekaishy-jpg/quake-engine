@@ -2,14 +2,17 @@
 
 use std::collections::BTreeSet;
 use std::path::Path;
+use std::sync::Arc;
 
 use engine_assets::{Archive, DirectoryArchive, FileSystem, PackSummary, write_pack_of};
+use engine_core::math::Vec3;
 use engine_format::Document;
-use engine_map::{Map, Texture};
+use engine_map::{EffectDef, EffectPoint, Map, Texture};
 
 use crate::bake::map_hash;
 use crate::build::{TextureSource, compile, compile_known};
 use crate::compiled::read_geometry;
+use crate::effect_read::read_effect;
 use crate::error::CompileError;
 use crate::material::{MaterialLibrary, document_of};
 use crate::source::read_map;
@@ -44,6 +47,24 @@ impl TextureSource for PlayTextures<'_> {
         let result = self.library.load_pixels(material);
         self.kept(result)
     }
+}
+
+/// Every effect `filesystem` holds.
+fn effects_in(filesystem: &FileSystem) -> Result<Vec<Arc<EffectDef>>, CompileError> {
+    let mut out = Vec::new();
+    for path in filesystem.list("effects/") {
+        if let Some(name) = path
+            .strip_prefix("effects/")
+            .and_then(|file| file.strip_suffix(".eeffect"))
+        {
+            let bytes = filesystem
+                .read(&path)
+                .map_err(|error| CompileError::Bad(error.to_string()))?;
+            out.push(Arc::new(read_effect(name, &document_of(&bytes)?)?));
+        }
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
 }
 
 /// A level ready to play.
@@ -89,6 +110,18 @@ pub fn play_map(
     let world = working.entities.iter().find(|e| e.kind == "worldspawn");
     let post = world.and_then(|world| world.text("post_shader"));
     map.post_shader = post.map(|name| textures.library.shader(name));
+    map.effects = effects_in(filesystem)?;
+    for entity in working.entities.iter().filter(|e| e.kind == "effect") {
+        let name = entity.text("effect").unwrap_or_default();
+        let [x, y, z] = entity.point("origin").unwrap_or([0.0; 3]);
+        #[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
+        let origin = Vec3::new(x as f32, y as f32, z as f32);
+        map.effect_points.push(EffectPoint {
+            effect: name.to_owned(),
+            origin,
+            model: None,
+        });
+    }
     Ok(PlayMap {
         map,
         hash,

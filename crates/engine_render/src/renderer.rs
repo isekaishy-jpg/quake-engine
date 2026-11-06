@@ -14,7 +14,7 @@ use crate::backend::{Backend, Scene};
 use crate::canvas::UiFrame;
 use crate::error::RenderError;
 use crate::live::LiveLight;
-use crate::sprite::{LightDraw, ParticleDraw, SpriteDraw};
+use crate::sprite::{GpuParticles, LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
 use crate::world::{ShownTiles, WorldMesh, build_world, detail_patches, far_patches, tile_image};
 
@@ -68,6 +68,8 @@ pub struct Drawables<'a> {
     pub quads: &'a [Quad],
     /// Lights worked out this frame.
     pub live_lights: &'a [LiveLight],
+    /// Particles the GPU works out.
+    pub gpu_particles: &'a [GpuParticles],
     /// Where each stencil's light is now.
     pub stencil_lights: &'a [Vec3],
     /// How open each stencil's cells are.

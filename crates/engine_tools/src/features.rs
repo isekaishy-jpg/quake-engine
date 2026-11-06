@@ -442,6 +442,24 @@ pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String
     }))
 }
 
+/// `check_effects`: what's wrong with effects.
+pub(crate) fn check_effects(session: &Session, _args: &Json) -> Result<Json, String> {
+    let mut found = serde_json::Map::new();
+    for name in names_in(session, "effects", ".eeffect") {
+        let path = session
+            .content
+            .join("effects")
+            .join(format!("{name}.eeffect"));
+        let bytes = std::fs::read(&path).map_err(|error| format!("{name}: {error}"))?;
+        let read = engine_compile::document_of(&bytes)
+            .and_then(|document| engine_compile::read_effect(&name, &document));
+        if let Err(problem) = read {
+            found.insert(name, json!(problem.to_string()));
+        }
+    }
+    Ok(Json::Object(found))
+}
+
 /// `check_shaders`: what's wrong with shaders, as the compiler sees them.
 pub(crate) fn check_shaders(session: &Session, _args: &Json) -> Result<Json, String> {
     let mut found = serde_json::Map::new();

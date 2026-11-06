@@ -9,7 +9,7 @@ use crate::matrix::rolled_axes;
 pub(crate) const SPRITE_PUSH_SIZE: u32 = 64;
 
 /// Bytes in one particle.
-pub(crate) const PARTICLE_BYTES: usize = 16;
+pub(crate) const PARTICLE_BYTES: usize = 40;
 
 /// The most particles a frame draws.
 pub const MAX_PARTICLE_DRAWS: usize = 16_384;
@@ -45,6 +45,20 @@ pub struct ParticleColor {
     pub blue: u8,
 }
 
+/// What a particle looks like.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ParticleShape {
+    /// A small square that shrinks to a limit, as the original's are.
+    #[default]
+    Square,
+    /// A soft round picture facing the eye.
+    Soft,
+    /// A line to `end`.
+    Line,
+    /// A flat mark facing `end`.
+    Flat,
+}
+
 /// A particle to draw this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct ParticleDraw {
@@ -52,6 +66,102 @@ pub struct ParticleDraw {
     pub origin: Vec3,
     /// Its colour.
     pub color: ParticleColor,
+    /// Its alpha.
+    pub alpha: u8,
+    /// Its size, for all but a square.
+    pub size: f32,
+    /// Where a line ends, or which way a flat mark faces.
+    pub end: Vec3,
+    /// What it looks like.
+    pub shape: ParticleShape,
+    /// How far past its colour it glows.
+    pub glow: f32,
+    /// Whether it adds to what's behind it.
+    pub adds: bool,
+}
+
+/// Particles the GPU works out, which it does from these and nothing else.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct GpuParticles {
+    /// Where they start.
+    pub origin: Vec3,
+    /// How long each lives.
+    pub life: f32,
+    /// Which way they head.
+    pub direction: Vec3,
+    /// How far from that they can go, as a cosine.
+    pub spread: f32,
+    /// Their colour at the start.
+    pub color: [f32; 4],
+    /// Their colour at the end.
+    pub end_color: [f32; 4],
+    /// How long they've been going.
+    pub age: f32,
+    /// How fast they start.
+    pub speed: f32,
+    /// How hard gravity pulls.
+    pub gravity: f32,
+    /// How hard they're pushed about.
+    pub turbulence: f32,
+    /// Their size at the start and the end.
+    pub size: [f32; 2],
+    /// How far from `origin` they start.
+    pub radius: f32,
+    /// How many there are.
+    pub count: u32,
+    /// Whether they add to what's behind them.
+    pub adds: bool,
+}
+
+/// Bytes of what a draw of [`GpuParticles`] pushes.
+pub(crate) const GPU_PARTICLE_PUSH: u32 = 96;
+
+/// The most draws of [`GpuParticles`] in a frame.
+pub const MAX_GPU_PARTICLE_DRAWS: usize = 64;
+
+/// What's pushed for `particles`.
+pub(crate) fn gpu_particle_bytes(particles: &GpuParticles) -> [u8; GPU_PARTICLE_PUSH as usize] {
+    let [ox, oy, oz] = [particles.origin.x, particles.origin.y, particles.origin.z];
+    let [dx, dy, dz] = [
+        particles.direction.x,
+        particles.direction.y,
+        particles.direction.z,
+    ];
+    let [r, g, b, a] = particles.color;
+    let [er, eg, eb, ea] = particles.end_color;
+    #[expect(clippy::cast_precision_loss, reason = "counts are far below 2^24")]
+    let count = particles.count as f32;
+    let numbers = [
+        ox,
+        oy,
+        oz,
+        particles.life,
+        dx,
+        dy,
+        dz,
+        particles.spread,
+        r,
+        g,
+        b,
+        a,
+        er,
+        eg,
+        eb,
+        ea,
+        particles.age,
+        particles.speed,
+        particles.gravity,
+        particles.turbulence,
+        particles.size[0],
+        particles.size[1],
+        particles.radius,
+        count,
+    ];
+    let mut out = [0; GPU_PARTICLE_PUSH as usize];
+    for (chunk, number) in out.as_chunks_mut::<4>().0.iter_mut().zip(numbers) {
+        *chunk = number.to_le_bytes();
+    }
+    out
 }
 
 /// A light shining this frame.
@@ -163,7 +273,24 @@ pub(crate) fn write_particle(particle: &ParticleDraw, out: &mut [u8]) {
         *chunk = value.to_le_bytes();
     }
     let color = particle.color;
-    if let Some(end) = out.get_mut(12..PARTICLE_BYTES) {
-        end.copy_from_slice(&[color.red, color.green, color.blue, 255]);
+    let alpha = match particle.shape {
+        ParticleShape::Square => 255,
+        _ => particle.alpha,
+    };
+    if let Some(end) = out.get_mut(12..16) {
+        end.copy_from_slice(&[color.red, color.green, color.blue, alpha]);
+    }
+    let shape: f32 = match particle.shape {
+        ParticleShape::Square => 0.0,
+        ParticleShape::Soft => 1.0,
+        ParticleShape::Line => 2.0,
+        ParticleShape::Flat => 3.0,
+    };
+    let end = particle.end;
+    let numbers = [particle.size, end.x, end.y, end.z, shape, particle.glow];
+    if let Some(rest) = out.get_mut(16..PARTICLE_BYTES) {
+        for (chunk, number) in rest.as_chunks_mut::<4>().0.iter_mut().zip(numbers) {
+            *chunk = number.to_le_bytes();
+        }
     }
 }

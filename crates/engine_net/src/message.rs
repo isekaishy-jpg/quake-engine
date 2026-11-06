@@ -86,6 +86,9 @@ const TAG_OUTLINE: u8 = 25;
 /// The level's gravity.
 const TAG_GRAVITY: u8 = 26;
 
+/// An effect an author described.
+const TAG_NAMED_EFFECT: u8 = 27;
+
 /// The most commands in a move message.
 const MAX_MOVE_COMMANDS: usize = 8;
 
@@ -580,6 +583,16 @@ impl ServerMessage {
                 put_vec3(&mut out, *origin);
                 put_vec3(&mut out, *direction);
             }
+            Self::Effect(Effect::Named {
+                effect,
+                origin,
+                entity,
+            }) => {
+                out.push(TAG_NAMED_EFFECT);
+                out.extend_from_slice(&effect.to_le_bytes());
+                put_vec3(&mut out, *origin);
+                out.extend_from_slice(&entity.to_le_bytes());
+            }
             Self::ModelName { number, name } => {
                 out.push(TAG_MODEL_NAME);
                 out.extend_from_slice(&number.to_le_bytes());
@@ -689,6 +702,15 @@ impl ServerMessage {
                     direction: reader.vec3()?,
                     color,
                     count,
+                };
+                reader.finished().then_some(Self::Effect(effect))
+            }
+            TAG_NAMED_EFFECT => {
+                let mut reader = Reader { bytes: rest };
+                let effect = Effect::Named {
+                    effect: reader.u32()?,
+                    origin: reader.vec3()?,
+                    entity: reader.u64()?,
                 };
                 reader.finished().then_some(Self::Effect(effect))
             }

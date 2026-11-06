@@ -10,7 +10,10 @@ use super::{
 };
 use crate::alias::{POSE_CORNER_BYTES, push_bytes};
 use crate::renderer::View;
-use crate::sprite::{MAX_PARTICLE_DRAWS, ViewAxes, sprite_axes, sprite_push_bytes};
+use crate::sprite::{
+    MAX_GPU_PARTICLE_DRAWS, MAX_PARTICLE_DRAWS, ViewAxes, gpu_particle_bytes, sprite_axes,
+    sprite_push_bytes,
+};
 use crate::world::{Batch, BatchKind};
 
 /// The corners of the cube the sky sphere is drawn on.
@@ -508,12 +511,44 @@ impl Recorder<'_> {
         scene: &Scene<'_>,
     ) {
         let count = scene.drawables.particles.len().min(MAX_PARTICLE_DRAWS);
-        if count == 0 {
-            return;
+        if count > 0 {
+            // What covers comes first, as what adds doesn't care what's behind it.
+            let list = &scene.drawables.particles[..count];
+            let over = list.iter().take_while(|particle| !particle.adds).count();
+            let over = u32::try_from(over).unwrap_or(0);
+            let all = u32::try_from(count).unwrap_or(0);
+            rec.bind_graphics_descriptor_sets(&self.layouts.particle, 0, &[&self.map.frame_set]);
+            rec.bind_vertex_buffers(0, &[(&self.particles.buffer, 0)]);
+            if over > 0 {
+                rec.bind_graphics_pipeline(&self.pipelines.particle.over);
+                rec.draw(6, over, 0, 0);
+            }
+            if all > over {
+                rec.bind_graphics_pipeline(&self.pipelines.particle.add);
+                rec.draw(6, all - over, 0, over);
+            }
         }
-        rec.bind_graphics_pipeline(&self.pipelines.particle);
-        rec.bind_graphics_descriptor_sets(&self.layouts.particle, 0, &[&self.map.frame_set]);
-        rec.bind_vertex_buffers(0, &[(&self.particles.buffer, 0)]);
-        rec.draw(6, u32::try_from(count).unwrap_or(0), 0, 0);
+        let batches = scene
+            .drawables
+            .gpu_particles
+            .iter()
+            .take(MAX_GPU_PARTICLE_DRAWS);
+        for batch in batches.filter(|batch| batch.count > 0) {
+            let layout = &self.layouts.gpu_particle;
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&self.map.frame_set]);
+            let pipelines = &self.pipelines.particle;
+            rec.bind_graphics_pipeline(if batch.adds {
+                &pipelines.gpu_add
+            } else {
+                &pipelines.gpu_over
+            });
+            rec.push_constants(
+                layout,
+                ShaderStageFlags::VERTEX,
+                0,
+                &gpu_particle_bytes(batch),
+            );
+            rec.draw(6, batch.count, 0, 0);
+        }
     }
 }

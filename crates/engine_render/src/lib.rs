@@ -36,8 +36,9 @@ pub use renderer::{
     View,
 };
 pub use sprite::{
-    LightDraw, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, ParticleColor, ParticleDraw, SpriteDraw,
-    ViewAxes, sprite_axes, sprite_push_bytes,
+    GpuParticles, LightDraw, MAX_GPU_PARTICLE_DRAWS, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS,
+    ParticleColor, ParticleDraw, ParticleShape, SpriteDraw, ViewAxes, sprite_axes,
+    sprite_push_bytes,
 };
 pub use streamer::TileStreamer;
 pub use visible::VisibleSet;
