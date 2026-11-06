@@ -9,6 +9,10 @@
   - [Windows window previews](research/windows-previews.md)
   - [Maps, materials and lighting](research/maps-materials-lighting.md)
   - [Rendering and editor plan](research/rendering-editor-plan.md)
+  - [Effects, water and shaders](research/effects-water-shaders.md): a direction, for the workflow later
+  - [Shadow rendering](research/shadow-rendering.md): lamps, curved surfaces and moving lights, for design later
+  - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
+  - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
 - **Designs:** none yet.
 - **Proposals:** one record per item, each with its research, design, proposal and review.
   - [0001: engine architecture and the road to playing Quake](proposals/0001-architecture.md)

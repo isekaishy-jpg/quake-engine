@@ -6,3 +6,8 @@
 # Compiled output.
 *.ebake
 *.ebin
+
+# Engine art and fonts, kept out of the repository until they're in use.
+/content/ui/
+/content/fonts/
+/delivered/
