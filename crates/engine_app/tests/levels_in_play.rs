@@ -209,6 +209,37 @@ fn a_guard_walks_the_way_it_faces() {
     assert!(frames.len() > 3, "its legs move");
 }
 
+/// A name alone doesn't make something wait to be fired.
+#[test]
+#[ignore = "takes a minute"]
+fn lifts_with_names_start_at_the_bottom_and_the_gate_waits_for_its_button() {
+    let map = level("ember_keep");
+    let (mut server, mut client) = start(&map);
+    let _settled = run(&mut server, &mut client, 1);
+    server
+        .exec(
+            r#"local lifts = find_all("classname", "plat")
+            for _, lift in lifts do
+                engine.print("LIFT " .. tostring(lift.name) .. " " .. tostring(lift.state == STATE_BOTTOM))
+            end
+            for _, door in find_all("classname", "door") do
+                if door.targetname == "gate_up" then
+                    engine.print("GATE " .. tostring(door.trigger_field == nil))
+                end
+            end"#,
+        )
+        .expect("asking");
+    let told = run(&mut server, &mut client, 1);
+    let lifts: Vec<_> = told
+        .iter()
+        .filter(|line| line.starts_with("LIFT"))
+        .collect();
+    assert!(lifts.len() >= 2, "{told:?}");
+    assert!(lifts.iter().all(|line| line.ends_with("true")), "{lifts:?}");
+    let gate = told.iter().find(|line| line.starts_with("GATE"));
+    assert_eq!(gate.map(String::as_str), Some("GATE true"), "{told:?}");
+}
+
 #[test]
 #[ignore = "takes a minute"]
 fn enemies_in_the_ember_keep_chase_and_fight() {

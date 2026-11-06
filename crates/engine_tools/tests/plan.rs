@@ -2,7 +2,6 @@
 
 use std::path::PathBuf;
 
-use engine_compile::{compile_text, placeholder_texture};
 use engine_tools::{CELL, Session, is_plan_map, run};
 use serde_json::{Value, json};
 
@@ -196,30 +195,6 @@ fn a_door_is_a_model_of_its_own() {
     let answer = run(&mut session, "validate", &json!({})).expect("validates");
     assert_eq!(answer["models"], json!(2), "a door's a model of its own");
     assert_eq!(answer["missing_materials"], json!([]), "{answer}");
-}
-
-/// A named entity is a target, and a door that's a target waits to be fired and never
-/// opens for someone walking up to it.
-#[test]
-fn nothing_a_plan_puts_down_is_a_target() {
-    let mut session = session();
-    let _room = paint(&mut session, &[[0, 0], [1, 0], [2, 0]], "floor");
-    for (cell, thing) in [([0, 0], "start"), ([1, 0], "door"), ([2, 0], "enemy")] {
-        let _put = put(&mut session, cell, thing);
-    }
-    let mut source = |name: &str| placeholder_texture(name);
-    let map = compile_text(&text(&session), &mut source).expect("compiles");
-    let door = map
-        .entities
-        .iter()
-        .find(|entity| format!("{entity:?}").contains("func_door"));
-    assert!(door.is_some(), "the door's there");
-    for entity in &map.entities {
-        let shown = format!("{entity:?}");
-        if !shown.contains("worldspawn") {
-            assert!(!shown.contains("targetname"), "{shown}");
-        }
-    }
 }
 
 #[test]

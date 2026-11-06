@@ -1,7 +1,7 @@
 //! Putting a map together.
 
 use std::borrow::Cow;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
@@ -286,6 +286,19 @@ struct VisibleFace<'a> {
 
 /// How far a decal sits off its surface.
 const DECAL_LIFT: f64 = 0.2;
+
+/// Every name something in `working` aims at. A name on its own is only a label: a door
+/// or lift with a `targetname` waits to be fired, and with nothing to fire it, it would
+/// wait for ever.
+fn targeted_names(working: &WorkingMap) -> HashSet<&str> {
+    working
+        .entities
+        .iter()
+        .flat_map(|entity| &entity.fields)
+        .filter(|(key, _)| key == "target" || key == "killtarget")
+        .filter_map(|(_, value)| value.text())
+        .collect()
+}
 
 /// The triangles of a decal, clipped to the world's faces under it.
 fn decal_triangles(decal: &DecalSource, faces: &[VisibleFace<'_>]) -> Vec<PlacedTriangle> {
@@ -965,6 +978,7 @@ fn compile_with(
     }
     let tracks = light_tracks(working);
     let mut next_track = tracks.iter();
+    let aimed_at = targeted_names(working);
     for entity in &working.entities {
         let mut fields = vec![("classname".to_owned(), entity.kind.clone())];
         // Scripts drive a track by its styles, from here.
@@ -974,7 +988,11 @@ fn compile_with(
             fields.push(("keyframe_style".to_owned(), track.first_style.to_string()));
         }
         if let Some(name) = &entity.name {
-            fields.push(("targetname".to_owned(), name.clone()));
+            fields.push(("name".to_owned(), name.clone()));
+            let has_its_own = entity.fields.iter().any(|(key, _)| key == "targetname");
+            if aimed_at.contains(name.as_str()) && !has_its_own {
+                fields.push(("targetname".to_owned(), name.clone()));
+            }
         }
         fields.extend(
             entity

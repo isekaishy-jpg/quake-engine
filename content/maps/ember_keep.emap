@@ -5532,6 +5532,7 @@ brush {
 
 entity main_gate {
     type = "func_door"
+    sounds = 1
     targetname = "gate_up"
     angle = -1
     wait = -1
@@ -5546,6 +5547,7 @@ entity main_gate {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = -1
     speed = 100
     wait = 4
@@ -6020,6 +6022,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = 180
     speed = 90
     wait = -1
@@ -6034,6 +6037,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = 0
     speed = 90
     wait = -1
@@ -6054,6 +6058,7 @@ brush {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = -1
     speed = 120
     wait = 4
@@ -6294,6 +6299,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = 90
     speed = 90
     wait = -1
@@ -6433,6 +6439,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = -2
     targetname = "crypt_trap"
     wait = -1
@@ -6460,6 +6467,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = -2
     targetname = "crypt_trap"
     wait = -1
@@ -6596,6 +6604,7 @@ entity {
 
 entity {
     type = "func_door"
+    sounds = 1
     angle = -1
     targetname = "balcony_link"
     wait = -1

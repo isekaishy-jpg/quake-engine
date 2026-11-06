@@ -234,11 +234,12 @@ fn door(plan: &Plan, x: i32, y: i32, picture: &str) -> Block {
             ROOM_HEIGHT,
         ]
     };
-    // A name would make it a target, and a target only opens when something fires it.
     let mut block = Block::new("entity");
     block.set("type", Value::Text("func_door".to_owned()));
     block.set("angle", Value::Number(-1.0));
     block.set("wait", Value::Number(3.0));
+    block.set("speed", Value::Number(200.0));
+    block.set("sounds", Value::Number(1.0));
     block.set(MADE, Value::Flag(true));
     block.children.push(brush(picture, cuboid));
     block

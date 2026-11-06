@@ -568,11 +568,7 @@ fn keyframes_make_a_track() {
     let swing = map
         .entities
         .iter()
-        .find(|e| {
-            e.fields
-                .iter()
-                .any(|(k, v)| k == "targetname" && v == "swing")
-        })
+        .find(|e| e.fields.iter().any(|(k, v)| k == "name" && v == "swing"))
         .expect("the entity");
     let field = swing.fields.iter().find(|(k, _)| k == "keyframe_style");
     assert_eq!(field.map(|(_, v)| v.as_str()), Some("48"));

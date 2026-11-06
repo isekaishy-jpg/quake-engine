@@ -356,6 +356,7 @@ entity first_door {
     lip = 8
     speed = 120
     type = "func_door"
+    sounds = 1
     wait = 3
     prefab = "door"
     id = 46
@@ -666,6 +667,7 @@ entity rolling {
     origin = [2892 200 0]
     speed = 48
     type = "func_door"
+    sounds = 1
     wait = 2
     prefab = "rolling_barrel"
     id = 85

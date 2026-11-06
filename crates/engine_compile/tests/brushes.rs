@@ -140,7 +140,7 @@ fn a_brush_entity_is_its_own_model() {
     assert_eq!(map.models.len(), 2);
     let door = map.entity_of_class("func_door").expect("a door");
     assert_eq!(door.get("model"), Some("*1"));
-    assert_eq!(door.get("targetname"), Some("door_1"));
+    assert_eq!(door.get("name"), Some("door_1"));
     assert_eq!(door.get("speed"), Some("100"));
     let model = &map.models[1];
     assert!(model.face_count >= 6);
@@ -302,11 +302,7 @@ fn a_mesh_entity_has_a_model_and_a_shade() {
     let found = map
         .entities
         .iter()
-        .find(|e| {
-            e.fields
-                .iter()
-                .any(|(k, v)| k == "targetname" && v == "lift_1")
-        })
+        .find(|e| e.fields.iter().any(|(k, v)| k == "name" && v == "lift_1"))
         .expect("the entity");
     let model = found
         .fields

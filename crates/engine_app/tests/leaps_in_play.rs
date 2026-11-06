@@ -22,6 +22,7 @@ end
 
 function walker(self)
     self.solid = SOLID_SLIDEBOX
+    self.health = 100
     self.movetype = MOVETYPE_STEP
     setsize(self, vector.create(-16, -16, -24), vector.create(16, 16, 40))
     self.goal = engine.parse_vector(self.goal)
@@ -117,6 +118,23 @@ fn walk(map: &Arc<Map>, seconds: u32) -> Vec3 {
 fn arrived(at: Vec3, goal: [f32; 3]) -> bool {
     let [x, y, z] = goal;
     (at - Vec3::new(x, y, z)).length() < 64.0
+}
+
+#[test]
+fn it_goes_through_a_door_with_a_name() {
+    let map = room(
+        "brush { material = floor cuboid = -1024 -288 -288 1024 288 0 }
+         brush { material = wall cuboid = -16 -288 0 16 -64 512 }
+         brush { material = wall cuboid = -16 64 0 16 288 512 }
+         brush { material = wall cuboid = -16 -64 128 16 64 512 }
+         entity hall_door { type = func_door angle = -1 speed = 200 wait = 3
+             brush { material = door cuboid = -8 -64 0 8 64 128 }
+         }",
+        [-300, 0, 26],
+        [300, 0, 24],
+    );
+    let at = walk(&map, 8);
+    assert!(arrived(at, [300.0, 0.0, 24.0]), "{at:?}");
 }
 
 #[test]
