@@ -272,6 +272,11 @@ impl World {
             palette,
             start,
         } = crate::level::load_level(&self.filesystem, name)?;
+        // An old bake is ignored, which leaves the level bright and flat.
+        if !map.lit && self.filesystem.read(&format!("maps/{name}.ebake")).is_ok() {
+            let line = format!("{name} has an out of date bake, so it's unlit");
+            self.console_view.print(&line, self.map_time);
+        }
         let level = Level {
             name: name.to_owned(),
             parms: self.next_parms.take(),

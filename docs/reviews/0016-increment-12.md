@@ -45,6 +45,7 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 28 | Drawing bounced light from a sample in a wall darkened corners | The ends of each row are always worked out |
 | 29 | Pictures in the packs had a line at their repeat. A measure of seams flagged 56, most of them lines meant to be there, so only stone, water, damp and plate were looked at, and 13 mended | `content/heal_seams.py` |
 | 30 | Four crates were outside the workspace lints, with 1,684 warnings | All four are under them, with `unsafe` allowed by name and a safety comment on each block (proposal 0096) |
+| 31 | An out of date bake was ignored without a word, so a level came up bright and flat. The final captures and route tests caught every map like this after one rebake. A fresh bake of the same inputs gave a different hash, and why wasn't found | The game now says so in its console, and every map was baked again and checked |
 
 ## Process
 
