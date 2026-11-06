@@ -5994,14 +5994,14 @@ entity {
 
 entity {
     type = "monster_army"
-    origin = [1280 1320 280]
+    origin = [1256 1368 296]
     angle = 270
     id = 292
 }
 
 entity {
     type = "monster_army"
-    origin = [1800 1320 280]
+    origin = [1816 1368 296]
     angle = 270
     id = 293
 }

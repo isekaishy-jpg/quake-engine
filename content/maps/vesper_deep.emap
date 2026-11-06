@@ -4107,7 +4107,7 @@ entity {
 
 entity {
     type = "monster_army"
-    origin = [4096 3000 92]
+    origin = [4096 2620 92]
     angle = 270
     id = 267
 }

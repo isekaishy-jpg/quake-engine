@@ -363,7 +363,7 @@ glow(480, 1880, 190, 280, (1, 0.85, 0.6))
 level.prefab('patrol', (3300, 2200, QUAY + 4), name='market_watch', size=260)
 level.prefab('patrol', (4500, 1200 + 240, QUAY), name='quay_watch', size=160)
 level.prefab('seeker', (3700, 2740, QUAY + 4), goal=[4400, 2760, QUAY + 28])
-level.entity('monster_army', (4096, 3000, QUAY + 28), angle=270)
+level.entity('monster_army', (4096, 2620, QUAY + 28), angle=270)
 level.entity('monster_dog', (3700, 2400, QUAY + 28), angle=0)
 level.entity('monster_dog', (4400, 2300, QUAY + 28), angle=180)
 # Stone hanging from the roof, which is higher over the middle of the city.
