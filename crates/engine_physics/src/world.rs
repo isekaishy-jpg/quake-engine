@@ -18,6 +18,12 @@ use engine_map::{ClipChild, Contents, Map, Model};
 use crate::hull::{HullRoot, enter_box, trace_hull};
 use crate::solids::build_solids;
 
+/// How finely a thin line looks for walls, which are thicker than this.
+const LINE_STEP: f32 = 8.0;
+
+/// How much of the end of a thin line is left out.
+const LINE_END: f32 = 24.0;
+
 /// How far short of a surface a trace stops, from `pmovetst.c`. It keeps the
 /// player out of solid, which rays can't see from inside.
 pub const DIST_EPSILON: f32 = 0.03125;
@@ -282,6 +288,43 @@ impl CollisionWorld {
     #[must_use]
     pub fn contents(&self, point: Vec3) -> PointContents {
         self.with(&[]).contents(point)
+    }
+
+    /// Whether a thin line from `start` gets to within [`LINE_END`] of `end`, past the
+    /// world and nothing else. A trace is the size of a player, which a place by a wall or
+    /// eyes under a low ceiling wouldn't pass. The end is left out, as what makes a sound
+    /// is often right against something.
+    #[must_use]
+    pub fn line_is_clear(&self, start: Vec3, end: Vec3) -> bool {
+        let line = end - start;
+        let length = line.length();
+        if length <= LINE_END {
+            return true;
+        }
+        let way = line * (1.0 / length);
+        let mut along = LINE_STEP;
+        while along < length - LINE_END {
+            if self.map_contents(start + way * along) == Contents::Solid {
+                return false;
+            }
+            along += LINE_STEP;
+        }
+        true
+    }
+
+    /// How far a thin line goes from `start` along `way`, of length 1, before it meets the
+    /// world. `None` is that it met nothing within `most`, or the sky.
+    #[must_use]
+    pub fn distance_along(&self, start: Vec3, way: Vec3, most: f32) -> Option<f32> {
+        let mut along = LINE_STEP;
+        while along < most {
+            match self.map_contents(start + way * along) {
+                Contents::Solid => return Some(along),
+                Contents::Sky => return None,
+                _ => along += LINE_STEP,
+            }
+        }
+        None
     }
 
     /// A trace with no moving models.

@@ -184,3 +184,32 @@ fn table() {
         }
     }
 }
+
+/// Loading isn't the network, so it doesn't leave others drawn far back.
+#[test]
+fn the_wait_for_the_first_snapshot_is_not_held_against_the_network() {
+    let mut clock = ViewClock::default();
+    let _waiting = clock.advance(3.0, 0.0);
+    let mut newest = 100.0;
+    let mut drawn = clock.advance(FRAME, newest);
+    for _ in 0..200 {
+        newest += TICK;
+        drawn = clock.advance(TICK, newest);
+    }
+    assert!(newest - drawn < 0.05, "{}", newest - drawn);
+}
+
+/// A new level's clock starts again from nothing.
+#[test]
+fn a_new_level_starts_the_clock_again() {
+    let mut clock = ViewClock::default();
+    let mut newest = 100.0;
+    for _ in 0..100 {
+        newest += TICK;
+        let _drawn = clock.advance(TICK, newest);
+    }
+    let drawn = clock.advance(TICK, 1.0);
+    assert!((drawn - 1.0).abs() < 0.05, "{drawn}");
+    let next = clock.advance(TICK, 1.0 + TICK);
+    assert!(next > drawn, "{next} after {drawn}");
+}

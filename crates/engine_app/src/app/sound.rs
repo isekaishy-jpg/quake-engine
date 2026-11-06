@@ -29,20 +29,15 @@ const ROOM_RAYS: [(f32, f32, f32); 10] = [
 
 /// Whether a straight line from the listener reaches `place`. With no world, it does.
 fn heard_from(world: Option<&CollisionWorld>, listener: Vec3, place: Vec3) -> bool {
-    world.is_none_or(|world| world.with(&[]).trace(listener, place).fraction >= 1.0)
+    world.is_none_or(|world| world.line_is_clear(listener, place))
 }
 
 /// How the room round `origin` sounds, from how far it is to what's there. What a ray
 /// doesn't reach, it takes to be open.
 fn room_round(world: &CollisionWorld, origin: Vec3) -> Room {
-    let view = world.with(&[]);
     let rays: Vec<Option<f32>> = ROOM_RAYS
         .iter()
-        .map(|(x, y, z)| {
-            let end = origin + Vec3::new(*x, *y, *z) * ROOM_REACH;
-            let fraction = view.trace(origin, end).fraction;
-            (fraction < 1.0).then_some(fraction * ROOM_REACH)
-        })
+        .map(|(x, y, z)| world.distance_along(origin, Vec3::new(*x, *y, *z), ROOM_REACH))
         .collect();
     Room::from_rays(&rays)
 }

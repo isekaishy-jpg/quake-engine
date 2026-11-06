@@ -104,6 +104,57 @@ fn a_player_is_stopped_by_a_compiled_wall() {
     );
 }
 
+/// What a thin line finds in the rooms below, which is how what's heard is worked out.
+fn rooms_world() -> CollisionWorld {
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile_text(TWO_ROOMS, &mut source).expect("compiles");
+    CollisionWorld::new(Arc::new(map))
+}
+
+#[test]
+fn a_thin_line_is_stopped_by_a_wall() {
+    let world = rooms_world();
+    let (here, there) = (Vec3::new(-500.0, 0.0, 64.0), Vec3::new(500.0, 0.0, 64.0));
+    assert!(!world.line_is_clear(here, there));
+    assert!(world.line_is_clear(here, Vec3::new(-100.0, 100.0, 64.0)));
+}
+
+/// Eyes under a ceiling are fine for a line, where a trace the size of a player starts in
+/// solid and calls everything blocked.
+#[test]
+fn a_thin_line_starts_under_a_low_ceiling() {
+    let world = rooms_world();
+    let eyes = Vec3::new(-500.0, 0.0, 250.0);
+    assert!(world.trace(eyes, Vec3::new(-300.0, 0.0, 250.0)).fraction < 1.0);
+    assert!(world.line_is_clear(eyes, Vec3::new(-300.0, 0.0, 250.0)));
+}
+
+/// What makes a sound is often right against something, and that doesn't hide it.
+#[test]
+fn a_thin_line_reaches_what_is_against_a_wall() {
+    let world = rooms_world();
+    let on_the_wall = Vec3::new(-32.0, 0.0, 64.0);
+    assert!(world.line_is_clear(Vec3::new(-500.0, 0.0, 64.0), on_the_wall));
+}
+
+#[test]
+fn a_thin_line_says_how_far_a_wall_is() {
+    let world = rooms_world();
+    let found = world.distance_along(
+        Vec3::new(-500.0, 0.0, 64.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        2048.0,
+    );
+    let distance = found.expect("a wall");
+    assert!((distance - 468.0).abs() < 10.0, "{distance}");
+    let short = world.distance_along(
+        Vec3::new(-500.0, 0.0, 64.0),
+        Vec3::new(1.0, 0.0, 0.0),
+        100.0,
+    );
+    assert_eq!(short, None);
+}
+
 /// Two rooms with a wall between them.
 const TWO_ROOMS: &str = "format 1 map
 brush { material = floor cuboid = -1024 -256 -32 1024 256 0 }

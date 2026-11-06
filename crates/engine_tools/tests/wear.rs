@@ -161,3 +161,15 @@ fn metal_stays_clean() {
     let _brush = run(&mut session, "add_brush", &args).expect("adds");
     assert_eq!(wear(&mut session, &json!({})), (0, 0));
 }
+
+/// A level that won't compile keeps its wear, and says why.
+#[test]
+fn wearing_a_level_that_fails_leaves_it_as_it_was() {
+    let mut session = room();
+    let _worn = wear(&mut session, &json!({}));
+    let strokes = lists(&session, "paint", "points").len();
+    let bad = json!({ "kind": "decal", "fields": { "size": 8 } });
+    let _added = run(&mut session, "add_block", &bad).expect("adds");
+    assert!(run(&mut session, "wear", &json!({})).is_err());
+    assert_eq!(lists(&session, "paint", "points").len(), strokes);
+}

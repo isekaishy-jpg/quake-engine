@@ -428,8 +428,16 @@ pub(crate) fn wear(session: &mut Session, args: &Json) -> Result<Json, String> {
     #[expect(clippy::cast_possible_truncation, reason = "any bits will do")]
     let seed = seed as u32;
     session.checkpoint();
+    // What's there is worked out without the old wear, which would be in it as decals.
+    let before = session.document.blocks.clone();
     session.document.blocks.retain(|b| b.get(MADE).is_none());
-    let (map, ..) = built_map(session)?;
+    let map = match built_map(session) {
+        Ok((map, ..)) => map,
+        Err(error) => {
+            session.document.blocks = before;
+            return Err(error);
+        }
+    };
     let reached = reached_space(&map);
     let mut worn = Worn::default();
     for surface in surfaces(&map) {

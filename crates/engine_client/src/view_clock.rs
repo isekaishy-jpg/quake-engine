@@ -58,9 +58,15 @@ impl ViewClock {
     /// come to the same thing here: a wait with nothing new to draw towards.
     fn note_arrival(&mut self, seconds: f64, newest: f64) {
         self.since_newest += seconds;
-        if newest > self.newest {
-            let wait = (self.since_newest - TICK_SECONDS).max(0.0);
-            self.longest_wait = (self.longest_wait * WAIT_KEPT).max(wait);
+        if newest < self.newest {
+            // A new level starts its clock again, and what came before says nothing.
+            *self = Self::default();
+        } else if newest > self.newest {
+            // Waiting for the first snapshot is loading, and not the network.
+            if self.newest > 0.0 {
+                let wait = (self.since_newest - TICK_SECONDS).max(0.0);
+                self.longest_wait = (self.longest_wait * WAIT_KEPT).max(wait);
+            }
             self.newest = newest;
             self.since_newest = 0.0;
         }
