@@ -240,11 +240,26 @@ impl Parser {
             && matches!(self.tokens.get(self.at + 1), Some((Token::Equals, _)))
     }
 
+    /// Whether a block starts here, as it can on the same line: a word then `{`, or a word,
+    /// a name and `{`.
+    fn at_block(&self) -> bool {
+        let token = |ahead: usize| self.tokens.get(self.at + ahead).map(|(token, _)| token);
+        let named = matches!(
+            token(1),
+            Some(Token::Word(_) | Token::Quoted(_) | Token::Number(_))
+        );
+        matches!(self.peek(), Some(Token::Word(_)))
+            && (token(1) == Some(&Token::Open) || (named && token(2) == Some(&Token::Open)))
+    }
+
     /// Reads a field's value: one value, or several making a list.
     fn value(&mut self) -> Result<Value, FormatError> {
         let first = self.scalar(0)?;
         let mut rest = Vec::new();
-        while !matches!(self.peek(), Some(Token::Line | Token::Close) | None) && !self.at_field() {
+        while !matches!(self.peek(), Some(Token::Line | Token::Close) | None)
+            && !self.at_field()
+            && !self.at_block()
+        {
             rest.push(self.scalar(0)?);
         }
         if rest.is_empty() {

@@ -296,8 +296,8 @@ impl World {
             && let Some(script) = &self.ui_script
         {
             let state = self.ui_state_now(script);
-            let commands = script.open_menu(&state).unwrap_or_default();
-            self.run_ui(commands);
+            let result = script.open_menu(&state);
+            self.after_ui(result);
         }
     }
 
@@ -305,12 +305,29 @@ impl World {
     pub(crate) fn menu_key_to_script(&mut self, key: &str) {
         if let Some(script) = &self.ui_script {
             let state = self.ui_state_now(script);
-            let commands = script.menu_key(&state, key).unwrap_or_default();
-            self.run_ui(commands);
+            let result = script.menu_key(&state, key);
+            self.after_ui(result);
         }
     }
 
     /// Does what a script asked to, past drawing.
+    /// Carries out what the script asked for, or says what went wrong.
+    fn after_ui<E: std::fmt::Display>(&mut self, result: Result<Vec<UiCommand>, E>) {
+        match result {
+            Ok(commands) => self.run_ui(commands),
+            Err(error) => self.note_ui_error(&error),
+        }
+    }
+
+    /// Says what went wrong in the UI script, once, as it runs every frame.
+    fn note_ui_error(&mut self, error: &impl std::fmt::Display) {
+        let text = format!("ui script: {error}");
+        if self.ui_error.as_ref() != Some(&text) {
+            self.ui_error = Some(text.clone());
+            self.ui_news.push(text);
+        }
+    }
+
     fn run_ui(&mut self, commands: Vec<UiCommand>) {
         for command in commands {
             match command {
@@ -343,6 +360,7 @@ impl World {
             reason = "which half of a blink"
         )]
         let blink = ((run_time * 4.0) as u64).is_multiple_of(2);
+        let mut failed = None;
         if running {
             self.hud.draw_tint(&mut canvas);
             if self.crosshair && playing && self.hud.intermission() == Intermission::None {
@@ -365,8 +383,9 @@ impl World {
                             script,
                             &self.console_settings,
                         );
-                        if let Ok(commands) = script.draw_status(&state) {
-                            draw_ui(&mut canvas, &mut self.theme, &commands);
+                        match script.draw_status(&state) {
+                            Ok(commands) => draw_ui(&mut canvas, &mut self.theme, &commands),
+                            Err(error) => failed = Some(error.to_string()),
                         }
                     }
                 }
@@ -414,8 +433,9 @@ impl World {
                 script,
                 &self.console_settings,
             );
-            if let Ok(commands) = script.draw_menu(&state) {
-                draw_ui(&mut canvas, &mut self.theme, &commands);
+            match script.draw_menu(&state) {
+                Ok(commands) => draw_ui(&mut canvas, &mut self.theme, &commands),
+                Err(error) => failed = Some(error.to_string()),
             }
         }
         if self.level_pending.is_some() {
@@ -434,7 +454,11 @@ impl World {
         if !self.rate_text.is_empty() {
             draw_rate(&mut canvas, &self.rate_text);
         }
-        canvas.into_quads()
+        let quads = canvas.into_quads();
+        if let Some(error) = failed {
+            self.note_ui_error(&error);
+        }
+        quads
     }
 
     /// Plays a sound with no place, as the menus do.

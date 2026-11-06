@@ -31389,3 +31389,66 @@ decal {
     from_wear = true
     id = 5882
 }
+
+entity keep {
+    type = "zone"
+    title = "The Ember Keep"
+    brush {
+        material = "hidden"
+        cuboid = [-512 -2048 -512 4096 3072 1024]
+    }
+}
+
+entity causeway {
+    type = "zone"
+    title = "The Causeway"
+    parent = "keep"
+    sound = "ambience/wind2.wav"
+    brush {
+        material = "hidden"
+        cuboid = [1024 -1800 -320 2048 -240 640]
+    }
+}
+
+entity undercroft {
+    type = "zone"
+    title = "The Undercroft"
+    parent = "keep"
+    brush {
+        material = "hidden"
+        cuboid = [256 -240 -320 1100 700 40]
+    }
+}
+
+entity great_hall {
+    type = "zone"
+    title = "The Great Hall"
+    parent = "keep"
+    brush {
+        material = "hidden"
+        cuboid = [1100 500 -60 1960 1160 704]
+    }
+}
+
+entity forge {
+    type = "zone"
+    title = "The Forge"
+    parent = "keep"
+    sound = "ambience/fire1.wav"
+    light = [1.1 0.95 0.85]
+    brush {
+        material = "hidden"
+        cuboid = [1960 100 -200 3300 1400 704]
+    }
+}
+
+entity crypt {
+    type = "zone"
+    title = "The Crypt"
+    parent = "keep"
+    sound = "ambience/drip1.wav"
+    brush {
+        material = "hidden"
+        cuboid = [200 1180 -320 1100 2600 100]
+    }
+}

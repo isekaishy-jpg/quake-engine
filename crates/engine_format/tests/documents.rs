@@ -163,3 +163,46 @@ fn deep_nesting_is_refused() {
     document.blocks.push(block);
     assert!(from_binary(&to_binary(&document)).is_err());
 }
+
+/// A list ends where a block starts, on one line as on many.
+#[test]
+fn a_block_can_follow_a_list_on_the_same_line() {
+    let one_line = "format 1 map
+entity x { light = [1 0 0] brush { size = 2 } }
+";
+    let many_lines = "format 1 map
+entity x {
+    light = [1 0 0]
+    brush {
+        size = 2
+    }
+}
+";
+    let (one, many) = (from_text(one_line), from_text(many_lines));
+    assert_eq!(one.expect("one line"), many.expect("many lines"));
+}
+
+#[test]
+fn a_named_block_can_follow_several_values_on_the_same_line() {
+    let parsed = from_text(
+        "format 1 map
+entity x { spot = 1 2 3 part wheel { size = 2 } }
+",
+    );
+    let document = parsed.expect("parses");
+    let block = &document.blocks[0];
+    assert_eq!(block.fields.len(), 1, "{block:?}");
+    assert_eq!(block.children[0].name.as_deref(), Some("wheel"));
+}
+
+/// A word is still a value where no block follows it.
+#[test]
+fn words_in_a_list_stay_words() {
+    let parsed = from_text(
+        "format 1 map
+entity x { tags = one two three }
+",
+    );
+    let document = parsed.expect("parses");
+    assert_eq!(document.blocks[0].fields.len(), 1);
+}

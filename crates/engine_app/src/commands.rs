@@ -90,6 +90,9 @@ pub(crate) fn register(console: &mut Console<World>) {
     for ignored in ["+mlook", "-mlook", "+klook", "-klook", "sizeup", "sizedown"] {
         console.register(ignored, nothing);
     }
+    for setting in ORIGINAL_SETTINGS {
+        console.register(setting, nothing);
+    }
     for button in Buttons::NAMES {
         console.register(&format!("+{button}"), button_down);
         console.register(&format!("-{button}"), button_up);
@@ -369,6 +372,42 @@ fn add_bot(console: &mut Console<World>, world: &mut World, args: &Args) {
 fn remove_bots(_console: &mut Console<World>, world: &mut World, _args: &Args) {
     world.bots.clear();
 }
+
+/// Settings a Quake `config.cfg` holds for things this engine doesn't have, such as modems
+/// and video modes. They mean nothing here, and each would say it's unknown at every start.
+const ORIGINAL_SETTINGS: &[&str] = &[
+    "_cl_color",
+    "_cl_name",
+    "_config_com_baud",
+    "_config_com_irq",
+    "_config_com_modem",
+    "_config_com_port",
+    "_config_modem_clear",
+    "_config_modem_dialtype",
+    "_config_modem_hangup",
+    "_config_modem_init",
+    "_snd_mixahead",
+    "_vid_default_mode",
+    "_vid_default_mode_win",
+    "_vid_wait_override",
+    "_windowed_mouse",
+    "cl_backspeed",
+    "cl_forwardspeed",
+    "joystick",
+    "lookspring",
+    "lookstrafe",
+    "m_forward",
+    "m_side",
+    "saved1",
+    "saved2",
+    "saved3",
+    "saved4",
+    "savedgamecfg",
+    "vid_config_x",
+    "vid_config_y",
+    "vid_nopageflip",
+    "vid_stretch_by_2",
+];
 
 /// The network the `net_fake` settings ask for, or `None` for the real one.
 fn fake_network(console: &Console<World>) -> Option<Conditions> {

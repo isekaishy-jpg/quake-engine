@@ -158,6 +158,10 @@ pub(crate) struct World {
     pub(crate) theme: UiTheme,
     /// The status bar and menus, if the content has them as a script.
     pub(crate) ui_script: Option<UiScript>,
+    /// What last went wrong in it, so that it's said once and not each frame.
+    pub(crate) ui_error: Option<String>,
+    /// What it hasn't said yet.
+    pub(crate) ui_news: Vec<String>,
     /// Whether the script's menu is open.
     pub(crate) script_menu: bool,
     /// The settings the script wants to know, as they stand.
@@ -479,7 +483,9 @@ impl World {
         if let Some(server) = &mut self.server {
             self.commands.extend(server.take_commands());
         }
-        (prints.unwrap_or_default(), level)
+        let mut prints = prints.unwrap_or_default();
+        prints.append(&mut self.ui_news);
+        (prints, level)
     }
 }
 
@@ -649,6 +655,8 @@ impl Engine {
                 effects_time: 0.0,
                 zones: ZoneTracker::default(),
                 ui_script,
+                ui_error: None,
+                ui_news: Vec::new(),
                 script_menu: false,
                 console_settings: BTreeMap::new(),
                 theme,

@@ -7,6 +7,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_compile::{compile_text, placeholder_texture};
+use engine_core::math::Vec3;
 use engine_map::Map;
 use engine_net::{Loopback, ServerMessage, Transport, loopback};
 use engine_physics::CollisionWorld;
@@ -207,6 +208,25 @@ fn a_guard_walks_the_way_it_faces() {
         }
     }
     assert!(frames.len() > 3, "its legs move");
+}
+
+/// Real places are in the zones they should be.
+#[test]
+#[ignore = "takes a minute"]
+fn the_real_levels_have_their_zones() {
+    for (name, place, title) in [
+        ("ember_keep", [2704.0, 720.0, 24.0], "The Forge"),
+        ("ember_keep", [1300.0, 832.0, 24.0], "The Great Hall"),
+        ("ember_keep", [1536.0, -1400.0, 24.0], "The Causeway"),
+        ("vesper_deep", [6800.0, 1700.0, 92.0], "The Foundry"),
+        ("vesper_deep", [3300.0, 2200.0, 92.0], "The Market"),
+        ("vesper_deep", [4096.0, 160.0, 1560.0], "The Ruined Quarter"),
+    ] {
+        let map = level(name);
+        let [x, y, z] = place;
+        let zone = map.zone_at(Vec3::new(x, y, z)).expect("in a zone");
+        assert_eq!(map.zones[zone].title.as_deref(), Some(title), "{name}");
+    }
 }
 
 /// A name alone doesn't make something wait to be fired.
