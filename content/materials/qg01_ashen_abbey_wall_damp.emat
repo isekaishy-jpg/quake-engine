@@ -2,8 +2,11 @@ format 1 material
 
 surface {
     base = textures/qg01_ashen_abbey_wall_damp.png
+    normal = textures/qg01_ashen_abbey_wall_damp_normal.png
+    specular = textures/qg01_ashen_abbey_wall_damp_specular.png
+    specular_strength = 1
+    gloss = 24
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0
 }

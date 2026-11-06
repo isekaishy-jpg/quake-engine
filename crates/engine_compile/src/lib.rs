@@ -6,6 +6,7 @@
 mod bake;
 mod build;
 mod cells;
+mod derive;
 mod effects;
 mod error;
 mod geometry;
@@ -25,10 +26,11 @@ pub use bake::{
     apply_bake, attach_side_files, bake_folder, map_hash, side_files, source_hash, write_bake,
 };
 pub use build::{TextureSource, compile, compile_text, read_map_text};
+pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
 pub use light::{BakeInput, ImageReader, bake_light, light_tracks};
-pub use material::{MaterialLibrary, document_of};
+pub use material::{MaterialLibrary, decode_png, document_of};
 pub use mesh::{
     LoadedMesh, Mesh, MeshPart, PlacedMesh, PlacedTriangle, occluders_of, place_mesh, read_mesh,
     read_occlusion, resolve_meshes, write_occlusion,

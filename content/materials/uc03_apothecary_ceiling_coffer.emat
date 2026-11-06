@@ -2,8 +2,11 @@ format 1 material
 
 surface {
     base = textures/uc03_apothecary_ceiling_coffer.png
+    normal = textures/uc03_apothecary_ceiling_coffer_normal.png
+    specular = textures/uc03_apothecary_ceiling_coffer_specular.png
+    specular_strength = 1
+    gloss = 12
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0
 }

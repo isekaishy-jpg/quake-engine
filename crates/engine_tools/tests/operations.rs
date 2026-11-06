@@ -455,3 +455,36 @@ fn a_prefab_turns_before_it_is_placed() {
         "turned about the origin, then moved"
     );
 }
+
+/// A material gets maps from its own picture, and asking again changes nothing
+/// about what it says. What flows is left alone.
+#[test]
+fn a_material_gets_maps_from_its_picture() {
+    let root = content("derive");
+    fs::create_dir_all(root.join("materials")).expect("directory");
+    fs::create_dir_all(root.join("textures")).expect("directory");
+    let mut pixels = Vec::new();
+    for at in 0..64_u32 * 64 {
+        let grey = if at % 64 < 32 { 60 } else { 200 };
+        pixels.extend_from_slice(&[grey, grey, grey, 255]);
+    }
+    let image = engine_compile::encode_png(64, 64, &pixels).expect("encodes");
+    fs::write(root.join("textures/wall.png"), &image).expect("writes");
+    let wall = "format 1 material\n\nsurface {\n    base = textures/wall.png\n}\n";
+    fs::write(root.join("materials/wall.emat"), wall).expect("writes");
+    let flowing =
+        "format 1 material\n\nsurface {\n    base = textures/wall.png\n    kind = liquid\n}\n";
+    fs::write(root.join("materials/wall_pool.emat"), flowing).expect("writes");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "derive_maps", &json!({ "prefix": "wall" })).expect("runs");
+    assert_eq!(answer["derived"], json!(["wall"]));
+    assert!(root.join("textures/wall_normal.png").exists());
+    assert!(root.join("textures/wall_specular.png").exists());
+    let text = fs::read_to_string(root.join("materials/wall.emat")).expect("reads");
+    assert!(text.contains("normal = textures/wall_normal.png"), "{text}");
+    run(&mut session, "derive_maps", &json!({ "material": "wall" })).expect("runs");
+    let again = fs::read_to_string(root.join("materials/wall.emat")).expect("reads");
+    assert_eq!(again, text);
+    let pool = fs::read_to_string(root.join("materials/wall_pool.emat")).expect("reads");
+    assert_eq!(pool, flowing);
+}

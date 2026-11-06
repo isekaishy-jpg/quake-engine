@@ -266,9 +266,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         var lit = light(in);
         if has_direction {
             let toward = normalize(baked_from);
-            let flat_response = max(dot(surface_at.normal, toward), 0.1);
+            // Light baked for a flat surface is shaped by how a bump turns from
+            // it. Where it strikes at a shallow angle, a small turn is a huge
+            // ratio, which only shows as glare, so it's held to what looks true.
+            let flat_response = max(dot(surface_at.normal, toward), 0.25);
             let bumped = max(dot(normal, toward), 0.0);
-            lit = lit * mix(1.0, bumped / flat_response, 0.8);
+            lit = lit * mix(1.0, min(bumped / flat_response, 1.5), 0.8);
         }
         if shading == 1 {
             let amount = dot(lit, vec3<f32>(0.3, 0.59, 0.11));

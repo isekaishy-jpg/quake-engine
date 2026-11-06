@@ -4,6 +4,7 @@
 
 use std::path::PathBuf;
 
+use engine_compile::{DeriveSettings, decode_png, derive_maps, encode_png};
 use engine_format::{Block, Value};
 use serde_json::{Value as Json, json};
 
@@ -249,6 +250,98 @@ pub(crate) fn read_material(session: &Session, args: &Json) -> Result<Json, Stri
 }
 
 /// `write_material`.
+/// How much a material shines and how glossy it is, going by what it's called.
+fn finish_of(name: &str) -> (f32, f64) {
+    let metal = ["metal", "plate", "grille", "bronze", "copper", "iron"];
+    if metal.iter().any(|word| name.contains(word)) {
+        (0.7, 48.0)
+    } else if name.contains("wood") || name.contains("door") {
+        (0.18, 14.0)
+    } else if name.contains("damp") {
+        (0.3, 24.0)
+    } else {
+        (0.14, 12.0)
+    }
+}
+
+/// The value of a material's `key`, from its text.
+fn material_field<'a>(text: &'a str, key: &str) -> Option<&'a str> {
+    text.lines().find_map(|line| {
+        let (name, value) = line.split_once('=')?;
+        (name.trim() == key).then(|| value.trim().trim_matches('"'))
+    })
+}
+
+/// Works out the maps of the material `name`. Returns whether it did: what
+/// flows or has no picture is left alone.
+fn derive_one(session: &Session, name: &str, strength: f32) -> Result<bool, String> {
+    let materials = session.content.join("materials");
+    let path = materials.join(format!("{name}.emat"));
+    let text = std::fs::read_to_string(&path).map_err(|error| format!("{name}: {error}"))?;
+    let Some(base) = material_field(&text, "base") else {
+        return Ok(false);
+    };
+    if matches!(material_field(&text, "kind"), Some("liquid" | "sky")) {
+        return Ok(false);
+    }
+    let bytes = std::fs::read(session.content.join(base)).map_err(|error| error.to_string())?;
+    let (width, height, rgba) = decode_png(&bytes).map_err(|error| error.to_string())?;
+    let (shine, gloss) = finish_of(name);
+    let settings = DeriveSettings { strength, shine };
+    let maps = derive_maps(width, height, &rgba, settings);
+    let write = |suffix: &str, pixels: &[u8]| -> Result<String, String> {
+        let file = format!("textures/{name}_{suffix}.png");
+        let png = encode_png(width, height, pixels).map_err(|error| error.to_string())?;
+        std::fs::write(session.content.join(&file), png).map_err(|error| error.to_string())?;
+        Ok(file)
+    };
+    let normal = write("normal", &maps.normal)?;
+    let specular = write("specular", &maps.specular)?;
+    let derived = ["normal", "specular", "specular_strength", "gloss"];
+    let mut lines = Vec::new();
+    for line in text.lines() {
+        let key = line.split_once('=').map(|(key, _)| key.trim());
+        if key.is_some_and(|key| derived.contains(&key)) {
+            continue;
+        }
+        lines.push(line.to_owned());
+        if key == Some("base") {
+            lines.push(format!("    normal = {normal}"));
+            lines.push(format!("    specular = {specular}"));
+            lines.push("    specular_strength = 1".to_owned());
+            lines.push(format!("    gloss = {gloss}"));
+        }
+    }
+    let joined = lines.join("\n") + "\n";
+    engine_format::from_text(&joined).map_err(|error| error.to_string())?;
+    std::fs::write(&path, joined).map_err(|error| error.to_string())?;
+    Ok(true)
+}
+
+/// `derive_maps`: normal and specular maps from a material's own picture.
+pub(crate) fn derive_material_maps(session: &Session, args: &Json) -> Result<Json, String> {
+    #[expect(clippy::cast_possible_truncation, reason = "a strength is small")]
+    let strength = args.get("strength").and_then(Json::as_f64).unwrap_or(1.0) as f32;
+    let names = match (
+        args.get("material").and_then(Json::as_str),
+        args.get("prefix").and_then(Json::as_str),
+    ) {
+        (Some(name), _) => vec![checked(name)?.to_owned()],
+        (None, Some(prefix)) => names_in(session, "materials", ".emat")
+            .into_iter()
+            .filter(|name| name.starts_with(prefix))
+            .collect(),
+        (None, None) => return Err("material or prefix is required".to_owned()),
+    };
+    let mut done = Vec::new();
+    for name in names {
+        if derive_one(session, &name, strength)? {
+            done.push(name);
+        }
+    }
+    Ok(json!({ "derived": done }))
+}
+
 pub(crate) fn write_material(session: &Session, args: &Json) -> Result<Json, String> {
     let name = args
         .get("name")

@@ -2,9 +2,12 @@ format 1 material
 
 surface {
     base = textures/uc02_royal_necropolis_door.png
+    normal = textures/uc02_royal_necropolis_door_normal.png
+    specular = textures/uc02_royal_necropolis_door_specular.png
+    specular_strength = 1
+    gloss = 14
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0
     hotspots = 0 0 1 1
 }

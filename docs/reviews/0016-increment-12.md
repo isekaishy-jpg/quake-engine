@@ -36,6 +36,9 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 19 | The human saw olive-green patches round torches. Each colour channel was cut off alone, so red stopped and green rose, in the bake and in the shader | Light too bright comes down as a whole. Tests in the bake and on screen fail without this |
 | 20 | The human saw clouds in blocks and pieces. Their noise hashed with `sin`, which breaks up at large numbers | An integer hash, layers turned against each other, and fine layers faded low in the sky |
 | 21 | Torches 12 units off a wall, and too bright, filled it flat with no falloff | They stand further off and burn lower |
+| 22 | The human saw a torch leave a circle on each wall of a corner, with nothing between them. Light fell with the full cosine of its angle | Half of that, as ericw-tools does (proposal 0098) |
+| 23 | The bump response was a plain ratio, so a surface nearly edge on to its light glared | It's held to 1.5, over a floor under the flat light |
+| 24 | Derived relief at full strength made stone look like modelled clay | The packs use 0.42 |
 
 ## Process
 
@@ -52,7 +55,6 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | What | Where it stands |
 |---|---|
 | Baking big maps | `wide_world` took 46 minutes before finding 11 and 12. It hasn't been timed since. `vesper_deep`, of 17,000 faces, bakes in about 90 seconds |
-| Normal maps for the packs | The packs are diffuse only, so stonework is lit flat. They could be drawn from the images, or made with the packs' art |
 | Real people for the city | Stand-ins now, as the human said they could be |
 | The Fall | It reads as a flat blue slab, and wants real falling water |
 | The host, worker and cache crates under the workspace lints | Measured at 1,703 items, about 800 of them doc comments to write by hand, with 47 uses of `unsafe` to allow by name. The open questions keep this apart from the rename. The test layout rule would also need test seams moved out of 189 places under `src/` |

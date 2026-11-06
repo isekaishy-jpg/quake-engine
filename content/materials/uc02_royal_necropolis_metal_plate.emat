@@ -2,9 +2,11 @@ format 1 material
 
 surface {
     base = textures/uc02_royal_necropolis_metal_plate.png
+    normal = textures/uc02_royal_necropolis_metal_plate_normal.png
+    specular = textures/uc02_royal_necropolis_metal_plate_specular.png
+    specular_strength = 1
+    gloss = 48
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0.12
-    gloss = 12
 }

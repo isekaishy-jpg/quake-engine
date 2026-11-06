@@ -138,6 +138,10 @@ pub const OPERATIONS: &[OperationInfo] = &[
         help: "Writes a material's text, which must parse. name, text.",
     },
     OperationInfo {
+        name: "derive_maps",
+        help: "Works out normal and specular maps from a material's picture, and adds them to it. material: a name, or prefix: the start of several. Optional strength.",
+    },
+    OperationInfo {
         name: "validate",
         help: "Compiles the map in memory and reports problems.",
     },
@@ -208,6 +212,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "undo" => Ok(json!({ "changed": session.undo() })),
         "redo" => Ok(json!({ "changed": session.redo() })),
         "prefabs" => Ok(json!({ "prefabs": prefab_names(&session.content) })),
+        "derive_maps" => features::derive_material_maps(session, args),
         "add_block" => features::add_block(session, args),
         "set_block" => features::set_block(session, args),
         "place_mesh" => features::place_mesh(session, args),

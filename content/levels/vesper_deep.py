@@ -44,7 +44,7 @@ level = Level(
     'vesper_deep',
     (0, 0, -320, 8192, 6144, GROUND),
     ROCK,
-    {'ambient': 44, 'light_spacing': 32, 'bounce': 1, 'cell_size': 1024, 'sun_intensity': 170,
+    {'ambient': 14, 'light_spacing': 32, 'bounce': 0.6, 'cell_size': 1024, 'sun_intensity': 170,
      'sun_crisp': True, 'wake_reach': 3072},
     blocks='''sky {
     zenith = 0.3 0.42 0.62

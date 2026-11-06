@@ -2,8 +2,11 @@ format 1 material
 
 surface {
     base = textures/qg02_iron_cathedral_floor_tiles.png
+    normal = textures/qg02_iron_cathedral_floor_tiles_normal.png
+    specular = textures/qg02_iron_cathedral_floor_tiles_specular.png
+    specular_strength = 1
+    gloss = 48
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0
 }

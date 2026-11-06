@@ -17,7 +17,11 @@ use crate::texture::placeholder_texture;
 use crate::tiles::{check_tiles, merge_tile};
 
 /// Decodes a PNG into RGBA bytes.
-fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
+///
+/// # Errors
+///
+/// Returns an error if `bytes` aren't a PNG this can read.
+pub fn decode_png(bytes: &[u8]) -> Result<(u32, u32, Vec<u8>), CompileError> {
     let bad = |error: &dyn std::fmt::Display| CompileError::Bad(format!("bad PNG: {error}"));
     let mut decoder = png::Decoder::new(std::io::Cursor::new(bytes));
     decoder.set_transformations(png::Transformations::normalize_to_color8());

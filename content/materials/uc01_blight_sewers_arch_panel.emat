@@ -2,9 +2,12 @@ format 1 material
 
 surface {
     base = textures/uc01_blight_sewers_arch_panel.png
+    normal = textures/uc01_blight_sewers_arch_panel_normal.png
+    specular = textures/uc01_blight_sewers_arch_panel_specular.png
+    specular_strength = 1
+    gloss = 12
     shading = lit
     alpha = opaque
     kind = solid
-    specular_strength = 0
     hotspots = 0 0 1 1
 }
