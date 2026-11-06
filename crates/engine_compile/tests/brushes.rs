@@ -489,6 +489,7 @@ fn stencil(name: &str, inner: [u8; 4]) -> Texture {
         width: 16,
         height: 16,
         rgba,
+        form: engine_map::PixelForm::Rgba,
     }];
     texture
 }

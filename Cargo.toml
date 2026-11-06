@@ -98,6 +98,10 @@ qbsp = { version = "=0.17.0", default-features = false }
 # Proposal 0044: what saved games are made of, and how they're written.
 serde = { version = "=1.0.229", default-features = false, features = ["derive", "std"] }
 serde_json = { version = "=1.0.154", default-features = false, features = ["std", "float_roundtrip"] }
+# Proposal 0106: squeezing what a pack holds, private to `engine_assets`.
+miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
+# Proposal 0106: block compression for compiled textures, private to `engine_compile`.
+rusty_dds = { version = "=0.9.0", default-features = false, features = ["encode", "simd"] }
 # Proposal 0019: writing screenshots, private to `engine_app`.
 png = { version = "=0.18.0", default-features = false }
 # Proposal 0016: the Vulkan backend, private to `engine_render`. The patched

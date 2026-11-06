@@ -123,10 +123,10 @@ pub(crate) fn build_stencil(
     let missing = |what: &str| CompileError::Bad(format!("a ray_stencil needs {what}"));
     let point = |key: &str| entity.point(key).map(stored);
     let name = entity.text("image").ok_or_else(|| missing("an image"))?;
-    let image = source.texture(name).mips;
+    let image = source.pixels(name).mips;
     let boxes = entity
         .text("marks")
-        .and_then(|name| source.texture(name).mips.into_iter().next())
+        .and_then(|name| source.pixels(name).mips.into_iter().next())
         .map_or_else(
             || vec![[0.0, 0.0, 1.0, 1.0]],
             |mip| stencil_boxes(mip.width as usize, mip.height as usize, &mip.rgba),

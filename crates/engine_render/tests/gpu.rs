@@ -10,9 +10,9 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
-    Material, MaterialLayer, MipLevel, PAINT_MASK, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil,
-    Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TextureKind,
-    TileLight,
+    Material, MaterialLayer, MipLevel, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT,
+    RayStencil, Shading, SideFiles, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
+    TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, LightDraw, LiveLight, ParticleColor,
@@ -243,6 +243,60 @@ fn a_lit_white_surface_shows_its_doubled_light() {
     assert_eq!(r, 255, "400 of 255 fits");
     assert!((126..=129).contains(&g), "green {g}");
     assert!((62..=66).contains(&b), "blue {b}");
+}
+
+/// A BC7 block of one opaque colour, whose parts are 7 bits each: mode 6, with
+/// every pixel on the first end of its line.
+fn solid_block(color: [u8; 3]) -> Vec<u8> {
+    let mut bits = 1_u128 << 6;
+    for (number, part) in color.into_iter().chain([127]).enumerate() {
+        bits |= u128::from(part) << (7 + number * 14);
+    }
+    bits |= 3 << 63;
+    bits.to_le_bytes().to_vec()
+}
+
+/// A compiled picture goes up as blocks, in the format they're in. Sent as
+/// anything else, a copy reads past its bytes and the device is lost.
+#[test]
+fn a_compressed_texture_draws_its_colour() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.textures[0].mips = vec![
+        MipLevel {
+            width: 8,
+            height: 8,
+            rgba: solid_block([100, 40, 20]).repeat(4),
+            form: PixelForm::Bc7Srgb,
+        },
+        MipLevel {
+            width: 4,
+            height: 4,
+            rgba: solid_block([100, 40, 20]),
+            form: PixelForm::Bc7Srgb,
+        },
+        MipLevel {
+            width: 2,
+            height: 2,
+            rgba: solid_block([100, 40, 20]),
+            form: PixelForm::Bc7Srgb,
+        },
+        MipLevel {
+            width: 1,
+            height: 1,
+            rgba: solid_block([100, 40, 20]),
+            form: PixelForm::Bc7Srgb,
+        },
+    ];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let [r, g, b, _] = centre(&capture);
+    assert!(r > g && g > b, "red over green over blue: {r} {g} {b}");
+    assert!(r > 0, "it drew");
 }
 
 #[test]
@@ -600,6 +654,7 @@ fn stencil_map(left: [u8; 4]) -> Map {
             width: 8,
             height: 8,
             rgba,
+            form: PixelForm::Rgba,
         }]),
         boxes: vec![[0.0, 0.0, 1.0, 1.0]],
     });
@@ -822,6 +877,7 @@ fn image_of(size: u32, color: impl Fn(u32, u32) -> [u8; 4]) -> Vec<MipLevel> {
         width: size,
         height: size,
         rgba,
+        form: PixelForm::Rgba,
     }]
 }
 

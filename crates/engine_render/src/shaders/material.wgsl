@@ -265,7 +265,10 @@ fn material_color(in: VertexOut) -> vec4<f32> {
 
     var normal = surface_at.normal;
     if material.slots_a.x >= 0 {
-        let bump = read_slot(material.slots_a.x, uv, dx, dy).xyz * 2.0 - vec3<f32>(1.0);
+        // Compiled normal maps hold two channels, and the third follows from them.
+        let flat_bump = read_slot(material.slots_a.x, uv, dx, dy).xy * 2.0 - vec2<f32>(1.0);
+        let rise = sqrt(max(1.0 - dot(flat_bump, flat_bump), 0.0));
+        let bump = vec3<f32>(flat_bump, rise);
         normal = normalize(
             surface_at.tangent * bump.x + surface_at.bitangent * bump.y + surface_at.normal * bump.z,
         );

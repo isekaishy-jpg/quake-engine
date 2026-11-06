@@ -17,5 +17,5 @@ pub use archive::Archive;
 pub use directory::DirectoryArchive;
 pub use error::AssetError;
 pub use filesystem::FileSystem;
-pub use pack::{PackArchive, write_pack};
+pub use pack::{PackArchive, PackSummary, write_pack, write_pack_of};
 pub use path::normalize_path;

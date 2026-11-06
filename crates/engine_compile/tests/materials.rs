@@ -200,6 +200,7 @@ fn world_size_sets_how_big_a_repeat_is() {
             width: 1024,
             height: 1024,
             rgba: Vec::new(),
+            form: engine_map::PixelForm::Rgba,
         }],
         ..Texture::default()
     };

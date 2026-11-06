@@ -74,3 +74,21 @@ target/release/engine-tool content - check_textures "{\"prefix\":\"uc01\"}"
 ```
 
 This lists what's wrong with each material. An empty list is a pass. A real ledge or join on a repeat line can read as a step, so look at those and decide.
+
+## Compiling and packing
+
+Pictures are delivered as PNGs and stay that way in the folder. For a game they're compiled, and nothing else about them changes:
+
+```bash
+target/release/engine-compile content --textures
+```
+
+That writes `compiled/<picture>.etex`: colour as BC7 in sRGB, measures as BC7, and normals as BC5, with their mips. Only what changed is redone, and a compiled picture that's behind its PNG isn't used. A normal map's blue channel is worked out from the other two, so it has to be a true unit normal.
+
+To make one file of all content, with what only making content needs left out:
+
+```bash
+target/release/engine-compile content --pack game.epak
+```
+
+Run the game on it with `-content game.epak`. See [proposal 0106](proposals/0106-packing.md).

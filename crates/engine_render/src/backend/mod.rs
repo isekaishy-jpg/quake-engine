@@ -549,7 +549,9 @@ impl Backend {
         let (physical, queue_family) = pick_device(&instance, surface.as_deref())?;
         let device_name = physical.properties().device_name().to_owned();
         let device_extensions = DeviceExtensions::new().khr_swapchain();
-        let features = DeviceFeatures::new().with_sampler_anisotropy();
+        let features = DeviceFeatures::new()
+            .with_sampler_anisotropy()
+            .with_texture_compression_bc();
         let device = physical.create_device(DeviceCreateInfo {
             queue_create_infos: &[QueueCreateInfo::single(queue_family)],
             enabled_extensions: surface.as_ref().map(|_| &device_extensions),

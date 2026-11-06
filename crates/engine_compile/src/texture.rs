@@ -42,6 +42,7 @@ pub fn placeholder_texture(name: &str) -> Texture {
                 width: size,
                 height: size,
                 rgba,
+                form: engine_map::PixelForm::Rgba,
             }
         })
         .collect();

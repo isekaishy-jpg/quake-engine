@@ -34,6 +34,7 @@ impl TextureSource for Plain {
                 width: 1,
                 height: 1,
                 rgba: vec![128, 128, 128, 255],
+                form: engine_map::PixelForm::Rgba,
             }],
             ..Texture::default()
         }

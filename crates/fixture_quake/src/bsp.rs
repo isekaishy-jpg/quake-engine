@@ -66,6 +66,7 @@ fn missing_texture(name: &str) -> Texture {
             width: side,
             height: side,
             rgba,
+            form: engine_map::PixelForm::Rgba,
         }],
         animation: None,
         alternate: None,

@@ -14,6 +14,7 @@ use crate::error::CompileError;
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
 use crate::source::{WorkingMap, read_map};
 use crate::texture::placeholder_texture;
+use crate::texture_pack::{bytes_hash, packed_path, read_packed};
 use crate::tiles::{check_tiles, merge_tile};
 
 /// Decodes a PNG into RGBA bytes.
@@ -134,6 +135,7 @@ fn flatten_layers(material: &mut Material, mips: Vec<MipLevel>) -> Vec<MipLevel>
                     width: 1,
                     height: 1,
                     rgba: vec![0; 4],
+                    form: engine_map::PixelForm::Rgba,
                 }]);
             }
         }
@@ -182,6 +184,11 @@ pub struct MaterialLibrary<'a> {
     filesystem: &'a FileSystem,
     /// Images already decoded, by path.
     images: HashMap<String, SlotImage>,
+    /// Whether this is for playing, not baking.
+    playing: bool,
+    /// Whether the material being read can use compiled pictures. Layers are
+    /// mixed into their base here, which takes pixels.
+    compiled_pictures: bool,
 }
 
 impl std::fmt::Debug for MaterialLibrary<'_> {
@@ -243,11 +250,43 @@ impl<'a> MaterialLibrary<'a> {
             filesystem,
             images: HashMap::new(),
             meshes: HashMap::new(),
+            playing: false,
+            compiled_pictures: false,
         }
+    }
+
+    /// A library for playing: it reads pictures as they were compiled, where it
+    /// can, since a game only hands them on to the GPU. A bake needs the pixels.
+    #[must_use]
+    pub fn for_play(filesystem: &'a FileSystem) -> Self {
+        Self {
+            playing: true,
+            ..Self::new(filesystem)
+        }
+    }
+
+    /// The compiled form of the picture at `path`, if there's one and its source
+    /// hasn't changed since. What ships has no source to compare.
+    fn packed(&self, path: &str) -> Option<SlotImage> {
+        let bytes = self.filesystem.read(&packed_path(path)).ok()?;
+        let (hash, mips) = read_packed(&bytes)?;
+        let source = self.filesystem.read(path).ok();
+        let current = source.is_none_or(|source| bytes_hash(&source) == hash);
+        current.then(|| Arc::new(mips))
     }
 
     /// The image at `path`, with all its mips.
     fn image(&mut self, path: &str) -> Result<SlotImage, CompileError> {
+        if self.compiled_pictures {
+            let key = packed_path(path);
+            if let Some(image) = self.images.get(&key) {
+                return Ok(Arc::clone(image));
+            }
+            if let Some(image) = self.packed(path) {
+                self.images.insert(key, Arc::clone(&image));
+                return Ok(image);
+            }
+        }
         if let Some(image) = self.images.get(path) {
             return Ok(Arc::clone(image));
         }
@@ -333,6 +372,16 @@ impl<'a> MaterialLibrary<'a> {
         Ok(loaded)
     }
 
+    /// The pictures read so far as plain pixels.
+    #[must_use]
+    pub fn pixel_pictures(&self) -> Vec<String> {
+        self.images
+            .keys()
+            .filter(|path| !path.starts_with("compiled/"))
+            .cloned()
+            .collect()
+    }
+
     /// The image at `path`, for what isn't a material, such as a light's
     /// cookie.
     ///
@@ -340,6 +389,7 @@ impl<'a> MaterialLibrary<'a> {
     ///
     /// Returns an error if it can't be read.
     pub fn image_at(&mut self, path: &str) -> Result<SlotImage, CompileError> {
+        self.compiled_pictures = false;
         self.image(path)
     }
 
@@ -349,6 +399,17 @@ impl<'a> MaterialLibrary<'a> {
     ///
     /// Returns an error if it makes no sense or an image can't be read.
     pub fn read(&mut self, name: &str, document: &Document) -> Result<Texture, CompileError> {
+        self.read_as(name, document, self.playing)
+    }
+
+    /// Reads a material document into a texture, with pictures as they were
+    /// compiled if `compiled` says so.
+    fn read_as(
+        &mut self,
+        name: &str,
+        document: &Document,
+        compiled: bool,
+    ) -> Result<Texture, CompileError> {
         if document.kind != "material" {
             return Err(CompileError::Bad(format!("{name} isn't a material")));
         }
@@ -360,6 +421,8 @@ impl<'a> MaterialLibrary<'a> {
             .get("base")
             .and_then(Value::text)
             .ok_or_else(|| CompileError::Bad(format!("{name} has no base")))?;
+        self.compiled_pictures =
+            compiled && block.children.iter().all(|child| child.kind != "layer");
         let mips: Vec<MipLevel> = self.image(base)?.as_ref().clone();
         let mut filler = SlotFiller {
             library: self,
@@ -463,11 +526,27 @@ impl<'a> MaterialLibrary<'a> {
     ///
     /// Returns an error if a material exists but is broken.
     pub fn load(&mut self, name: &str) -> Result<Texture, CompileError> {
+        self.load_as(name, self.playing)
+    }
+
+    /// The texture of `name` in plain pixels, as [`Self::load`] gives it to a
+    /// bake, for whatever reads it here and not on the GPU.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a material exists but is broken.
+    pub fn load_pixels(&mut self, name: &str) -> Result<Texture, CompileError> {
+        self.load_as(name, false)
+    }
+
+    /// The texture of `name`, with pictures as they were compiled if `compiled`
+    /// says so.
+    fn load_as(&mut self, name: &str, compiled: bool) -> Result<Texture, CompileError> {
         let Ok(bytes) = self.filesystem.read(&format!("materials/{name}.emat")) else {
             return Ok(placeholder_texture(name));
         };
         let text = std::str::from_utf8(&bytes)
             .map_err(|_| CompileError::Bad(format!("{name} isn't text")))?;
-        self.read(name, &from_text(text)?)
+        self.read_as(name, &from_text(text)?, compiled)
     }
 }

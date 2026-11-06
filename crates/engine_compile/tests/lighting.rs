@@ -417,6 +417,7 @@ fn stained_glass_tints_what_passes_through() {
         width: 1,
         height: 1,
         rgba: vec![255, 0, 0, 255],
+        form: engine_map::PixelForm::Rgba,
     };
     let material = Material {
         alpha: AlphaMode::Blend,
@@ -583,6 +584,7 @@ fn mega_texture() -> Texture {
             width: 4,
             height: 4,
             rgba: color.repeat(16),
+            form: engine_map::PixelForm::Rgba,
         }]
     };
     Texture {
@@ -664,6 +666,7 @@ fn a_mega_surface_keeps_its_other_maps() {
             width: 4,
             height: 4,
             rgba: color.repeat(16),
+            form: engine_map::PixelForm::Rgba,
         }])
     };
     let mut texture = mega_texture();

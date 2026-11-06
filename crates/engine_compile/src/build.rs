@@ -29,6 +29,12 @@ use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 pub trait TextureSource {
     /// The texture of `material`.
     fn texture(&mut self, material: &str) -> Texture;
+
+    /// The texture of `material`, in plain pixels, for what's read here and not
+    /// by the GPU. A game's textures can be compiled (proposal 0106).
+    fn pixels(&mut self, material: &str) -> Texture {
+        self.texture(material)
+    }
 }
 
 impl<F: FnMut(&str) -> Texture> TextureSource for F {
@@ -595,7 +601,7 @@ impl Builder<'_> {
     ) -> Vec<VisibleFace<'a>> {
         let mut faces = faces;
         for stamp in stamps {
-            let texture = self.source.texture(&stamp.image);
+            let texture = self.source.pixels(&stamp.image);
             let Some(image) = texture.mips.first() else {
                 continue;
             };
@@ -945,7 +951,7 @@ fn compile_with(
     if let Some(sky) = &working.sky {
         let mut built = sky.sky.clone();
         if let (Some(clouds), Some(image)) = (&mut built.clouds, &sky.cloud_image) {
-            let texture = builder.source.texture(image);
+            let texture = builder.source.pixels(image);
             clouds.image = Some(Arc::new(texture.mips));
         }
         builder.map.sky = Some(built);

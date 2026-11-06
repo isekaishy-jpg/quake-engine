@@ -36,6 +36,20 @@ pub enum TextureKind {
     Hidden,
 }
 
+/// What a mip's bytes are.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum PixelForm {
+    /// Four bytes a pixel.
+    #[default]
+    Rgba,
+    /// Compressed colour, in sRGB.
+    Bc7Srgb,
+    /// Compressed numbers.
+    Bc7,
+    /// Two compressed channels, for a normal map.
+    Bc5,
+}
+
 /// One level of a texture's mip chain, in RGBA bytes.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct MipLevel {
@@ -43,8 +57,10 @@ pub struct MipLevel {
     pub width: u32,
     /// Height in pixels.
     pub height: u32,
-    /// Four bytes a pixel.
+    /// Its pixels, four bytes each, unless `form` says otherwise.
     pub rgba: Vec<u8>,
+    /// What those bytes are.
+    pub form: PixelForm,
 }
 
 /// Frames a texture cycles through.

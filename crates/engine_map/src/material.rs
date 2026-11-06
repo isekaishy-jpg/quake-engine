@@ -135,6 +135,7 @@ pub fn mip_chain(width: u32, height: u32, rgba: Vec<u8>) -> Vec<MipLevel> {
         width,
         height,
         rgba,
+        form: crate::PixelForm::Rgba,
     }];
     while let Some(last) = levels.last() {
         if last.width <= 1 && last.height <= 1 {
@@ -160,6 +161,7 @@ pub fn mip_chain(width: u32, height: u32, rgba: Vec<u8>) -> Vec<MipLevel> {
             width: u32::try_from(new_width).unwrap_or(1),
             height: u32::try_from(new_height).unwrap_or(1),
             rgba: pixels,
+            form: crate::PixelForm::Rgba,
         });
     }
     levels

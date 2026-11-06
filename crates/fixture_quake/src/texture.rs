@@ -58,6 +58,7 @@ impl Palette {
             width,
             height,
             rgba,
+            form: engine_map::PixelForm::Rgba,
         }
     }
 }

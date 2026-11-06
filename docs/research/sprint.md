@@ -16,7 +16,7 @@ Earlier items unblock later ones.
 | 2 | Loading: stop compiling a map from text at each load | Review 0016 | done |
 | 3 | Texture standard: world size, sizes, delivery spec, sets, naming, import checks | [Note](texture-standard.md) | done |
 | 4 | Linear colour, with the murky look kept on purpose | [Note](texture-standard.md) | done |
-| 5 | Packing: compiled textures, BC compression, one `.epak` container | [Note](texture-standard.md) | todo |
+| 5 | Packing: compiled textures, BC compression, one `.epak` container | [Note](texture-standard.md) | done |
 | 6 | Shader system: container, cache, surface code, instances, one way of drawing | [Note](effects-water-shaders.md) | todo |
 | 7 | Metal, roughness, specular and gloss together | [Note](texture-standard.md) | todo |
 | 8 | Full meshes: format, normals, drawing path, glTF import | [Note](mesh-support.md) | todo |

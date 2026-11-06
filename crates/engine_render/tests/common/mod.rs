@@ -17,6 +17,7 @@ pub(crate) fn map(models: u32) -> Map {
                 width: 64,
                 height: 64,
                 rgba: [255, 255, 255, 255].repeat(64 * 64),
+                form: engine_map::PixelForm::Rgba,
             }],
             animation: None,
             alternate: None,

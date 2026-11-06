@@ -5,8 +5,8 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, BOUNCE_STYLE, Fog, Look, Map, Material, Pool, ProbeGrid, RayStencil, STENCIL_GRID,
-    Sky, Sprite, TextureKind,
+    AliasModel, BOUNCE_STYLE, Fog, Look, Map, Material, MipLevel, PixelForm, Pool, ProbeGrid,
+    RayStencil, STENCIL_GRID, Sky, Sprite, TextureKind,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -100,9 +100,23 @@ pub(super) fn host_buffer(
     Ok(GpuBuffer { buffer, memory })
 }
 
+/// The format of compiled `mips`, if that's what they are.
+fn compiled_format(mips: &[MipLevel]) -> Option<Format> {
+    match mips.first()?.form {
+        PixelForm::Rgba => None,
+        PixelForm::Bc7Srgb => Some(Format::BC7_SRGB),
+        PixelForm::Bc7 => Some(Format::BC7_UNORM),
+        PixelForm::Bc5 => Some(Format::BC5_UNORM),
+    }
+}
+
 /// How slot `number` of `material` is held: colours as sRGB, which reads back as
 /// linear light, and what's a measure of something as it is.
 fn slot_format(material: &Material, number: u8) -> Format {
+    let image = material.slots.get(usize::from(number).wrapping_sub(1));
+    if let Some(format) = image.and_then(|mips| compiled_format(mips)) {
+        return format;
+    }
     let data = [
         material.normal,
         material.specular,
@@ -749,7 +763,8 @@ impl Backend {
                 .iter()
                 .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                 .collect();
-            let image = self.upload_image(&levels, Format::R8G8B8A8_SRGB)?;
+            let format = compiled_format(&texture.mips).unwrap_or(Format::R8G8B8A8_SRGB);
+            let image = self.upload_image(&levels, format)?;
             if let (Some(material), Some(params)) = (&texture.material, &mut material_params)
                 && uses_material(texture)
             {

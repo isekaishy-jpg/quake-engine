@@ -17,6 +17,7 @@ engine_core.workspace = true
 engine_format.workspace = true
 engine_map.workspace = true
 png.workspace = true
+rusty_dds.workspace = true
 
 [dev-dependencies]
 engine_physics.workspace = true

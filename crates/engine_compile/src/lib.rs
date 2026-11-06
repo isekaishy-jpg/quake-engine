@@ -7,6 +7,7 @@ mod bake;
 mod build;
 mod cells;
 mod compiled;
+mod content_pack;
 mod derive;
 mod effects;
 mod error;
@@ -21,6 +22,7 @@ mod source;
 mod stamp;
 mod texture;
 mod texture_check;
+mod texture_pack;
 mod tiles;
 mod tree;
 mod visibility;
@@ -30,6 +32,7 @@ pub use bake::{
 };
 pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
 pub use compiled::{Geometry, read_geometry, write_geometry};
+pub use content_pack::{PlayMap, pack_content, play_map};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
@@ -46,3 +49,6 @@ pub use source::{
 };
 pub use texture::placeholder_texture;
 pub use texture_check::{Repeat, check_picture};
+pub use texture_pack::{
+    Role, bytes_hash, pack_picture, pack_textures, packed_path, picture_roles, read_packed,
+};

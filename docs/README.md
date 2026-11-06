@@ -134,6 +134,7 @@
     - [0103: levels that load](proposals/0103-levels-that-load.md)
     - [0104: a texture standard](proposals/0104-a-texture-standard.md)
     - [0105: linear colour](proposals/0105-linear-colour.md)
+    - [0106: packing](proposals/0106-packing.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

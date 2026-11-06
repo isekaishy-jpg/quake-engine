@@ -2,7 +2,9 @@
 //!
 //! Writes `maps/<map>.ebake` and the binary `maps/<map>.ebin` in the content
 //! directory. With `--occlusion`
-//! first, the names are meshes, and it writes `meshes/<mesh>.eocc`.
+//! first, the names are meshes, and it writes `meshes/<mesh>.eocc`. With
+//! `--textures` it compiles the pictures materials use, and with `--pack <file>`
+//! it does that and writes the whole content folder as one pack.
 
 #![expect(clippy::print_stdout, reason = "this tool's output is its report")]
 #![expect(clippy::print_stderr, reason = "this tool reports its failures")]
@@ -15,8 +17,8 @@ use std::time::Instant;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, MaterialLibrary, bake_folder, bake_light, compile, map_hash, occluders_of, read_map,
-    side_files, write_bake, write_geometry, write_occlusion,
+    BakeInput, MaterialLibrary, bake_folder, bake_light, compile, map_hash, occluders_of,
+    pack_content, pack_textures, read_map, side_files, write_bake, write_geometry, write_occlusion,
 };
 use engine_format::{from_text, to_binary};
 use engine_map::{MipLevel, Texture};
@@ -95,13 +97,46 @@ fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
     let Some(content) = arguments.next() else {
         eprintln!("usage: engine-compile <content directory> [--occlusion] <name> ...");
+        eprintln!("       engine-compile <content directory> --textures");
+        eprintln!("       engine-compile <content directory> --pack <file>");
         return ExitCode::FAILURE;
     };
     let content = Path::new(&content);
+    let mut arguments = arguments.peekable();
+    if arguments.next_if(|first| first == "--textures").is_some() {
+        return match pack_textures(content) {
+            Ok((compiled, all)) => {
+                println!("compiled {compiled} of {all} pictures");
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("textures: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
+    if arguments.next_if(|first| first == "--pack").is_some() {
+        let Some(out) = arguments.next() else {
+            eprintln!("--pack needs a file to write");
+            return ExitCode::FAILURE;
+        };
+        return match pack_content(content, Path::new(&out)) {
+            Ok(summary) => {
+                println!(
+                    "packed {} files, {} of them shared, {} bytes down to {}",
+                    summary.files, summary.shared, summary.bytes, summary.stored
+                );
+                ExitCode::SUCCESS
+            }
+            Err(error) => {
+                eprintln!("pack: {error}");
+                ExitCode::FAILURE
+            }
+        };
+    }
     let mut filesystem = FileSystem::new();
     filesystem.mount(Box::new(DirectoryArchive::new(content)));
     let mut failed = false;
-    let mut arguments = arguments.peekable();
     let sidecars = arguments.next_if(|first| first == "--occlusion").is_some();
     for name in arguments {
         let done = if sidecars {

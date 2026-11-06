@@ -4,11 +4,8 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{
-    MaterialLibrary, apply_bake, attach_side_files, compile, compile_known, document_of, map_hash,
-    read_geometry, read_map,
-};
-use engine_map::{SideFiles, Texture};
+use engine_compile::{PlayMap, apply_bake, attach_side_files, document_of, play_map};
+use engine_map::SideFiles;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
 /// A level's text, in the engine's own format.
@@ -42,26 +39,7 @@ pub(crate) fn load_level(
         return fixture_quake::load_level(filesystem, name);
     };
     let document = document_of(&bytes)?;
-    let mut working = read_map(&document)?;
-    let mut library = MaterialLibrary::new(filesystem);
-    let used = library.prepare(&mut working)?;
-    let mut failure = None;
-    let mut textures = |material: &str| {
-        library.load(material).unwrap_or_else(|error| {
-            failure = Some(error);
-            Texture::default()
-        })
-    };
-    let hash = map_hash(&document, &used);
-    let kept = filesystem.read(&format!("maps/{name}.egeo")).ok();
-    let geometry = kept.and_then(|bytes| read_geometry(&bytes, hash));
-    let mut map = match geometry {
-        Some(geometry) => compile_known(&working, &mut textures, geometry)?,
-        None => compile(&working, &mut textures)?,
-    };
-    if let Some(error) = failure {
-        return Err(error.into());
-    }
+    let PlayMap { mut map, hash, .. } = play_map(filesystem, name, &document)?;
     if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
         apply_bake(&mut map, &baked, hash)?;
         let source = Arc::clone(filesystem);
