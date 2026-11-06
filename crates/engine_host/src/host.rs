@@ -25,6 +25,10 @@ pub trait Application: Sized {
     ///
     /// Returning an error or unwinding still invokes `stopping`, retaining
     /// successfully created windows until domain cleanup reports settled.
+    ///
+    /// # Errors
+    ///
+    /// Returns what stopped it from starting, which ends the host.
     fn started(&mut self, cx: &mut Context<'_, Self>) -> Result<(), Error>;
 
     /// Performs bounded legal owner work for a registered service. Applications
@@ -190,6 +194,10 @@ pub struct Host<A: Application> {
 impl<A: Application> Host<A> {
     /// Constructs the native event loop and returns configuration ownership on
     /// validation or native failure. This does not call application startup.
+    ///
+    /// # Errors
+    ///
+    /// Hands the configuration back, with why, if the event loop can't be made.
     pub fn new(config: HostConfig) -> Result<Self, Rejected<HostConfig>> {
         if let Err(error) = config.validate() {
             return Err(Rejected::new(config, error));
@@ -234,6 +242,10 @@ impl<A: Application> Host<A> {
     /// obligations is fatal: `engine_host` aborts rather than returning invalid borrowed
     /// state. Dependency panics before app entry can return a native failure.
     /// Only one invocation is accepted, including a failed startup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host can't run, or stopped with one.
     pub fn run(&mut self, app: &mut A) -> Result<ExitReport, Error> {
         self.core.check_owner()?;
         let event_loop = self.event_loop.take().ok_or(Error::AlreadyRun)?;
@@ -294,7 +306,7 @@ pub(crate) struct Core<A: Application> {
     pub(crate) dispatch: crate::dispatch::Dispatch<A>,
     pub(crate) timers: crate::timer::Timers<A::LocalEvent>,
     pub(crate) input: crate::input::Input,
-    pub(crate) native_input: crate::backend::winit_input::NativeInputAdapter,
+    pub(crate) native_input: backend::winit_input::NativeInputAdapter,
     pub(crate) text: crate::text::TextState,
     pub(crate) raw_input: crate::RawInputState,
     pub(crate) relative_target: Option<crate::WindowTarget>,
@@ -305,7 +317,7 @@ pub(crate) struct Core<A: Application> {
     pub(crate) event_budget: usize,
     pub(crate) services: crate::service::Services,
     pub(crate) pacing: crate::pacing::Pacing,
-    pub(crate) native_wake: crate::backend::wake::NativeWake,
+    pub(crate) native_wake: backend::wake::NativeWake,
     pub(crate) display_events: std::collections::VecDeque<crate::DisplayTransition>,
     pub(crate) shell: Option<crate::shell::ShellHelper>,
     pub(crate) shell_capacity: usize,
@@ -318,7 +330,7 @@ impl<A: Application> Core<A> {
     }
     pub(crate) fn with_config(config: &HostConfig) -> Result<Self, Error> {
         let id = HostId::allocate()?;
-        let native_wake = crate::backend::wake::NativeWake::new();
+        let native_wake = backend::wake::NativeWake::new();
         Ok(Self {
             id,
             owner: thread::current().id(),
@@ -335,7 +347,7 @@ impl<A: Application> Core<A> {
             dispatch: crate::dispatch::Dispatch::new(),
             timers: crate::timer::Timers::new(id),
             input: crate::input::Input::new(),
-            native_input: crate::backend::winit_input::NativeInputAdapter::new(),
+            native_input: backend::winit_input::NativeInputAdapter::new(),
             text: crate::text::TextState::new(),
             raw_input: crate::RawInputState::default(),
             relative_target: None,
@@ -401,7 +413,7 @@ impl<A: Application> Core<A> {
         if let Err(payload) = catch_unwind(AssertUnwindSafe(|| drop(value))) {
             self.fail(
                 Error::ApplicationPanicked {
-                    phase: crate::ContextPhase::Event,
+                    phase: ContextPhase::Event,
                     message: panic_message(payload),
                 },
                 StopReason::CallbackPanicked,

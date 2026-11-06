@@ -87,6 +87,10 @@ impl<M: Send + 'static> Proxy<M> {
     /// Atomically admits or rejects a message addressed to an exact recipient
     /// generation. The configured capacity includes detached/active posts.
     /// Standard-library shared-handle allocation can still process-abort on OOM.
+    ///
+    /// # Errors
+    ///
+    /// Hands the message back, with why, if it isn't taken.
     pub fn try_post(&self, recipient: RecipientId, message: M) -> Result<PostReceipt, Rejected<M>> {
         match self.transport.enqueue(recipient, message) {
             Ok(receipt) => Ok(receipt),
@@ -159,7 +163,7 @@ struct RebalanceTest {
 impl<M> BatchCache<M> {
     const BYTE_LIMIT: usize = 64 * 1024;
     // Post contains nonzero receipt/recipient metadata, even for a ZST message.
-    const CAPACITY_LIMIT: usize = Self::BYTE_LIMIT / std::mem::size_of::<Post<M>>();
+    const CAPACITY_LIMIT: usize = Self::BYTE_LIMIT / size_of::<Post<M>>();
 
     pub(crate) fn new() -> Self {
         Self {
@@ -174,7 +178,7 @@ impl<M> BatchCache<M> {
 
     fn capacities_fit(a: usize, b: usize) -> bool {
         a.checked_add(b)
-            .and_then(|capacity| capacity.checked_mul(std::mem::size_of::<Post<M>>()))
+            .and_then(|capacity| capacity.checked_mul(size_of::<Post<M>>()))
             .is_some_and(|bytes| bytes <= Self::BYTE_LIMIT)
     }
 
@@ -197,8 +201,13 @@ impl<M> BatchCache<M> {
                 ticket: None,
             });
         }
-        let ticket = ticket.unwrap();
-        let other = self.outstanding.iter().copied().max().unwrap();
+        let ticket = ticket.expect("a ticket, as one is outstanding");
+        let other = self
+            .outstanding
+            .iter()
+            .copied()
+            .max()
+            .expect("an outstanding ticket");
         let mut large = self.large.max(count);
         let mut small = self.small.max(count.min(other));
         if !Self::capacities_fit(large, small) {
@@ -238,11 +247,7 @@ impl<M> BatchCache<M> {
             let idle_available = Self::CAPACITY_LIMIT.saturating_sub(idle_capacity);
             // Match VecDeque's ordinary minimum geometric capacity across message
             // layouts, including its smaller minimum for very large elements.
-            let minimum = if std::mem::size_of::<Post<M>>() <= 1024 {
-                4
-            } else {
-                1
-            };
+            let minimum = if size_of::<Post<M>>() <= 1024 { 4 } else { 1 };
             let geometric = if posts.capacity() == 0 {
                 minimum
             } else {
@@ -338,7 +343,10 @@ impl<M> BatchCache<M> {
             self.buffers[empty] = Some(buffer);
             return;
         };
-        let old = self.buffers[existing].as_ref().unwrap().capacity();
+        let old = self.buffers[existing]
+            .as_ref()
+            .expect("a buffer in its slot")
+            .capacity();
         if Self::capacities_fit(buffer.capacity(), old) {
             self.buffers[empty] = Some(buffer);
             return;

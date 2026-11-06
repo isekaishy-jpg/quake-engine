@@ -17,22 +17,30 @@ const THREADS: usize = 64;
 /// identifiers, not public handles. Timestamps share the start origin.
 #[derive(Clone, Copy, Debug)]
 pub struct TraceEvent {
+    /// Nanoseconds since the trace started.
     pub elapsed_ns: u64,
+    /// The thread it happened on.
     pub thread: ThreadId,
     /// Native Windows TID for joining OS scheduling observations, when available.
     pub native_thread_id: Option<u32>,
     /// Runtime identity distinguishes record IDs from separate runtimes.
     pub runtime: u64,
+    /// What happened.
     pub event: &'static str,
+    /// The record it's about.
     pub id: u64,
+    /// Another record it's about, or 0.
     pub related: u64,
 }
 
 /// Identity of the owned job executing or settling on this thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TraceJob {
+    /// The runtime it belongs to.
     pub runtime: u64,
+    /// Its record.
     pub id: u64,
+    /// The group it's in, if any.
     pub group: Option<u64>,
 }
 
@@ -117,13 +125,17 @@ pub(crate) fn record(event: &'static str, runtime: u64, id: u64, related: u64) {
     record_at(event, runtime, id, related, Instant::now());
 }
 
+#[expect(
+    clippy::cast_possible_truncation,
+    reason = "held to the most a u64 can be just before"
+)]
 pub(crate) fn record_at(event: &'static str, runtime: u64, id: u64, related: u64, at: Instant) {
     let Some(session) = SESSION.get() else { return };
     let observation = TraceEvent {
         elapsed_ns: at
             .saturating_duration_since(session.origin)
             .as_nanos()
-            .min(u64::MAX as u128) as u64,
+            .min(u128::from(u64::MAX)) as u64,
         thread: std::thread::current().id(),
         native_thread_id: native_thread_id(),
         runtime,
@@ -168,6 +180,7 @@ pub(crate) fn clock() -> Option<Instant> {
 }
 
 #[cfg(windows)]
+#[expect(unsafe_code, reason = "thread ids are only reached through kernel32")]
 fn native_thread_id() -> Option<u32> {
     #[link(name = "kernel32")]
     unsafe extern "system" {
@@ -184,6 +197,10 @@ fn native_thread_id() -> Option<u32> {
 
 /// Diagnostic execution cycles, never converted to a portable time estimate.
 #[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "thread cycles are only reached through kernel32"
+)]
 pub(crate) fn cycles() -> Option<u64> {
     #[link(name = "kernel32")]
     unsafe extern "system" {

@@ -1,9 +1,24 @@
 //! Real `engine_worker` owner publication and independent, borrowed `engine_cache` cleanup. This uses
 //! controlled CPU data, not a renderer/provider final-use certification.
+#![cfg_attr(
+    not(test),
+    expect(clippy::unwrap_used, reason = "an example keeps to what it shows")
+)]
+#![cfg_attr(
+    not(test),
+    expect(clippy::print_stdout, reason = "an example reports to its console")
+)]
 
 #[cfg(test)]
 use crate as engine_host;
 use engine_cache::{AccountingDomain, AllocationClass, Backing, CleanupContext};
+#[cfg_attr(
+    not(test),
+    expect(
+        clippy::wildcard_imports,
+        reason = "as a test module it needs the crate's private names"
+    )
+)]
 use engine_host::*;
 use engine_worker::{
     ExecutionClass, NotifyBinding, NotifyLimits, NotifyRoute, OwnedLimits, Owner, Phase,
@@ -265,7 +280,7 @@ fn main() {
     // `engine_host` observations describe its own obligations. The separate assertions
     // above establish the application's actual `engine_worker` join and `engine_cache` cleanup.
     let shutdown = host.shutdown_snapshot();
-    assert_eq!(shutdown.state, engine_host::HostState::Closed);
+    assert_eq!(shutdown.state, HostState::Closed);
     assert!(shutdown.application_settled);
     assert_eq!(shutdown.external_window_leases, 0);
     assert_eq!(shutdown.pending_native_destructions, 0);

@@ -25,7 +25,7 @@ impl<T> BufferPool<T> {
     }
 
     pub(crate) fn acquire(&mut self, minimum: usize) -> Vec<T> {
-        if std::mem::size_of::<T>() == 0 || minimum == 0 {
+        if size_of::<T>() == 0 || minimum == 0 {
             return Vec::new();
         }
         let Some(index) = bucket_index(minimum) else {
@@ -56,7 +56,7 @@ impl<T> BufferPool<T> {
             entry.is_empty(),
             "only detached subscription storage can recycle"
         );
-        if std::mem::size_of::<T>() == 0 {
+        if size_of::<T>() == 0 {
             return;
         }
         let capacity = entry.capacity();

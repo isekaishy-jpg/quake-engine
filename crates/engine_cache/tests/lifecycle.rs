@@ -1,3 +1,5 @@
+//! A cache from its start to its end.
+
 use engine_cache::{
     AccountingDomain, Admission, AdmissionError, AllocationClass, Backing, Cache, CountLimit,
     ProductionClaim, ProductionMap, ProductionStart, ProviderDecision, StartRejectionReason,
@@ -60,14 +62,14 @@ fn closed_roots_preserve_inputs_and_allow_accepted_join_and_discovery() {
         SubmissionOutcome::Accepted
     ));
     let input = Box::new(String::from("rejected"));
-    let address = &*input as *const String;
+    let address = std::ptr::from_ref(&*input);
     let rejected = match map.begin_shared(&other, input) {
         Err(rejected) => rejected,
         Ok(_) => panic!(),
     };
     assert_eq!(rejected.reason(), StartRejectionReason::Closed);
     let returned = rejected.into_inputs();
-    assert_eq!(&*returned as *const String, address);
+    assert_eq!(std::ptr::from_ref(&*returned), address);
     let rejected = match map.begin_candidate(&identity, "candidate") {
         Err(rejected) => rejected,
         Ok(_) => panic!(),

@@ -13,9 +13,13 @@ pub use association::{
 /// Actual provider acceptance, independent of completion and consumer demand.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProductionPhase {
+    /// It's ready to be handed to a provider.
     Prepared,
+    /// A provider has taken it.
     Accepted,
+    /// A provider turned it down.
     Rejected,
+    /// It was given up on.
     Aborted,
 }
 
@@ -23,19 +27,29 @@ pub enum ProductionPhase {
 /// No snapshot certifies physical provider or device quiescence.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProductionSnapshot {
+    /// How far it has got.
     pub phase: ProductionPhase,
+    /// How many accesses are open.
     pub active_accesses: usize,
+    /// Whether its completion has been recorded.
     pub completion_recorded: bool,
+    /// Whether its outcome has been taken.
     pub outcome_claimed: bool,
 }
 
 /// Owned outcome retrieval, gated by acceptance and all `engine_cache` final-access releases.
 pub enum ProductionClaim<O, E> {
+    /// It isn't finished.
     Pending,
+    /// It finished with this.
     Ready(Result<O, E>),
+    /// Its producer went away without finishing.
     Abandoned,
+    /// A provider turned it down.
     Rejected,
+    /// It was given up on.
     Aborted,
+    /// Its outcome has already been taken.
     Taken,
 }
 
@@ -229,14 +243,19 @@ impl<I, O, E> Submission<I, O, E> {
 
 /// Provider decision made after invocation, distinct from a produced outcome.
 pub enum ProviderDecision<I, O, E> {
+    /// The provider took it.
     Accepted,
+    /// The provider turned it down, and hands back the producer.
     Rejected(Producer<I, O, E>),
 }
 
 /// Submission settlement with owned rejected or foreign capabilities preserved.
 pub enum SubmissionOutcome<I, O, E> {
+    /// It was taken.
     Accepted,
+    /// It was turned down.
     Rejected(RejectedSubmission<I, O, E>),
+    /// It was turned down when that wasn't allowed, and hands back the producer.
     InvalidRejection(Producer<I, O, E>),
 }
 
@@ -249,6 +268,7 @@ pub struct RejectedSubmission<I, O, E> {
     production: Production<O, E>,
 }
 impl<I, O, E> RejectedSubmission<I, O, E> {
+    /// The production this was for.
     pub fn production(&self) -> Production<O, E> {
         self.production.clone()
     }
@@ -261,7 +281,9 @@ impl<I, O, E> RejectedSubmission<I, O, E> {
 /// Failure to extend an attempt's accepted access obligations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProductionError {
+    /// Too many accesses are open to count another.
     AccessOverflow,
+    /// It has already settled.
     Settled,
 }
 
@@ -271,9 +293,11 @@ pub struct ChildRejected<I> {
     reason: ProductionError,
 }
 impl<I> ChildRejected<I> {
+    /// Why the child wasn't started.
     pub fn reason(&self) -> ProductionError {
         self.reason
     }
+    /// The inputs, handed back.
     pub fn into_inputs(self) -> I {
         self.inputs
     }
@@ -289,7 +313,9 @@ impl<I> fmt::Debug for ChildRejected<I> {
 /// Why a completion returned its original owned outcome.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CompletionRejectionReason {
+    /// It already has a completion.
     AlreadyCompleted,
+    /// It has already settled.
     Settled,
 }
 
@@ -299,9 +325,15 @@ pub struct CompletionRejected<O, E> {
     reason: CompletionRejectionReason,
 }
 impl<O, E> CompletionRejected<O, E> {
+    /// Why the completion wasn't taken.
     pub fn reason(&self) -> CompletionRejectionReason {
         self.reason
     }
+    /// The outcome, handed back.
+    ///
+    /// # Errors
+    ///
+    /// Returns the failure it finished with.
     pub fn into_outcome(self) -> Result<O, E> {
         self.outcome
     }
@@ -366,14 +398,20 @@ pub struct Producer<I, O, E> {
     lease: AccessLease<O, E>,
 }
 impl<I, O, E> Producer<I, O, E> {
+    /// The inputs, if they're still here.
     pub fn inputs(&self) -> Option<&I> {
         self.inputs.as_ref()
     }
+    /// The inputs, to change, if they're still here.
     pub fn inputs_mut(&mut self) -> Option<&mut I> {
         self.inputs.as_mut()
     }
     /// Transfers consumed input to an independently counted final-access owner.
     /// Overflow or settlement preserves the input in this producer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if too many accesses are open, or it has settled.
     pub fn consume_inputs(&mut self) -> Result<Option<ProductionAccess<I, O, E>>, ProductionError> {
         if self.inputs.is_none() {
             return Ok(None);
@@ -386,11 +424,23 @@ impl<I, O, E> Producer<I, O, E> {
     }
     /// Owns discovered child input or continuation state before handing it onward.
     /// Child access cannot complete the root attempt. Unit input is a continuation.
+    ///
+    /// # Errors
+    ///
+    /// Hands the input back if too many accesses are open, or it has settled.
     pub fn child<J>(&self, inputs: J) -> Result<ProductionAccess<J, O, E>, ChildRejected<J>> {
         self.lease.child(inputs)
     }
     /// Stages success or accepted failure once, without ending producer access.
     /// Late and duplicate completion return their owned outcome to the caller.
+    ///
+    /// # Errors
+    ///
+    /// Hands the outcome back if it already has one, or it has settled.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a rejection has no reason, which is a bug in this crate.
     pub fn complete(&mut self, outcome: Result<O, E>) -> Result<(), CompletionRejected<O, E>> {
         let reason = {
             let mut state = lock(&self.lease.state);
@@ -423,13 +473,19 @@ pub struct ProductionAccess<I, O, E> {
     lease: AccessLease<O, E>,
 }
 impl<I, O, E> ProductionAccess<I, O, E> {
+    /// The inputs, if they're still here.
     pub fn inputs(&self) -> Option<&I> {
         self.inputs.as_ref()
     }
+    /// The inputs, to change, if they're still here.
     pub fn inputs_mut(&mut self) -> Option<&mut I> {
         self.inputs.as_mut()
     }
     /// Retains nested discovery or continuation input before handoff.
+    ///
+    /// # Errors
+    ///
+    /// Hands the input back if too many accesses are open, or it has settled.
     pub fn child<J>(&self, inputs: J) -> Result<ProductionAccess<J, O, E>, ChildRejected<J>> {
         self.lease.child(inputs)
     }

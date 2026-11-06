@@ -11,8 +11,11 @@ use crate::task::{ProducerControl, WaitError};
 /// Why a discovery capability could not be acquired.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DiscoveryError {
+    /// There's no room.
     Full,
+    /// It has been closed.
     Closed,
+    /// It has been cancelled.
     Cancelled,
 }
 
@@ -31,13 +34,18 @@ impl std::error::Error for DiscoveryError {}
 /// Set responsibilities that remain after a snapshot is taken.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct WorkSetProgress {
+    /// Whether it has been sealed.
     pub sealed: bool,
+    /// Whether it has been cancelled.
     pub cancelled: bool,
+    /// How much work it's waiting on.
     pub active_work: usize,
+    /// How many discovery permits it has.
     pub discovery_permits: usize,
 }
 
 impl WorkSetProgress {
+    /// Whether it's sealed with nothing left.
     pub fn is_drained(self) -> bool {
         self.sealed && self.active_work == 0 && self.discovery_permits == 0
     }
@@ -206,6 +214,10 @@ impl WorkSet {
     }
 
     /// Reserves a live discoverer that can admit descendants after sealing.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it has no room left, or has closed or been cancelled.
     pub fn discovery(&self) -> Result<DiscoveryPermit, DiscoveryError> {
         if !self.inner.runtime_accepts(true) {
             return Err(DiscoveryError::Closed);
@@ -239,16 +251,22 @@ impl WorkSet {
         self.inner.cancel();
     }
 
+    /// How it stands.
     pub fn progress(&self) -> WorkSetProgress {
         self.inner.progress()
     }
 
+    /// Whether it's sealed with nothing left.
     pub fn is_drained(&self) -> bool {
         self.progress().is_drained()
     }
 
     /// Passively waits for a sealed set to drain. The host must still service
     /// owner phases and external providers. A CPU or owner context cannot wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't wait from here.
     pub fn wait_drained(&self) -> Result<(), WaitError> {
         if context::passive_wait_forbidden() {
             return Err(WaitError::ExecutionContext);
@@ -286,6 +304,11 @@ pub struct DiscoveryPermit {
 }
 
 impl DiscoveryPermit {
+    /// Another permit for the same work set.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it has no room left, or has closed or been cancelled.
     pub fn fork(&self) -> Result<Self, DiscoveryError> {
         if !self.inner.runtime_accepts(false) {
             return Err(DiscoveryError::Closed);
@@ -305,6 +328,7 @@ impl DiscoveryPermit {
         })
     }
 
+    /// How its work set stands.
     pub fn progress(&self) -> WorkSetProgress {
         self.inner.progress()
     }

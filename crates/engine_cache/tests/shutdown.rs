@@ -1,3 +1,6 @@
+//! Stopping with work still in hand.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::sync::mpsc::{self, RecvTimeoutError, Sender};
 use std::thread::{self, ThreadId};
 use std::time::Duration;

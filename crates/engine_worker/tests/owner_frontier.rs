@@ -1,3 +1,5 @@
+//! How far an owner has got through its work.
+
 use std::num::NonZeroUsize;
 
 use engine_worker::{

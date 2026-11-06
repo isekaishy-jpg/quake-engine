@@ -1,3 +1,6 @@
+//! The basic types of the runtime, from outside the crate.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::cell::RefCell;
 use std::collections::HashSet;
 use std::io;

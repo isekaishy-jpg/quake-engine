@@ -1,3 +1,6 @@
+//! Scoped work from its start to its end.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::sync::mpsc::{self, Sender};

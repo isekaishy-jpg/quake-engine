@@ -17,8 +17,6 @@
 //! Shutdown observations distinguish pending obligations without certifying
 //! provider completion. The private winit backend owns the native event loop.
 //! A second event loop in the same process is not promised.
-#![deny(unsafe_code)]
-#![deny(missing_docs)]
 
 #[cfg(not(all(target_os = "windows", target_arch = "x86_64")))]
 compile_error!("engine_host currently supports Windows x64 only");

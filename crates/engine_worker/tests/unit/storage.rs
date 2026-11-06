@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 fn retired_signal_reuses_only_after_result_and_observers_release() {
     let signals = SignalPool::new(2);
     let first = signals.acquire();
-    let address = &*first as *const _;
+    let address = std::ptr::from_ref(&*first);
     let (task, sink) = Task::pending_with_signal(first);
     let completion = task.completion();
     let subscription = completion.subscribe_cancelable(Box::new(|_| {}));
@@ -17,14 +17,14 @@ fn retired_signal_reuses_only_after_result_and_observers_release() {
     let shared = task.into_shared();
     let result = shared.try_result().unwrap();
     let other = signals.acquire();
-    assert_ne!(&*other as *const _, address);
+    assert_ne!(std::ptr::from_ref(&*other), address);
     assert_eq!(completion.status(), Some(TaskStatus::Succeeded));
     drop(other);
     drop(shared);
     drop(completion);
     // A detached subscription's weak reference still pins the old identity.
     let other = signals.acquire();
-    assert_ne!(&*other as *const _, address);
+    assert_ne!(std::ptr::from_ref(&*other), address);
     drop(other);
     drop(subscription);
     // The weak reference outlived the last strong owner, so that particular
@@ -35,7 +35,7 @@ fn retired_signal_reuses_only_after_result_and_observers_release() {
     assert!(matches!(&*result, Outcome::Success(41)));
 
     let reusable = signals.acquire();
-    let reusable_address = &*reusable as *const _;
+    let reusable_address = std::ptr::from_ref(&*reusable);
     let (task, sink) = Task::pending_with_signal(reusable);
     sink.finish(Outcome::Success(42_u32), false);
     let completion = task.completion();
@@ -43,7 +43,7 @@ fn retired_signal_reuses_only_after_result_and_observers_release() {
     assert_eq!(completion.status(), Some(TaskStatus::Succeeded));
     drop(completion);
     let recycled = signals.acquire();
-    assert_eq!(&*recycled as *const _, reusable_address);
+    assert_eq!(std::ptr::from_ref(&*recycled), reusable_address);
     let (next, sink) = Task::<u32>::pending_with_signal(recycled);
     assert_eq!(next.status(), None);
     sink.finish(Outcome::Success(43), false);
@@ -53,7 +53,7 @@ fn retired_signal_reuses_only_after_result_and_observers_release() {
     let mut raw = super::SignalCheckouts::default();
     signals.acquire_many_into(3, &mut portion, &mut raw);
     assert!(raw.entries.is_empty());
-    assert_eq!(&*portion[0] as *const _, reusable_address);
+    assert_eq!(std::ptr::from_ref(&*portion[0]), reusable_address);
     let mut observers = Vec::new();
     for (index, signal) in portion.drain(..).enumerate() {
         let (task, sink) = Task::pending_with_signal(signal);
@@ -102,7 +102,7 @@ fn retired_group_waits_for_seal_settlement_and_public_release() {
 fn simultaneous_final_signal_observers_return_one_reusable_allocation() {
     let signals = SignalPool::new(1);
     let signal = signals.acquire();
-    let address = &*signal as *const _;
+    let address = std::ptr::from_ref(&*signal);
     let (task, sink) = Task::pending_with_signal(signal);
     sink.finish(Outcome::Success(()), false);
     let first = task.completion();
@@ -121,7 +121,7 @@ fn simultaneous_final_signal_observers_return_one_reusable_allocation() {
         barrier.wait();
     });
     let recycled = signals.acquire();
-    assert_eq!(&*recycled as *const _, address);
+    assert_eq!(std::ptr::from_ref(&*recycled), address);
 }
 
 #[test]

@@ -10,7 +10,7 @@ pub(crate) mod winit;
 pub(crate) mod winit_input;
 
 #[cfg(test)]
-#[path = "../tests/common/backend.rs"]
+#[path = "../../tests/common/backend.rs"]
 pub(crate) mod test;
 
 pub(crate) enum NativeWindow {

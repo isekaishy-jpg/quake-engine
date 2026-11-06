@@ -17,20 +17,30 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 /// source registrations.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct NotifyLimits {
+    /// How many routes there can be.
     pub routes: usize,
+    /// How many bindings there can be.
     pub bindings: usize,
 }
 
 /// A notification management or registration failure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NotifyError {
+    /// Notifications are turned off.
     Disabled,
+    /// There's no room.
     Full,
+    /// It has been closed.
     Closed,
+    /// The source belongs to another runtime.
     ForeignSource,
+    /// The stamp belongs to another runtime.
     ForeignStamp,
+    /// It can't be called from here.
     InvalidContext,
+    /// Something has gone wrong with the route.
     Faulted,
+    /// A count has run out.
     CounterExhausted,
 }
 
@@ -45,18 +55,24 @@ impl std::error::Error for NotifyError {}
 /// A failed signal function is retained as route status, separate from job state.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum NotifyFault {
+    /// It reported this error.
     Error(String),
+    /// It panicked.
     Panicked,
+    /// A count ran out.
     CounterExhausted,
 }
 
 /// Failed route construction returns the uninvoked signal closure.
 pub struct NotifyRejected<F> {
+    /// Why it wasn't sent.
     pub reason: NotifyError,
+    /// The signal, handed back.
     pub signal: F,
 }
 
 impl<F> NotifyRejected<F> {
+    /// The signal, handed back.
     pub fn into_signal(self) -> F {
         self.signal
     }
@@ -686,6 +702,10 @@ impl NotifyRoute {
     }
 
     /// Watches this runtime's broad scheduler and control progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the route is closed, faulted or full.
     pub fn watch_progress(&mut self) -> Result<NotifyBinding, NotifyError> {
         let source = self.domain.progress_source();
         self.watch_source(&source)
@@ -694,6 +714,10 @@ impl NotifyRoute {
     /// Watches one terminal completion token. Foreign-runtime tokens are
     /// rejected even after completion. Runtime-independent ready tokens request
     /// an immediate recheck and return an inert binding.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the route is closed, faulted or full, or the token is foreign.
     pub fn watch_completion(
         &mut self,
         completion: &crate::task::Completion,
@@ -725,6 +749,10 @@ impl NotifyRoute {
     }
 
     /// Watches one owner's delivery and lifecycle progress.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the route is closed, faulted or full, or the owner is foreign.
     pub fn watch_owner<O>(
         &mut self,
         owner: &crate::owner::Owner<O>,
@@ -736,6 +764,10 @@ impl NotifyRoute {
     /// Clears pending and returns a stamp for the subsequent state recheck.
     /// Drain the host wake primitive before this call, then inspect source
     /// state and use `changed_since` before entering the host wait.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the route is closed or faulted, or its count has run out.
     pub fn prepare_wait(&mut self) -> Result<NotifyStamp, NotifyError> {
         if invocation_active() {
             return Err(NotifyError::InvalidContext);
@@ -759,6 +791,10 @@ impl NotifyRoute {
     }
 
     /// Checks changes and lifecycle after inspecting authoritative source state.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the route is closed or faulted, or the stamp is foreign.
     pub fn changed_since(&self, stamp: NotifyStamp) -> Result<bool, NotifyError> {
         if invocation_active() {
             return Err(NotifyError::InvalidContext);
@@ -783,12 +819,17 @@ impl NotifyRoute {
         Ok(changed)
     }
 
+    /// What went wrong with the route, if anything did.
     pub fn fault(&self) -> Option<NotifyFault> {
         lock(&self.cell.state).fault.clone()
     }
 
     /// Prevents new claims and detaches interests without waiting. Claimed
     /// callbacks may remain; poll `is_quiescent` before releasing host resources.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be closed from here.
     pub fn close(&mut self) -> Result<(), NotifyError> {
         if invocation_active() {
             return Err(NotifyError::InvalidContext);

@@ -1,3 +1,6 @@
+//! Setting capacity aside before it is needed.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use engine_worker::{
     Cost, ExecutionClass, Limits, Outcome, OwnedLimits, Priority, ReservationError, Runtime,
     RuntimeConfig, SpawnError, SpawnOptions, StageOptions, TaskStatus, WorkerConfig,

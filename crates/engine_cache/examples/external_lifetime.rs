@@ -1,3 +1,7 @@
+//! Keeping a resource alive for something outside the cache.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
+
 use std::sync::mpsc;
 use std::thread::{self, ThreadId};
 

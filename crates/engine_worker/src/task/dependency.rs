@@ -9,9 +9,13 @@ use crate::scheduler::{
 /// Rejected continuation inputs. Admission consumes neither the input handle
 /// nor the operation, and the operation has not run.
 pub struct ThenRejected<I, F> {
+    /// Why it wasn't taken.
     pub reason: SpawnError,
+    /// What it would have followed, handed back.
     pub input: I,
+    /// The work, handed back.
     pub operation: F,
+    /// The options, handed back.
     pub options: SpawnOptions,
 }
 
@@ -76,6 +80,10 @@ impl<T: Send + 'static> Task<T> {
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then<U, F>(
         self,
         lane: &Lane,
@@ -101,6 +109,10 @@ impl<T: Send + 'static> Task<T> {
     /// A returned `Err` marks application failure while retaining its typed error.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_fallible<U, E, F>(
         self,
         lane: &Lane,
@@ -127,6 +139,10 @@ impl<T: Send + 'static> Task<T> {
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_outcome<U, F>(
         self,
         lane: &Lane,
@@ -152,6 +168,10 @@ impl<T: Send + 'static> Task<T> {
     /// A returned `Err` marks application failure while retaining its typed error.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_outcome_fallible<U, E, F>(
         self,
         lane: &Lane,
@@ -212,6 +232,10 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then<U, F>(
         self,
         lane: &Lane,
@@ -237,6 +261,10 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// A returned `Err` marks application failure while retaining its typed error.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_fallible<U, E, F>(
         self,
         lane: &Lane,
@@ -263,6 +291,10 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_outcome<U, F>(
         self,
         lane: &Lane,
@@ -288,6 +320,10 @@ impl<T: Send + Sync + 'static> Shared<T> {
     /// A returned `Err` marks application failure while retaining its typed error.
     /// Rejection returns the input and uninvoked operation. A previously taken
     /// result is rejected with [`SpawnError::Consumed`].
+    ///
+    /// # Errors
+    ///
+    /// Hands the input and the work back, with why, if it isn't taken.
     pub fn try_then_outcome_fallible<U, E, F>(
         self,
         lane: &Lane,

@@ -45,14 +45,17 @@ impl<'cleanup, T> SourceSnapshot<'cleanup, T> {
         }
     }
 
+    /// What the source was given to look after.
     pub fn context(&self) -> View<'_, T> {
         self.context.view()
     }
 
+    /// Whether `other` comes from the same source.
     pub fn same_source(&self, other: &Self) -> bool {
         Arc::ptr_eq(&self.identity, &other.identity)
     }
 
+    /// Whether `other` comes from the same revision of its source.
     pub fn same_revision(&self, other: &Self) -> bool {
         self.same_source(other) && Arc::ptr_eq(&self.revision, &other.revision)
     }
@@ -71,11 +74,17 @@ impl<T> Clone for SourceSnapshot<'_, T> {
 /// A synchronous operation failed before changing bytes or membership.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RangeError {
+    /// The store has been closed.
     Closed,
+    /// The store is turned off.
     Disabled,
+    /// The range goes past what can be counted.
     BoundsOverflow,
+    /// Memory for it couldn't be had.
     AllocationFailed,
+    /// Accounting turned it down.
     Accounting(AccountingError),
+    /// There's no score left to give it.
     ScoreExhausted,
 }
 
@@ -97,8 +106,11 @@ impl std::error::Error for RangeError {}
 /// Copied insertion outcome, independent of physical bytes retained.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RangeInsert {
+    /// It's a new range.
     Inserted,
+    /// It took the place of an old one.
     Replaced,
+    /// It was already here, and is now fresher.
     Refreshed,
 }
 
@@ -115,18 +127,23 @@ pub struct RangeRead<'cleanup, T> {
 }
 
 impl<'cleanup, T> RangeRead<'cleanup, T> {
+    /// The source this was read from.
     pub fn source(&self) -> &SourceSnapshot<'cleanup, T> {
         &self.source
     }
+    /// How many bytes were copied.
     pub fn copied(&self) -> usize {
         self.copied
     }
+    /// Where the part that wasn't found begins.
     pub fn remaining_offset(&self) -> u64 {
         self.remaining_offset
     }
+    /// How much wasn't found.
     pub fn remaining_length(&self) -> usize {
         self.remaining_length
     }
+    /// Whether all of it was found.
     pub fn is_complete(&self) -> bool {
         self.remaining_length == 0
     }
@@ -175,18 +192,23 @@ impl Drop for ChargedBytes {
 }
 
 impl<'cleanup, T> RangeAllocation<'cleanup, T> {
+    /// The source this is for.
     pub fn source(&self) -> &SourceSnapshot<'cleanup, T> {
         &self.source
     }
+    /// Where in the source it begins.
     pub fn offset(&self) -> u64 {
         self.offset
     }
+    /// The bytes it holds.
     pub fn bytes(&self) -> &[u8] {
         &self.storage.bytes
     }
+    /// How much it can hold.
     pub fn capacity(&self) -> usize {
         self.storage.bytes.capacity()
     }
+    /// How many bytes it declares.
     pub fn declared_bytes(&self) -> u64 {
         self.storage.charge().declared_bytes()
     }
@@ -207,10 +229,15 @@ struct Entry<'cleanup, T> {
 /// Occupancy and copied costs, excluding separately retained source backing.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct RangeSnapshot {
+    /// How many entries it holds.
     pub entries: usize,
+    /// How many it may hold.
     pub entry_limit: usize,
+    /// How many bytes in it are valid.
     pub valid_bytes: u64,
+    /// How many bytes of capacity it keeps.
     pub retained_capacity_bytes: u64,
+    /// Whether it has been closed.
     pub closed: bool,
 }
 
@@ -258,6 +285,14 @@ impl<'cleanup, T> RangeStore<'cleanup, T> {
     /// Expected errors preserve membership and caller input. Smaller replacements
     /// keep capacity and its charge. Growth temporarily owns both allocations;
     /// accounting overflow rejects before commit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the store is closed or turned off, or the range can't be held.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a full store has no entry to replace, which is a bug in this crate.
     pub fn insert(
         &mut self,
         source: &SourceSnapshot<'cleanup, T>,
@@ -350,6 +385,10 @@ impl<'cleanup, T> RangeStore<'cleanup, T> {
     /// Copies the covered beginning of a request and returns actual byte count.
     /// Bounds are checked even on misses; errors leave destination unchanged.
     /// A zero-length request can refresh a contained entry's score.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the store is closed or turned off, or the range overflows.
     pub fn copy_prefix(
         &mut self,
         source: &SourceSnapshot<'cleanup, T>,
@@ -393,6 +432,10 @@ impl<'cleanup, T> RangeStore<'cleanup, T> {
 
     /// Transfers the entire matching revision's range allocation separately
     /// from non-consuming copied prefix hits.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the store is closed or turned off.
     pub fn take(
         &mut self,
         source: &SourceSnapshot<'cleanup, T>,
@@ -405,6 +448,7 @@ impl<'cleanup, T> RangeStore<'cleanup, T> {
         Ok(index.and_then(|index| self.entries[index].take().map(|entry| entry.allocation)))
     }
 
+    /// How it stands now.
     pub fn snapshot(&self) -> RangeSnapshot {
         // Capacity charges share one u64 domain; their subsets and valid lengths
         // therefore cannot overflow that domain's checked total.

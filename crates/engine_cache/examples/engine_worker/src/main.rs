@@ -1,3 +1,6 @@
+//! Runs the worker and cache pipeline, and prints what it reports.
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+
 fn main() {
     let report = engine_cache_worker_example::run_pipeline();
     engine_cache_worker_example::settle_saturated_attempt();

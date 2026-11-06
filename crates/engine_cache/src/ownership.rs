@@ -177,6 +177,10 @@ impl<T> Backing<'static, T> {
     /// policy admission, production or publication is inferred. Accounting
     /// rejection returns the original value. Success owns the charge until the
     /// payload destructor completes, including deferred or unwinding cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Hands `value` back if accounting turns the charge down.
     pub fn try_new(
         value: T,
         domain: &AccountingDomain,
@@ -199,6 +203,10 @@ impl<T> Backing<'_, T> {
     }
 
     /// Returns the complete caller-declared cost retained by this backing.
+    ///
+    /// # Panics
+    ///
+    /// Panics if live backing has lost its cleanup record, which is a bug in this crate.
     pub fn declared_bytes(&self) -> u64 {
         self.backing
             .record
@@ -209,6 +217,10 @@ impl<T> Backing<'_, T> {
     }
 
     /// Returns the current allocation class shared by this backing's owners.
+    ///
+    /// # Panics
+    ///
+    /// Panics if live backing has lost its cleanup record, which is a bug in this crate.
     pub fn allocation_class(&self) -> AllocationClass {
         self.backing
             .record
@@ -223,6 +235,10 @@ impl<T> Backing<'_, T> {
     /// Returns false without mutation if another owner exists. The total charge,
     /// domain and payload remain unchanged; this grants no external final-use
     /// permission. Class changes are unavailable through shared owners.
+    ///
+    /// # Panics
+    ///
+    /// Panics if live backing has lost its cleanup record, which is a bug in this crate.
     pub fn try_transition(&mut self, class: AllocationClass) -> bool {
         let Some(backing) = Arc::get_mut(&mut self.backing) else {
             return false;
@@ -237,6 +253,10 @@ impl<T> Backing<'_, T> {
     }
 
     /// Borrows the payload without adding an owner or allocation charge.
+    ///
+    /// # Panics
+    ///
+    /// Panics if live backing has lost its cleanup record, which is a bug in this crate.
     pub fn view(&self) -> View<'_, T> {
         let record = self
             .backing
@@ -368,6 +388,10 @@ impl<T> CleanupContext<T> {
     ///
     /// Rejection preserves `value`. The returned lifetime is tied to this borrow
     /// even though the private shared queue permits scoped off-thread release.
+    ///
+    /// # Errors
+    ///
+    /// Hands `value` back if accounting turns the charge down or the context has closed.
     pub fn try_acquire(
         &self,
         value: T,

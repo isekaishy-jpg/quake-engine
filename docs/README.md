@@ -119,6 +119,7 @@
     - [0093: what increment 11 left](proposals/0093-what-increment-11-left.md)
     - [0094: formatting Luau](proposals/0094-formatting-luau.md)
     - [0095: streaming tiles](proposals/0095-streaming-tiles.md)
+    - [0096: the last crates under the lints](proposals/0096-the-last-crates-under-the-lints.md)
     - [0097: two real levels](proposals/0097-two-real-levels.md)
     - [0098: light in corners](proposals/0098-light-in-corners.md)
     - [0099: maps from pictures](proposals/0099-maps-from-pictures.md)

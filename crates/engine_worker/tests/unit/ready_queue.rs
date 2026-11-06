@@ -38,7 +38,7 @@ fn mixed_routes_match_scanning_reference_through_updates_and_removal() {
                 let selection = (next() % 3 != 0).then(|| DemandSelection {
                     priority: Some(Priority::new((next() % 4) as u16)),
                     active: next() % 2 == 0,
-                    tie: (next() % 11) as i128 - 5,
+                    tie: i128::from(next() % 11) - 5,
                     version: step,
                 });
                 if next() % 2 == 0 {
@@ -63,7 +63,7 @@ fn mixed_routes_match_scanning_reference_through_updates_and_removal() {
                     };
                     selection.active = !selection.active;
                     selection.priority = Some(Priority::new((next() % 4) as u16));
-                    selection.tie = (next() % 11) as i128 - 5;
+                    selection.tie = i128::from(next() % 11) - 5;
                     queue.update_resource(id, selection);
                     reference.push((id, Some(selection)));
                 }

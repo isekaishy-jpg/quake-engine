@@ -1,3 +1,6 @@
+//! How long a value stays once nobody holds it.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use engine_cache::{
@@ -19,7 +22,7 @@ fn family_thresholds_preserve_equality_and_stop_at_the_selected_target() {
         (ByteLimit::Disabled, 16 * mib, 0, 32 * mib),
     ] {
         let domain = AccountingDomain::new();
-        let mut cache: Cache<u8, u8> = Cache::new();
+        let mut cache: Cache<'_, u8, u8> = Cache::new();
         cache.install(0, backing(&domain, 0, 1), cost).unwrap();
         cache.install(1, backing(&domain, 1, 1), cost).unwrap();
         let report = cache.maintain(limit, usize::MAX, false);
@@ -33,7 +36,7 @@ fn family_thresholds_preserve_equality_and_stop_at_the_selected_target() {
 #[test]
 fn shared_payload_revival_blocks_even_forced_collection_until_final_pin_release() {
     let domain = AccountingDomain::new();
-    let mut cache: Cache<u8, u8> = Cache::new();
+    let mut cache: Cache<'_, u8, u8> = Cache::new();
     let (identity, _) = cache.install(0, backing(&domain, 42, 5), 17).unwrap();
     assert!(matches!(cache.lookup(&0), Lookup::Ready(_)));
     let Lookup::Ready(pin) = cache.share(&0) else {
@@ -60,7 +63,7 @@ fn shared_payload_revival_blocks_even_forced_collection_until_final_pin_release(
 fn audio_policy_removal_precedes_deferred_physical_cleanup() {
     let domain = AccountingDomain::new();
     let context = CleanupContext::new();
-    let mut cache: Cache<u8, u8> = Cache::new();
+    let mut cache: Cache<'_, u8, u8> = Cache::new();
     let owner = context
         .try_acquire(7, &domain, 103, AllocationClass::Resident)
         .unwrap();
@@ -82,7 +85,7 @@ fn audio_policy_removal_precedes_deferred_physical_cleanup() {
 #[test]
 fn bounded_scans_count_holes_unavailable_and_pinned_slots_and_resume_without_starvation() {
     let domain = AccountingDomain::new();
-    let mut cache: Cache<u8, u8, &'static str> = Cache::new();
+    let mut cache: Cache<'_, u8, u8, &'static str> = Cache::new();
     for key in 0..5 {
         cache.ensure(key);
     }
@@ -121,7 +124,7 @@ fn bounded_scans_count_holes_unavailable_and_pinned_slots_and_resume_without_sta
     assert_eq!(cycle.pinned_encountered, 0);
     assert!(cycle.completed_cycle);
     assert_eq!(cycle.policy_bytes_after, 0);
-    let mut empty: Cache<u8, u8> = Cache::new();
+    let mut empty: Cache<'_, u8, u8> = Cache::new();
     let empty_report = empty.maintain(ByteLimit::AtOrAbove(0), 0, true);
     assert!(empty_report.completed_cycle);
     assert!(empty_report.pressure_after);
@@ -131,7 +134,7 @@ fn bounded_scans_count_holes_unavailable_and_pinned_slots_and_resume_without_sta
 #[test]
 fn aliased_backing_conservatively_pins_entries_with_independent_policy_contributions() {
     let domain = AccountingDomain::new();
-    let mut cache: Cache<u8, u8> = Cache::new();
+    let mut cache: Cache<'_, u8, u8> = Cache::new();
     let owner = backing(&domain, 8, 3);
     cache.install(0, owner.clone(), 7).unwrap();
     cache.install(1, owner, 11).unwrap();
@@ -160,7 +163,7 @@ impl Drop for PanickingPayload {
 #[test]
 fn destructor_panic_preserves_committed_detachment_accounting_and_scan_progress() {
     let domain = AccountingDomain::new();
-    let mut cache: Cache<u8, PanickingPayload> = Cache::new();
+    let mut cache: Cache<'_, u8, PanickingPayload> = Cache::new();
     for (key, panic, declared, policy) in [(0, true, 3, 5), (1, false, 7, 11)] {
         let owner = Backing::try_new(
             PanickingPayload(panic),

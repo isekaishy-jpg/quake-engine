@@ -49,11 +49,19 @@ impl<T: Send + 'static> ExternalPrepared<T> {
     }
 
     /// Borrows the resource while no foreign access is permitted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle has lost what it holds, which is a bug in this crate.
     pub fn get(&self) -> &T {
         self.resource.0.as_deref().expect("prepared resource")
     }
 
     /// Mutates the resource while no foreign access is permitted.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle has lost what it holds, which is a bug in this crate.
     pub fn get_mut(&mut self) -> &mut T {
         self.resource.0.as_deref_mut().expect("prepared resource")
     }
@@ -73,6 +81,10 @@ impl<T: Send + 'static> ExternalPrepared<T> {
 
     /// Registers active physical access and fixes the resource's address.
     /// Rejection returns the complete prepared resource to the caller.
+    ///
+    /// # Errors
+    ///
+    /// Hands the resource back, still prepared, with why, if it can't be activated.
     pub fn activate(self) -> Result<ExternalAccess<T>, ExternalActivationRejected<T>> {
         if let Err(reason) = self.retention.activate() {
             return Err(ExternalActivationRejected {
@@ -98,7 +110,9 @@ impl<T: Send + 'static> ExternalPrepared<T> {
 
 /// Activation rejection with the original, still unexposed resource.
 pub struct ExternalActivationRejected<T: Send + 'static> {
+    /// Why it wasn't activated.
     pub reason: SpawnError,
+    /// The resource, still prepared.
     pub prepared: ExternalPrepared<T>,
 }
 
@@ -142,13 +156,19 @@ impl<T: Send + 'static> ExternalAccess<T> {
     /// the address of `T` but does not fix allocations referenced by `T`.
     /// Repeated pointer requests must not create conflicting Rust aliases while
     /// the provider accesses the resource.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle has lost what it holds, which is a bug in this crate.
     pub unsafe fn as_mut_ptr(&self) -> *mut T {
         let inner = self.inner.as_ref().expect("active external ticket");
         let mut state = inner.state.lock().unwrap_or_else(|e| e.into_inner());
-        state
-            .resource
-            .as_deref_mut()
-            .expect("active external resource") as *mut T
+        std::ptr::from_mut(
+            state
+                .resource
+                .as_deref_mut()
+                .expect("active external resource"),
+        )
     }
 
     /// Transfers the resource and its declared byte charge into CPU-visible
@@ -160,6 +180,10 @@ impl<T: Send + 'static> ExternalAccess<T> {
     /// must have ended. The provider must establish all memory visibility needed
     /// before Rust reads or destroys `T`. A failure, cancellation, timeout, or
     /// unrelated completion counter does not establish this condition.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle has lost what it holds, which is a bug in this crate.
     pub unsafe fn acknowledge_release(mut self) -> Retained<T> {
         let inner = self.inner.take().expect("active external ticket");
         let (resource, bytes, retention, anchor) = inner.take_release();
@@ -179,6 +203,10 @@ impl<T: Send + 'static> ExternalAccess<T> {
     /// The same obligations as [`Self::acknowledge_release`] apply. The resource
     /// destructor must be legal on this thread; thread-affine destruction belongs
     /// in a provider-owned service instead.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the handle has lost what it holds, which is a bug in this crate.
     pub unsafe fn release(mut self) {
         let _guard = ControlCallbackGuard::enter();
         let inner = self.inner.take().expect("active external ticket");

@@ -1,3 +1,5 @@
+//! The worker and the cache working together.
+
 use engine_cache_worker_example::{
     forward_ordered_demand, run_pipeline, run_transfer_rejection, settle_saturated_attempt,
 };

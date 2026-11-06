@@ -1,3 +1,7 @@
+//! Recording what notifications were sent.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(clippy::print_stderr, reason = "a test reports to its console")]
+
 use std::time::Duration;
 
 use engine_worker::{

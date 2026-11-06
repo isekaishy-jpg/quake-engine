@@ -1,3 +1,6 @@
+//! Thread-local state while work runs.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use engine_worker::*;
 use std::{cell::RefCell, time::Duration};
 

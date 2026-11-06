@@ -1,5 +1,7 @@
 //! Finite CPU example for pubdocs/execution.md and pubdocs/ownership.md.
 //! There is no native event loop, provider wait or GPU access in this example.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use std::fmt::Debug;
 use std::io;

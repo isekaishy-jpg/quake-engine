@@ -14,12 +14,19 @@ use crate::task::{CompletionSink, Outcome, ProducerControl, Retained, Task, Task
 /// provider-supplied result. The provider is started only after admission.
 #[derive(Default)]
 pub struct ExternalOptions<'a> {
+    /// The work set it counts towards, if any.
     pub work_set: Option<&'a WorkSet>,
+    /// What lets it join a sealed work set, if anything.
     pub discovery: Option<&'a DiscoveryPermit>,
+    /// How much it's wanted, if that's known.
     pub priority: Option<Priority>,
+    /// The capacity set aside for it, if any.
     pub reservation: Option<&'a Reservation>,
+    /// What it's expected to cost.
     pub cost: Cost,
+    /// How many bytes its result keeps.
     pub retained_bytes: usize,
+    /// The delivery it finishes with, if any.
     pub delivery: Option<DeliveryTicket>,
     /// Called outside scheduler locks with versioned aggregate demand.
     /// A panic is contained and that notification is discarded.
@@ -34,7 +41,9 @@ pub type ExternalResult<'a, T> =
 
 /// Rejection returns all uncommitted options, including the delivery ticket.
 pub struct ExternalRejected<'a> {
+    /// Why it wasn't taken.
     pub reason: SpawnError,
+    /// The options, handed back.
     pub options: ExternalOptions<'a>,
 }
 
@@ -114,6 +123,10 @@ impl<T: Send + 'static> Producer<T> {
     /// result may precede physical retirement only when the value is already
     /// safe to observe independently; otherwise await provider acknowledgement
     /// before completing it.
+    ///
+    /// # Errors
+    ///
+    /// Hands the value back if it was cancelled or given up on first.
     pub fn complete(&self, value: T) -> Result<(), T> {
         self.complete_with(value, false)
     }
@@ -121,6 +134,10 @@ impl<T: Send + 'static> Producer<T> {
     /// Publishes a value whose declared bytes are already held by its
     /// physical-access lease. Configure `retained_bytes: 0` when using this
     /// route so the producer does not reserve a second output charge.
+    ///
+    /// # Errors
+    ///
+    /// Hands the value back if it was cancelled or given up on first.
     pub fn complete_retained(&self, value: Retained<T>) -> Result<(), Retained<T>> {
         self.complete_retained_with(value, false)
     }
@@ -175,6 +192,10 @@ impl<T: Send + 'static> Producer<T> {
 impl<T: Send + 'static, E: Send + 'static> Producer<Result<T, E>> {
     /// Preserves the typed `Err` payload and marks dependency status as an
     /// application failure.
+    ///
+    /// # Errors
+    ///
+    /// Hands the value back if it was cancelled or given up on first.
     pub fn complete_fallible(&self, value: Result<T, E>) -> Result<(), Result<T, E>> {
         let failed = value.is_err();
         self.complete_with(value, failed)
@@ -182,6 +203,10 @@ impl<T: Send + 'static, E: Send + 'static> Producer<Result<T, E>> {
 
     /// Publishes an already charged application result while preserving a
     /// typed `Err` and its dependency failure status.
+    ///
+    /// # Errors
+    ///
+    /// Hands the value back if it was cancelled or given up on first.
     pub fn complete_fallible_retained(
         &self,
         value: Retained<Result<T, E>>,

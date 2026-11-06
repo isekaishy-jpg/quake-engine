@@ -1,3 +1,9 @@
+//! External providers driven through a runtime.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(
+    unsafe_code,
+    reason = "releasing an external resource is an unsafe contract, and this tests it"
+)]
 use std::num::NonZeroUsize;
 
 use engine_worker::{
@@ -66,8 +72,8 @@ fn physical_release_and_logical_publication_keep_independent_sets_and_one_byte_c
         }
         assert!(!physical_set.is_drained());
         assert_eq!(runtime.external_progress().active, 1);
-        // This simulated provider is the only accessor. All pointer use ends
-        // synchronously here, before acknowledgement and safe publication.
+        // SAFETY: This simulated provider is the only accessor. All pointer use
+        // ends synchronously here, before acknowledgement and safe publication.
         let retained = unsafe {
             let resource = access.as_mut_ptr();
             (&mut *resource)[0] = 9;
@@ -150,8 +156,8 @@ fn physical_pressure_returns_inputs_and_protects_required_slots_until_release() 
     drop(ordinary);
     assert_eq!(runtime.external_progress().prepared, 0);
     runtime.abandon();
-    // No provider accesses were started in this case; absence of foreign users
-    // supplies the acknowledgement even though runtime abandonment alone cannot.
+    // SAFETY: No provider accesses were started in this case; absence of foreign
+    // users supplies the acknowledgement even though abandonment alone cannot.
     unsafe {
         required.release();
     }

@@ -1,3 +1,5 @@
+#![expect(clippy::print_stderr, reason = "a test reports to its console")]
+
 use super::*;
 
 #[test]
@@ -16,10 +18,10 @@ fn owner_wake_precedes_final_admission_and_sc_fallback_outlives_worker_route() {
     // There is no final completion yet. The owner's own interest admits it.
     core.pump_ordinary(&mut app, BackendOps::Test(&mut native));
     assert!(app.final_admitted);
-    let timeout = std::time::Instant::now() + Duration::from_secs(2);
+    let timeout = Instant::now() + Duration::from_secs(2);
     while app.lifecycle == WorkLifecycle::Running {
         assert!(
-            std::time::Instant::now() < timeout,
+            Instant::now() < timeout,
             "worker publication did not progress"
         );
         core.clock.manual = Some(Duration::from_millis(10));
@@ -37,7 +39,7 @@ fn owner_wake_precedes_final_admission_and_sc_fallback_outlives_worker_route() {
     let mut millis = 100;
     while !app.joined {
         assert!(
-            std::time::Instant::now() < timeout,
+            Instant::now() < timeout,
             "runtime did not join after quiescence"
         );
         millis += 10;
@@ -110,7 +112,7 @@ fn finish<'scope>(
 #[ignore = "private child; invoked only by the bounded parent test"]
 fn outstanding_worker_retirement_child() {
     assert_eq!(std::env::var(CHILD_MODE).as_deref(), Ok("1"));
-    crate::backend::windows::shell::suppress_child_abort_reporting();
+    backend::windows::shell::suppress_child_abort_reporting();
     let cleanup = CleanupContext::new();
     let mut runtime = runtime();
     let mut app = Demo::new(&mut runtime, &cleanup);

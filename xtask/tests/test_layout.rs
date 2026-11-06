@@ -1,10 +1,10 @@
 //! docs/style.md §12: tests are not collocated with production code. No
 //! file under a `src/` tree of the workspace holds a `#[cfg(test)]` item
-//! (proposal 0009 exempts the crates that came from Sol).
+//! (proposal 0096 keeps a short list of crates that came from Sol).
 
 use std::path::{Path, PathBuf};
 
-use xtask::crate_graph::LINT_EXEMPT;
+use xtask::crate_graph::INLINE_TESTS;
 use xtask::workspace_root;
 
 /// Every `.rs` file under `dir`, recursively.
@@ -31,7 +31,7 @@ fn no_test_code_lives_under_src() {
     let crates = std::fs::read_dir(root.join("crates")).expect("crates");
     for member in crates.flatten() {
         let name = member.file_name();
-        if !LINT_EXEMPT.contains(&name.to_string_lossy().as_ref()) {
+        if !INLINE_TESTS.contains(&name.to_string_lossy().as_ref()) {
             rust_files(&member.path().join("src"), &mut sources);
         }
     }

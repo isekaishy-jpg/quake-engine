@@ -1,4 +1,6 @@
 //! A caller queues owned submissions and drives them itself, with no executor.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use engine_cache::{
     AccountingDomain, Admission, AllocationClass, Backing, CountLimit, Dependencies, Lookup,

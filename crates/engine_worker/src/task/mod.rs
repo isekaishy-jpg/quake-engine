@@ -33,6 +33,7 @@ impl ProducerControl {
         }
     }
 
+    /// Asks for it to be cancelled.
     pub fn cancel(&self) {
         (self.cancel)();
     }

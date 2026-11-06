@@ -199,7 +199,7 @@ impl JobCheckouts {
     }
 
     pub(in crate::scheduler) fn bytes(&self) -> usize {
-        self.entries.capacity() * std::mem::size_of::<Arc<Job>>()
+        self.entries.capacity() * size_of::<Arc<Job>>()
     }
 }
 

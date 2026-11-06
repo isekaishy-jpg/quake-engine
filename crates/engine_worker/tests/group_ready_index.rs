@@ -1,3 +1,5 @@
+//! Finding the groups that are ready to run.
+
 use engine_worker::{
     BatchSpawnOptions, CallerEligibility, ExecutionClass, ExternalOptions, Outcome, OwnedLimits,
     Runtime, RuntimeConfig, SpawnOptions, TaskStatus, WorkerConfig,

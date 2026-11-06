@@ -58,7 +58,7 @@ impl App {
     }
 
     fn runtime_address(&self) -> usize {
-        self.runtime.as_ref() as *const Runtime as usize
+        std::ptr::from_ref(self.runtime.as_ref()) as usize
     }
 }
 
@@ -357,7 +357,7 @@ fn unexpected_destroyed_during_host_retirement_invalidates_renderer_held_generat
     assert!(lease.is_native_alive());
     let record = core.windows.get(target.id).unwrap();
     let key = record.native.key();
-    if let crate::backend::NativeWindow::Test(window) = &record.native {
+    if let backend::NativeWindow::Test(window) = &record.native {
         // This is a simulated unexpected native destruction, not a normal Drop request.
         window.native_alive.set(false);
     }
@@ -413,7 +413,7 @@ fn simulated_partial_display_and_acquisition_failures_do_not_orphan_old_access_o
             )
             .unwrap();
     }
-    if let crate::backend::NativeWindow::Test(window) = &core.windows.get(old.id).unwrap().native {
+    if let backend::NativeWindow::Test(window) = &core.windows.get(old.id).unwrap().native {
         window.fail_display.set(true);
     }
     core.pump_display(&mut app, BackendOps::Test(&mut backend));
@@ -458,7 +458,7 @@ fn simulated_partial_display_and_acquisition_failures_do_not_orphan_old_access_o
             .request_display(old, DisplayRequest::Windowed { placement: None })
             .unwrap();
     }
-    if let crate::backend::NativeWindow::Test(window) = &core.windows.get(old.id).unwrap().native {
+    if let backend::NativeWindow::Test(window) = &core.windows.get(old.id).unwrap().native {
         window.fail_display.set(false);
     }
     core.pump_display(&mut app, BackendOps::Test(&mut backend));

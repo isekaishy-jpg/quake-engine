@@ -1,4 +1,7 @@
-use super::*;
+use super::{
+    DisplayObserved, DisplayReceipt, DisplayRequest, DisplayTransition, Error, MonitorSnapshot,
+    PresentationStatus, WindowTarget,
+};
 use crate::backend::BackendOps;
 use crate::host::{Core, StopReason};
 use crate::{Application, Context, ContextPhase, HostState, Rejected, WindowState};
@@ -6,6 +9,10 @@ use std::panic::{AssertUnwindSafe, catch_unwind};
 
 impl<A: Application> Context<'_, A> {
     /// Queries current driver choices. Every native apply revalidates them.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current, or the system won't say.
     pub fn monitors(&self, target: WindowTarget) -> Result<Vec<MonitorSnapshot>, Error> {
         self.core.check_owner()?;
         self.window_state(target)?;
@@ -16,6 +23,10 @@ impl<A: Application> Context<'_, A> {
             .monitors(self.core.id)
     }
     /// Queries backend-reported mode and native geometry, not GPU readiness.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn display_observed(&self, target: WindowTarget) -> Result<DisplayObserved, Error> {
         self.core.check_owner()?;
         self.window_state(target)?;
@@ -23,6 +34,10 @@ impl<A: Application> Context<'_, A> {
     }
     /// Queries one retained pending, active or last settled transition.
     /// Progress callbacks own every status; this bounded query is not history.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receipt isn't known.
     pub fn display_transition(&self, receipt: DisplayReceipt) -> Result<DisplayTransition, Error> {
         self.core.check_owner()?;
         let target = receipt.transition.target();
@@ -38,6 +53,14 @@ impl<A: Application> Context<'_, A> {
     /// Admits serialized settings. Before requesting, end incompatible old
     /// presentation use. Admission is neither native success nor persistence.
     /// Rejection preserves the owned request.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current, or the settings can't be taken.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the change just requested isn't pending, which is a bug in this crate.
     pub fn request_display(
         &mut self,
         target: WindowTarget,
@@ -65,7 +88,7 @@ impl<A: Application> Context<'_, A> {
                     .get(target.id)?
                     .display
                     .pending()
-                    .unwrap()
+                    .expect("the change just requested is pending")
                     .clone(),
             );
             Ok(admission.receipt)
@@ -75,6 +98,10 @@ impl<A: Application> Context<'_, A> {
     /// Reports the exact renderer revision after native apply. A failed report
     /// settles this operation; retained access independently covers final use.
     /// Retirement permits settlement without new admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the receipt isn't the one waiting on a report.
     pub fn report_presentation(
         &mut self,
         receipt: DisplayReceipt,
@@ -98,6 +125,10 @@ impl<A: Application> Context<'_, A> {
     /// Closes one generation's new input/access/display admission. Destruction
     /// waits for retained access release and native acknowledgment. Other windows
     /// and the application runtime continue in the same host.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn request_close(&mut self, target: WindowTarget) -> Result<WindowState, Error> {
         self.ordinary()?;
         if self.window_state(target)? == WindowState::Retiring {
@@ -167,7 +198,10 @@ impl<A: Application> Core<A> {
                     allocation_failed = true;
                     break;
                 }
-                let apply = record.display.start_next().unwrap();
+                let apply = record
+                    .display
+                    .start_next()
+                    .expect("a queued change to start");
                 applied += 1;
                 self.display_events.push_back(apply.transition.clone());
                 let result = record.native.apply_display(
@@ -182,11 +216,15 @@ impl<A: Application> Core<A> {
                 let result = result
                     .and_then(|()| record.display.applied(apply.transition.receipt, observed?));
                 let event = match result {
-                    Ok(()) => record.display.active().unwrap().clone(),
+                    Ok(()) => record
+                        .display
+                        .active()
+                        .expect("the change just applied")
+                        .clone(),
                     Err(error) => record
                         .display
                         .fail(apply.transition.receipt, error)
-                        .unwrap(),
+                        .expect("the change that just failed"),
                 };
                 self.display_events.push_back(event);
             }

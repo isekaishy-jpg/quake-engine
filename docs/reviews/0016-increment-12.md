@@ -44,6 +44,7 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 27 | `wide_world` took 40 minutes to bake: every ray asked about every mesh and pane of glass, and sun rays crossed the whole tree | 2 minutes 17 seconds (proposal 0101) |
 | 28 | Drawing bounced light from a sample in a wall darkened corners | The ends of each row are always worked out |
 | 29 | Pictures in the packs had a line at their repeat. A measure of seams flagged 56, most of them lines meant to be there, so only stone, water, damp and plate were looked at, and 13 mended | `content/heal_seams.py` |
+| 30 | Four crates were outside the workspace lints, with 1,684 warnings | All four are under them, with `unsafe` allowed by name and a safety comment on each block (proposal 0096) |
 
 ## Process
 
@@ -59,6 +60,6 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 
 | What | Where it stands |
 |---|---|
+| Those crates' tests under `src` | 41 files still hold `#[cfg(test)]` code, which reaches private seams. Moving them needs a decision on those seams |
 | Real people for the city | Stand-ins now, as the human said they could be |
-| The host, worker and cache crates under the workspace lints | Measured at 1,703 items, about 800 of them doc comments to write by hand, with 47 uses of `unsafe` to allow by name. The open questions keep this apart from the rename. The test layout rule would also need test seams moved out of 189 places under `src/` |
 | Jumps, water and lifts in paths | The human set these for later |

@@ -502,7 +502,11 @@ impl ShellHelper {
             if !thread.is_finished() {
                 return Ok(false);
             }
-            let result = self.thread.take().unwrap().join();
+            let result = self
+                .thread
+                .take()
+                .expect("the thread, until it is joined")
+                .join();
             if let Err(payload) = result {
                 std::mem::forget(payload);
                 return Err(ShellFailure::HelperPanicked);
@@ -526,6 +530,7 @@ impl Drop for ShellHelper {
 }
 
 #[cfg(test)]
+#[expect(clippy::print_stdout, reason = "a test reports to its console")]
 mod tests {
     use super::*;
     use std::sync::mpsc;
@@ -662,6 +667,10 @@ mod tests {
     }
 
     #[test]
+    #[expect(
+        clippy::cast_possible_wrap,
+        reason = "a COM error is a negative number written in hex"
+    )]
     fn apartment_startup_failure_settles_every_accepted_request() {
         let failure = ShellFailure::Native {
             operation: "initialize shell apartment",
@@ -718,10 +727,7 @@ mod tests {
             };
             assert_eq!(prepared.wide(), expected);
             assert_eq!(counts.allocations, 1);
-            assert_eq!(
-                counts.requested_bytes,
-                expected.len() * std::mem::size_of::<u16>()
-            );
+            assert_eq!(counts.requested_bytes, expected.len() * size_of::<u16>());
             assert_eq!(counts.reallocations, 0);
             assert_eq!(PREPARATIONS.with(|count| count.get()), 1);
             println!(
@@ -906,7 +912,7 @@ mod tests {
     fn helper_init_panic_still_settles_accepted_owned_preparation_and_retires() {
         let mut helper = ShellHelper::spawn(crate::HostId::allocate().unwrap(), 1, || {
             panic!("injected helper init panic");
-            #[allow(unreachable_code)]
+            #[expect(unreachable_code, reason = "the call before it never returns")]
             |_: &PreparedRequest| Ok(())
         })
         .unwrap();

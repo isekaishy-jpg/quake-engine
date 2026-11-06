@@ -133,6 +133,10 @@ impl PolicyCounter {
     }
 
     /// Adds an amount, preserving the previous value on overflow.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the count would overflow.
     pub fn try_add(&mut self, amount: u64) -> Result<(), PolicyCounterError> {
         let next = self
             .value
@@ -143,6 +147,10 @@ impl PolicyCounter {
     }
 
     /// Removes an amount, preserving the previous value on underflow.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the count would go below zero.
     pub fn try_sub(&mut self, amount: u64) -> Result<(), PolicyCounterError> {
         let next = self
             .value

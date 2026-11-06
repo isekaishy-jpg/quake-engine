@@ -15,10 +15,15 @@ use crate::scheduler::storage::SignalRetirement;
 /// returned `Result<T, E>`; they are never erased into a runtime failure.
 #[derive(Debug, Eq, PartialEq)]
 pub enum Outcome<T> {
+    /// It finished with this.
     Success(T),
+    /// It was cancelled.
     Cancelled,
+    /// What came first failed.
     PrerequisiteFailed,
+    /// It panicked.
     Panicked,
+    /// It was given up on.
     Abandoned,
 }
 
@@ -26,15 +31,22 @@ pub enum Outcome<T> {
 /// returned `Err`; its typed error remains in the result cell.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TaskStatus {
+    /// It finished.
     Succeeded,
+    /// It finished with a failure of its own.
     ApplicationFailed,
+    /// It was cancelled.
     Cancelled,
+    /// What came first failed.
     PrerequisiteFailed,
+    /// It panicked.
     Panicked,
+    /// It was given up on.
     Abandoned,
 }
 
 impl TaskStatus {
+    /// Whether it finished.
     pub fn is_success(self) -> bool {
         self == Self::Succeeded
     }
@@ -43,6 +55,7 @@ impl TaskStatus {
 /// Passive waiting is unavailable during CPU work or on a live owner thread.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum WaitError {
+    /// It can't be waited on from here.
     ExecutionContext,
 }
 
@@ -305,6 +318,10 @@ impl Completion {
 
     /// Retains independent consumer interest while this producer is pending.
     /// Dropping demand never cancels the producer or releases a retained result.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if demand is closed or full, or what it was for has gone.
     pub fn demand(
         &self,
         priority: crate::scheduler::Priority,
@@ -324,6 +341,10 @@ impl Completion {
     /// Retains consumer interest in a separate work set until this producer
     /// completes, the set is cancelled, or the demand handle is dropped.
     /// Detaching this interest never cancels the shared producer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if demand is closed or full, or what it was for has gone.
     pub fn demand_in(
         &self,
         set: &crate::scheduler::WorkSet,
@@ -347,6 +368,10 @@ impl Completion {
     /// interest without cancelling the producer. A cancelled/foreign permit
     /// returns `Closed`; other demand errors match [`Self::demand`]. Failed
     /// attachment retains no consumer lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if demand is closed or full, or what it was for has gone.
     pub fn demand_from(
         &self,
         permit: &crate::scheduler::DiscoveryPermit,
@@ -364,6 +389,7 @@ impl Completion {
         Ok(demand.bind_consumer(lease, self))
     }
 
+    /// How it finished, if it has.
     pub fn status(&self) -> Option<TaskStatus> {
         self.signal.lock().status
     }
@@ -371,6 +397,10 @@ impl Completion {
     /// Waits for the represented outcome without executing jobs or servicing
     /// owner/provider callbacks. This can return while successor activation is
     /// still in progress. Group tokens include their members' settlement.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't wait from here.
     pub fn wait(&self) -> Result<TaskStatus, WaitError> {
         if context::passive_wait_forbidden() {
             return Err(WaitError::ExecutionContext);
@@ -390,6 +420,10 @@ impl Completion {
 
     /// A timeout only ends observation; it never cancels the producer. A ready
     /// status has the same task-level boundary as [`Self::wait`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't wait from here.
     pub fn wait_timeout(&self, timeout: Duration) -> Result<Option<TaskStatus>, WaitError> {
         if context::passive_wait_forbidden() {
             return Err(WaitError::ExecutionContext);
@@ -439,7 +473,7 @@ impl Completion {
 /// A charged dependency registration. Dropping it detaches an unresolved edge
 /// promptly, including its captured scheduler reference.
 pub(crate) struct Subscription {
-    signal: Option<std::sync::Weak<Signal>>,
+    signal: Option<Weak<Signal>>,
     retirement: Weak<SignalRetirement>,
     id: u64,
 }
@@ -583,12 +617,14 @@ impl<T: Send + 'static> Task<T> {
         task
     }
 
+    /// What says when it has finished.
     pub fn completion(&self) -> Completion {
         Completion {
             signal: self.cell.signal.clone(),
         }
     }
 
+    /// How it finished, if it has.
     pub fn status(&self) -> Option<TaskStatus> {
         self.cell.signal.lock().status
     }
@@ -609,6 +645,7 @@ impl<T: Send + 'static> Task<T> {
         Some(OutcomeRef { guard })
     }
 
+    /// Its outcome, if it has one and nothing has taken it.
     pub fn try_take(&mut self) -> Option<Outcome<T>> {
         let status = self.cell.signal.lock();
         status.status?;
@@ -674,22 +711,29 @@ impl<T: Send + Sync + 'static> Shared<T> {
         self.cell.continuation_input_available()
     }
 
+    /// A shared value that's already here.
     pub fn ready(value: T) -> Self {
         Task::ready(value).into_shared()
     }
 
+    /// What says when it has finished.
     pub fn completion(&self) -> Completion {
         Completion {
             signal: self.cell.signal.clone(),
         }
     }
 
+    /// How it finished, if it has.
     pub fn status(&self) -> Option<TaskStatus> {
         self.cell.signal.lock().status
     }
 
     /// Returns shared ownership of the same immutable outcome. The returned
     /// `Arc` supports simultaneous borrows and never clones `T`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if shared storage has changed type, which is a bug in this crate.
     pub fn try_result(&self) -> Option<Arc<Outcome<T>>> {
         let status = self.cell.signal.lock();
         status.status?;

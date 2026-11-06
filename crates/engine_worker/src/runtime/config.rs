@@ -9,8 +9,11 @@ use std::fmt;
 /// thread priority.
 #[derive(Clone, Copy, Debug, Eq, Hash, PartialEq)]
 pub enum ExecutionClass {
+    /// For what can wait.
     Low,
+    /// For what's usual.
     Mid,
+    /// For what can't wait.
     High,
 }
 
@@ -34,8 +37,11 @@ impl ExecutionClass {
 /// runtime construction rather than silently ignoring it.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThreadPriority {
+    /// Below the usual priority.
     BelowNormal,
+    /// The usual priority.
     Normal,
+    /// Above the usual priority.
     AboveNormal,
 }
 
@@ -64,10 +70,12 @@ impl WorkerConfig {
         self
     }
 
+    /// How many workers it has.
     pub const fn worker_count(self) -> usize {
         self.worker_count
     }
 
+    /// The priority it asks for, if any.
     pub const fn requested_priority(self) -> Option<ThreadPriority> {
         self.requested_priority
     }
@@ -86,6 +94,10 @@ pub struct RuntimeConfig {
 
 impl RuntimeConfig {
     /// Validates the aggregate budget and class split before worker startup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the budget is zero, or the classes ask for more than it has.
     pub fn new(worker_budget: usize, classes: [WorkerConfig; 3]) -> Result<Self, ConfigError> {
         let configured = classes[0]
             .worker_count
@@ -108,10 +120,12 @@ impl RuntimeConfig {
         })
     }
 
+    /// How many workers there can be.
     pub const fn worker_budget(&self) -> usize {
         self.worker_budget
     }
 
+    /// How the workers of `class` are set up.
     pub const fn workers_for(&self, class: ExecutionClass) -> WorkerConfig {
         self.classes[class.index()]
     }
@@ -120,12 +134,17 @@ impl RuntimeConfig {
 /// Invalid aggregate worker allocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ConfigError {
+    /// There are no workers to give out.
     ZeroBudget,
     /// Retained for source compatibility; zero now disables a class.
     ZeroWorkers(ExecutionClass),
+    /// The count of workers overflowed.
     WorkerCountOverflow,
+    /// More workers were asked for than the budget has.
     BudgetExceeded {
+        /// How many there can be.
         budget: usize,
+        /// How many were asked for.
         configured: usize,
     },
 }

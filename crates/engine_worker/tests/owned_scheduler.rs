@@ -1,3 +1,6 @@
+//! Scheduling work that an owner holds.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
 use std::thread;

@@ -13,7 +13,7 @@ pub use check::{Violation, check_workspace};
 pub use load::{LoadError, load_workspace};
 pub use manifest::inherits_workspace_lints;
 pub use rules::{
-    BACKEND_RULES, BackendRule, CRATE_RULES, CrateRule, FORMAT_RULES, FormatRule, LINT_EXEMPT,
+    BACKEND_RULES, BackendRule, CRATE_RULES, CrateRule, FORMAT_RULES, FormatRule, INLINE_TESTS,
     REQUIRED_EDITION, REQUIRED_RUST_VERSION,
 };
 

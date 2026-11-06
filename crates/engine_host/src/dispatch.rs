@@ -9,6 +9,10 @@ use crate::{Context, Error, HostId, IdentityKind};
 pub struct Priority(f64);
 impl Priority {
     /// Validates finite priority and normalizes signed zero as equal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `value` isn't finite.
     pub fn new(value: f64) -> Result<Self, Error> {
         if !value.is_finite() {
             return Err(Error::InvalidInput("priority must be finite"));

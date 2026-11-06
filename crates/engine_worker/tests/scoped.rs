@@ -1,3 +1,6 @@
+//! Work that borrows from the caller.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::cell::Cell;
 use std::num::NonZeroUsize;
 use std::rc::Rc;
@@ -80,7 +83,7 @@ fn discarded_panic_payloads_cannot_escape_the_executor() {
             let _ = child.wait();
             panic!("panic disposal child timed out");
         }
-        std::thread::sleep(std::time::Duration::from_millis(10));
+        thread::sleep(std::time::Duration::from_millis(10));
     }
 }
 

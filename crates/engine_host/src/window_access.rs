@@ -43,6 +43,11 @@ impl WindowAccess {
 
     /// Borrows a native view on the creating thread while this lease remains alive.
     /// Copied raw integers confer no ownership or proof of renderer completion.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it's asked for off the thread that made it, or the window has
+    /// gone.
     pub fn native_ref(&self) -> Result<NativeWindowRef<'_>, Error> {
         let anchor = self.anchor();
         anchor.check_native_access()?;
@@ -106,11 +111,19 @@ impl NativeWindowRef<'_> {
 
     /// Copies the Win32 HWND while retaining this checked borrowed view.
     /// The integer alone does not retain the native window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend gave no handle.
     pub fn hwnd(&self) -> Result<NonZeroIsize, Error> {
         self.win32_handle().map(|handle| handle.hwnd)
     }
 
     /// Copies the observed Win32 HINSTANCE, if supplied by the backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the backend's handle isn't one this can read.
     pub fn hinstance(&self) -> Result<Option<NonZeroIsize>, Error> {
         self.win32_handle().map(|handle| handle.hinstance)
     }

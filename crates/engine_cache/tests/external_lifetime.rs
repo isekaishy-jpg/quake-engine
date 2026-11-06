@@ -1,3 +1,5 @@
+//! What outlives the cache that made it.
+
 use std::sync::mpsc;
 use std::thread::{self, ThreadId};
 

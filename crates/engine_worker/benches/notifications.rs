@@ -1,5 +1,9 @@
+//! Timing how notifications reach their owners.
+#![expect(clippy::unwrap_used, reason = "a failed bench is the intended report")]
+#![expect(clippy::print_stdout, reason = "a bench reports to its console")]
+
 #[path = "../tests/common/world.rs"]
-#[allow(dead_code)]
+#[expect(dead_code, reason = "not every bench uses all of what it shares")]
 mod world;
 
 use std::hint::black_box;

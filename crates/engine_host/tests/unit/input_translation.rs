@@ -1,3 +1,5 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+
 use super::*;
 use crate::identity::{HostId, WindowGeneration, WindowSlots};
 use crate::text::TextCaret;
@@ -503,16 +505,13 @@ fn output_backing_matches_complete_event_and_ignores_held_key_population() {
         )
     });
     assert_eq!(counts.allocations, 1);
-    assert_eq!(
-        counts.requested_bytes,
-        4099 * std::mem::size_of::<NormalizedInput>()
-    );
+    assert_eq!(counts.requested_bytes, 4099 * size_of::<NormalizedInput>());
     assert_eq!(counts.reallocations, 0);
     println!(
         "input retained Vec fallback records=4099 backing_bytes={} vec_size={} record_size={}",
         counts.requested_bytes,
-        std::mem::size_of::<Vec<NormalizedInput>>(),
-        std::mem::size_of::<NormalizedInput>()
+        size_of::<Vec<NormalizedInput>>(),
+        size_of::<NormalizedInput>()
     );
     assert_eq!(focus.len(), 4099);
     assert_eq!(focus.capacity(), 4099);
@@ -1110,7 +1109,7 @@ fn normalized_receipt_movement_benchmark() {
             let elapsed = start.elapsed().as_nanos();
             println!(
                 "input-movement,{label},{sample},{iterations},{output},{elapsed},{}",
-                elapsed as f64 / iterations as f64
+                elapsed as f64 / f64::from(iterations)
             );
         }
     }

@@ -175,8 +175,7 @@ fn pending_reversal_partial_failure_and_close_preserve_terminal_statuses_and_rea
         )
         .unwrap();
     }
-    if let crate::backend::NativeWindow::Test(window) = &core.windows.get(target.id).unwrap().native
-    {
+    if let backend::NativeWindow::Test(window) = &core.windows.get(target.id).unwrap().native {
         window.fail_display.set(true);
     }
     core.pump_display(&mut app, BackendOps::Test(&mut native));
@@ -258,10 +257,10 @@ fn repeated_native_key_reuse_keeps_old_acknowledgments_in_acquisition_order() {
     // Model three buffered native acquisitions reusing one opaque native key;
     // this fixture changes no native handle or operating-system state.
     for target in [second, third] {
-        if let crate::backend::NativeWindow::Test(window) =
+        if let backend::NativeWindow::Test(window) =
             &mut core.windows.get_mut(target.id).unwrap().native
         {
-            let crate::backend::NativeWindowKey::Test(id) = key else {
+            let backend::NativeWindowKey::Test(id) = key else {
                 unreachable!()
             };
             window.id = id;

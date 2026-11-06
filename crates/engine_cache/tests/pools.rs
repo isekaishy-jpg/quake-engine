@@ -1,3 +1,6 @@
+//! Reusing storage from a pool.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Barrier, Mutex};
@@ -35,7 +38,7 @@ impl Drop for Probe {
     }
 }
 
-fn assert_panic(result: std::thread::Result<()>, expected: &str) {
+fn assert_panic(result: thread::Result<()>, expected: &str) {
     let payload = result.expect_err("expected the deliberate callback panic");
     let message = payload
         .downcast_ref::<&str>()
@@ -170,7 +173,7 @@ fn rejected_insertion_returns_unchanged_value_and_charge() {
     let pool = Pool::new();
     pool.close();
     let value = Box::new(vec![8_u8, 9]);
-    let address = &*value as *const Vec<u8>;
+    let address = std::ptr::from_ref(&*value);
     let rejected = pool
         .insert(
             1,
@@ -179,7 +182,7 @@ fn rejected_insertion_returns_unchanged_value_and_charge() {
         )
         .unwrap_err();
     let (value, charge) = rejected.into_parts();
-    assert_eq!(&*value as *const Vec<u8>, address);
+    assert_eq!(std::ptr::from_ref(&*value), address);
     assert_eq!(value.as_slice(), &[8, 9]);
     assert_eq!(charge.class(), AllocationClass::Resident);
     assert_eq!(charge.declared_bytes(), 29);

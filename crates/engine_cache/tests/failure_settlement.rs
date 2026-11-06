@@ -1,3 +1,5 @@
+//! What a failed production leaves behind.
+
 use std::cell::Cell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;

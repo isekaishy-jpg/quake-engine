@@ -1,5 +1,7 @@
 //! A simulated provider plus a dependent CPU stage, without blocking a worker.
 //! See pubdocs/resources.md. No actual foreign memory access is started here.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use std::fmt::Debug;
 use std::io;

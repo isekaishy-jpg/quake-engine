@@ -1,3 +1,5 @@
+//! Stopping the worker and the cache with work in hand.
+
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
 use std::thread;

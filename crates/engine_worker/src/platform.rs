@@ -9,7 +9,9 @@ use crate::runtime::config::ThreadPriority;
 /// A requested worker policy could not be established.
 #[derive(Debug)]
 pub enum WorkerSetupError {
+    /// This system has no such priority.
     UnsupportedPriority(ThreadPriority),
+    /// The system said no.
     System(io::Error),
 }
 
@@ -58,6 +60,10 @@ pub(crate) fn apply_worker_priority(
 }
 
 #[cfg(windows)]
+#[expect(
+    unsafe_code,
+    reason = "thread priority is only reached through kernel32"
+)]
 mod windows {
     use std::ffi::c_void;
     use std::io;

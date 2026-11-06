@@ -1,3 +1,6 @@
+//! Notifying an owner of progress.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::io;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

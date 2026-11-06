@@ -4,6 +4,10 @@
 //! in use. Expose payloads only when access is valid, and retain cleanup until
 //! the provider acknowledges release. I/O and graphics backends remain external.
 
+#[expect(
+    unsafe_code,
+    reason = "physical adapters are an unsafe contract by design"
+)]
 mod physical;
 pub(crate) mod producer;
 
@@ -24,17 +28,24 @@ pub use producer::{ExternalOptions, ExternalRejected, ExternalResult, Producer};
 /// separate logical/owner admission and must be zero here.
 #[derive(Default)]
 pub struct ExternalAccessOptions<'a> {
+    /// The work set it counts towards, if any.
     pub work_set: Option<&'a WorkSet>,
+    /// What lets it join a sealed work set, if anything.
     pub discovery: Option<&'a DiscoveryPermit>,
+    /// The capacity set aside for it, if any.
     pub reservation: Option<&'a Reservation>,
+    /// What it's expected to cost.
     pub cost: Cost,
 }
 
 /// Physical admission failed before foreign access began. All inputs remain
 /// owned by the caller; no provider action has been initiated.
 pub struct ExternalAccessRejected<'a, T> {
+    /// Why it wasn't taken.
     pub reason: SpawnError,
+    /// The resource, handed back.
     pub resource: T,
+    /// The options, handed back.
     pub options: ExternalAccessOptions<'a>,
 }
 
@@ -51,9 +62,13 @@ impl<T> std::fmt::Debug for ExternalAccessRejected<'_, T> {
 /// a lost ticket has no automatic recovery or leak-free shutdown guarantee.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct ExternalProgress {
+    /// How many outcomes are waiting on a provider.
     pub logical: usize,
+    /// How many resources are ready to be handed over.
     pub prepared: usize,
+    /// How many resources a provider has.
     pub active: usize,
+    /// How many resources were left when what held them went away.
     pub orphaned: usize,
 }
 

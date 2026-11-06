@@ -1,3 +1,6 @@
+//! What the runtime promises callers.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 mod common;
 
 use common::world::{Background, Executor, Schedule, World};

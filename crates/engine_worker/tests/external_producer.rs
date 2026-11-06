@@ -1,3 +1,6 @@
+//! External work that produces a value.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::num::NonZeroUsize;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};

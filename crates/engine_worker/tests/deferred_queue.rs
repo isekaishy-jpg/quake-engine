@@ -1,3 +1,5 @@
+//! Work held back until it can run.
+
 use engine_worker::{
     CallerEligibility, DependencyPolicy, ExecutionClass, ExternalOptions, OwnedLimits, Priority,
     Runtime, RuntimeConfig, SpawnOptions, StageOptions, TaskStatus, WorkerConfig,

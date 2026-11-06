@@ -24,3 +24,6 @@ harness = false
 [[bench]]
 name = "notifications"
 harness = false
+
+[lints]
+workspace = true

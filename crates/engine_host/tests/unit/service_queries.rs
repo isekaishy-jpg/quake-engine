@@ -1,3 +1,5 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+
 use super::*;
 
 fn fixture() -> (HostId, RawTime, Services) {

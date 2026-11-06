@@ -1,3 +1,8 @@
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "testing a count past the most a signed one holds"
+)]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;

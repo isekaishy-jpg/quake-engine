@@ -12,9 +12,13 @@ pub type SpawnResult<T, F> = Result<(Task<T>, ProducerControl), SpawnRejected<F>
 /// A supplied group stays open until its caller seals it.
 #[derive(Clone, Copy)]
 pub struct BatchSpawnOptions<'a> {
+    /// How each is spawned.
     pub spawn: SpawnOptions,
+    /// The group they join, if any.
     pub group: Option<&'a Group>,
+    /// What has to finish first.
     pub prerequisites: &'a [Completion],
+    /// How what comes first decides whether they run.
     pub dependency_policy: DependencyPolicy,
 }
 
@@ -50,9 +54,13 @@ pub type BatchSpawnResult<'a, T, F> =
 /// receipt does not cancel accepted work.
 #[must_use]
 pub struct BatchSpawnRejected<'a, T: Send + 'static, F> {
+    /// Why the rest weren't taken.
     pub reason: SpawnError,
+    /// What was taken.
     pub accepted: Vec<(Task<T>, ProducerControl)>,
+    /// What wasn't, handed back.
     pub remaining: Vec<F>,
+    /// The options, handed back.
     pub options: BatchSpawnOptions<'a>,
 }
 
@@ -91,6 +99,11 @@ pub struct OwnedLimits {
 }
 
 impl OwnedLimits {
+    /// Limits with each of these counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any count is zero.
     pub fn new(
         records: usize,
         edges: usize,
@@ -125,10 +138,14 @@ impl OwnedLimits {
     }
 }
 
+/// Why limits on owned work don't add up.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OwnedConfigError {
+    /// There's no room for records.
     ZeroRecords,
+    /// There's no room for ready work in this class.
     ZeroRunnable(ExecutionClass),
+    /// There's no room for handoffs in this class.
     ZeroHandoff(ExecutionClass),
 }
 
@@ -153,36 +170,50 @@ impl std::error::Error for OwnedConfigError {}
 pub enum SpawnError {
     /// This execution class has no workers. Rejected inputs remain uninvoked.
     ClassDisabled(ExecutionClass),
+    /// There's no room just now.
     Full,
+    /// It could never fit.
     TooLarge,
+    /// The runtime has stopped taking work.
     Closed,
+    /// What it needs is turned off.
     Disabled,
+    /// It can't be done from here.
     InvalidContext,
+    /// The group isn't one it can join.
     InvalidGroup,
     /// The promised delivery belongs to another runtime or was already used.
     InvalidDelivery,
+    /// The priority isn't known.
     InvalidPriority,
+    /// The reservation doesn't fit it.
     InvalidReservation,
+    /// What it needs has already been used.
     Consumed,
 }
 
 /// Whether a retained job may run on an explicitly participating caller.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CallerEligibility {
+    /// Only a worker may run it.
     WorkerOnly,
+    /// The caller may run it too.
     CallerEligible,
 }
 
 /// Whether prerequisite failure suppresses a successor's closure.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DependencyPolicy {
+    /// It runs only if what comes first succeeded.
     SuccessOnly,
+    /// It runs whatever became of what comes first.
     OutcomeAware,
 }
 
 /// Execution constraints for an owned job.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SpawnOptions {
+    /// Who may run it.
     pub eligibility: CallerEligibility,
 }
 
@@ -196,8 +227,11 @@ impl Default for SpawnOptions {
 
 /// An owned admission rejection, preserving the uninvoked closure and options.
 pub struct SpawnRejected<F> {
+    /// Why it wasn't taken.
     pub reason: SpawnError,
+    /// The work, handed back.
     pub operation: F,
+    /// The options, handed back.
     pub options: SpawnOptions,
 }
 

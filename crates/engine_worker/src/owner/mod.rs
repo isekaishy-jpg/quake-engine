@@ -33,18 +33,27 @@ pub use sender::OwnerSender;
 /// unwound and this owner has faulted; its state is not rolled back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum OwnerError {
+    /// It has been closed.
     Closed,
+    /// There's no room.
     Full,
+    /// It can't be called from here.
     InvalidContext,
+    /// It can't be done in this phase.
     WrongPhase,
+    /// The owner has a fault to recover from.
     Faulted,
+    /// Its callback panicked.
     Panicked,
+    /// It isn't ready.
     NotReady,
 }
 
 /// Rejected registration returns the uninvoked local callback to its caller.
 pub struct OwnerRejected<F> {
+    /// Why it wasn't taken.
     pub reason: OwnerError,
+    /// The callback, handed back.
     pub callback: F,
 }
 
@@ -59,8 +68,11 @@ impl<F> fmt::Debug for OwnerRejected<F> {
 
 /// Result of immediate ready access. A pending result preserves its callback.
 pub enum ReadyAccess<R, F> {
+    /// It's ready, and here it is.
     Ready(R),
+    /// It was turned down.
     Rejected(OwnerRejected<F>),
+    /// Its callback panicked.
     Panicked,
 }
 
@@ -75,8 +87,11 @@ struct LocalDelivery<O> {
 /// Returned by a promised local delivery reservation. The ticket is Send and
 /// can be attached to admitted CPU work; the callback remains owner-local.
 pub struct PreparedDelivery {
+    /// What the worker holds, to say how it went.
     pub ticket: DeliveryTicket,
+    /// What the caller holds, to see how it went.
     pub delivery: Delivery,
+    /// What the caller holds, to cancel it.
     pub control: DeliveryControl,
 }
 
@@ -169,6 +184,10 @@ impl<O> Owner<O> {
 
     /// The host explicitly establishes the current application phase. It may
     /// then use immediate access or pump that phase's delivery route.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be set from here, or the owner has a fault.
     pub fn set_phase(&mut self, phase: Phase) -> Result<(), OwnerError> {
         if self.active {
             return Err(OwnerError::InvalidContext);
@@ -177,10 +196,12 @@ impl<O> Owner<O> {
         Ok(())
     }
 
+    /// Which phase it's in, if it's in one.
     pub fn phase(&self) -> Option<Phase> {
         self.phase
     }
 
+    /// What can stop it from outside.
     pub fn control(&self) -> OwnerControl {
         OwnerControl {
             close_requested: Arc::clone(&self.close_requested),
@@ -205,10 +226,16 @@ impl<O> Owner<O> {
         &self.state
     }
 
+    /// Its state.
     pub fn state_mut(&mut self) -> &mut O {
         &mut self.state
     }
 
+    /// Clears a fault, so that it can go on.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be done from here, or the owner has closed.
     pub fn recover(&mut self) -> Result<(), OwnerError> {
         if self.closed || self.transport.is_closed() {
             return Err(OwnerError::Closed);
@@ -308,6 +335,10 @@ impl<O> Owner<O> {
     /// Reserves bounded notification capacity before an application admits
     /// producing work. Dropping an unused ticket suppresses and locally cleans
     /// the callback at the next owner pump or close.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery<F>(
         &mut self,
         phase: Phase,
@@ -321,6 +352,10 @@ impl<O> Owner<O> {
 
     /// Reserves a promised delivery from a pipeline's delivery credits.
     /// The callback stays owner-local and its credit lasts through settlement.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery_reserved<F>(
         &mut self,
         reservation: &Reservation,
@@ -335,6 +370,10 @@ impl<O> Owner<O> {
 
     /// Reserves a delivery owned by a consumer work set. Cancellation of that
     /// set suppresses this unclaimed callback without cancelling its producer.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery_in<F>(
         &mut self,
         set: &WorkSet,
@@ -357,6 +396,10 @@ impl<O> Owner<O> {
     }
 
     /// Reserves a consumer-owned promised delivery from a pipeline's credits.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery_reserved_in<F>(
         &mut self,
         set: &WorkSet,
@@ -380,6 +423,10 @@ impl<O> Owner<O> {
     }
 
     /// Reserves a promised descendant delivery using an existing discoverer.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery_from<F>(
         &mut self,
         permit: &DiscoveryPermit,
@@ -402,6 +449,10 @@ impl<O> Owner<O> {
     }
 
     /// Reserves a descendant consumer delivery from a pipeline's credits.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn prepare_delivery_reserved_from<F>(
         &mut self,
         permit: &DiscoveryPermit,
@@ -454,6 +505,10 @@ impl<O> Owner<O> {
     }
 
     /// Queues a local callback for this phase. It never invokes inline.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn try_post<F>(
         &mut self,
         phase: Phase,
@@ -471,6 +526,10 @@ impl<O> Owner<O> {
 
     /// Subscribes to a CPU completion while retaining the callback locally.
     /// Ready-at-registration follows the same deferred path as pending work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready<F>(
         &mut self,
         completion: &Completion,
@@ -485,6 +544,10 @@ impl<O> Owner<O> {
 
     /// Attaches a consumer-owned delivery to an outcome. Cancelling this set only
     /// suppresses its callback; other consumers and the producer remain live.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready_in<F>(
         &mut self,
         set: &WorkSet,
@@ -512,6 +575,10 @@ impl<O> Owner<O> {
     /// Ready outcomes still deliver through the owner pump. Set cancellation
     /// suppresses only this consumer's unclaimed callback; rejection returns
     /// the uninvoked callback without retaining a consumer lease.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready_from<F>(
         &mut self,
         permit: &DiscoveryPermit,
@@ -538,6 +605,10 @@ impl<O> Owner<O> {
     /// Pending and already-ready outcomes both notify through the owner pump;
     /// no CPU job is created. Rejection returns the uninvoked callback and
     /// restores any provisionally checked-out reservation credits.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready_reserved<F>(
         &mut self,
         reservation: &Reservation,
@@ -553,6 +624,10 @@ impl<O> Owner<O> {
 
     /// A reserved subscription owned by a consumer set, independent of the
     /// producer's set. Its credit and set count last through owner-local cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready_reserved_in<F>(
         &mut self,
         set: &WorkSet,
@@ -578,6 +653,10 @@ impl<O> Owner<O> {
 
     /// Attaches a reserved descendant subscription after the consumer set has
     /// sealed. Cancelling that set suppresses only this consumer's publication.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
     pub fn on_ready_reserved_from<F>(
         &mut self,
         permit: &DiscoveryPermit,
@@ -752,6 +831,10 @@ impl<O> Owner<O> {
 
     /// Runs or cleans eligible entries within the caller's count/time budget.
     /// No callback or local destructor executes under transport locks.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't pump from here, or in this phase.
     pub fn pump(&mut self, phase: Phase, budget: PumpBudget) -> Result<PumpReport, OwnerError> {
         if self.active || crate::notification::invocation_active() {
             return Err(OwnerError::InvalidContext);

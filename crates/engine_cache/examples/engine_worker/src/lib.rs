@@ -1,4 +1,5 @@
 //! Application code composing `engine_cache` and `engine_worker` directly. This is not a cache adapter.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
 
 use std::num::NonZeroUsize;
 use std::sync::mpsc::{self, Sender};
@@ -122,11 +123,17 @@ impl OwnerState<'_> {
 /// Receipts from actual bytes, owned accesses and thread-bound destruction.
 #[derive(Debug)]
 pub struct PipelineReport {
+    /// The bytes that came out.
     pub bytes: [u8; 4],
+    /// Whether the input stayed at the same address through the pipeline.
     pub input_address_preserved: bool,
+    /// Whether the output stayed at the same address through the pipeline.
     pub output_address_preserved: bool,
+    /// Whether the result was applied on the owner's thread.
     pub applied_on_owner: bool,
+    /// Whether what was left was destroyed on the owner's thread.
     pub destroyed_on_owner: bool,
+    /// Whether handing it to another owner was turned down.
     pub transfer_rejected: bool,
 }
 
@@ -463,6 +470,10 @@ fn pipeline(reject_transfer: bool) -> PipelineReport {
 
 /// Drops a retained saturated operation instead of retrying it. The original
 /// `engine_cache` root ends, owned input is destroyed and its allowance is returned.
+///
+/// # Panics
+///
+/// Panics if a step of the example fails.
 pub fn settle_saturated_attempt() {
     let mut runtime = runtime(1, 16);
     let low = runtime.lane(ExecutionClass::Low);
@@ -527,6 +538,10 @@ fn rank(urgency: u32) -> Priority {
 
 /// Proves forwarding changes real pending execution order. All `engine_cache` updates and
 /// snapshot-to-`engine_worker` application occur on this serialized coordinator.
+///
+/// # Panics
+///
+/// Panics if a step of the example fails.
 pub fn forward_ordered_demand() {
     // Raise, lower, and detach a more urgent independent consumer. In every
     // case both resources remain pending until forwarding has been serviced.

@@ -17,26 +17,38 @@ use crate::scheduler::reservation::ReservationPool;
 use crate::scheduler::{Cost, Reservation, ReservationError};
 use crate::task::{Completion, Subscription};
 
+/// How far a delivery has got.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DeliveryStatus {
+    /// Its work hasn't finished.
     Waiting,
+    /// It's waiting for its owner.
     Ready,
+    /// Its owner has taken it.
     Claimed,
+    /// Its owner has dealt with it.
     Published,
+    /// It was dropped, and nothing will come of it.
     Suppressed,
+    /// Its owner panicked while dealing with it.
     Panicked,
 }
 
 impl DeliveryStatus {
+    /// Whether it has gone as far as it will go.
     pub fn is_settled(self) -> bool {
         matches!(self, Self::Published | Self::Suppressed | Self::Panicked)
     }
 }
 
+/// What came of asking to cancel.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum CancelResult {
+    /// It will be cancelled.
     Requested,
+    /// It has got too far to stop.
     TooLate,
+    /// It had already finished.
     Settled,
 }
 
@@ -47,8 +59,18 @@ pub struct Delivery {
 }
 
 impl Delivery {
+    /// How far it has got.
+    ///
+    /// # Panics
+    ///
+    /// Panics if another thread panicked while holding the same lock, which is a bug in
+    /// this crate.
     pub fn status(&self) -> DeliveryStatus {
-        self.record.state.lock().unwrap().status
+        self.record
+            .state
+            .lock()
+            .expect("a lock nothing panics under")
+            .status
     }
 }
 
@@ -59,6 +81,7 @@ pub struct DeliveryControl {
 }
 
 impl DeliveryControl {
+    /// Asks for it to be cancelled.
     pub fn cancel(&self) -> CancelResult {
         self.record.cancel()
     }
@@ -110,7 +133,7 @@ impl Record {
     }
 
     fn ready(self: &Arc<Self>) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("a lock nothing panics under");
         if state.status == DeliveryStatus::Waiting && !state.cancelled {
             state.status = DeliveryStatus::Ready;
             self.notify(&mut state);
@@ -122,7 +145,7 @@ impl Record {
     }
 
     fn cancel(self: &Arc<Self>) -> CancelResult {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("a lock nothing panics under");
         let result = match state.status {
             DeliveryStatus::Waiting | DeliveryStatus::Ready => {
                 state.cancelled = true;
@@ -146,7 +169,7 @@ impl Record {
     }
 
     fn set_subscription(&self, subscription: Subscription) {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("a lock nothing panics under");
         if state.status == DeliveryStatus::Waiting && !state.cancelled {
             state.subscription = Some(subscription);
             return;
@@ -261,13 +284,13 @@ impl Transport {
     /// Snapshot transferable records only. No local callback or capture is
     /// inspected, and the transport lock always precedes each record lock.
     pub(super) fn progress(&self) -> OwnerProgress {
-        let state = self.state.lock().unwrap();
+        let state = self.state.lock().expect("a lock nothing panics under");
         let mut progress = OwnerProgress {
             routes: 1,
             ..OwnerProgress::default()
         };
         for record in state.records.values() {
-            let record_state = record.state.lock().unwrap();
+            let record_state = record.state.lock().expect("a lock nothing panics under");
             if state.closed || record_state.cancelled {
                 progress.cleanup += 1;
             } else {
@@ -330,7 +353,7 @@ impl Transport {
         endpoint: EndpointKind,
         charge: Option<Reservation>,
     ) -> Option<SlotReservation> {
-        let mut state = self.state.lock().unwrap();
+        let mut state = self.state.lock().expect("a lock nothing panics under");
         let full = match endpoint {
             EndpointKind::Ordinary => state.ordinary_records >= self.ordinary_capacity,
             EndpointKind::Protected => state.protected_records >= self.protected_capacity,
@@ -381,7 +404,11 @@ impl Transport {
     }
 
     pub(super) fn pending_count(&self) -> usize {
-        self.state.lock().unwrap().records.len()
+        self.state
+            .lock()
+            .expect("a lock nothing panics under")
+            .records
+            .len()
     }
 
     pub(super) fn is_empty(&self) -> bool {
@@ -389,12 +416,15 @@ impl Transport {
     }
 
     pub(super) fn is_closed(&self) -> bool {
-        self.state.lock().unwrap().closed
+        self.state
+            .lock()
+            .expect("a lock nothing panics under")
+            .closed
     }
 
     pub(super) fn begin_close(&self) -> TransportClosure {
         let records = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("a lock nothing panics under");
             state.closed = true;
             state.records.values().cloned().collect::<Vec<_>>()
         };
@@ -416,7 +446,7 @@ impl Transport {
         let records = self
             .state
             .lock()
-            .unwrap()
+            .expect("a lock nothing panics under")
             .records
             .values()
             .cloned()
@@ -506,11 +536,23 @@ pub(crate) enum TicketCommitError {
 
 impl DeliveryTicket {
     pub(crate) fn is_accounted(&self) -> bool {
-        self.notifier.inner.record.state.lock().unwrap().accounted
+        self.notifier
+            .inner
+            .record
+            .state
+            .lock()
+            .expect("a lock nothing panics under")
+            .accounted
     }
 
     pub(crate) fn attach_capacity(&self, capacity: Reservation) {
-        let mut state = self.notifier.inner.record.state.lock().unwrap();
+        let mut state = self
+            .notifier
+            .inner
+            .record
+            .state
+            .lock()
+            .expect("a lock nothing panics under");
         if !state.status.is_settled() {
             assert!(
                 state.capacity.is_none(),
@@ -532,10 +574,21 @@ impl DeliveryTicket {
         let Some(transport) = self.notifier.inner.record.transport.upgrade() else {
             return false;
         };
-        if transport.state.lock().unwrap().closed {
+        if transport
+            .state
+            .lock()
+            .expect("a lock nothing panics under")
+            .closed
+        {
             return false;
         }
-        let state = self.notifier.inner.record.state.lock().unwrap();
+        let state = self
+            .notifier
+            .inner
+            .record
+            .state
+            .lock()
+            .expect("a lock nothing panics under");
         state.status == DeliveryStatus::Waiting && !state.cancelled && !state.committed
     }
 
@@ -545,11 +598,17 @@ impl DeliveryTicket {
         let Some(transport) = self.notifier.inner.record.transport.upgrade() else {
             return Err(TicketCommitError::Closed);
         };
-        let transport_state = transport.state.lock().unwrap();
+        let transport_state = transport.state.lock().expect("a lock nothing panics under");
         if transport_state.closed {
             return Err(TicketCommitError::Closed);
         }
-        let mut record_state = self.notifier.inner.record.state.lock().unwrap();
+        let mut record_state = self
+            .notifier
+            .inner
+            .record
+            .state
+            .lock()
+            .expect("a lock nothing panics under");
         if record_state.committed {
             return Err(TicketCommitError::AlreadyCommitted);
         }
@@ -566,10 +625,12 @@ impl DeliveryTicket {
         record.set_subscription(subscription);
     }
 
+    /// Says it's ready for its owner.
     pub fn ready(self) {
         self.notifier.ready();
     }
 
+    /// Says nothing will come of it.
     pub fn suppress(self) {
         self.notifier.suppress();
     }
@@ -604,8 +665,13 @@ impl Notification {
         let transport = self.message.pin.transport.upgrade();
         let transport_state = transport
             .as_ref()
-            .map(|transport| transport.state.lock().unwrap());
-        let mut state = self.message.pin.state.lock().unwrap();
+            .map(|transport| transport.state.lock().expect("a lock nothing panics under"));
+        let mut state = self
+            .message
+            .pin
+            .state
+            .lock()
+            .expect("a lock nothing panics under");
         let run = transport_state.as_ref().is_some_and(|state| !state.closed)
             && state.status == DeliveryStatus::Ready
             && !state.cancelled;
@@ -638,7 +704,12 @@ impl Notification {
             "only terminal delivery states settle"
         );
         let (subscription, capacity) = {
-            let mut state = self.message.pin.state.lock().unwrap();
+            let mut state = self
+                .message
+                .pin
+                .state
+                .lock()
+                .expect("a lock nothing panics under");
             assert_eq!(state.status, DeliveryStatus::Claimed);
             state.status = status;
             (state.subscription.take(), state.capacity.take())
@@ -646,7 +717,7 @@ impl Notification {
         drop(subscription);
         drop(capacity);
         if let Some(transport) = self.message.pin.transport.upgrade() {
-            let mut state = transport.state.lock().unwrap();
+            let mut state = transport.state.lock().expect("a lock nothing panics under");
             if state.records.remove(&self.message.id).is_some() {
                 match self.message.pin.endpoint {
                     EndpointKind::Ordinary => state.ordinary_records -= 1,

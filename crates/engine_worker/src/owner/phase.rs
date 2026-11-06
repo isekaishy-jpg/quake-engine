@@ -23,12 +23,16 @@ pub enum PumpMode {
 /// destructor may exceed the time limit. A zero count performs no work.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PumpBudget {
+    /// The most entries to deal with.
     pub max_entries: usize,
+    /// The longest to spend, if there's a limit.
     pub max_duration: Option<Duration>,
+    /// How entries are dealt with.
     pub mode: PumpMode,
 }
 
 impl PumpBudget {
+    /// A budget of `max_entries`, with no limit on time.
     pub fn new(max_entries: usize) -> Self {
         Self {
             max_entries,
@@ -37,11 +41,13 @@ impl PumpBudget {
         }
     }
 
+    /// This budget, with a limit on time.
     pub fn with_duration(mut self, duration: Duration) -> Self {
         self.max_duration = Some(duration);
         self
     }
 
+    /// This budget, with its mode.
     pub fn with_mode(mut self, mode: PumpMode) -> Self {
         self.mode = mode;
         self
@@ -51,11 +57,14 @@ impl PumpBudget {
 /// Work completed by one bounded route pump.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct PumpReport {
+    /// How many were dealt with.
     pub invoked: usize,
+    /// How many were dropped.
     pub suppressed: usize,
 }
 
 impl PumpReport {
+    /// How many were looked at, either way.
     pub fn processed(self) -> usize {
         self.invoked + self.suppressed
     }

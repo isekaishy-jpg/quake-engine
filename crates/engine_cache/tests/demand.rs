@@ -1,3 +1,5 @@
+//! How wanting a value keeps it, and how that ends.
+
 use std::sync::{Arc, Barrier};
 use std::thread;
 

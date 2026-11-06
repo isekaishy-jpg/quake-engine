@@ -1,3 +1,7 @@
+//! A cache of values found by key.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
+
 use engine_cache::{AccountingDomain, AllocationClass, ByteLimit, Cache, CleanupContext, Lookup};
 
 fn main() {

@@ -84,9 +84,13 @@ impl<T> PoolInner<'_, T> {
 /// they do not include pending deferred cleanup or certify external final use.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct PoolSnapshot {
+    /// Whether it has been closed.
     pub closed: bool,
+    /// How many items are waiting to be used.
     pub idle_items: usize,
+    /// How many items are out.
     pub checked_out_items: usize,
+    /// How many bytes of capacity it keeps.
     pub retained_capacity_bytes: u128,
 }
 
@@ -189,6 +193,10 @@ impl<'cleanup, T> Pool<'cleanup, T> {
     /// Closure returns both inputs unchanged. The direct charge must describe
     /// this item's retained allocation capacity; separately charged nested owners
     /// must not also be counted in it.
+    ///
+    /// # Errors
+    ///
+    /// Hands the item back if the pool can't take it.
     pub fn insert(
         &self,
         layout: u64,
@@ -212,6 +220,14 @@ impl<'cleanup, T> Pool<'cleanup, T> {
     ///
     /// The charge enters temporary use. A miss creates no storage or work.
     /// No ordering or best-fit selection among compatible items is promised.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the charge can't move from the pool to the lease.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a pooled item has lost its charge, which is a bug in this crate.
     pub fn checkout(
         &self,
         layout: u64,
@@ -238,6 +254,7 @@ impl<'cleanup, T> Pool<'cleanup, T> {
         }))
     }
 
+    /// How it stands now.
     pub fn snapshot(&self) -> PoolSnapshot {
         let state = self.inner.state();
         PoolSnapshot {
@@ -309,6 +326,11 @@ pub struct PoolLease<'cleanup, T> {
 }
 
 impl<T> PoolLease<'_, T> {
+    /// The item.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a live lease has lost its item, which is a bug in this crate.
     pub fn get(&self) -> &T {
         self.item
             .as_ref()
@@ -325,6 +347,10 @@ impl<T> PoolLease<'_, T> {
     /// then let it outlive this lease's charge. Independently owned nested backing
     /// can move safely when its own charge moves with it. Generic `T` mutation
     /// cannot enforce these accounting obligations or validate a correct reset.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a live lease has lost its item, which is a bug in this crate.
     pub fn get_mut(&mut self) -> &mut T {
         self.item
             .as_mut()
@@ -332,6 +358,11 @@ impl<T> PoolLease<'_, T> {
             .expect("live lease retains its payload")
     }
 
+    /// How many bytes the item declares.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a live lease has lost its item, which is a bug in this crate.
     pub fn declared_bytes(&self) -> u64 {
         self.item
             .as_ref()
@@ -352,6 +383,10 @@ impl<T> PoolLease<'_, T> {
     /// Returns storage whose caller has already completed reset and final use.
     ///
     /// This operation does not clear payloads or validate nested/domain state.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a live lease has lost its item, which is a bug in this crate.
     pub fn return_to_pool(mut self) -> PoolReturn {
         let mut item = self.item.take().expect("live lease retains its item");
         let retired = {

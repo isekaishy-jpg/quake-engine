@@ -1,3 +1,5 @@
+//! What owned work finishes with.
+
 use std::cell::Cell;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, mpsc};
@@ -415,7 +417,7 @@ fn typed_continuations_preserve_ownership_and_classify_failure_explicitly() {
                 .try_spawn_after(
                     SpawnOptions::default(),
                     &[stage.completion()],
-                    engine_worker::DependencyPolicy::SuccessOnly,
+                    DependencyPolicy::SuccessOnly,
                     move || {
                         invoked.fetch_add(1, Ordering::Relaxed);
                     },

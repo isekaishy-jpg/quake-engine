@@ -1,4 +1,6 @@
 //! Main-process native startup/cleanup witness, with no interactive window.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use engine_host::{
     Application, Context, Error, Host, HostConfig, StopProgress, WindowSpec, WindowState,

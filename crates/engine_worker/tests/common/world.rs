@@ -1,5 +1,9 @@
 //! Deterministic synthetic frame work shared by contracts and benchmarks.
 //! The algorithms and sizes are fixtures, not native implementations or captures.
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
 use std::hint::black_box;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -13,7 +17,7 @@ use engine_worker::{
 };
 
 #[derive(Clone, Copy, Debug)]
-pub enum Schedule {
+pub(crate) enum Schedule {
     Serial,
     CallerSplit,
     ScopedChunks,
@@ -21,7 +25,7 @@ pub enum Schedule {
 }
 
 impl Schedule {
-    pub const ALL: [Self; 4] = [
+    pub(crate) const ALL: [Self; 4] = [
         Self::Serial,
         Self::CallerSplit,
         Self::ScopedChunks,
@@ -30,7 +34,7 @@ impl Schedule {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct Draw {
+pub(crate) struct Draw {
     pub pass: u32,
     pub depth: u32,
     pub instance: usize,
@@ -47,7 +51,7 @@ struct Instance {
     effect_frame: u64,
 }
 
-pub struct World {
+pub(crate) struct World {
     pub admission_retries: usize,
     partitions: Vec<Vec<Instance>>,
     split: usize,
@@ -56,25 +60,25 @@ pub struct World {
     draws: Vec<Draw>,
 }
 
-pub struct Executor {
+pub(crate) struct Executor {
     pub runtime: Runtime,
     high: Lane,
     batch: Batch,
 }
 
 impl Executor {
-    pub fn new(workers: usize) -> Self {
+    pub(crate) fn new(workers: usize) -> Self {
         Self::with_limits(
             workers,
             OwnedLimits::new(4096, 4096, [4096; 3], [workers; 3]).unwrap(),
         )
     }
 
-    pub fn with_limits(workers: usize, limits: OwnedLimits) -> Self {
+    pub(crate) fn with_limits(workers: usize, limits: OwnedLimits) -> Self {
         Self::with_notification_limits(workers, limits, None)
     }
 
-    pub fn with_notification_limits(
+    pub(crate) fn with_notification_limits(
         workers: usize,
         limits: OwnedLimits,
         notifications: Option<NotifyLimits>,
@@ -98,7 +102,7 @@ impl Executor {
 }
 
 impl World {
-    pub fn new(instances: usize, chunk: usize) -> Self {
+    pub(crate) fn new(instances: usize, chunk: usize) -> Self {
         assert!(instances > 0 && chunk > 0);
         let models: Vec<_> = (0..8)
             .map(|model| Arc::new(std::array::from_fn(|bone| (model * 37 + bone + 1) as u64)))
@@ -138,11 +142,16 @@ impl World {
         }
     }
 
-    pub fn frame(&mut self, executor: &mut Executor, schedule: Schedule, rounds: usize) -> &[Draw] {
+    pub(crate) fn frame(
+        &mut self,
+        executor: &mut Executor,
+        schedule: Schedule,
+        rounds: usize,
+    ) -> &[Draw] {
         self.frame_with_group_binding(executor, schedule, rounds, |_| None)
     }
 
-    pub fn frame_with_group_binding<F>(
+    pub(crate) fn frame_with_group_binding<F>(
         &mut self,
         executor: &mut Executor,
         schedule: Schedule,
@@ -305,13 +314,13 @@ fn run_stage(instances: &mut [Instance], stage: Stage, frame: u64, rounds: usize
 
 /// Bounded by the host's frame interval, not a sleep pretending to be CPU work.
 /// Drop signals stop even when a correctness assertion unwinds.
-pub struct Background {
+pub(crate) struct Background {
     stop: Arc<AtomicBool>,
     tasks: Vec<Task<u64>>,
 }
 
 impl Background {
-    pub fn start(runtime: &Runtime) -> Self {
+    pub(crate) fn start(runtime: &Runtime) -> Self {
         let mut background = Self {
             stop: Arc::new(AtomicBool::new(false)),
             tasks: Vec::new(),
@@ -342,7 +351,7 @@ impl Background {
         background
     }
 
-    pub fn finish(mut self) -> u64 {
+    pub(crate) fn finish(mut self) -> u64 {
         self.stop.store(true, Ordering::Relaxed);
         self.tasks
             .drain(..)

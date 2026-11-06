@@ -1,3 +1,6 @@
+//! Keeping, finding and dropping cached values.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::hash::{Hash, Hasher};
 
 use engine_cache::{

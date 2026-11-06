@@ -15,6 +15,10 @@ impl RawTime {
         self.elapsed
     }
     /// Creates a checked raw deadline in this same clock domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the deadline can't be held.
     pub fn checked_add(self, duration: Duration) -> Result<RawDeadline, Error> {
         Ok(RawDeadline(Self {
             host: self.host,
@@ -58,6 +62,10 @@ impl ApplicationTime {
     }
     /// Legacy whole-millisecond projection, truncating submilliseconds and wrapping
     /// at 32 bits. Host scheduling never uses this projection for deadlines.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a timer is far shorter than 49 days"
+    )]
     pub fn milliseconds_wrapping(self) -> u32 {
         self.elapsed.as_millis() as u32
     }

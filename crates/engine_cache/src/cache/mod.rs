@@ -52,17 +52,24 @@ impl<K> fmt::Debug for Identity<K> {
 /// Retrieval distinguishes usable backing from missing or failed membership.
 /// No unavailable outcome creates consumer demand or starts production.
 pub enum Lookup<'entry, R, E> {
+    /// Nothing is known about this key.
     Absent,
+    /// The key is known, with nothing stored.
     Vacant,
+    /// Producing it failed, with this error.
     Failed(&'entry E),
+    /// It's here.
     Ready(R),
 }
 
 /// Owned payload state returned by replacement or removal.
 /// Dropping a ready state releases its owner using that backing's cleanup contract.
 pub enum StoredPayload<'cleanup, T, E> {
+    /// Nothing is stored.
     Vacant,
+    /// Producing it failed, with this error.
     Failed(E),
+    /// It's stored in this backing.
     Ready(Backing<'cleanup, T>),
 }
 impl<T, E> fmt::Debug for StoredPayload<'_, T, E> {
@@ -78,7 +85,9 @@ impl<T, E> fmt::Debug for StoredPayload<'_, T, E> {
 /// Why an installation rejected its original owned inputs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum InstallErrorReason {
+    /// Its size would take the policy past what it can count.
     PolicyOverflow,
+    /// Its allocation class isn't one this cache takes.
     InvalidClass,
 }
 
@@ -107,9 +116,11 @@ pub(crate) struct IdentityReplaceFailure<'cleanup, T, E> {
 }
 
 impl<'cleanup, K, T> InstallError<'cleanup, K, T> {
+    /// Why it wasn't installed.
     pub fn reason(&self) -> InstallErrorReason {
         self.reason
     }
+    /// The key, the backing and the policy bytes that were offered, handed back.
     pub fn into_parts(self) -> (K, Backing<'cleanup, T>, u64) {
         (self.key, self.backing, self.policy_bytes)
     }
@@ -144,15 +155,18 @@ pub struct Cache<'cleanup, K, T, E = ()> {
 }
 
 impl<'cleanup, K, T, E> Cache<'cleanup, K, T, E> {
+    /// An empty cache.
     pub fn new() -> Self {
         Self {
             storage: Storage::new(),
             policy_bytes: 0,
         }
     }
+    /// How many entries it has.
     pub fn len(&self) -> usize {
         self.storage.slots.len() - self.storage.free.len()
     }
+    /// Whether it has no entries.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -317,6 +331,11 @@ impl<'cleanup, K: Eq + Hash, T, E> Cache<'cleanup, K, T, E> {
         self.storage.keys.insert(hash, slot);
         identity
     }
+    /// The identity of `key`, if it has one.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a known key has lost its slot, which is a bug in this crate.
     pub fn identity(&self, key: &K) -> Option<Identity<K>> {
         let slot = self.find(key)?;
         Some(
@@ -335,6 +354,10 @@ impl<'cleanup, K: Eq + Hash, T, E> Cache<'cleanup, K, T, E> {
         )
     }
     /// Acquires an existing ready owner under a protected cache borrow.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a known key has lost its slot, which is a bug in this crate.
     pub fn share(&self, key: &K) -> Lookup<'_, Backing<'cleanup, T>, E> {
         let Some(slot) = self.find(key) else {
             return Lookup::Absent;
@@ -350,6 +373,10 @@ impl<'cleanup, K: Eq + Hash, T, E> Cache<'cleanup, K, T, E> {
         }
     }
     /// Moves the table owner and its physical charge, leaving logical membership vacant.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a known key has lost its slot, which is a bug in this crate.
     pub fn take(&mut self, key: &K) -> Lookup<'_, Backing<'cleanup, T>, E> {
         let Some(slot) = self.find(key) else {
             return Lookup::Absent;
@@ -374,6 +401,14 @@ impl<'cleanup, K: Eq + Hash, T, E> Cache<'cleanup, K, T, E> {
     }
     /// Installs resident backing, returning the previous owned state.
     /// Rejection preserves inputs and membership. Escaped old owners stay valid.
+    ///
+    /// # Errors
+    ///
+    /// Hands everything back if the class isn't taken or the policy count would overflow.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a known key has lost its slot, which is a bug in this crate.
     pub fn install(
         &mut self,
         key: K,

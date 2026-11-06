@@ -23,6 +23,10 @@ pub struct ScaleFactor(f64);
 
 impl ScaleFactor {
     /// Validates a scale before exposing it as geometry.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `value` isn't finite and above zero.
     pub fn new(value: f64) -> Result<Self, Error> {
         if !value.is_finite() || value <= 0.0 {
             return Err(Error::InvalidInput("scale must be positive and finite"));
@@ -64,6 +68,10 @@ impl WindowedPlacement {
     /// Keeps this placement on a currently observed monitor. If its old monitor
     /// vanished, moves it inside the nearest snapshot without changing client size.
     /// Native decoration sizes and subsequent native adjustments remain backend-owned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there are no monitors to choose from.
     pub fn adjusted_for_monitors(self, monitors: &[MonitorSnapshot]) -> Result<Self, Error> {
         self.validate()?;
         let intersects = |monitor: &MonitorSnapshot| {
@@ -645,7 +653,7 @@ impl DisplayState {
         {
             return Err(Error::StaleIdentity);
         }
-        let mut transition = self.active.take().unwrap();
+        let mut transition = self.active.take().expect("a change in progress");
         transition.state = DisplayTransitionState::Failed(reason);
         self.settled = Some(transition.clone());
         Ok(transition)
@@ -671,7 +679,7 @@ impl DisplayState {
                 "backend mode has not matched this request",
             ));
         }
-        let mut transition = self.active.take().unwrap();
+        let mut transition = self.active.take().expect("a change in progress");
         transition.state = match status {
             PresentationStatus::Ready => DisplayTransitionState::Ready,
             PresentationStatus::Failed(reason) => DisplayTransitionState::Failed(reason),
@@ -705,5 +713,5 @@ impl DisplayState {
 }
 
 #[cfg(test)]
-#[path = "../tests/unit/display_transitions.rs"]
+#[path = "../../tests/unit/display_transitions.rs"]
 mod tests;

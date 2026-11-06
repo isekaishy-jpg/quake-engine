@@ -1,3 +1,9 @@
+//! Finishing what is left when a runtime stops.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(
+    unsafe_code,
+    reason = "releasing an external resource is an unsafe contract, and this tests it"
+)]
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::mpsc;
@@ -86,6 +92,7 @@ fn closing_seals_roots_but_keeps_discovery_and_prepared_access_alive() {
         external.completion().wait_timeout(TIMEOUT).unwrap(),
         Some(TaskStatus::Succeeded)
     );
+    // SAFETY: Nothing foreign ever had the resource.
     let retained = unsafe { active.acknowledge_release() };
     drop(retained);
     drop(permit);

@@ -321,7 +321,7 @@ fn completion_and_suppression_during_attachment_settle_one_accepted_record() {
             let (release_send, release_recv) = mpsc::channel();
             let release = Release(release_send);
             let release_recv = Mutex::new(release_recv);
-            let first_attachment = std::sync::atomic::AtomicBool::new(true);
+            let first_attachment = AtomicBool::new(true);
             *scheduler.attachment_hook.lock().unwrap() = Some(Arc::new(move |job| {
                 if first_attachment.swap(false, Ordering::SeqCst) {
                     attached_send.send(job).unwrap();

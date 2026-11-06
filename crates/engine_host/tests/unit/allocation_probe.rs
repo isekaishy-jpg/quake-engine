@@ -3,7 +3,10 @@
 //! Allocation/reallocation calls are counted even if the allocator returns null;
 //! deallocation may release storage allocated outside this scope or thread.
 
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "counting allocations means standing in for the allocator"
+)]
 
 use std::alloc::{GlobalAlloc, Layout, System};
 use std::cell::Cell;
@@ -50,6 +53,7 @@ unsafe impl GlobalAlloc for Probe {
             counts.allocations = counts.allocations.saturating_add(1);
             counts.requested_bytes = counts.requested_bytes.saturating_add(layout.size());
         });
+        // SAFETY: The caller's contract for `GlobalAlloc` is passed straight on.
         unsafe { System.alloc(layout) }
     }
     unsafe fn alloc_zeroed(&self, layout: Layout) -> *mut u8 {
@@ -57,6 +61,7 @@ unsafe impl GlobalAlloc for Probe {
             counts.allocations = counts.allocations.saturating_add(1);
             counts.requested_bytes = counts.requested_bytes.saturating_add(layout.size());
         });
+        // SAFETY: The caller's contract for `GlobalAlloc` is passed straight on.
         unsafe { System.alloc_zeroed(layout) }
     }
     unsafe fn realloc(&self, ptr: *mut u8, layout: Layout, size: usize) -> *mut u8 {
@@ -64,6 +69,7 @@ unsafe impl GlobalAlloc for Probe {
             counts.reallocations = counts.reallocations.saturating_add(1);
             counts.reallocated_bytes = counts.reallocated_bytes.saturating_add(size);
         });
+        // SAFETY: The caller's contract for `GlobalAlloc` is passed straight on.
         unsafe { System.realloc(ptr, layout, size) }
     }
     unsafe fn dealloc(&self, ptr: *mut u8, layout: Layout) {
@@ -71,6 +77,7 @@ unsafe impl GlobalAlloc for Probe {
             counts.deallocations = counts.deallocations.saturating_add(1);
             counts.deallocated_bytes = counts.deallocated_bytes.saturating_add(layout.size());
         });
+        // SAFETY: The caller's contract for `GlobalAlloc` is passed straight on.
         unsafe { System.dealloc(ptr, layout) }
     }
 }

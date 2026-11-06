@@ -1,3 +1,9 @@
+#![expect(
+    clippy::cast_sign_loss,
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+
 use super::*;
 use crate::external::ExternalOptions;
 use crate::notification::NotifyLimits;

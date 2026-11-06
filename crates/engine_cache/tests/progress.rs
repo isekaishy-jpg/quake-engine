@@ -1,3 +1,6 @@
+//! Reporting how far a production has got.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::cell::RefCell;
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::rc::Rc;

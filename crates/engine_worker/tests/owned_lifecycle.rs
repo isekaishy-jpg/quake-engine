@@ -1,3 +1,6 @@
+//! Owned work from its start to its end.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
@@ -61,7 +64,7 @@ fn cancelling_queued_and_waiting_jobs_settles_their_captures() {
             &group,
             SpawnOptions::default(),
             &[prerequisite.completion()],
-            engine_worker::DependencyPolicy::SuccessOnly,
+            DependencyPolicy::SuccessOnly,
             move || {
                 let _capture = waiting_flag;
                 13usize

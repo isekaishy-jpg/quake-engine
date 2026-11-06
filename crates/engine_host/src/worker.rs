@@ -36,6 +36,11 @@ impl WorkerPlan {
     /// the sum of effective class counts; it can exceed the number of physical
     /// or logical processors. This function installs no affinity, starts no
     /// workers and does not override application-chosen direct `engine_worker` configuration.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the budget it works out doesn't match its classes, which is a bug in this
+    /// crate.
     pub fn independent_physical_caps(topology: &CpuTopology, request: WorkerRequest) -> Self {
         let physical_cores = topology.physical_cores();
         let class_ceiling = physical_cores
@@ -90,6 +95,7 @@ mod tests {
     use crate::{CoreAffinity, CpuCore};
     use engine_worker::ExecutionClass;
 
+    #[expect(clippy::cast_possible_truncation, reason = "a test has few cores")]
     fn topology(physical: usize, logical: usize) -> CpuTopology {
         CpuTopology {
             cores: (0..physical)

@@ -8,3 +8,6 @@ publish = false
 [dependencies]
 engine_cache = { path = "../.." }
 engine_worker = { path = "../../../engine_worker" }
+
+[lints]
+workspace = true

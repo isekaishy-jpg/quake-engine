@@ -1,4 +1,6 @@
 //! A single-thread host combines a retained CPU group with its own wake token.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use std::thread;
 use std::time::Duration;

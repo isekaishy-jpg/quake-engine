@@ -46,14 +46,18 @@ impl<O> Inbox<O> {
     }
 
     pub(super) fn take(&self, id: u64) -> Option<(Phase, SendCallback<O>)> {
-        self.state.lock().unwrap().callbacks.remove(&id)
+        self.state
+            .lock()
+            .expect("a lock nothing panics under")
+            .callbacks
+            .remove(&id)
     }
 
     /// Close sender admission atomically with transport closure while keeping
     /// accepted packages for budgeted owner-thread cleanup.
     pub(super) fn mark_closed(&self) {
         let closure = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("a lock nothing panics under");
             state.closed = true;
             self.transport.begin_close()
         };
@@ -61,17 +65,24 @@ impl<O> Inbox<O> {
     }
 
     pub(super) fn is_empty(&self) -> bool {
-        self.state.lock().unwrap().callbacks.is_empty()
+        self.state
+            .lock()
+            .expect("a lock nothing panics under")
+            .callbacks
+            .is_empty()
     }
 
     pub(super) fn set_faulted(&self, faulted: bool) {
-        self.state.lock().unwrap().faulted = faulted;
+        self.state
+            .lock()
+            .expect("a lock nothing panics under")
+            .faulted = faulted;
     }
 
     /// Close admission and move captures out before any local destructor runs.
     pub(super) fn close_and_take(&self) -> Vec<(u64, Phase, SendCallback<O>)> {
         let callbacks = {
-            let mut state = self.state.lock().unwrap();
+            let mut state = self.state.lock().expect("a lock nothing panics under");
             state.closed = true;
             std::mem::take(&mut state.callbacks)
         };
@@ -99,6 +110,15 @@ impl<O> Clone for OwnerSender<O> {
 impl<O> OwnerSender<O> {
     /// Reserves delivery before accepting the callback. Rejection returns it
     /// uninvoked, so the caller decides where its captures are destroyed.
+    ///
+    /// # Errors
+    ///
+    /// Hands the callback back, with why, if there is no room or it can't be done here.
+    ///
+    /// # Panics
+    ///
+    /// Panics if another thread panicked while holding the same lock, which is a bug in
+    /// this crate.
     pub fn try_post<F>(
         &self,
         phase: Phase,
@@ -123,7 +143,11 @@ impl<O> OwnerSender<O> {
                 });
             }
         };
-        let mut state = self.inbox.state.lock().unwrap();
+        let mut state = self
+            .inbox
+            .state
+            .lock()
+            .expect("a lock nothing panics under");
         if state.closed || self.inbox.transport.is_closed() {
             return Err(OwnerRejected {
                 reason: OwnerError::Closed,

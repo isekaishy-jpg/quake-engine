@@ -1,3 +1,6 @@
+//! Work classes that are turned off.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;

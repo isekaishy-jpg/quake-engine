@@ -27,10 +27,15 @@ pub enum AllocationClass {
 /// not report policy occupancy, measured memory, or domain shutdown completion.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct AccountingSnapshot {
+    /// Bytes held for a short time.
     pub temporary_bytes: u64,
+    /// Bytes held in place.
     pub resident_bytes: u64,
+    /// Bytes on their way out.
     pub retiring_bytes: u64,
+    /// Bytes kept for reuse.
     pub retained_capacity_bytes: u64,
+    /// All bytes declared, of every class.
     pub total_declared_bytes: u64,
 }
 
@@ -70,6 +75,7 @@ impl AccountingSnapshot {
 /// An accounting operation could not represent the resulting declared byte total.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AccountingError {
+    /// A count went past what it can hold.
     Overflow,
 }
 
@@ -105,6 +111,7 @@ impl fmt::Debug for AccountingDomain {
 }
 
 impl AccountingDomain {
+    /// A domain with nothing charged to it.
     pub fn new() -> Self {
         Self::default()
     }
@@ -114,6 +121,10 @@ impl AccountingDomain {
     /// Zero-byte charges are valid. Overflow leaves the domain unchanged. The
     /// caller supplies the cost and must bind this charge to actual ownership;
     /// this operation neither allocates payload storage nor measures its cost.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the domain's count would overflow.
     pub fn charge(
         &self,
         declared_bytes: u64,
@@ -166,10 +177,12 @@ impl fmt::Debug for AllocationCharge {
 }
 
 impl AllocationCharge {
+    /// How many bytes this charge declares.
     pub fn declared_bytes(&self) -> u64 {
         self.declared_bytes
     }
 
+    /// Which class of allocation this charge is for.
     pub fn class(&self) -> AllocationClass {
         self.class
     }
@@ -189,6 +202,10 @@ impl AllocationCharge {
     /// returns the unchanged original charge; neither domain changes. Transfers
     /// to the same domain are class transitions. Independently sampled domains
     /// do not constitute one atomic global snapshot. No payload cleanup occurs.
+    ///
+    /// # Errors
+    ///
+    /// Returns the charge unchanged if the other domain's count would overflow.
     pub fn transfer(
         mut self,
         destination: &AccountingDomain,
@@ -241,6 +258,7 @@ pub struct ChargeTransferFailure {
 }
 
 impl ChargeTransferFailure {
+    /// Why the transfer failed.
     pub fn error(&self) -> AccountingError {
         self.error
     }

@@ -1,8 +1,22 @@
 //! Regression witness using public `engine_host` and two own hidden Windows windows.
 //! Native messages synthesize client/capture state; this does not certify pixels
 //! or hardware movement. No focus change, pointer move or global input is used.
+#![expect(
+    clippy::cast_sign_loss,
+    reason = "a window handle is passed on as it is"
+)]
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
+#![expect(
+    unsafe_code,
+    reason = "it reads the cursor through Win32, to see what the host did to it"
+)]
 
-use engine_host::*;
+use engine_host::{
+    Application, Context, Error, Event, EventFilter, Host, HostConfig, HostState, InputEvent,
+    InputMode, Priority, Propagation, ServiceBudget, ServicePoints, ServiceReport, ServiceRequest,
+    ServiceSpec, StopProgress, WindowAccess, WindowSpec, WindowTarget,
+};
 use std::time::{Duration, Instant};
 
 // Test-only Win32 ABI. Message/hit-test values follow winuser.h; all HWNDs are
@@ -24,7 +38,8 @@ const HTCLIENT: isize = 1;
 const HTCAPTION: isize = 2;
 
 fn thread_cursor_count() -> i32 {
-    // The temporary increment is balanced before returning the original count.
+    // SAFETY: ShowCursor takes a plain number, and the temporary increment is
+    // balanced before returning the original count.
     unsafe {
         let incremented = ShowCursor(1);
         assert_eq!(ShowCursor(0), incremented - 1);
@@ -40,6 +55,7 @@ impl Drop for CountRestore {
             if current == self.0 {
                 return;
             }
+            // SAFETY: ShowCursor takes a plain number, and only changes this thread's count.
             unsafe { ShowCursor(i32::from(current < self.0)) };
         }
         panic!("could not restore original cursor count");
@@ -73,6 +89,7 @@ impl Application for App {
             let lease = cx.acquire_window(target)?;
             let hwnd = lease.native_ref()?.hwnd()?.get();
             let mut pid = 0;
+            // SAFETY: Any handle is accepted, and `pid` is a live local to write to.
             assert_ne!(unsafe { GetWindowThreadProcessId(hwnd, &mut pid) }, 0);
             assert_eq!(pid, std::process::id());
             self.targets.push(target);
@@ -83,6 +100,7 @@ impl Application for App {
         cx.request_cursor_visibility(self.targets[0], false)?;
         let hwnd = self.leases[0].native_ref()?.hwnd()?.get();
         assert_ne!(
+            // SAFETY: A window this test made, with plain numbers for its message.
             unsafe { PostMessageW(hwnd, WM_MOUSEMOVE, 0, 1 | (1 << 16)) },
             0
         );
@@ -106,6 +124,7 @@ impl Application for App {
 }
 
 fn client_message(hwnd: isize, hit: isize) {
+    // SAFETY: A window this test made, with plain numbers for its message.
     unsafe { SendMessageW(hwnd, WM_SETCURSOR, hwnd as usize, hit) };
 }
 
@@ -151,8 +170,11 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         println!("PASS: unrelated visibility/input-mode requests preserve A hide");
 
         // A captured hidden window remains authoritative outside its client.
+        // SAFETY: A window this test made, with plain numbers for its message.
         unsafe { SendMessageW(ah, WM_LBUTTONDOWN, 1, 1 | (1 << 16)) };
+        // SAFETY: GetCapture takes nothing, and only reads this thread.
         assert_eq!(unsafe { GetCapture() }, ah);
+        // SAFETY: A window this test made, with plain numbers for its message.
         unsafe { SendMessageW(ah, WM_MOUSELEAVE, 0, 0) };
         assert_eq!(
             thread_cursor_count(),
@@ -187,7 +209,9 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
 
         cx.request_cursor_visibility(b, true).unwrap();
         assert_eq!(thread_cursor_count(), hidden);
+        // SAFETY: A window this test made, with plain numbers for its message.
         unsafe { SendMessageW(bh, WM_LBUTTONDOWN, 1, 1 | (1 << 16)) };
+        // SAFETY: GetCapture takes nothing, and only reads this thread.
         assert_eq!(unsafe { GetCapture() }, bh);
         assert_eq!(
             thread_cursor_count(),
@@ -196,9 +220,12 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         );
         cx.request_cursor_visibility(b, false).unwrap();
         assert_eq!(thread_cursor_count(), hidden, "new capture owner hides");
+        // SAFETY: A window this test made, with plain numbers for its message.
         unsafe { SendMessageW(ah, WM_MOUSELEAVE, 0, 0) };
         assert_eq!(thread_cursor_count(), hidden, "late old-owner leave");
+        // SAFETY: A window this test made, with plain numbers for its message.
         unsafe { SendMessageW(bh, WM_LBUTTONUP, 0, 1 | (1 << 16)) };
+        // SAFETY: GetCapture takes nothing, and only reads this thread.
         assert_eq!(unsafe { GetCapture() }, 0);
         assert_eq!(
             thread_cursor_count(),

@@ -1,3 +1,10 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+#![expect(clippy::cast_sign_loss, reason = "a test's numbers are small")]
+
 use crate::backend::BackendOps;
 use crate::host::Core;
 use crate::*;
@@ -148,7 +155,7 @@ fn timer_counts_match_records_through_claim_cancel_rollback_stale_and_repeated_r
     let recipient = cx.create_recipient().unwrap();
     let sample = cx.clock().raw;
     let deadline = sample.checked_add(Duration::ZERO).unwrap();
-    let check = |timers: &crate::timer::Timers<u8>, expected| {
+    let check = |timers: &timer::Timers<u8>, expected| {
         assert_eq!(timers.counts(), expected);
         assert_eq!(timers.counts(), timers.scanned_counts());
     };

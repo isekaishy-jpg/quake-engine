@@ -1,3 +1,6 @@
+//! Sets of work tracked together.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::num::NonZeroUsize;
 use std::sync::mpsc;
 use std::thread;

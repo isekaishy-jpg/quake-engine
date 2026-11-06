@@ -1,4 +1,5 @@
 //! Process isolation qualifies the fatal contract; no native window is created.
+#![expect(clippy::print_stderr, reason = "a test reports to its console")]
 
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};

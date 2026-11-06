@@ -1,3 +1,9 @@
+//! Physical adapters for external providers.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(
+    unsafe_code,
+    reason = "physical adapters are an unsafe contract, and this tests them"
+)]
 use std::num::NonZeroUsize;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -68,7 +74,8 @@ fn physical_destruction_is_guarded_and_settles_accounting_even_on_unwind() {
             set.seal();
             let cleanup = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 if active {
-                    // No foreign accessor was exposed; this thread may destroy T.
+                    // SAFETY: No foreign accessor was exposed; this thread may
+                    // destroy T.
                     unsafe { prepared.activate().unwrap().release() };
                 } else {
                     drop(prepared);
@@ -109,9 +116,11 @@ fn acknowledged_release_transfers_resource_after_physical_count_ends() {
 
     let active = prepared.activate().ok().unwrap();
     assert_eq!(runtime.external_progress().active, 1);
+    // SAFETY: Only its address is looked at. Nothing reads or writes through it.
     let pointer = unsafe { active.as_mut_ptr() };
     assert!(!pointer.is_null());
 
+    // SAFETY: Nothing foreign ever had the resource.
     let retained = unsafe { active.acknowledge_release() };
     assert_eq!(runtime.external_progress().active, 0);
     assert_eq!(runtime.external_progress().orphaned, 0);
@@ -223,6 +232,7 @@ fn bytes_and_set_work_follow_resource_through_handoff() {
     assert_eq!(set.progress().active_work, 1);
     assert_eq!(runtime.capacity_usage().unwrap().ordinary.bytes, 16);
 
+    // SAFETY: Nothing foreign ever had the resource.
     let retained = unsafe { active.acknowledge_release() };
     assert!(set.is_drained());
     assert_eq!(runtime.capacity_usage().unwrap().ordinary.bytes, 16);
@@ -266,6 +276,8 @@ fn physical_cleanup_may_finish_on_another_thread() {
         .ok()
         .unwrap();
     set.seal();
+    // SAFETY: Nothing foreign ever had the resource, and its destructor is
+    // written to run on any thread.
     let cleanup = std::thread::spawn(move || unsafe { active.release() });
     started_recv.recv().unwrap();
     assert_eq!(runtime.external_progress().active, 1);

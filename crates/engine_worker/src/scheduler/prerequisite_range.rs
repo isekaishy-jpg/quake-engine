@@ -115,7 +115,7 @@ impl<const N: usize> Descriptor<N> {
             );
             enqueue_activation(Activation::PrerequisiteRange(
                 scheduler,
-                PrerequisiteRange(Arc::clone(self) as Arc<dyn RangeOps>),
+                PrerequisiteRange(self.clone()),
                 status,
             ));
         }

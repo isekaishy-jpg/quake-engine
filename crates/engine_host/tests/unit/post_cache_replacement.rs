@@ -1,3 +1,9 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+
 use crate::backend::BackendOps;
 use crate::host::Core;
 use crate::post::{Batch, Post};
@@ -20,7 +26,7 @@ type Payload = [u8; 48];
 type Fixture = Core<PlainApp<Payload>>;
 
 fn limit<M>() -> usize {
-    65536 / std::mem::size_of::<Post<M>>()
+    65536 / size_of::<Post<M>>()
 }
 fn fixture(capacity: usize) -> (Fixture, RecipientId) {
     let mut core = Core::with_config(&HostConfig {
@@ -49,12 +55,12 @@ fn complete(core: &mut Fixture, mut batch: Batch<Payload>) {
     empty(core, &mut batch);
     core.post_batches.complete(batch, true);
 }
-fn calls(counts: crate::allocation_probe::Counts) -> usize {
+fn calls(counts: allocation_probe::Counts) -> usize {
     counts.allocations + counts.reallocations
 }
 fn check_idle(core: &Fixture) {
     let state = core.post_batches.state_for_test();
-    assert!(state.0.iter().sum::<usize>() * std::mem::size_of::<Post<Payload>>() <= 65536);
+    assert!(state.0.iter().sum::<usize>() * size_of::<Post<Payload>>() <= 65536);
     assert_eq!(state.1, [0, 0]);
     assert_eq!(core.transport.accepted(), 0);
     assert_eq!(core.transport.len(), 0);
@@ -64,7 +70,7 @@ fn check_idle(core: &Fixture) {
 // both checkout and completion (including replacements) contribute allocations.
 fn operation(core: &mut Fixture, recipient: RecipientId, sizes: [usize; 2]) -> usize {
     let receipts = enqueue(core, recipient, sizes.iter().sum());
-    let ((mut outer, mut child), acquisition) = crate::allocation_probe::measure(|| {
+    let ((mut outer, mut child), acquisition) = allocation_probe::measure(|| {
         let outer = core
             .transport
             .detach(sizes[0], &mut core.post_batches)
@@ -81,7 +87,7 @@ fn operation(core: &mut Fixture, recipient: RecipientId, sizes: [usize; 2]) -> u
             .iter()
             .all(|receipt| receipt.outcome() == PostOutcome::Pending)
     );
-    let (_, completion) = crate::allocation_probe::measure(|| {
+    let (_, completion) = allocation_probe::measure(|| {
         empty(core, &mut child);
         core.post_batches.complete(child, true);
         empty(core, &mut outer);
@@ -148,7 +154,7 @@ fn production_three_operation_corpus_converges_including_asymmetric_regressions(
     }
     println!(
         "production mixed corpus: patterns={patterns}, periods=8, final allocation-free periods=4, post_bytes={}",
-        std::mem::size_of::<Post<Payload>>()
+        size_of::<Post<Payload>>()
     );
 }
 
@@ -345,7 +351,7 @@ fn each_rebalance_failure_and_actual_capacity_overshoot_preserves_existing_idle_
         let idle = core.post_batches.retained_capacities();
         core.post_batches
             .configure_rebalance_for_test(fail, overshoot);
-        let (_, measured) = crate::allocation_probe::measure(|| complete(&mut core, outer));
+        let (_, measured) = allocation_probe::measure(|| complete(&mut core, outer));
         assert_eq!(
             core.post_batches.rebalance_reservations_for_test(),
             expected_attempts
@@ -383,8 +389,7 @@ fn individually_overlimit_actual_return_is_dropped_without_rebalance() {
     buffer.reserve_empty_for_test(k + 1);
     core.post_batches.seed_for_test(VecDeque::with_capacity(2));
     let before = core.post_batches.retained_capacities();
-    let (_, measured) =
-        crate::allocation_probe::measure(|| core.post_batches.complete(batch, true));
+    let (_, measured) = allocation_probe::measure(|| core.post_batches.complete(batch, true));
     assert_eq!(calls(measured), 0);
     assert_eq!(core.post_batches.retained_capacities(), before);
     check_idle(&core);
@@ -403,9 +408,8 @@ fn cold_layout<M: Send + Clone + 'static>(message: M, expected_capacity: usize) 
         core.proxy().try_post(recipient, message.clone()).unwrap(),
         core.proxy().try_post(recipient, message).unwrap(),
     ];
-    let (mut batch, measured) = crate::allocation_probe::measure(|| {
-        core.transport.detach(2, &mut core.post_batches).unwrap()
-    });
+    let (mut batch, measured) =
+        allocation_probe::measure(|| core.transport.detach(2, &mut core.post_batches).unwrap());
     let Batch::Many(buffer) = &batch else {
         panic!("many frontier required")
     };
@@ -413,7 +417,7 @@ fn cold_layout<M: Send + Clone + 'static>(message: M, expected_capacity: usize) 
     assert_eq!(calls(measured), 1);
     assert_eq!(
         measured.requested_bytes,
-        expected_capacity * std::mem::size_of::<Post<M>>()
+        expected_capacity * size_of::<Post<M>>()
     );
     for post in batch.by_ref() {
         post.receipt.settle(PostOutcome::Delivered { callbacks: 0 });
@@ -445,18 +449,18 @@ fn cold_sizing_uses_real_element_layout_including_zero_and_large_inline_payloads
 
 #[test]
 fn private_post_layout_matches_optimized_measurement_surrogates() {
-    assert_eq!(std::mem::size_of::<Post<[u8; 32]>>(), 64);
-    assert_eq!(std::mem::size_of::<Post<[u8; 256]>>(), 288);
-    assert_eq!(std::mem::align_of::<Post<[u8; 32]>>(), 8);
-    assert_eq!(std::mem::align_of::<Post<[u8; 256]>>(), 8);
+    assert_eq!(size_of::<Post<[u8; 32]>>(), 64);
+    assert_eq!(size_of::<Post<[u8; 256]>>(), 288);
+    assert_eq!(align_of::<Post<[u8; 32]>>(), 8);
+    assert_eq!(align_of::<Post<[u8; 256]>>(), 8);
     println!(
         "private instrumented layouts: Post32={} Post256={} Batch32={} Batch256={} BatchCache32={} BatchCache256={}; cache includes cfg(test) failure instrumentation",
-        std::mem::size_of::<Post<[u8; 32]>>(),
-        std::mem::size_of::<Post<[u8; 256]>>(),
-        std::mem::size_of::<Batch<[u8; 32]>>(),
-        std::mem::size_of::<Batch<[u8; 256]>>(),
-        std::mem::size_of::<crate::post::BatchCache<[u8; 32]>>(),
-        std::mem::size_of::<crate::post::BatchCache<[u8; 256]>>()
+        size_of::<Post<[u8; 32]>>(),
+        size_of::<Post<[u8; 256]>>(),
+        size_of::<Batch<[u8; 32]>>(),
+        size_of::<Batch<[u8; 256]>>(),
+        size_of::<post::BatchCache<[u8; 32]>>(),
+        size_of::<post::BatchCache<[u8; 256]>>()
     );
 }
 
@@ -500,7 +504,7 @@ struct ClosingApp {
     trace: Vec<u8>,
     drops: std::sync::Arc<std::sync::Mutex<Vec<(u8, std::thread::ThreadId)>>>,
     created: Vec<PostReceipt>,
-    native: Option<crate::backend::test::TestBackend>,
+    native: Option<backend::test::TestBackend>,
     mode: u8,
 }
 impl Application for ClosingApp {
@@ -706,7 +710,7 @@ fn many_frontier_holds_ticket_and_accepted_capacity_across_destructor_post_reent
 fn nested_context_closure_preserves_outstanding_tickets_and_owner_disposal_across_faults() {
     for mode in 0..5 {
         let mut core = Core::<ClosingApp>::new().unwrap();
-        let mut native = crate::backend::test::TestBackend::default();
+        let mut native = backend::test::TestBackend::default();
         let mut app = ClosingApp {
             recipient: None,
             trace: Vec::with_capacity(8),
@@ -784,7 +788,7 @@ fn nested_context_closure_preserves_outstanding_tickets_and_owner_disposal_acros
         );
         // A new drain after closure is rejected without allocating or reviving
         // backing; outstanding drains completed through the earlier return path.
-        let (result, measured) = crate::allocation_probe::measure(|| {
+        let (result, measured) = allocation_probe::measure(|| {
             Context::new(&mut core, BackendOps::Unavailable, ContextPhase::Retirement)
                 .drain_posts(&mut app, 8)
         });

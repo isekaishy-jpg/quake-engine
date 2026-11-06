@@ -8,3 +8,6 @@ readme = "pubdocs/README.md"
 description = "Reusable resource ownership, accounting and caching foundations"
 
 [dependencies]
+
+[lints]
+workspace = true

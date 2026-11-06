@@ -158,6 +158,10 @@ impl Wake {
     }
     /// Requests a recheck. A failed native post still leaves the durable signal.
     /// Keep this destination alive through an external route's actual quiescence.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the native post fails. The signal still stands.
     pub fn signal(&self) -> Result<(), Error> {
         if self.state.closed.load(Ordering::Acquire) {
             return Err(Error::AdmissionClosed);
@@ -249,7 +253,7 @@ impl Services {
     }
     pub(crate) fn remove(&mut self, host: HostId, id: ServiceId) -> Result<ServiceState, Error> {
         self.get(host, id)?;
-        let record = self.records.get_mut(id.key).unwrap();
+        let record = self.records.get_mut(id.key).expect("a record just checked");
         record.alive = false;
         record.wake.close();
         let state = ServiceState {
@@ -287,7 +291,7 @@ impl Services {
             self.cursor %= self.order.len();
             let key = self.order[self.cursor];
             self.cursor += 1;
-            let record = self.records.get_mut(key).unwrap();
+            let record = self.records.get_mut(key).expect("a record just checked");
             if Self::due(record, point, raw) {
                 record.active = true;
                 // Drain before application arm/recheck, never after its final check.
@@ -308,7 +312,10 @@ impl Services {
         request: ServiceRequest,
         report: Option<ServiceReport>,
     ) -> Result<(), Error> {
-        let record = self.records.get_mut(request.id.key).unwrap();
+        let record = self
+            .records
+            .get_mut(request.id.key)
+            .expect("a record just checked");
         record.active = false;
         if !record.alive {
             self.reclaim(request.id.key);

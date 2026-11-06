@@ -1,3 +1,6 @@
+//! Keeping work moving, and waiting on it.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::num::NonZeroUsize;
 use std::sync::{Arc, Mutex, mpsc};
 use std::thread;

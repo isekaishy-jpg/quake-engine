@@ -30,9 +30,13 @@ impl Apartment {
         })
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a structure is far smaller than 4 GB"
+    )]
     pub(crate) fn launch(&self, destination: &PreparedDestination) -> Result<(), ShellFailure> {
         let mut info = SHELLEXECUTEINFOW {
-            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            cbSize: size_of::<SHELLEXECUTEINFOW>() as u32,
             // NOASYNC covers file/DDE completion where supported. URI handlers
             // may still continue externally; success never means process exit.
             fMask: SEE_MASK_NOASYNC | SEE_MASK_FLAG_NO_UI,

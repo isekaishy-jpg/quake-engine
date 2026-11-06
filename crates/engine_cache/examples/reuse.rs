@@ -1,3 +1,10 @@
+//! Handing a finished value back to be used again.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+
 use engine_cache::{
     AccountingDomain, AllocationClass, Backing, Pool, RangeStore, SourceBuffers, SourceSnapshot,
 };

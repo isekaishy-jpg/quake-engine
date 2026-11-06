@@ -1,3 +1,5 @@
+//! Making a value once for whoever asks.
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::mpsc;
 use std::thread;
@@ -52,7 +54,7 @@ fn rejection_returns_unconsumed_input_and_inline_outcome_without_accepting_failu
     let (production, submission) = Production::<u8, &str>::prepare(Box::new(19));
     let mut address = std::ptr::null();
     let rejected = match submission.submit(|mut producer| {
-        address = &**producer.inputs().unwrap() as *const i32;
+        address = std::ptr::from_ref(&**producer.inputs().unwrap());
         producer.complete(Err("failure before decision")).unwrap();
         ProviderDecision::Rejected(producer)
     }) {
@@ -64,7 +66,7 @@ fn rejection_returns_unconsumed_input_and_inline_outcome_without_accepting_failu
     assert!(matches!(production.claim(), ProductionClaim::Rejected));
     let (inputs, staged) = rejected.into_parts();
     let inputs = inputs.unwrap();
-    assert_eq!(&*inputs as *const i32, address);
+    assert_eq!(std::ptr::from_ref(&*inputs), address);
     assert_eq!(staged, Some(Err("failure before decision")));
 }
 
@@ -135,11 +137,11 @@ fn duplicate_and_late_completion_preserve_original_candidate() {
         submission.submit(|mut producer| {
             producer.complete(Ok(Box::new(1))).unwrap();
             let candidate = Box::new(2);
-            let address = &*candidate as *const u8;
+            let address = std::ptr::from_ref(&*candidate);
             let error = producer.complete(Ok(candidate)).unwrap_err();
             assert_eq!(error.reason(), CompletionRejectionReason::AlreadyCompleted);
             let candidate = error.into_outcome().unwrap();
-            assert_eq!(&*candidate as *const u8, address);
+            assert_eq!(std::ptr::from_ref(&*candidate), address);
             escaped = Some(producer);
             panic!("provider panics after transferring root");
         })

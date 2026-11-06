@@ -13,19 +13,26 @@ use crate::task::{Completion, Subscription};
 pub struct Priority(u16);
 
 impl Priority {
+    /// A priority of `rank`.
     pub const fn new(rank: u16) -> Self {
         Self(rank)
     }
+    /// Its rank.
     pub const fn rank(self) -> u16 {
         self.0
     }
 }
 
+/// Why demand couldn't change.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DemandError {
+    /// The priority isn't known.
     UnknownPriority,
+    /// What it was for has gone.
     Gone,
+    /// There's no room.
     Full,
+    /// It has been closed.
     Closed,
 }
 
@@ -143,14 +150,26 @@ impl Demand {
     }
 
     /// Moves still-pending resource work before other work at equal rank.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if what it was for has gone, or demand is closed or full.
     pub fn promote(&self) -> Result<(), DemandError> {
         (self.change)(self.lease, DemandCommand::Promote)
     }
     /// Changes interest and reactivates this consumer if it was deferred.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the priority isn't known, or what it was for has gone.
     pub fn refresh(&self, priority: Priority) -> Result<(), DemandError> {
         (self.change)(self.lease, DemandCommand::Refresh(priority))
     }
     /// Keeps background interest but removes this consumer's active demand.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if what it was for has gone, or demand is closed.
     pub fn defer(&self) -> Result<(), DemandError> {
         (self.change)(self.lease, DemandCommand::Defer)
     }
@@ -175,6 +194,7 @@ pub struct DemandSnapshot {
     /// Whether the aggregate includes active demand. Deferred interest retains
     /// a priority with `active: false`; no interest has neither.
     pub active: bool,
+    /// Which change this is.
     pub version: u64,
 }
 

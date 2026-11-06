@@ -27,6 +27,7 @@ pub struct ProductionMap<K, O, E> {
 }
 
 impl<K, O, E> ProductionMap<K, O, E> {
+    /// An empty map, admitting productions by `admission`.
     pub fn new(admission: Admission) -> Self {
         Self {
             associations: HashMap::new(),
@@ -53,6 +54,7 @@ impl<K, O, E> ProductionMap<K, O, E> {
             .map(|entry| entry.demand.clone())
     }
 
+    /// What's being made for `identity`, if anything.
     pub fn current(&self, identity: &Identity<K>) -> Option<Production<O, E>> {
         self.associations
             .get(identity)
@@ -76,6 +78,11 @@ impl<K, O, E> ProductionMap<K, O, E> {
     /// publication round. Keep the original ticket with that production's outcome.
     /// This map compares identity only, not dependency/source revisions: changed
     /// inputs require explicit supersession or settlement of the old association.
+    ///
+    /// # Errors
+    ///
+    /// Hands the input back if nothing wants it, too many are running, or the map has
+    /// closed.
     pub fn begin_shared<I>(
         &mut self,
         identity: &Identity<K>,
@@ -118,6 +125,11 @@ impl<K, O, E> ProductionMap<K, O, E> {
     /// Starts a separate owned candidate without changing shared association.
     /// The caller selects a domain permitting independent candidates and later
     /// arbitrates publication; this operation does not select a winner.
+    ///
+    /// # Errors
+    ///
+    /// Hands the input back if nothing wants it, too many are running, or the map has
+    /// closed.
     pub fn begin_candidate<I>(
         &self,
         identity: &Identity<K>,
@@ -169,23 +181,33 @@ fn prepare<I, O, E>(
 
 /// Owned submission paired with its already-installed observer.
 pub struct ProductionAttempt<I, O, E> {
+    /// The production that was started.
     pub production: Production<O, E>,
+    /// What the provider needs to take it on.
     pub submission: Submission<I, O, E>,
 }
 
 /// Shared work never consumes the joining caller's unused input.
 pub enum ProductionStart<I, O, E> {
+    /// A new production was started.
     Started(ProductionAttempt<I, O, E>),
+    /// One was already running, so this joined it.
     Joined {
+        /// The production that was joined.
         production: Production<O, E>,
+        /// The input this didn't need, handed back.
         unused_input: I,
     },
 }
 
+/// Why a production wasn't started.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StartRejectionReason {
+    /// Nothing wants it any more.
     NoDemand,
+    /// Too many are running.
     AtCapacity,
+    /// The map has been closed.
     Closed,
 }
 
@@ -196,9 +218,11 @@ pub struct StartRejected<I> {
 }
 
 impl<I> StartRejected<I> {
+    /// Why it wasn't started.
     pub fn reason(&self) -> StartRejectionReason {
         self.reason
     }
+    /// The inputs, handed back.
     pub fn into_inputs(self) -> I {
         self.inputs
     }

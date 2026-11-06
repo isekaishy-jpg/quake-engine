@@ -42,6 +42,10 @@ pub struct CpuTopology {
 impl CpuTopology {
     /// Queries Windows without inventing counts after failure. The snapshot may
     /// become stale after processor hot-add; it does not select worker counts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the system won't say, or what it says can't be read.
     pub fn query() -> Result<Self, TopologyError> {
         crate::backend::windows::topology::query()
     }

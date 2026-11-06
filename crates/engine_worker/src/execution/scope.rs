@@ -14,6 +14,7 @@ use crate::runtime::config::ExecutionClass;
 pub struct Panic(Box<dyn Any + Send>);
 
 impl Panic {
+    /// What the panic carried.
     pub fn into_payload(self) -> Box<dyn Any + Send> {
         self.0
     }
@@ -31,8 +32,11 @@ pub type BranchOutcome<T> = Result<T, Panic>;
 
 /// A rejected join returns both closures uninvoked to their owner.
 pub struct JoinRejected<L, R> {
+    /// Why the two weren't run.
     pub reason: ExecutionError,
+    /// The left side, handed back.
     pub left: L,
+    /// The right side, handed back.
     pub right: R,
 }
 
@@ -47,7 +51,9 @@ impl<L, R> fmt::Debug for JoinRejected<L, R> {
 /// A rejected batch returns its operation uninvoked. Its borrowed slice stays
 /// with the caller throughout admission.
 pub struct BatchRejected<F> {
+    /// Why the batch wasn't run.
     pub reason: ExecutionError,
+    /// The work, handed back.
     pub operation: F,
 }
 
@@ -76,6 +82,7 @@ impl Lane {
         Self { control, class }
     }
 
+    /// The class this lane runs in.
     pub fn class(&self) -> ExecutionClass {
         self.class
     }
@@ -84,6 +91,10 @@ impl Lane {
     /// their captures are destroyed before return, even if either panics.
     /// Same-lane nesting is supported; blocking calls to a different lane or
     /// runtime reject before running either closure.
+    ///
+    /// # Errors
+    ///
+    /// Hands both branches back, with why, if they can't be run.
     pub fn join<L, R, LO, RO>(
         &self,
         left: L,
@@ -129,6 +140,10 @@ impl Lane {
     /// The branches must also be valid when run serially: `owner` must not
     /// wait for the unfinished worker branch through a channel, lock, or other
     /// side channel. Advertisement does not guarantee concurrent execution.
+    ///
+    /// # Errors
+    ///
+    /// Hands both branches back, with why, if they can't be run.
     pub fn join_with_owner<W, O, WO, OO>(
         &self,
         worker: W,
@@ -168,6 +183,10 @@ impl Lane {
     /// stable starting index. All chunks settle before return. The first caught
     /// panic is returned after the remaining chunks finish; its identity is
     /// nondeterministic if multiple chunks panic.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be run.
     pub fn for_each_chunk<T, F>(
         &self,
         input: &mut [T],
@@ -194,10 +213,10 @@ impl Lane {
             size,
         };
         let result = run_chunks(lease.pool(), runtime, class, group, count, |index| {
+            let (ptr, len) = shared.raw_chunk(index);
             // SAFETY: invoke_indexed calls each index in 0..count once and
             // joins every call. Distinct indices address disjoint chunks; the
             // input is exclusively borrowed until run_chunks returns.
-            let (ptr, len) = shared.raw_chunk(index);
             let chunk = unsafe { std::slice::from_raw_parts_mut(ptr, len) };
             operation(index * size, chunk);
         });
@@ -207,6 +226,10 @@ impl Lane {
 
     /// Applies `operation` to immutable indexed chunks. Concurrent operations
     /// share the input, and all invocations settle before return.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be run.
     pub fn for_each_read_chunk<T, F>(
         &self,
         input: &[T],

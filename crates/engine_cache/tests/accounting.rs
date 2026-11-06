@@ -1,3 +1,5 @@
+//! What a cache counts against its budget.
+
 use engine_cache::{AccountingDomain, AccountingError, AllocationClass, PolicyCounter};
 use std::sync::{Arc, Barrier};
 use std::thread;

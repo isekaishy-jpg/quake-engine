@@ -363,7 +363,7 @@ fn unexpected_destroyed_suppressed_target_is_invalidated_before_stop_visibility_
     core.state = HostState::Running;
     let native = &core.windows.get(target.id).unwrap().native;
     let key = native.key();
-    if let crate::backend::NativeWindow::Test(window) = native {
+    if let backend::NativeWindow::Test(window) = native {
         window.native_alive.set(false);
     }
     let before = backend.trace.borrow().len();

@@ -124,12 +124,20 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Explicit optional application-time multiplier. Zero pauses the application
     /// clock; changing it preserves continuity and never rescales raw deadlines.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the multiplier isn't finite and at least zero.
     pub fn rescale_application_time(&mut self, multiplier: f64) -> Result<(), Error> {
         self.ordinary()?;
         self.core.clock.rescale(multiplier)
     }
 
     /// Registers an owner callback opportunity with its own finite source recheck.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service is invalid, there's no room, or the host is closing.
     pub fn register_service(
         &mut self,
         spec: crate::ServiceSpec,
@@ -145,12 +153,20 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Removes future visits immediately, retaining an active callback record.
     /// Removal does not certify an external route/provider/domain has retired.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service isn't current.
     pub fn remove_service(&mut self, id: crate::ServiceId) -> Result<crate::ServiceState, Error> {
         self.core.check_owner()?;
         self.core.services.remove(self.core.id, id)
     }
 
     /// Queries generation and active callback retention.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service isn't current.
     pub fn service_state(&self, id: crate::ServiceId) -> Result<crate::ServiceState, Error> {
         self.core.check_owner()?;
         let service = self.core.services.get(self.core.id, id)?;
@@ -162,6 +178,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Creates an owned signal destination for this exact source generation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the service isn't current.
     pub fn wake(&self, id: crate::ServiceId) -> Result<crate::Wake, Error> {
         self.core.check_owner()?;
         let service = self.core.services.get(self.core.id, id)?;
@@ -176,6 +196,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// An explicit point may drain already received input while ordinary admission
     /// is open. Owner waits requiring fresh OS/provider progress must yield a
     /// continuation to the native loop. Previous context/input phase is restored.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if services can't be run from here.
     pub fn service_pending(
         &mut self,
         app: &mut A,
@@ -261,6 +285,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Selects a frame target and explicit limiter owner/profile. Disabled is the
     /// default; renderer-managed mode adds no physical interval limiter.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the target or the limiter isn't valid.
     pub fn set_pacing(
         &mut self,
         target: Option<WindowTarget>,
@@ -280,6 +308,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Supplies graphics activation independently of normalized OS focus.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host is closing.
     pub fn set_renderer_active(&mut self, active: bool) -> Result<(), Error> {
         self.ordinary()?;
         self.core
@@ -289,6 +321,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Requests the selected target's next frame without bypassing a finite cap.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no frame can be asked for now.
     pub fn request_frame(&mut self) -> Result<(), Error> {
         self.ordinary()?;
         self.core.pacing.request(self.core.clock.sample())
@@ -318,6 +354,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Creates an owner-local recipient generation, mirrored in post admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there's no room, or the host is closing.
     pub fn create_recipient(&mut self) -> Result<RecipientId, Error> {
         self.ordinary()?;
         let key = self.core.dispatch.recipients.reserve()?;
@@ -337,6 +377,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Inspects active callback retention; a fully reclaimed generation is stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the recipient isn't current.
     pub fn recipient_state(&self, recipient: RecipientId) -> Result<RecipientState, Error> {
         let record = self.core.dispatch.recipient(self.core.id, recipient)?;
         Ok(RecipientState {
@@ -347,6 +391,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Immediately removes future calls/admission while active callbacks finish.
     /// The result does not authorize destroying state an active callback uses.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the recipient isn't current.
     pub fn retire_recipient(&mut self, recipient: RecipientId) -> Result<RecipientState, Error> {
         self.core.check_owner()?;
         let state = self
@@ -359,6 +407,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Registers a function pointer in descending priority/newest equal order.
     /// Insertions before an active traversal's cursor wait for its next traversal.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there's no room, or the priority isn't valid.
     pub fn subscribe(
         &mut self,
         recipient: RecipientId,
@@ -373,6 +425,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Excludes future calls immediately; self-removal retains the active record.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the subscription isn't current.
     pub fn unsubscribe(&mut self, subscription: SubscriptionId) -> Result<(), Error> {
         self.core.check_owner()?;
         self.core.dispatch.unsubscribe(self.core.id, subscription)
@@ -380,6 +436,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Dispatches a borrowed owner-local event. Each nested call starts at the
     /// head with its own insertion frontier; no registry borrow crosses a handler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if dispatch can't start from here, or nests too deep.
     pub fn dispatch_local(
         &mut self,
         app: &mut A,
@@ -469,6 +529,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Checks window generation before inspecting a named state layer.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn input_state(
         &self,
         target: WindowTarget,
@@ -481,6 +545,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// Delivers at most this many queued records in receipt order, temporarily
     /// allowing delivery even inside a deferred scope. Native input not yet
     /// dispatched by winit is unavailable to this explicit drain.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if input can't be drained from here.
     pub fn drain_input(&mut self, app: &mut A, budget: usize) -> Result<InputDrainReport, Error> {
         self.ordinary()?;
         if self.core.dispatch.depth >= self.core.nesting_limit {
@@ -589,6 +657,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Schedules an owned local event on this host's checked raw clock.
     /// Rejection returns the payload; no `Send` or `'static` bound is added.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the recipient isn't current, or there's no room.
     pub fn schedule_timer(
         &mut self,
         recipient: RecipientId,
@@ -609,6 +681,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Removes an unclaimed timer and returns its owned payload. A claimed
     /// callback is retained; a stale token cannot cancel a reused slot.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the timer isn't current.
     pub fn cancel_timer(&mut self, timer: TimerId) -> Result<TimerCancel<A::LocalEvent>, Error> {
         self.core.check_owner()?;
         self.core.timers.cancel(timer)
@@ -617,6 +693,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// Samples raw time once, claims before callbacks, and rechecks the heap
     /// after each callback. Newly added due timers can run in this same pump.
     /// A nested explicit pump samples again and has its own checked budget/depth.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if timers can't be serviced from here.
     pub fn service_timers(&mut self, app: &mut A, budget: usize) -> Result<TimerPumpReport, Error> {
         self.ordinary()?;
         if self.core.dispatch.depth >= self.core.nesting_limit {
@@ -678,6 +758,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// Routes a detached intake frontier of at most `budget` posts. New arrivals
     /// wait for a later explicit drain; acceptance capacity includes active posts.
     /// Every accepted post receives a terminal receipt, including obsolete targets.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if posts can't be drained from here.
     pub fn drain_posts(&mut self, app: &mut A, budget: usize) -> Result<usize, Error> {
         self.ordinary()?;
         let mut batch = self
@@ -731,7 +815,7 @@ impl<'cx, A: Application> Context<'cx, A> {
         // A nested service can finish closure before this drain returns.
         self.core
             .post_batches
-            .complete(batch, self.core.state != crate::HostState::Closed);
+            .complete(batch, self.core.state != HostState::Closed);
         if let Some(error) = failure {
             Err(error)
         } else {
@@ -741,6 +825,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Starts/replaces this window's exact text target and supplies the native caret.
     /// Native candidate UI uses the backend's Windows IMM fallback.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current, or the caret is out of range.
     pub fn begin_text(
         &mut self,
         target: WindowTarget,
@@ -754,6 +842,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Updates an exact live session's physical caret rectangle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session isn't current, or the caret is out of range.
     pub fn update_text(
         &mut self,
         session: crate::TextSessionId,
@@ -771,6 +863,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Ends the exact session; already queued commits/preedit become stale.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session isn't current.
     pub fn end_text(&mut self, session: crate::TextSessionId) -> Result<(), Error> {
         self.core.check_owner()?;
         self.window_state(session.target())?;
@@ -784,12 +880,20 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Queries the caret of an exact live text session.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the session isn't current.
     pub fn text_caret(&self, session: crate::TextSessionId) -> Result<crate::TextCaret, Error> {
         self.window_state(session.target())?;
         self.core.text.caret(session)
     }
 
     /// Creates a native resource from already prepared pixels, preserving input on rejection.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pixels aren't valid, or the native cursor can't be made.
     pub fn create_cursor(
         &mut self,
         input: crate::PreparedCursor,
@@ -802,6 +906,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Retains a window-local selection; the existing native cursor owner applies it
     /// only when this window controls the client/capture cursor.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window or the cursor isn't current.
     pub fn select_cursor(
         &mut self,
         target: WindowTarget,
@@ -826,6 +934,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Requests visibility independently of input suppression. Native visibility
     /// requests do not certify actual visible cursor pixels or a hardware plane.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn request_cursor_visibility(
         &mut self,
         target: WindowTarget,
@@ -842,6 +954,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Inspects retained selection and independent visibility/suppression policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn cursor_state(&self, target: WindowTarget) -> Result<&crate::CursorState, Error> {
         self.window_state(target)?;
         Ok(&self.core.windows.get(target.id)?.cursor)
@@ -851,6 +967,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// Partial failure retains the request and each last successful native result.
     /// Selecting relative delivery transfers the single raw recipient from any
     /// previous window; routing still requires receipt-time platform focus.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current, or the mode can't be applied.
     pub fn request_input_mode(
         &mut self,
         target: WindowTarget,
@@ -905,6 +1025,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     }
 
     /// Queries this window's requests and last successful mode operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn input_mode(&self, target: WindowTarget) -> Result<&crate::InputModeState, Error> {
         self.window_state(target)?;
         Ok(&self.core.windows.get(target.id)?.input_mode)
@@ -920,6 +1044,10 @@ impl<'cx, A: Application> Context<'cx, A> {
     /// Validation and `engine_host` storage reservation precede native construction.
     /// Success means a native window is retained, not renderer readiness. Every
     /// rejection returns the complete supplied spec. Stopping closes admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if windows can't be made now, or the native call fails.
     pub fn create_window(
         &mut self,
         spec: WindowSpec,
@@ -991,6 +1119,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Checks both host identity and expected native generation before query.
     /// Pending application retirement retains this generation's window.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the host or the generation doesn't match.
     pub fn window_state(&self, target: WindowTarget) -> Result<WindowState, Error> {
         self.core.check_owner()?;
         if self
@@ -1023,6 +1155,10 @@ impl<'cx, A: Application> Context<'cx, A> {
 
     /// Retains the actual current native generation through external final use.
     /// Native extraction is available only on this host's owner thread.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the window isn't current.
     pub fn acquire_window(&mut self, target: WindowTarget) -> Result<crate::WindowAccess, Error> {
         self.ordinary()?;
         self.require_live_window(target)?;

@@ -218,13 +218,13 @@ fn singleton_structural_rejections_precede_full_capacity_and_preserve_capture() 
         let drops = Arc::new(AtomicUsize::new(0));
         let capture = CountDrop(Arc::clone(&drops));
         let identity = Box::new(113usize);
-        let address = &*identity as *const usize as usize;
+        let address = std::ptr::from_ref(&*identity) as usize;
         let rejected = lane
             .try_spawn_batch(
                 options,
                 vec![move || {
                     let _capture = capture;
-                    (&*identity as *const usize as usize, *identity)
+                    (std::ptr::from_ref(&*identity) as usize, *identity)
                 }],
             )
             .err()
@@ -427,7 +427,7 @@ fn singleton_notification_context_precedes_structural_errors_and_retains_capture
             let prerequisites = [group.completion(), group.completion()];
             let capture = CountDrop(Arc::clone(&observed));
             let identity = Box::new(127usize);
-            let address = &*identity as *const usize as usize;
+            let address = std::ptr::from_ref(&*identity) as usize;
             let rejected = lane
                 .try_spawn_batch(
                     BatchSpawnOptions {
@@ -437,7 +437,7 @@ fn singleton_notification_context_precedes_structural_errors_and_retains_capture
                     },
                     vec![move || {
                         let _capture = capture;
-                        (&*identity as *const usize as usize, *identity)
+                        (std::ptr::from_ref(&*identity) as usize, *identity)
                     }],
                 )
                 .err()

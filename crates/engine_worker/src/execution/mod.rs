@@ -5,6 +5,10 @@ pub(crate) mod context;
 mod delivery;
 pub(crate) mod group;
 mod owned;
+#[expect(
+    unsafe_code,
+    reason = "scoped work borrows past what the compiler can see"
+)]
 mod scope;
 mod work_set;
 pub use work_set::WorkOptions;

@@ -1,3 +1,7 @@
+//! Timing bursts of small jobs.
+#![expect(clippy::unwrap_used, reason = "a failed bench is the intended report")]
+#![expect(clippy::print_stdout, reason = "a bench reports to its console")]
+
 #[path = "../tests/common/bursts.rs"]
 mod bursts;
 #[path = "../tests/common/mod.rs"]

@@ -1,3 +1,6 @@
+//! How wanting a result raises its work.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::sync::mpsc;
 use std::time::Duration;
 

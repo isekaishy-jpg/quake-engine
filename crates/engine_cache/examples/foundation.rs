@@ -1,3 +1,6 @@
+//! The pieces a cache is built from, on their own.
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
+
 use engine_cache::{AccountingDomain, AllocationClass, CleanupContext, PolicyCounter};
 
 fn main() {

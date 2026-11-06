@@ -1,3 +1,6 @@
+//! Publishing a value for readers.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use engine_cache::{
     AccountingDomain, AllocationClass, Backing, Dependencies, DependencyError, DependencyScope,
     InstallErrorReason, Lookup, Publication, PublicationRejectionReason, StoredPayload,

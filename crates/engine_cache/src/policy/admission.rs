@@ -9,7 +9,9 @@ use super::CountLimit;
 /// A coherent count observation, independent of bytes and executor concurrency.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct AdmissionSnapshot {
+    /// How many are in now.
     pub active: usize,
+    /// How many may be.
     pub limit: usize,
     /// Permanent root closure; active reservations remain independently owned.
     pub closed: bool,
@@ -27,6 +29,7 @@ pub struct Admission {
 }
 
 impl Admission {
+    /// Admission up to `limit` at a time.
     pub fn new(limit: CountLimit) -> Self {
         Self {
             state: Arc::new(Mutex::new(AdmissionSnapshot {
@@ -38,6 +41,10 @@ impl Admission {
     }
 
     /// Reserves one count or leaves the closed/full domain unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it's full or closed.
     pub fn try_acquire(&self) -> Result<AdmissionPermit, AdmissionError> {
         let mut state = lock(&self.state);
         if state.closed {
@@ -68,6 +75,7 @@ impl Admission {
         lock(&self.state).closed = true;
     }
 
+    /// How it stands now.
     pub fn snapshot(&self) -> AdmissionSnapshot {
         *lock(&self.state)
     }
@@ -86,7 +94,9 @@ impl fmt::Debug for Admission {
 /// Admission could not reserve another count in the closed or full domain.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum AdmissionError {
+    /// It's full.
     AtCapacity,
+    /// It no longer lets anything in.
     Closed,
 }
 

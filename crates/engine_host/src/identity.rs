@@ -83,7 +83,9 @@ impl<T> Arena<T> {
             }
             return Ok(SlotKey {
                 index,
-                generation: self.entries[index as usize].incarnation.unwrap(),
+                generation: self.entries[index as usize]
+                    .incarnation
+                    .expect("a live entry"),
             });
         }
         let index =
@@ -144,6 +146,10 @@ impl<T> Arena<T> {
         Some(value)
     }
     #[cfg(test)]
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "indices are checked against the limit of a u32"
+    )]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (SlotKey, &T)> {
         self.entries.iter().enumerate().filter_map(|(index, slot)| {
             Some((
@@ -260,6 +266,10 @@ impl<T> WindowSlots<T> {
     // Reserve before native construction: acquired resources always have room
     // for their retirement record. A failed initialization stays reserved until
     // its native destruction is acknowledged.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "slots are checked against the limit of a u32"
+    )]
     pub(crate) fn reserve(&mut self) -> Result<WindowId, Error> {
         for (slot, entry) in self.slots.iter_mut().enumerate() {
             if matches!(entry.state, WindowSlotState::Vacant)
@@ -341,7 +351,9 @@ impl<T> WindowSlots<T> {
 
     pub(crate) fn get_mut(&mut self, id: WindowId) -> Result<&mut T, Error> {
         self.get(id)?;
-        Ok(self.slots[id.slot as usize].value_mut().unwrap())
+        Ok(self.slots[id.slot as usize]
+            .value_mut()
+            .expect("a slot just found full"))
     }
 
     pub(crate) fn remove(&mut self, id: WindowId) -> Result<T, Error> {
@@ -353,6 +365,10 @@ impl<T> WindowSlots<T> {
         Ok(value)
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "slots are checked against the limit of a u32"
+    )]
     pub(crate) fn iter(&self) -> impl Iterator<Item = (WindowId, &T)> {
         self.slots.iter().enumerate().filter_map(|(slot, entry)| {
             Some((
@@ -366,6 +382,10 @@ impl<T> WindowSlots<T> {
         })
     }
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "slots are checked against the limit of a u32"
+    )]
     pub(crate) fn iter_mut(&mut self) -> impl Iterator<Item = (WindowId, &mut T)> {
         self.slots
             .iter_mut()

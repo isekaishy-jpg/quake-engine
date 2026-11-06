@@ -1,3 +1,6 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+#![expect(trivial_casts, reason = "a function has to be named as a pointer here")]
+
 use crate::backend::BackendOps;
 use crate::host::Core;
 use crate::*;
@@ -72,7 +75,7 @@ fn recipient_compaction_matches_repeated_unsubscribe_for_every_nested_gap_and_re
                         host,
                         recipients[usize::from(mask & (1 << index) == 0)],
                         EventFilter::Local,
-                        Priority::new((6 - index) as f64).unwrap(),
+                        Priority::new(f64::from(6 - index)).unwrap(),
                         first,
                     )
                     .unwrap()
@@ -219,7 +222,7 @@ fn retirement_visits_occupied_order_once_and_each_removed_entry_checks_active_ma
             cx.core.dispatch.begin().unwrap();
         }
         let before = cx.core.dispatch.test_retirement_steps();
-        let (_, allocation) = crate::allocation_probe::measure(|| {
+        let (_, allocation) = allocation_probe::measure(|| {
             cx.retire_recipient(retired).unwrap();
         });
         let after = cx.core.dispatch.test_retirement_steps();

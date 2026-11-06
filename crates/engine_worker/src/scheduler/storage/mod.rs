@@ -7,7 +7,7 @@ use crate::runtime::config::ExecutionClass;
 use crate::task::{Signal, SignalLease};
 
 #[cfg(test)]
-#[path = "../../tests/unit/storage.rs"]
+#[path = "../../../tests/unit/storage.rs"]
 mod tests;
 
 mod jobs;
@@ -118,7 +118,7 @@ impl SignalCheckouts {
     }
 
     pub(super) fn bytes(&self) -> usize {
-        self.entries.capacity() * std::mem::size_of::<Arc<Signal>>()
+        self.entries.capacity() * size_of::<Arc<Signal>>()
     }
 }
 

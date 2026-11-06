@@ -1,3 +1,4 @@
+//! What the runtime records about itself.
 #![cfg(feature = "diagnostics")]
 
 use engine_worker::diagnostics::Trace;

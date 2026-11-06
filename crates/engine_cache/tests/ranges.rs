@@ -1,3 +1,10 @@
+//! Keeping parts of a larger resource.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 use engine_cache::{

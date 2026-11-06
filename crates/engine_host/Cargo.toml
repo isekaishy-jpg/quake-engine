@@ -22,3 +22,6 @@ engine_worker = { path = "../engine_worker" }
 [[test]]
 name = "capture_transfer"
 harness = false
+
+[lints]
+workspace = true

@@ -1,3 +1,7 @@
+//! Publishing a new version of a value beside the old.
+#![expect(clippy::unwrap_used, reason = "an example keeps to what it shows")]
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
+
 use engine_cache::{
     AccountingDomain, AllocationClass, Backing, Dependencies, DependencyError, DependencyScope,
     Lookup, Production, ProductionClaim, ProviderDecision, Publication,

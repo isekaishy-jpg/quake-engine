@@ -2,8 +2,19 @@
 //! child's app callback, so a native reentry deadlock cannot hide its deadline.
 //! Synthetic own-window messages do not measure physical input frequency.
 #![cfg(windows)]
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+#![expect(
+    unsafe_code,
+    reason = "it drives real Win32 windows, to test what the host does with them"
+)]
 
-use engine_host::*;
+use engine_host::{
+    Application, ButtonState, Context, Error, Event, EventFilter, Host, HostConfig, HostState,
+    InputEvent, InputOrigin, InputStateLayer, MouseButton, NativeOperation, Priority, Propagation,
+    ServiceBudget, ServicePoints, ServiceReport, ServiceRequest, ServiceSpec, StopProgress,
+    WindowAccess, WindowSpec, WindowTarget,
+};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -30,6 +41,7 @@ const MOVE: u32 = 0x0200;
 const POINT: isize = 1 | (1 << 16);
 
 fn count() -> i32 {
+    // SAFETY: ShowCursor takes a plain number, and the rise is balanced at once.
     unsafe {
         let raised = ShowCursor(1);
         assert_eq!(ShowCursor(0), raised - 1);
@@ -42,6 +54,7 @@ fn post(window: isize, message: u32, wparam: usize) {
 }
 
 fn post_at(window: isize, message: u32, wparam: usize, point: isize) {
+    // SAFETY: A window this test made, with plain numbers for its message.
     assert_ne!(unsafe { PostMessageW(window, message, wparam, point) }, 0);
 }
 
@@ -77,6 +90,7 @@ impl Application for App {
             let lease = cx.acquire_window(target)?;
             let handle = lease.native_ref()?.hwnd()?.get();
             let mut pid = 0;
+            // SAFETY: Any handle is accepted, and `pid` is a live local to write to.
             assert_ne!(unsafe { GetWindowThreadProcessId(handle, &mut pid) }, 0);
             assert_eq!(pid, std::process::id());
             self.targets.push(target);
@@ -99,6 +113,7 @@ impl Application for App {
     fn service(&mut self, cx: &mut Context<'_, Self>, _: ServiceRequest) -> ServiceReport {
         if self.phase == 5 {
             self.services_after_transfer += 1;
+            // SAFETY: GetCapture takes nothing, and only reads this thread.
             assert_eq!(unsafe { GetCapture() }, 0);
             assert_eq!(count(), self.baseline);
             if matches!(
@@ -167,6 +182,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
     if app.phase == 4 && matches!(record.event, InputEvent::PointerMoved(_)) {
         if app.action.starts_with("reacquire") {
             assert_eq!(
+                // SAFETY: GetCapture takes nothing, and only reads this thread.
                 unsafe { GetCapture() },
                 b,
                 "first up must preserve the other held button's capture"
@@ -194,6 +210,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         }
         let expected_capture = if app.action == "transfer" { a } else { 0 };
         assert_eq!(
+            // SAFETY: GetCapture takes nothing, and only reads this thread.
             unsafe { GetCapture() },
             expected_capture,
             "B release preserves callback-selected capture"
@@ -207,6 +224,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
             app.phase = 5;
         }
     } else if app.phase == 6 && matches!(record.event, InputEvent::PointerMoved(_)) {
+        // SAFETY: GetCapture takes nothing, and only reads this thread.
         assert_eq!(unsafe { GetCapture() }, 0);
         assert_eq!(count(), app.baseline);
         app.phase = 5;
@@ -218,6 +236,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
             app.lost, 1,
             "same-owner acquisition must not emit capture loss"
         );
+        // SAFETY: GetCapture takes nothing, and only reads this thread.
         assert_eq!(unsafe { GetCapture() }, b);
         // This operation needs B's window-state mutex, reproducing the old deadlock.
         println!("CaptureLost A callback requests B hidden; native capture is B");
@@ -226,24 +245,32 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         assert_eq!(count(), app.baseline - 1);
         match app.action.as_str() {
             "release" => {
+                // SAFETY: ReleaseCapture takes nothing, and only touches this thread.
                 assert_ne!(unsafe { ReleaseCapture() }, 0);
             }
             "reacquire" | "reacquire_outer_first" => {
+                // SAFETY: ReleaseCapture takes nothing, and only touches this thread.
                 assert_ne!(unsafe { ReleaseCapture() }, 0);
+                // SAFETY: A window this test made, with plain numbers for its message.
                 unsafe { SendMessageW(b, RIGHT_DOWN, 2, POINT) };
+                // SAFETY: GetCapture takes nothing, and only reads this thread.
                 assert_eq!(unsafe { GetCapture() }, b);
             }
             "transfer" => {
                 // A different native owner wins during B's acquisition callback.
                 // Its event is buffered by the existing runner and delivered later.
+                // SAFETY: A window this test made, with plain numbers for its message.
                 unsafe { SendMessageW(a, LEFT_DOWN, 1, POINT) };
+                // SAFETY: GetCapture takes nothing, and only reads this thread.
                 assert_eq!(unsafe { GetCapture() }, a);
             }
             "retire" => {
                 // Exercise WindowData's recursive retirement while SetCapture is
                 // suspended. This external destruction violates the `engine_host` lease
                 // contract; the expected host fault must still finish cleanup.
+                // SAFETY: A window this test made, on the thread that made it.
                 assert_ne!(unsafe { DestroyWindow(b) }, 0);
+                // SAFETY: IsWindow takes any handle, whether it lives or not.
                 assert_eq!(unsafe { IsWindow(b) }, 0);
             }
             "stop" => {
@@ -263,11 +290,13 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         if record.target == app.targets[0] {
             match app.phase {
                 0 => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, a);
                     app.phase = 1;
                     post(a, RIGHT_DOWN, 2);
                 }
                 1 => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, a);
                     assert_eq!(app.lost, 0);
                     app.phase = 2;
@@ -310,6 +339,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
             app.phase = 4;
             match app.action.as_str() {
                 "reacquire" | "reacquire_outer_first" => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, b);
                     let (first_up, held) = if app.action == "reacquire" {
                         (RIGHT_UP, 1)
@@ -320,18 +350,21 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
                     post(a, MOVE, 0);
                 }
                 "visibility" => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, b);
                     assert_eq!(count(), app.baseline - 1);
                     post(b, app.up, app.wparam & 0xffff_0000);
                     post(a, MOVE, 0);
                 }
                 "transfer" => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, a);
                     assert_eq!(count(), app.baseline);
                     post(b, LEFT_UP, 0);
                     post(a, MOVE, 0);
                 }
                 "release" => {
+                    // SAFETY: GetCapture takes nothing, and only reads this thread.
                     assert_eq!(unsafe { GetCapture() }, 0);
                     assert_eq!(count(), app.baseline);
                     post(b, LEFT_UP, 0);
@@ -368,6 +401,7 @@ fn route(app: &mut App, cx: &mut Context<'_, App>, event: &Event<'_, (), ()>) ->
         }
         if app.phase == 2 && record.target == app.targets[0] && button == MouseButton::Right {
             assert_eq!(
+                // SAFETY: GetCapture takes nothing, and only reads this thread.
                 unsafe { GetCapture() },
                 a,
                 "multiple-button count preserved"
@@ -432,6 +466,7 @@ fn capture_transfer_child() {
     assert!(
         app.handles
             .iter()
+            // SAFETY: IsWindow takes any handle, whether it lives or not.
             .all(|&handle| unsafe { IsWindow(handle) } == 0)
     );
     assert_eq!(

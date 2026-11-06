@@ -28,25 +28,42 @@ type WorkerSetup = dyn Fn(ExecutionClass, usize) -> io::Result<()> + Send + Sync
 /// already created before returning the error.
 #[derive(Debug)]
 pub enum BuildError {
+    /// The limits on capacity don't add up.
     Capacity(crate::scheduler::reservation::LimitError),
+    /// Owned work is turned off, and was asked for.
     OwnedWorkDisabled,
+    /// A worker thread couldn't start.
     Spawn {
+        /// The class it was for.
         class: ExecutionClass,
+        /// Which worker it was.
         worker: usize,
+        /// What went wrong.
         source: io::Error,
     },
+    /// A worker couldn't be set up.
     Setup {
+        /// The class it was for.
         class: ExecutionClass,
+        /// Which worker it was.
         worker: usize,
+        /// What went wrong.
         source: WorkerSetupError,
     },
+    /// A worker's start hook failed.
     Hook {
+        /// The class it was for.
         class: ExecutionClass,
+        /// Which worker it was.
         worker: usize,
+        /// What went wrong.
         source: io::Error,
     },
+    /// Setting a worker up panicked.
     SetupPanicked {
+        /// The class it was for.
         class: ExecutionClass,
+        /// Which worker it was.
         worker: usize,
     },
 }
@@ -108,6 +125,7 @@ pub struct RuntimeBuilder {
 }
 
 impl RuntimeBuilder {
+    /// A builder for `config`.
     pub fn new(config: RuntimeConfig) -> Self {
         Self {
             config,
@@ -180,6 +198,10 @@ impl RuntimeBuilder {
     /// Starts all classes atomically with respect to executor entry. Returns
     /// only after every worker has completed setup. Failure releases the startup
     /// gate and joins every created worker; no partial runtime is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the limits don't add up, or a worker can't be started or set up.
     pub fn build(self) -> Result<Runtime, BuildError> {
         self.build_with(Arc::new(Startup::new()), |_, _, builder, worker| {
             builder.spawn(worker)
@@ -329,9 +351,13 @@ impl RuntimeBuilder {
 /// Observable state of the worker foundation. Terminal states cannot reopen.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum RuntimeState {
+    /// It's taking work.
     Running,
+    /// It's finishing what it has.
     Closing,
+    /// It has stopped.
     Stopped,
+    /// It was given up on with work left.
     Abandoned,
 }
 
@@ -350,6 +376,7 @@ pub struct Runtime {
 /// Terminal shutdown cannot block from within a participating invocation.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ShutdownError {
+    /// It can't be stopped from inside its own work.
     ExecutionContext,
     /// Close and clean registered owners on their own threads before joining.
     LiveOwners,
@@ -383,6 +410,10 @@ impl Runtime {
     /// Binds a reusable host signal destination. The adapter runs synchronously
     /// on publishers, outside bookkeeping locks; it must only signal the host.
     /// Rejection returns the uninvoked closure and its captures.
+    ///
+    /// # Errors
+    ///
+    /// Hands the signal back, with why, if there's no room for a route.
     pub fn notification_route<F>(
         &self,
         signal: F,
@@ -402,6 +433,10 @@ impl Runtime {
     /// Admits a provider-owned logical result without occupying a CPU worker.
     /// Provider submission occurs only after successful admission. Dropping the
     /// producer abandons its logical result, never a separate physical access.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error, with the options, if it isn't taken.
     pub fn external<'a, T: Send + 'static>(
         &self,
         options: crate::external::ExternalOptions<'a>,
@@ -415,6 +450,14 @@ impl Runtime {
     /// Reserves storage before foreign access starts. The prepared value is safe
     /// to reclaim; activation separately commits access against closure and set
     /// cancellation. No I/O, GPU submission or foreign code runs in admission.
+    ///
+    /// # Errors
+    ///
+    /// Hands the resource back, with why, if it isn't taken.
+    ///
+    /// # Panics
+    ///
+    /// Panics if charged bytes have no capacity, which is a bug in this crate.
     pub fn prepare_external<'a, T: Send + 'static>(
         &self,
         resource: T,
@@ -505,6 +548,10 @@ impl Runtime {
     }
 
     /// Reserves a required pipeline without borrowing the ordinary allowance.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the capacity can't be set aside.
     pub fn reserve_required(
         &self,
         cost: crate::scheduler::Cost,
@@ -519,6 +566,11 @@ impl Runtime {
             .try_reserve_required(cost)
     }
 
+    /// Sets ordinary capacity aside.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the capacity can't be set aside.
     pub fn reserve_ordinary(
         &self,
         cost: crate::scheduler::Cost,
@@ -533,6 +585,7 @@ impl Runtime {
             .try_reserve_ordinary(cost)
     }
 
+    /// How capacity stands, if it's counted.
     pub fn capacity_usage(&self) -> Option<crate::scheduler::CapacityUsage> {
         self.owned
             .as_ref()?
@@ -550,6 +603,10 @@ impl Runtime {
     }
     /// Creates a lifetime boundary with a bounded number of discovery permits.
     /// Retained results may outlive this set after its producers and consumers settle.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if there's no room for another work set.
     pub fn work_set(
         &self,
         capacity: std::num::NonZeroUsize,
@@ -558,6 +615,10 @@ impl Runtime {
     }
     /// Registers thread-bound state and bounded deferred delivery on this host
     /// thread. Close/clean owners before joining the runtime. O need not be Send.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the owner can't be made from here, or there's no room.
     pub fn owner<O>(
         &self,
         state: O,
@@ -566,14 +627,17 @@ impl Runtime {
         crate::owner::Owner::new(Arc::clone(&self.control), state, capacity)
     }
 
+    /// A builder for `config`.
     pub fn builder(config: RuntimeConfig) -> RuntimeBuilder {
         RuntimeBuilder::new(config)
     }
 
+    /// What it was set up with.
     pub fn config(&self) -> &RuntimeConfig {
         &self.config
     }
 
+    /// How it stands.
     pub fn state(&self) -> RuntimeState {
         self.control.phase()
     }
@@ -618,6 +682,15 @@ impl Runtime {
     /// to a join and returns `Ok(false)`.
     /// Worker termination and thread-local cleanup can still block after the
     /// quiescence check, so a participating execution context cannot call this.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it's called from inside the runtime's own work.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a settled runtime still has an execution owner, which is a bug in this
+    /// crate.
     pub fn try_shutdown(&mut self) -> Result<bool, ShutdownError> {
         if context::current().is_some()
             || context::owner_callback_active()
@@ -671,6 +744,10 @@ impl Runtime {
     /// closed and a later call can finish the join. Participating callers and
     /// callbacks receive an error before closure. For a host-driven drain,
     /// call [`Self::begin_shutdown`] and poll [`Self::try_shutdown`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it's called from inside the runtime's own work.
     pub fn shutdown(&mut self) -> Result<(), ShutdownError> {
         if context::current().is_some()
             || context::owner_callback_active()

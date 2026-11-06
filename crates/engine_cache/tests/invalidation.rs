@@ -1,3 +1,5 @@
+//! Marking values out of date.
+
 use engine_cache::{Dependencies, DependencyError, DependencyScope};
 
 #[test]

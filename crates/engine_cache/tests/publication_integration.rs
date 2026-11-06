@@ -1,3 +1,6 @@
+//! Publishing a value through a real runtime.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::sync::{Arc, Barrier, Mutex};
 
 use engine_cache::{

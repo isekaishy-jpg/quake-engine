@@ -195,15 +195,9 @@ pub const CRATE_RULES: &[CrateRule] = &[
     },
 ];
 
-/// Packages that keep their own lint settings for now. `engine_host`,
-/// `engine_worker` and `engine_cache` were written to their own standard, and
-/// bringing them under the workspace lints is its own item (proposal 0009).
-pub const LINT_EXEMPT: &[&str] = &[
-    "engine_host",
-    "engine_worker",
-    "engine_cache",
-    "engine_cache_worker_example",
-];
+/// Packages whose tests still sit beside their code. They reach private seams,
+/// so moving them needs those seams settled first (proposal 0096).
+pub const INLINE_TESTS: &[&str] = &["engine_host", "engine_worker", "engine_cache"];
 
 /// An external dependency that is a swappable backend and therefore private
 /// to one owning crate.

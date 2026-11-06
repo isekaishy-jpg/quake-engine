@@ -164,6 +164,10 @@ fn parse(mut data: &[u8]) -> Result<CpuTopology, TopologyError> {
 mod tests {
     use super::*;
 
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "a structure is far smaller than 4 GB"
+    )]
     fn core(group: u16, mask: u64, efficiency: u8) -> Vec<u8> {
         let header = offset_of!(SYSTEM_LOGICAL_PROCESSOR_INFORMATION_EX, Anonymous);
         let size = header + size_of::<PROCESSOR_RELATIONSHIP>();

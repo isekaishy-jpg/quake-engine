@@ -8,13 +8,18 @@ use std::sync::{Arc, Mutex, OnceLock, Weak};
 /// Simultaneously live scheduler metadata, promised deliveries, and payload bytes.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct Cost {
+    /// How many records.
     pub records: usize,
+    /// How many edges.
     pub edges: usize,
+    /// How many deliveries.
     pub deliveries: usize,
+    /// How many bytes.
     pub bytes: usize,
 }
 
 impl Cost {
+    /// A cost of these parts.
     pub const fn new(records: usize, edges: usize, deliveries: usize, bytes: usize) -> Self {
         Self {
             records,
@@ -78,13 +83,22 @@ impl Cost {
 /// constrains aggregate required bytes.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct Limits {
+    /// What ordinary work tries to stay under.
     pub ordinary_target: Cost,
+    /// What's kept for required work.
     pub required_allowance: Cost,
+    /// How many required pipelines there can be.
     pub required_pipelines: usize,
+    /// The most bytes there can be, if there's a limit.
     pub hard_byte_ceiling: Option<usize>,
 }
 
 impl Limits {
+    /// Limits of these parts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if required work has no room, or the parts don't add up.
     pub fn new(
         ordinary_target: Cost,
         required_allowance: Cost,
@@ -125,10 +139,14 @@ impl Limits {
     }
 }
 
+/// Why limits don't add up.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum LimitError {
+    /// Required work was given no room.
     ZeroRequiredCapacity,
+    /// The metadata for it would overflow.
     MetadataOverflow,
+    /// The target is above the ceiling.
     OrdinaryTargetExceedsCeiling,
 }
 
@@ -148,11 +166,16 @@ impl std::fmt::Display for LimitError {
 
 impl std::error::Error for LimitError {}
 
+/// Why capacity couldn't be set aside.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ReservationError {
+    /// There's no room just now.
     Full,
+    /// It could never fit.
     TooLarge,
+    /// It has been closed.
     Closed,
+    /// This reservation hasn't enough left.
     InsufficientCredits,
 }
 
@@ -361,8 +384,11 @@ impl ReservationPool {
 /// Current charges, including credits parked in pipeline reservations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct CapacityUsage {
+    /// What ordinary work is using.
     pub ordinary: Cost,
+    /// What required work is using.
     pub required: Cost,
+    /// How many required pipelines there are.
     pub required_pipelines: usize,
 }
 
@@ -581,14 +607,17 @@ impl Drop for Reservation {
 }
 
 impl Reservation {
+    /// Whether it's for required work.
     pub fn is_required(&self) -> bool {
         self.pipeline.kind == Kind::Required
     }
 
+    /// Which runtime it belongs to.
     pub fn runtime_identity(&self) -> u64 {
         self.pipeline.ledger.runtime_identity
     }
 
+    /// What it has left.
     pub fn available(&self) -> Cost {
         self.credits
             .state
@@ -598,6 +627,10 @@ impl Reservation {
     }
 
     /// Transfers capacity to a child stage without touching global admission.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this reservation hasn't enough left.
     pub fn stage(&self, cost: Cost) -> Result<Self, ReservationError> {
         let mut credits = self.credits.state.lock().unwrap_or_else(|e| e.into_inner());
         if !credits.balance.subtract(cost) {
@@ -615,11 +648,20 @@ impl Reservation {
         })
     }
 
+    /// Takes `cost` out into a reservation of its own.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this reservation hasn't enough left.
     pub fn split(&mut self, cost: Cost) -> Result<Self, ReservationError> {
         self.stage(cost)
     }
 
     /// Transfers capacity from the pool atomically. Failure leaves this handle unchanged.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the pool has no room, and leaves this as it was.
     pub fn try_grow(&mut self, additional: Cost) -> Result<(), ReservationError> {
         // Ledger::claim publishes progress while this operation still owns the
         // pipeline total lock. Delay the host adapter until both locks retire.
@@ -662,6 +704,14 @@ impl Reservation {
     /// slot. If released while a pipeline handle lives, credits return to that
     /// reserve; otherwise the global byte charge ends on release or explicit
     /// transfer to an external budget.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if this reservation hasn't enough left.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the bytes are more than a reservation can account for.
     pub fn retain_bytes(&self, bytes: usize) -> Result<ByteLease, ReservationError> {
         let mut total = self
             .pipeline
@@ -697,6 +747,7 @@ pub struct ByteLease {
 }
 
 impl ByteLease {
+    /// How many bytes it holds.
     pub fn bytes(&self) -> usize {
         self.bytes
     }

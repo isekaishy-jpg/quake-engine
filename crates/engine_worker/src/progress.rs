@@ -13,18 +13,31 @@ use crate::scheduler::CapacityUsage;
 /// state; full flags identify saturated admission routes, not queued applicants.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct SchedulerProgress {
+    /// How many are waiting on what comes first.
     pub waiting: usize,
+    /// How many are ready to run.
     pub ready: usize,
+    /// How many are held back for now.
     pub deferred: usize,
+    /// How many are being passed to a worker.
     pub handed: usize,
+    /// How many are running.
     pub running: usize,
+    /// How many are finishing.
     pub finalizing: usize,
+    /// How many handoffs are in place, by class.
     pub handoff_wrappers: [usize; 3],
+    /// Whether a change of demand is waiting to be dealt with.
     pub demand_pending: bool,
+    /// How many provider callbacks are running.
     pub provider_callbacks: usize,
+    /// Whether there's no room for more records.
     pub records_full: bool,
+    /// Whether there's no room for more edges.
     pub edges_full: bool,
+    /// Whether there's no room for more ready work, by class.
     pub runnable_full: [bool; 3],
+    /// Whether there's no room for more handoffs, by class.
     pub handoff_full: [bool; 3],
 }
 
@@ -32,10 +45,15 @@ pub struct SchedulerProgress {
 /// producer; ready deliveries need a matching host phase; cleanup is owner-local.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct OwnerProgress {
+    /// How many routes there are.
     pub routes: usize,
+    /// How many deliveries are waiting on work.
     pub waiting: usize,
+    /// How many deliveries are ready.
     pub ready: usize,
+    /// How many deliveries have been taken.
     pub claimed: usize,
+    /// How many are being cleaned up.
     pub cleanup: usize,
 }
 
@@ -52,9 +70,13 @@ impl OwnerProgress {
 /// Work-set responsibilities that can outlive an empty CPU queue.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub struct WorkSetsProgress {
+    /// How many sets there are.
     pub sets: usize,
+    /// How many are open.
     pub open: usize,
+    /// How much work they're waiting on.
     pub active_work: usize,
+    /// How many discovery permits there are.
     pub discovery_permits: usize,
 }
 
@@ -64,15 +86,22 @@ pub struct WorkSetsProgress {
 /// updates and owner/provider work before sleeping; observation does not do so.
 #[derive(Clone, Debug)]
 pub struct Progress {
+    /// How the runtime stands.
     pub state: RuntimeState,
+    /// How the scheduler stands.
     pub scheduler: SchedulerProgress,
+    /// How capacity stands, if it's counted.
     pub capacity: Option<CapacityUsage>,
+    /// How owners stand.
     pub owner: OwnerProgress,
+    /// How work sets stand.
     pub work_sets: WorkSetsProgress,
+    /// How external work stands.
     pub external: ExternalProgress,
     /// Runtime leases include admitted CPU work, active scoped/owned invocations
     /// and in-progress owner-root admissions; these overlap scheduler counts.
     pub active_leases: usize,
+    /// How many times this has changed.
     pub wake_generation: u64,
     wake: Arc<Wake>,
 }
@@ -80,7 +109,10 @@ pub struct Progress {
 impl Progress {
     // Components are sampled independently by the runtime; keeping construction
     // here prevents callers from forging the private wake association.
-    #[allow(clippy::too_many_arguments)]
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "each is a separate part of one wait"
+    )]
     pub(crate) fn new(
         state: RuntimeState,
         scheduler: SchedulerProgress,
@@ -108,6 +140,10 @@ impl Progress {
     /// Blocks only for a state-change signal or the caller's deadline. It
     /// never runs CPU work, provider hooks, or owner callbacks. Any registered
     /// live owner or CPU participant must use explicit progress instead.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't wait from here.
     pub fn wait_for_change(&self, deadline: Instant) -> Result<ProgressWait, ProgressWaitError> {
         if context::passive_wait_forbidden() {
             return Err(ProgressWaitError::InvalidContext);
@@ -125,12 +161,16 @@ impl Progress {
 /// A wake reports a change, not the new progress snapshot.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProgressWait {
+    /// It changed, and this is the new count.
     Changed(u64),
+    /// It didn't change in time, and this is the count.
     TimedOut(u64),
 }
 
+/// Why progress can't be waited on.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProgressWaitError {
+    /// It can't be waited on from here.
     InvalidContext,
 }
 

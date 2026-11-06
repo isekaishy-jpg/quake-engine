@@ -13,20 +13,20 @@ use std::thread::{self, ThreadId};
 use std::time::{Duration, Instant};
 
 #[derive(Clone, Copy, Debug)]
-pub enum Pressure {
+pub(crate) enum Pressure {
     Runnable,
     Records,
 }
 
 impl Pressure {
-    pub const ALL: [Self; 2] = [Self::Runnable, Self::Records];
+    pub(crate) const ALL: [Self; 2] = [Self::Runnable, Self::Records];
     fn limits(self) -> OwnedLimits {
         match self {
             Self::Runnable => OwnedLimits::new(64, 0, [2, 2, 32], [1; 3]).unwrap(),
             Self::Records => OwnedLimits::new(8, 0, [64; 3], [1; 3]).unwrap(),
         }
     }
-    pub fn record_limit(self) -> usize {
+    pub(crate) fn record_limit(self) -> usize {
         match self {
             Self::Runnable => 64,
             Self::Records => 8,
@@ -35,7 +35,7 @@ impl Pressure {
 }
 
 #[derive(Clone, Copy)]
-pub struct Config {
+pub(crate) struct Config {
     pub baseline_frames: usize,
     pub burst_frames: usize,
     pub burst_arrivals: usize,
@@ -59,7 +59,7 @@ impl Default for Config {
     }
 }
 
-pub struct Sample {
+pub(crate) struct Sample {
     pub phase: &'static str,
     pub frame_us: f64,
     pub pending_cpu: usize,
@@ -72,7 +72,7 @@ pub struct Sample {
     pub delivery_retries: usize,
 }
 
-pub struct Report {
+pub(crate) struct Report {
     pub samples: Vec<Sample>,
     pub generated: usize,
     pub published: usize,
@@ -112,7 +112,12 @@ impl Drop for Gate {
     }
 }
 
-pub fn run(schedule: Schedule, pressure: Pressure, config: Config, verify_frames: bool) -> Report {
+pub(crate) fn run(
+    schedule: Schedule,
+    pressure: Pressure,
+    config: Config,
+    verify_frames: bool,
+) -> Report {
     assert!(config.baseline_frames > 0 && config.burst_frames > 0 && config.settled_frames > 0);
     let expected_jobs = config.baseline_frames + config.burst_frames * config.burst_arrivals;
     let calls = Arc::new(

@@ -12,10 +12,15 @@ use crate::task::Completion;
 /// Group membership and prerequisites commit with the job's admission.
 #[derive(Clone, Copy)]
 pub struct WorkOptions<'a> {
+    /// How it's spawned.
     pub spawn: SpawnOptions,
+    /// The group it joins, if any.
     pub group: Option<&'a Group>,
+    /// What has to finish first.
     pub prerequisites: &'a [Completion],
+    /// How what comes first decides whether it runs.
     pub dependency_policy: DependencyPolicy,
+    /// Whether it may run on the caller's thread.
     pub allow_inline: bool,
 }
 
@@ -94,6 +99,10 @@ fn map_discovery_error(error: DiscoveryError) -> SpawnError {
 impl WorkSet {
     /// Admits a root job while the set is open. The accepted job keeps the set
     /// active until its capture, dependencies and cancellation settle.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn<F, T>(
         &self,
         lane: &Lane,
@@ -116,6 +125,10 @@ impl WorkSet {
 
     /// On runnable saturation, caller-eligible work may execute synchronously
     /// through the same set accounting and scheduler claim path.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run<F, T>(
         &self,
         lane: &Lane,
@@ -138,6 +151,10 @@ impl WorkSet {
     }
 
     /// Admits a root with optional group, prerequisites and caller eligibility.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_with<F, T>(
         &self,
         lane: &Lane,
@@ -159,6 +176,10 @@ impl WorkSet {
     }
 
     /// A typed `Err` stays in the result and marks success-only dependents failed.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_fallible_with<F, T, E>(
         &self,
         lane: &Lane,
@@ -184,6 +205,10 @@ impl WorkSet {
 impl DiscoveryPermit {
     /// Admits a descendant while this permit is live, including after the set
     /// is sealed. A child is counted before this permit can be released.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn<F, T>(
         &self,
         lane: &Lane,
@@ -206,6 +231,10 @@ impl DiscoveryPermit {
 
     /// Admits a descendant with caller execution on runnable saturation when
     /// the job explicitly allows that context.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run<F, T>(
         &self,
         lane: &Lane,
@@ -228,6 +257,10 @@ impl DiscoveryPermit {
     }
 
     /// Admits a descendant with optional group and prerequisite edges.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_with<F, T>(
         &self,
         lane: &Lane,
@@ -249,6 +282,10 @@ impl DiscoveryPermit {
     }
 
     /// Admits a fallible descendant; the typed `Err` remains observable.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_fallible_with<F, T, E>(
         &self,
         lane: &Lane,

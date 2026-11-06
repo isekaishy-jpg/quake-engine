@@ -59,12 +59,18 @@ impl<K> Clone for PublicationAttempt<K> {
     }
 }
 
+/// Why something wasn't published.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum PublicationRejectionReason {
+    /// Nothing is known of the identity.
     Missing,
+    /// Authority over it has moved on.
     AuthorityChanged,
+    /// A newer attempt has replaced this one.
     ObsoleteAttempt,
+    /// A dependency stopped it.
     Dependency(DependencyError),
+    /// The cache wouldn't take it.
     Install(InstallErrorReason),
 }
 
@@ -75,9 +81,11 @@ pub struct PublicationRejected<'cleanup, T, E> {
     reason: PublicationRejectionReason,
 }
 impl<'cleanup, T, E> PublicationRejected<'cleanup, T, E> {
+    /// Why it wasn't published.
     pub fn reason(&self) -> PublicationRejectionReason {
         self.reason
     }
+    /// What was offered, and its policy bytes, handed back.
     pub fn into_parts(self) -> (Result<Backing<'cleanup, T>, E>, u64) {
         (self.payload, self.policy_bytes)
     }
@@ -100,12 +108,14 @@ pub struct Publication<'cleanup, K, T, E = ()> {
     states: HashMap<Identity<K>, State>,
 }
 impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
+    /// An empty publication.
     pub fn new() -> Self {
         Self {
             cache: Cache::new(),
             states: HashMap::new(),
         }
     }
+    /// How many policy bytes it holds.
     pub fn policy_bytes(&self) -> u64 {
         self.cache.policy_bytes()
     }
@@ -119,6 +129,7 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
     pub fn into_cache(self) -> Cache<'cleanup, K, T, E> {
         self.cache
     }
+    /// Current authority over `identity`, if it's known.
     pub fn authority(&self, identity: &Identity<K>) -> Option<Authority<K>> {
         if !self.cache.contains_identity(identity) {
             return None;
@@ -177,6 +188,11 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
         }
         Ok(())
     }
+    /// What's published for `identity`, as it stands.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a dependency of what's published has changed.
     pub fn lookup(
         &self,
         identity: &Identity<K>,
@@ -185,6 +201,11 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
         self.validate_stored(identity, dependencies)?;
         Ok(self.cache.lookup_identity(identity))
     }
+    /// What's published for `identity`, as a share that keeps it alive.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a dependency of what's published has changed.
     pub fn share(
         &self,
         identity: &Identity<K>,
@@ -207,6 +228,10 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
     }
     /// Replaces the source/delivery authority and clears payload. Old tagged
     /// deliveries and attempt tickets are rejected; old backing readers survive.
+    ///
+    /// # Panics
+    ///
+    /// Panics if a cleared member has gone, which is a bug in this crate.
     pub fn replace_authority(
         &mut self,
         identity: &Identity<K>,
@@ -219,6 +244,12 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
             .authority = authority;
         Some(previous)
     }
+    /// Publishes `outcome` under `authority`, if that authority still holds.
+    ///
+    /// # Errors
+    ///
+    /// Hands the outcome back if the identity is gone, authority has moved on, a newer
+    /// attempt replaced this one, or a dependency or the cache turned it down.
     pub fn publish(
         &mut self,
         attempt: &PublicationAttempt<K>,
@@ -267,6 +298,11 @@ impl<'cleanup, K, T, E> Publication<'cleanup, K, T, E> {
     /// neither payload nor attachment and returns the supplied outcome intact.
     /// The validity stamp is borrowed so a rejected update can retry with its
     /// original revisions; do not recapture newer revisions for an old payload.
+    ///
+    /// # Errors
+    ///
+    /// Hands the outcome back if the identity is gone, authority has moved on, or a
+    /// dependency or the cache turned it down.
     pub fn authoritative(
         &mut self,
         identity: &Identity<K>,
@@ -355,6 +391,7 @@ impl<K, T, E> Default for Publication<'_, K, T, E> {
     }
 }
 impl<'cleanup, K: Eq + Hash, T, E> Publication<'cleanup, K, T, E> {
+    /// The identity of `key`, made if it's new.
     pub fn ensure(&mut self, key: K) -> Identity<K> {
         let identity = self.cache.ensure(key);
         self.states
@@ -375,6 +412,7 @@ impl<'cleanup, K: Eq + Hash, T, E> Publication<'cleanup, K, T, E> {
         drop(entry.key);
         Some((entry.identity, entry.state))
     }
+    /// The identity of `key`, if it has one.
     pub fn identity(&self, key: &K) -> Option<Identity<K>> {
         self.cache.identity(key)
     }

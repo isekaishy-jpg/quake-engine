@@ -53,6 +53,14 @@ impl Batch {
     /// Uses the same admission rules as [`Lane::group`], including accepted
     /// execution descendants during graceful shutdown. This does not wait for
     /// members or run their work on the caller.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the last wave is still open, or the group can't be made.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the wave just made has gone, which is a bug in this crate.
     pub fn begin(&mut self) -> Result<&Group, BatchError> {
         if let Some(group) = self.current.as_mut() {
             if !group.is_complete() {

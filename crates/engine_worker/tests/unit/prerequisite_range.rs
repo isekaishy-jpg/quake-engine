@@ -1,3 +1,5 @@
+#![expect(clippy::print_stderr, reason = "a test reports to its console")]
+
 use super::*;
 use crate::runtime::Runtime;
 use crate::runtime::config::{ExecutionClass, RuntimeConfig, WorkerConfig};
@@ -36,21 +38,16 @@ fn scheduler(runtime: &Runtime) -> Arc<OwnedScheduler> {
 fn inline_delivery_reconciles_once_after_every_member_attachment_closes() {
     // A range must not inflate every ordinary prerequisite/finalization entry
     // by embedding its fixed slot table in the common activation queue.
-    assert!(std::mem::size_of::<super::super::Activation>() <= 4 * std::mem::size_of::<usize>());
-    assert_eq!(
-        std::mem::size_of::<PrerequisiteRange>(),
-        2 * std::mem::size_of::<usize>()
-    );
-    assert!(
-        std::mem::size_of::<Descriptor<SMALL_RANGE>>() < std::mem::size_of::<Descriptor<QUANTUM>>()
-    );
+    assert!(size_of::<Activation>() <= 4 * size_of::<usize>());
+    assert_eq!(size_of::<PrerequisiteRange>(), 2 * size_of::<usize>());
+    assert!(size_of::<Descriptor<SMALL_RANGE>>() < size_of::<Descriptor<QUANTUM>>());
     eprintln!(
         "descriptor bytes: small={}, large={}, member={}, activation={}, record={}",
-        std::mem::size_of::<Descriptor<SMALL_RANGE>>(),
-        std::mem::size_of::<Descriptor<QUANTUM>>(),
-        std::mem::size_of::<RangeMember>(),
-        std::mem::size_of::<super::super::Activation>(),
-        std::mem::size_of::<super::super::Record>(),
+        size_of::<Descriptor<SMALL_RANGE>>(),
+        size_of::<Descriptor<QUANTUM>>(),
+        size_of::<RangeMember>(),
+        size_of::<Activation>(),
+        size_of::<super::super::Record>(),
     );
     for policy in [
         DependencyPolicy::SuccessOnly,
@@ -113,7 +110,7 @@ fn cancellation_before_subscription_install_refunds_members_and_releases_signal_
     let mut runtime = runtime();
     let scheduler = scheduler(&runtime);
     let signal = scheduler.signals.acquire();
-    let address = &*signal as *const _ as usize;
+    let address = std::ptr::from_ref(&*signal) as usize;
     let (input, sink) = Task::<()>::pending_with_signal(signal);
     let weak = Arc::downgrade(&scheduler);
     *scheduler.range_install_hook.lock().unwrap() = Some(Arc::new(move || {
@@ -151,7 +148,7 @@ fn cancellation_before_subscription_install_refunds_members_and_releases_signal_
     sink.finish(Outcome::Success(()), false);
     drop(input);
     let recycled = scheduler.signals.acquire();
-    assert_eq!(&*recycled as *const _ as usize, address);
+    assert_eq!(std::ptr::from_ref(&*recycled) as usize, address);
     drop(recycled);
     runtime.shutdown().unwrap();
 }
@@ -170,7 +167,9 @@ fn check_cancelled_control_recycling(count: usize) {
     let addresses = Arc::new(Mutex::new(Vec::new()));
     let seen = Arc::clone(&addresses);
     *scheduler.attachment_hook.lock().unwrap() = Some(Arc::new(move |job| {
-        seen.lock().unwrap().push(&*job as *const _ as usize);
+        seen.lock()
+            .unwrap()
+            .push(std::ptr::from_ref(&*job) as usize);
     }));
     let members = runtime
         .lane(ExecutionClass::High)

@@ -70,7 +70,7 @@ impl Buffers {
 
     fn bytes(&self) -> usize {
         fn backing<T>(values: &Vec<T>) -> usize {
-            values.capacity().saturating_mul(std::mem::size_of::<T>())
+            values.capacity().saturating_mul(size_of::<T>())
         }
         backing(&self.admissions)
             .saturating_add(backing(&self.capacities))

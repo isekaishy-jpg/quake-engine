@@ -9,10 +9,15 @@ use crate::ownership::Backing;
 /// Why a completed source read was not admitted. Its owner is returned intact.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum SourceRejectionReason {
+    /// It has been closed.
     Closed,
+    /// It has reached the most it wants to keep.
     SoftLimitReached,
+    /// There's nothing in the read.
     EmptyRead,
+    /// Its allocation class isn't one these buffers take.
     InvalidClass,
+    /// A count went past what it can hold.
     CounterOverflow,
 }
 
@@ -23,10 +28,12 @@ pub struct SourceRejected<'cleanup, T> {
 }
 
 impl<'cleanup, T> SourceRejected<'cleanup, T> {
+    /// Why it wasn't kept.
     pub fn reason(&self) -> SourceRejectionReason {
         self.reason
     }
 
+    /// The backing, and why it wasn't kept.
     pub fn into_parts(self) -> (Backing<'cleanup, T>, SourceRejectionReason) {
         (self.backing, self.reason)
     }
@@ -42,6 +49,7 @@ impl<T> fmt::Debug for SourceRejected<'_, T> {
 
 /// Result of recording a nonzero read. Both outcomes charge the read measure.
 pub enum SourceInsert<'cleanup, T> {
+    /// It was kept.
     Stored,
     /// The first buffer remains stored; the incoming owner is returned for cleanup.
     Duplicate(Backing<'cleanup, T>),
@@ -59,10 +67,15 @@ impl<T> fmt::Debug for SourceInsert<'_, T> {
 /// Read-policy state, deliberately separate from physical allocation accounting.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SourceBufferSnapshot {
+    /// How many entries it keeps.
     pub retained_entries: usize,
+    /// How many bytes have been read.
     pub read_bytes: u64,
+    /// Whether it's turned on.
     pub enabled: bool,
+    /// Whether it may read more.
     pub may_read: bool,
+    /// Whether it has been closed.
     pub closed: bool,
 }
 
@@ -112,6 +125,10 @@ impl<'cleanup, T> SourceBuffers<'cleanup, T> {
     /// Check `may_read` before issuing the next read in this serialized scope.
     /// Errors preserve the supplied owner and all table state. Duplicate cleanup
     /// is explicit through the returned owner, after the counter is committed.
+    ///
+    /// # Errors
+    ///
+    /// Hands the backing back, with the reason, if the buffers won't keep it.
     pub fn insert_read(
         &mut self,
         id: u64,
@@ -154,6 +171,7 @@ impl<'cleanup, T> SourceBuffers<'cleanup, T> {
         Some(backing)
     }
 
+    /// How it stands now.
     pub fn snapshot(&self) -> SourceBufferSnapshot {
         SourceBufferSnapshot {
             retained_entries: self.entries.len(),

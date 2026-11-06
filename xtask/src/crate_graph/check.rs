@@ -3,8 +3,7 @@
 use std::fmt;
 
 use super::rules::{
-    BACKEND_RULES, CRATE_RULES, CrateRule, FORMAT_RULES, LINT_EXEMPT, REQUIRED_EDITION,
-    REQUIRED_RUST_VERSION,
+    BACKEND_RULES, CRATE_RULES, CrateRule, FORMAT_RULES, REQUIRED_EDITION, REQUIRED_RUST_VERSION,
 };
 use super::{Kind, WorkspacePackage};
 
@@ -195,7 +194,7 @@ fn check_settings(package: &WorkspacePackage, violations: &mut Vec<Violation>) {
             package: package.name.clone(),
         });
     }
-    if !package.inherits_workspace_lints && !LINT_EXEMPT.contains(&package.name.as_str()) {
+    if !package.inherits_workspace_lints {
         violations.push(Violation::LintsNotInherited {
             package: package.name.clone(),
         });

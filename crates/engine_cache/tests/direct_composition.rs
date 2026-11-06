@@ -1,3 +1,5 @@
+//! Putting the pieces together by hand, without a runtime.
+
 use std::collections::VecDeque;
 use std::thread;
 

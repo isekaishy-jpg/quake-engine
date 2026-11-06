@@ -1,3 +1,5 @@
+//! What a cache lets in, and what it turns away.
+
 use engine_cache::{
     Admission, AdmissionError, CACHE_REFERENCE_PRODUCTION_LIMIT, CACHE_REFERENCE_PROVIDER_SLOTS,
     CountLimit,

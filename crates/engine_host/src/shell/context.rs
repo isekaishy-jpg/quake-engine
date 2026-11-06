@@ -13,6 +13,10 @@ impl<A: Application> Context<'_, A> {
     /// enter native modal processing. It does not pump nested application work.
     /// Use `request_shell` when the owner must remain responsive. Success means
     /// native association acceptance, not external process start or exit.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the request isn't valid, or the system won't open it.
     pub fn open_shell(&mut self, request: &ShellRequest) -> Result<(), ShellFailure> {
         self.core
             .check_owner()
@@ -27,6 +31,14 @@ impl<A: Application> Context<'_, A> {
     /// Accepts an owned association request on the bounded dedicated helper.
     /// Rejection returns the original request; an accepted receipt survives
     /// host closure without retaining the application or a native window.
+    ///
+    /// # Errors
+    ///
+    /// Hands the request back, with why, if the helper won't take it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the helper just made has gone, which is a bug in this crate.
     pub fn request_shell(&mut self, request: ShellRequest) -> Result<ShellReceipt, ShellRejected> {
         let admission = self
             .core
@@ -52,7 +64,7 @@ impl<A: Application> Context<'_, A> {
         self.core
             .shell
             .as_ref()
-            .unwrap()
+            .expect("the helper just made")
             .try_launch_validated(request)
     }
 
@@ -259,6 +271,7 @@ mod tests {
 }
 
 #[cfg(test)]
+#[expect(clippy::print_stdout, reason = "a test reports to its console")]
 mod validation_tests {
     use super::super::{PREPARATIONS, VALIDATIONS};
     use super::*;

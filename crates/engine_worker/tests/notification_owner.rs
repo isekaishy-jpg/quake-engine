@@ -1,3 +1,6 @@
+//! Which owner a notification reaches.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::cell::RefCell;
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};

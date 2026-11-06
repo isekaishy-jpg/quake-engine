@@ -1,3 +1,6 @@
+//! Running jobs together as a batch.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::num::NonZeroUsize;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, mpsc};

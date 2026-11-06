@@ -1,3 +1,6 @@
+//! Who holds a value, and when it goes.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use std::panic::{AssertUnwindSafe, catch_unwind};
 use std::sync::{Arc, Barrier, Mutex};
 use std::thread::{self, ThreadId};
@@ -73,7 +76,7 @@ fn acquisition_rejection_preserves_the_original_value_and_counters() {
     let context = CleanupContext::new();
     for deferred in [false, true] {
         let value = Box::new(String::from("original value"));
-        let address = &*value as *const String;
+        let address = std::ptr::from_ref(&*value);
         let result = if deferred {
             context.try_acquire(value, &domain, 1, AllocationClass::Temporary)
         } else {
@@ -85,7 +88,7 @@ fn acquisition_rejection_preserves_the_original_value_and_counters() {
         };
         assert_eq!(error.reason(), &AccountingError::Overflow);
         let (returned, reason) = error.into_parts();
-        assert_eq!(&*returned as *const String, address);
+        assert_eq!(std::ptr::from_ref(&*returned), address);
         assert_eq!(*returned, "original value");
         assert_eq!(reason, AccountingError::Overflow);
         assert_eq!(domain.snapshot().total_declared_bytes, u64::MAX);

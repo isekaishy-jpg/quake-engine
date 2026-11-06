@@ -1,3 +1,6 @@
+//! Reading from buffers a source owns.
+#![expect(clippy::unwrap_used, reason = "a failed test is the intended report")]
+
 use engine_cache::{
     AccountingDomain, AllocationClass, Backing, CleanupContext, SourceBuffers, SourceInsert,
     SourceRejectionReason,

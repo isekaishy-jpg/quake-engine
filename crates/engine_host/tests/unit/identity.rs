@@ -1,3 +1,9 @@
+#![expect(clippy::print_stdout, reason = "a test reports to its console")]
+#![expect(
+    clippy::cast_possible_truncation,
+    reason = "a test's numbers are small"
+)]
+
 use super::*;
 
 #[test]

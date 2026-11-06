@@ -33,6 +33,10 @@ impl Lane {
     /// Workers may begin before return; this method never runs jobs inline as a
     /// saturation fallback and never seals the supplied group. Empty input is a
     /// no-op, including on closed or owned-disabled runtimes.
+    ///
+    /// # Errors
+    ///
+    /// Hands back what wasn't taken, with what was, if it can't all be taken.
     pub fn try_spawn_batch<'a, F, T>(
         &self,
         options: BatchSpawnOptions<'a>,
@@ -49,6 +53,10 @@ impl Lane {
     /// values mark failure for success-only dependents without losing the typed
     /// result. Admission, suffix recovery and caller eligibility match
     /// [`Self::try_spawn_batch`].
+    ///
+    /// # Errors
+    ///
+    /// Hands back what wasn't taken, with what was, if it can't all be taken.
     pub fn try_spawn_batch_fallible<'a, F, T, E>(
         &self,
         options: BatchSpawnOptions<'a>,
@@ -100,6 +108,10 @@ impl Lane {
 
     /// Creates an open retained group in this lane. Seal it before waiting for
     /// completion; dropping an observer never cancels its accepted members.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime won't make one.
     pub fn group(&self) -> Result<Group, SpawnError> {
         self.control
             .owned_scheduler_for(self.class)?
@@ -109,6 +121,10 @@ impl Lane {
     /// Admits a job without waiting for capacity or executing it on this caller.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn<F, T>(&self, options: SpawnOptions, operation: F) -> SpawnResult<T, F>
     where
         F: FnOnce() -> T + Send + 'static,
@@ -126,6 +142,10 @@ impl Lane {
     /// Membership is admitted to an open group from this lane.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_in<F, T>(
         &self,
         group: &Group,
@@ -151,6 +171,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_fallible<F, T, E>(
         &self,
         options: SpawnOptions,
@@ -174,6 +198,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_fallible_in<F, T, E>(
         &self,
         group: &Group,
@@ -200,6 +228,10 @@ impl Lane {
     /// Record/edge limits still apply. Handoff pressure alone never runs it inline.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run<F, T>(&self, options: SpawnOptions, operation: F) -> SpawnResult<T, F>
     where
         F: FnOnce() -> T + Send + 'static,
@@ -221,6 +253,10 @@ impl Lane {
     /// Membership is admitted to an open group from this lane.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run_in<F, T>(
         &self,
         group: &Group,
@@ -248,6 +284,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run_fallible<F, T, E>(
         &self,
         options: SpawnOptions,
@@ -275,6 +315,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it can't be taken or run here.
     pub fn submit_or_run_fallible_in<F, T, E>(
         &self,
         group: &Group,
@@ -302,6 +346,10 @@ impl Lane {
     /// Outcome-aware work must inspect its captured prerequisite outcomes.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_after<F, T>(
         &self,
         options: SpawnOptions,
@@ -330,6 +378,10 @@ impl Lane {
     /// Membership is admitted to an open group from this lane.
     /// Any returned value, including `Result::Err`, counts as success.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_after_in<F, T>(
         &self,
         group: &Group,
@@ -360,6 +412,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_after_fallible<F, T, E>(
         &self,
         options: SpawnOptions,
@@ -390,6 +446,10 @@ impl Lane {
     /// A returned `Err` marks application failure for success-only dependents;
     /// the typed error stays in the result. Prerequisite policy is independent.
     /// Rejection returns the uninvoked operation. Dropping observers never cancels work.
+    ///
+    /// # Errors
+    ///
+    /// Hands the work back, with why, if it isn't taken.
     pub fn try_spawn_after_fallible_in<F, T, E>(
         &self,
         group: &Group,

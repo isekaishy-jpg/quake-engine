@@ -32,9 +32,7 @@ fn nested_leases_keep_backing_private_and_cache_only_empty_bounded_buffers() {
     drop(idle);
 
     let mut oversized = pool.acquire();
-    oversized
-        .parents
-        .reserve(IDLE_BYTES / std::mem::size_of::<u64>() + 1);
+    oversized.parents.reserve(IDLE_BYTES / size_of::<u64>() + 1);
     drop(oversized);
     let idle = pool.idle.lock().unwrap();
     assert!(

@@ -9,10 +9,15 @@ use std::sync::Arc;
 /// Independent validity domains; advancing one does not implicitly advance another.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DependencyScope {
+    /// It depends on where the data came from.
     Source,
+    /// It depends on how the data is represented.
     Representation,
+    /// It depends on one instance.
     Instance,
+    /// It depends on one view.
     View,
+    /// It depends on a device.
     Device,
 }
 
@@ -29,6 +34,7 @@ pub struct Dependency {
 }
 
 impl Dependency {
+    /// What this dependency covers.
     pub fn scope(&self) -> DependencyScope {
         self.scope
     }
@@ -58,10 +64,12 @@ pub struct DependencySnapshot {
 }
 
 impl DependencySnapshot {
+    /// How many dependencies it holds.
     pub fn len(&self) -> usize {
         self.revisions.len()
     }
 
+    /// Whether it holds none.
     pub fn is_empty(&self) -> bool {
         self.revisions.is_empty()
     }
@@ -70,8 +78,11 @@ impl DependencySnapshot {
 /// Why declared dependencies cannot be captured or accepted.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum DependencyError {
+    /// The dependency belongs to another registry.
     ForeignRegistry,
+    /// The dependency isn't known here.
     UnknownDependency,
+    /// The dependency has changed since it was read.
     Stale,
 }
 
@@ -114,6 +125,7 @@ impl Default for Dependencies {
 }
 
 impl Dependencies {
+    /// A registry with nothing in it.
     pub fn new() -> Self {
         Self {
             registry: Arc::new(Token),
@@ -136,6 +148,10 @@ impl Dependencies {
     }
 
     /// Captures the selected set coherently, deduplicating repeated identities.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a dependency is foreign to this registry or isn't known.
     pub fn snapshot(
         &self,
         dependencies: &[Dependency],
@@ -157,6 +173,10 @@ impl Dependencies {
     }
 
     /// Checks all declared revisions without acquiring any payload owner.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a dependency is foreign, unknown, or has changed.
     pub fn validate(&self, snapshot: &DependencySnapshot) -> Result<(), DependencyError> {
         if !Arc::ptr_eq(&self.registry, &snapshot.registry) {
             return Err(DependencyError::ForeignRegistry);
@@ -175,6 +195,10 @@ impl Dependencies {
     /// All inputs are checked before any change. Duplicate handles advance once.
     /// Callers explicitly include dependent representations/instances/views when
     /// their domain rules require propagation. No payload is destroyed here.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a dependency is foreign or isn't known, and advances nothing.
     pub fn advance(
         &mut self,
         dependencies: &[Dependency],
@@ -189,6 +213,10 @@ impl Dependencies {
     }
 
     /// Removes one declaration. Re-registering its scope creates a fresh identity.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the dependency is foreign or isn't known.
     pub fn remove(&mut self, dependency: &Dependency) -> Result<(), DependencyError> {
         let index = self.index(dependency)?;
         self.revisions.remove(index);

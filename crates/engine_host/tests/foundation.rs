@@ -1,3 +1,5 @@
+//! The basic types of the host, from outside the crate.
+
 use engine_host::{Application, Context, Error, Host, HostConfig, StopProgress};
 use std::time::Duration;
 

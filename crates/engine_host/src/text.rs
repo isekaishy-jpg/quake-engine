@@ -28,6 +28,10 @@ pub struct TextCaret {
 }
 
 impl TextCaret {
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "checked to be in range just before"
+    )]
     pub(crate) fn validate(self) -> Result<(), Error> {
         if !self.position.x.is_finite() || !self.position.y.is_finite() {
             return Err(Error::InvalidInput("text caret position is not finite"));

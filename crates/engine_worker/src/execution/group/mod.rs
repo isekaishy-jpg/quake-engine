@@ -98,7 +98,7 @@ impl Drop for MembershipReservation<'_> {
 }
 
 #[cfg(test)]
-#[path = "../../tests/unit/group.rs"]
+#[path = "../../../tests/unit/group.rs"]
 mod tests;
 
 pub(crate) struct GroupInner {
@@ -459,6 +459,7 @@ impl Group {
         true
     }
 
+    /// The class its work runs in.
     pub fn class(&self) -> ExecutionClass {
         self.inner.class
     }
@@ -468,6 +469,7 @@ impl Group {
         self.inner.seal();
     }
 
+    /// Whether all of its work has finished.
     pub fn is_complete(&self) -> bool {
         self.inner.is_complete()
     }
@@ -484,6 +486,10 @@ impl Group {
     }
 
     /// Executes one ready member of this group when the caller is eligible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't help from here.
     pub fn help_ready(&self) -> Result<bool, ExecutionError> {
         self.check_context()?;
         let Some(scheduler) = self.scheduler.upgrade() else {
@@ -499,6 +505,10 @@ impl Group {
     /// detected.
     /// A participating worker must not be the sole executor needed by any
     /// remaining worker-only member.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't wait from here.
     pub fn wait_helping(&self) -> Result<(), ExecutionError> {
         self.check_context()?;
         if current().is_some_and(|context| {

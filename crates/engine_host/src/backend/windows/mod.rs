@@ -1,6 +1,9 @@
 //! Narrow platform helpers; native input and window mechanics remain in winit.
 
-#![allow(unsafe_code)]
+#![expect(
+    unsafe_code,
+    reason = "shell and display calls are only reached through Win32"
+)]
 
 pub(crate) mod shell;
 pub(crate) mod topology;

@@ -1,4 +1,5 @@
 //! Borrowed non-Send application, native post intake, and local timer smoke.
+#![expect(clippy::print_stdout, reason = "an example reports to its console")]
 
 use engine_host::{
     Application, Context, Error, Event, EventFilter, Host, HostConfig, PostOutcome, PostReceipt,

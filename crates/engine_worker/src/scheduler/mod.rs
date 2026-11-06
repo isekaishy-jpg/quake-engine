@@ -50,7 +50,7 @@ use work_set::WorkSetLease;
 pub use work_set::{DiscoveryError, DiscoveryPermit, WorkSet, WorkSetProgress};
 
 #[cfg(test)]
-#[path = "../tests/unit/demand.rs"]
+#[path = "../../tests/unit/demand.rs"]
 mod demand_tests;
 
 #[derive(Default)]
@@ -82,7 +82,7 @@ type AttachmentHook = Arc<dyn Fn(JobHandle) + Send + Sync>;
 type CountHook = Arc<dyn Fn(usize) + Send + Sync>;
 
 #[cfg(test)]
-#[path = "../tests/unit/scheduler_domains.rs"]
+#[path = "../../tests/unit/scheduler_domains.rs"]
 mod domain_tests;
 
 enum Activation {
@@ -393,6 +393,13 @@ impl<T> std::ops::DerefMut for DomainGuard<'_, T> {
     }
 }
 impl<T> Drop for DomainGuard<'_, T> {
+    #[cfg_attr(
+        feature = "diagnostics",
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "held to the most a u64 can be just before"
+        )
+    )]
     fn drop(&mut self) {
         #[cfg(feature = "diagnostics")]
         let cycles = self
@@ -406,11 +413,11 @@ impl<T> Drop for DomainGuard<'_, T> {
             let waiting = acquired
                 .duration_since(started)
                 .as_nanos()
-                .min(u64::MAX as u128) as u64;
+                .min(u128::from(u64::MAX)) as u64;
             let holding = released
                 .duration_since(acquired)
                 .as_nanos()
-                .min(u64::MAX as u128) as u64;
+                .min(u128::from(u64::MAX)) as u64;
             self.metrics.acquisitions.fetch_add(1, Ordering::Relaxed);
             self.metrics.wait_ns.fetch_add(waiting, Ordering::Relaxed);
             self.metrics.hold_ns.fetch_add(holding, Ordering::Relaxed);
@@ -538,6 +545,13 @@ impl OwnedScheduler {
     }
 
     #[track_caller]
+    #[cfg_attr(
+        feature = "diagnostics",
+        expect(
+            clippy::cast_possible_truncation,
+            reason = "domains are a short fixed list"
+        )
+    )]
     fn domain_lock<'a, T>(&'a self, mutex: &'a Mutex<T>, _domain: u64) -> DomainGuard<'a, T> {
         let notification = self.wake.notification_scope();
         #[cfg(feature = "diagnostics")]
@@ -550,7 +564,7 @@ impl OwnedScheduler {
             #[cfg(feature = "diagnostics")]
             timing: started.map(|start| (start, std::time::Instant::now())),
             #[cfg(feature = "diagnostics")]
-            scheduler: self as *const Self as usize as u64,
+            scheduler: std::ptr::from_ref(self) as usize as u64,
             #[cfg(feature = "diagnostics")]
             runtime: self.trace_runtime,
             #[cfg(feature = "diagnostics")]
