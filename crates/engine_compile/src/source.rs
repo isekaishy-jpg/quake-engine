@@ -113,6 +113,9 @@ pub struct MeshPlacement {
     pub angles: Point,
     /// How much it's stretched along each of its axes.
     pub scale: Point,
+    /// Whether it's only there to be seen: it can't be touched, and light goes
+    /// through it. Falling water is like this.
+    pub only_seen: bool,
 }
 
 /// A map as it's edited.
@@ -510,6 +513,10 @@ fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileErro
         origin: triple("origin", [0.0; 3]),
         angles: triple("angles", [0.0; 3]),
         scale,
+        only_seen: block
+            .get("only_seen")
+            .and_then(Value::number)
+            .is_some_and(|flag| flag != 0.0),
     })
 }
 

@@ -239,9 +239,11 @@ fn mirrored(start: vec3<f32>, direction: vec3<f32>, fallback: vec3<f32>, jitter:
     return fallback;
 }
 
-// What a mirror sees past everything: the sky, or nothing indoors.
+// What a mirror sees past everything: the sky, or nothing indoors. Having a sky
+// isn't enough, as a cave under it can't see it.
 fn sky_towards(direction: vec3<f32>, indoors: vec3<f32>) -> vec3<f32> {
-    if frame.sky_zenith.w <= 0.0 && dot(frame.sky_zenith.rgb, vec3<f32>(1.0)) <= 0.0 {
+    let no_sky = frame.sky_zenith.w <= 0.0 && dot(frame.sky_zenith.rgb, vec3<f32>(1.0)) <= 0.0;
+    if no_sky || frame.pool_params.z < 0.5 {
         return indoors;
     }
     let up = clamp(direction.z, 0.0, 1.0);

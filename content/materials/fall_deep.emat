@@ -1,0 +1,7 @@
+format 1 material
+
+surface {
+    base = textures/fall_deep.png
+    shading = unlit
+    scroll = 0 0.8
+}

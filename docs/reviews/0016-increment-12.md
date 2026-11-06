@@ -39,6 +39,8 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 | 22 | The human saw a torch leave a circle on each wall of a corner, with nothing between them. Light fell with the full cosine of its angle | Half of that, as ericw-tools does (proposal 0098) |
 | 23 | The bump response was a plain ratio, so a surface nearly edge on to its light glared | It's held to 1.5, over a floor under the flat light |
 | 24 | Derived relief at full strength made stone look like modelled clay | The packs use 0.42 |
+| 25 | A mirror that found nothing showed the sky, even in a cave under it | It only does if the view is under the sky |
+| 26 | Big see-through quads were split by the order of faces, which showed as hard diagonals | Mist is small puffs in front of the water, and the body of a fall is opaque |
 
 ## Process
 
@@ -56,6 +58,5 @@ The human pushed increment 11, and asked for what was left over, the rename incl
 |---|---|
 | Baking big maps | `wide_world` took 46 minutes before finding 11 and 12. It hasn't been timed since. `vesper_deep`, of 17,000 faces, bakes in about 90 seconds |
 | Real people for the city | Stand-ins now, as the human said they could be |
-| The Fall | It reads as a flat blue slab, and wants real falling water |
 | The host, worker and cache crates under the workspace lints | Measured at 1,703 items, about 800 of them doc comments to write by hand, with 47 uses of `unsafe` to allow by name. The open questions keep this apart from the rename. The test layout rule would also need test seams moved out of 189 places under `src/` |
 | Jumps, water and lifts in paths | The human set these for later |

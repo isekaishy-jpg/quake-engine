@@ -280,7 +280,89 @@ def flame_sheet(x, y):
     return (clamp(255 * min(1, heat * 3)), clamp(200 * heat * 1.4), clamp(60 * heat), clamp(255 * min(1, heat * 3)) if inside else 0)
 
 
+def stretched(table, x, y, across, along):
+    """Wrapping value noise with its own number of cells each way."""
+    fx, fy = x / SIZE * across, y / SIZE * along
+    ix, iy = int(fx), int(fy)
+    tx, ty = fx - ix, fy - iy
+    tx, ty = tx * tx * (3 - 2 * tx), ty * ty * (3 - 2 * ty)
+    a = table[iy % along][ix % across]
+    b = table[iy % along][(ix + 1) % across]
+    c = table[(iy + 1) % along][ix % across]
+    d = table[(iy + 1) % along][(ix + 1) % across]
+    return (a * (1 - tx) + b * tx) * (1 - ty) + (c * (1 - tx) + d * tx) * ty
+
+
+STREAKS = noise_table(7)
+
+
+def foam_of(x, y):
+    """How much white water there is, in streaks that run down the image."""
+    streaks = (stretched(STREAKS, x, y, 32, 2) * 0.5 + stretched(NOISE, x, y, 64, 4) * 0.3
+               + stretched(STREAKS, x, y, 16, 1) * 0.2)
+    clumps = stretched(NOISE, x, y, 8, 4)
+    return max(0.0, min(1.0, (streaks - 0.42) * 3.2 * (0.45 + clumps)))
+
+
+def fall_base(x, y):
+    """White water over clear, for the front of a fall."""
+    foam = foam_of(x, y)
+    return (clamp(70 + foam * 150), clamp(96 + foam * 134), clamp(108 + foam * 124), clamp(70 + foam * 175))
+
+
+def fall_deep(x, y):
+    """The body of a fall, behind its white water."""
+    n = stretched(STREAKS, x, y, 16, 2) * 0.6 + stretched(NOISE, x, y, 32, 2) * 0.4
+    return (clamp(24 + n * 40), clamp(44 + n * 52), clamp(54 + n * 58), 225)
+
+
+def flow_fall(x, y):
+    """Each thread of a fall has its own speed, all of them down the image."""
+    speed = stretched(STREAKS, x, 0, 16, 1) * 0.7 + stretched(NOISE, x, 0, 32, 1) * 0.3
+    return (128, clamp(128 + (speed - 0.5) * 240), 128, 255)
+
+
+def flow_outward(x, y):
+    """A flow map spreading from the image's middle."""
+    dx, dy = (x - SIZE / 2) / (SIZE / 2), (y - SIZE / 2) / (SIZE / 2)
+    return (clamp(128 - dx * 120), clamp(128 - dy * 120), 128, 255)
+
+
+def edge_fade(x, y, wobble):
+    """1 in the middle of the image, going to 0 by a ragged edge."""
+    dx, dy = (x - SIZE / 2) / (SIZE / 2), (y - SIZE / 2) / (SIZE / 2)
+    reach = math.sqrt(dx * dx + dy * dy) + (fractal(NOISE, x, y) - 0.5) * wobble
+    return max(0.0, min(1.0, (0.88 - reach) * 3.0))
+
+
+def fall_foam(x, y):
+    """White water spreading on a pool, in a fine lace thinning towards the edge."""
+    lace = 1 - abs(smooth(STREAKS, x, y, 32) - smooth(NOISE, x, y, 16)) * 5
+    lace = max(0.0, min(1.0, lace * 1.2 - 0.3))
+    fade = edge_fade(x, y, 0.5) ** 1.5
+    return (clamp(150 + lace * 50), clamp(170 + lace * 46), clamp(178 + lace * 44), clamp(fade * (24 + lace * 130)))
+
+
+def canal_water(x, y):
+    """Dark water, for somewhere with little light to give it colour."""
+    n = fractal(NOISE, x, y)
+    return (clamp(8 + n * 16), clamp(26 + n * 26), clamp(30 + n * 30), 170)
+
+
+def fall_mist(x, y):
+    """A soft cloud of spray."""
+    fade = edge_fade(x, y, 0.9) ** 1.6
+    return (178, 198, 208, clamp(fade * (12 + fractal(NOISE, x, y) * 72)))
+
+
 IMAGES = {
+    'fall': fall_base,
+    'fall_deep': fall_deep,
+    'flow_fall': flow_fall,
+    'flow_outward': flow_outward,
+    'fall_foam': fall_foam,
+    'fall_mist': fall_mist,
+    'canal_water': canal_water,
     'glass_marks': glass_marks,
     'stamp_letters': stamp_letters,
     'stamp_bricks': stamp_bricks,
@@ -312,6 +394,11 @@ IMAGES = {
 }
 
 MATERIALS_TEXT = {
+    'canal_water': 'base = textures/canal_water.png\n    kind = liquid\n    alpha = blend\n    shading = unlit\n    scroll = 0.03 0.02',
+    'fall': 'base = textures/fall.png\n    alpha = blend\n    shading = unlit\n    scroll = 0 1.1\n    flow = textures/flow_fall.png\n    flow_strength = 0.5\n    flow_speed = 0.8',
+    'fall_deep': 'base = textures/fall_deep.png\n    shading = unlit\n    scroll = 0 0.8',
+    'fall_foam': 'base = textures/fall_foam.png\n    alpha = blend\n    shading = unlit\n    flow = textures/flow_outward.png\n    flow_strength = 0.1\n    flow_speed = 0.35',
+    'fall_mist': 'base = textures/fall_mist.png\n    alpha = blend\n    shading = unlit\n    flow = textures/flow_outward.png\n    flow_strength = 0.08\n    flow_speed = 0.25',
     'brick': 'base = textures/brick.png\n    normal = textures/brick_normal.png\n    height = textures/brick_height.png\n    parallax = 0.025',
     'stone': 'base = textures/stone.png\n    normal = textures/stone_normal.png\n    hex = true\n    detail = textures/detail.png',
     'metal': 'base = textures/metal.png\n    normal = textures/metal_normal.png\n    specular = textures/metal_specular.png\n    gloss = 48',

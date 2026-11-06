@@ -55,6 +55,8 @@ pub struct PlacedMesh {
     pub hulls: Vec<Brush>,
     /// The volume it shades, from its sidecar, if it has one.
     pub occluders: Vec<OccluderSphere>,
+    /// Whether light goes through it.
+    pub only_seen: bool,
 }
 
 /// The numbers of a field, in groups of `N`.
@@ -228,7 +230,10 @@ impl Transform {
 #[must_use]
 pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
     let transform = Transform::of(placement);
-    let mut placed = PlacedMesh::default();
+    let mut placed = PlacedMesh {
+        only_seen: placement.only_seen,
+        ..PlacedMesh::default()
+    };
     for part in &mesh.parts {
         for triangle in &part.triangles {
             let mut corners = triangle.map(|corner| corner as usize);
@@ -241,6 +246,9 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
                 material: part.material.clone(),
             });
         }
+    }
+    if placement.only_seen {
+        return placed;
     }
     let all = mesh.parts.iter().flat_map(|part| part.points.iter());
     let whole = bounds(all).map(|(low, high)| [low[0], low[1], low[2], high[0], high[1], high[2]]);

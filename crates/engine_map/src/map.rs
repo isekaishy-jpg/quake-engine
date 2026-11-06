@@ -16,7 +16,7 @@ use crate::sky::{Fog, Sky};
 use crate::stencil::RayStencil;
 use crate::tile_light::LightTiles;
 
-use crate::tree::{ClipChild, NodeChild, Tree};
+use crate::tree::{ClipChild, Contents, NodeChild, Tree};
 
 /// How a texture is drawn.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -284,6 +284,24 @@ impl Model {
 }
 
 impl Map {
+    /// Whether nothing solid stands over `point`, all the way to the top of the
+    /// world, so that a mirror there could see the sky.
+    #[must_use]
+    pub fn open_above(&self, point: Vec3) -> bool {
+        /// How finely it looks: as thin as a thin ceiling.
+        const STEP: f32 = 8.0;
+        let top = self.models.first().map_or(point.z, |world| world.maxs.z);
+        let mut at = point;
+        while at.z < top {
+            let leaf = self.tree.leaf(self.tree.leaf_at(at));
+            if leaf.is_some_and(|leaf| leaf.contents == Contents::Solid) {
+                return false;
+            }
+            at.z += STEP;
+        }
+        true
+    }
+
     /// Where something `width` across can walk: the grid of the hull that
     /// holds it, as collision chooses one.
     #[must_use]

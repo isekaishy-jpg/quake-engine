@@ -1,0 +1,10 @@
+format 1 material
+
+surface {
+    base = textures/fall_foam.png
+    alpha = blend
+    shading = unlit
+    flow = textures/flow_outward.png
+    flow_strength = 0.1
+    flow_speed = 0.35
+}

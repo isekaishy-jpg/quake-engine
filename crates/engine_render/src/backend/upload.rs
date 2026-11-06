@@ -217,6 +217,8 @@ pub(super) struct FrameExtras<'a> {
     samples: u32,
     /// Where the view is, to choose among them.
     eye: Vec3,
+    /// Whether the view is under the open sky, so that mirrors can show it.
+    under_sky: bool,
     /// The baked light in the air.
     probes: Option<&'a ProbeGrid>,
 }
@@ -330,6 +332,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     let pool_count = pools.len() as f32;
     out[base] = pool_count;
     out[base + 1] = post.detail_distance;
+    out[base + 2] = f32::from(u8::from(extra.under_sky));
     if let Some(probes) = extra.probes {
         out[base + 4..base + 8].copy_from_slice(&[
             probes.origin.x,
@@ -1007,6 +1010,7 @@ impl Backend {
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             eye: view.origin,
+            under_sky: scene.is_some_and(|scene| scene.map.open_above(view.origin)),
             samples: self.samples,
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
         };

@@ -1323,7 +1323,12 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         root,
         planes,
         glass,
-        meshes: working.placed.iter().filter_map(MeshShadow::of).collect(),
+        meshes: working
+            .placed
+            .iter()
+            .filter(|mesh| !mesh.only_seen)
+            .filter_map(MeshShadow::of)
+            .collect(),
         lifts: map
             .light_lifts
             .iter()

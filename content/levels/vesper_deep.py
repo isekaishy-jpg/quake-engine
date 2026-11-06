@@ -9,7 +9,9 @@ past the sluice, are the way on.
 
 It's on a grid of tiles, so its light and paths stream.
 """
-from kit import Level
+import random
+
+from kit import Level, falling, puffs, ribbon, write_mesh
 
 LIME = 'qg03_elder_crypt_wall_blocks'
 LIME_DAMP = 'qg03_elder_crypt_wall_damp'
@@ -55,6 +57,7 @@ level = Level(
     clouds { color = 0.9 0.86 0.82 coverage = 0.5 scale = 1 }
 }
 fog { color = 0.2 0.27 0.3 density = 0.00012 height = 1100 falloff = 0.0006 }
+water { color = 0.03 0.07 0.08 absorption = 0.006 caustics = 0.3 }
 tile_grid { size = 2048 }''')
 
 
@@ -183,7 +186,7 @@ LAND = [(640, 640, 7552, 1000), (6000, 1000, 7552, 2400), (640, 1000, 2000, 2800
 for x0, y0, x1, y1 in LAND:
     level.box(FLAGS, x0, y0, -160, x1, y1, QUAY)
 for x0, y0, x1, y1 in CANAL:
-    level.liquid('water', 'water', x0, y0, -160, x1, y1, -24)
+    level.liquid('water', 'canal_water', x0, y0, -160, x1, y1, -24)
     level.box(MOSSY, x0, y0, -160, x1, y0 + 8, QUAY)
     level.box(MOSSY, x0, y1 - 8, -160, x1, y1, QUAY)
 
@@ -278,9 +281,35 @@ level.entity('monster_army', (6400, 1200, QUAY + 28), angle=90)
 level.entity('monster_army', (6500, 2150, QUAY + 28), angle=270)
 
 # --- The Fall, and the walkways ------------------------------------------
-# It comes out of the east wall and feeds the canal.
-level.liquid('water', 'water', 7488, 2440, -24, 7552, 2760, 860)
-level.box(ROCK, 7360, 2400, 860, 7552, 2800, 1024)
+# It comes out of the east wall and down two ledges into the canal.
+STOPS = [(7560, 864), (7488, 860), (7360, 596), (7240, 336), (0, -24)]
+level.box(ROCK, 7360, 2340, 860, 7552, 2860, 1024)
+level.box(ROCK, 7360, 2340, -160, 7552, 2860, 590)
+level.box(ROCK, 7240, 2340, -160, 7360, 2860, 330)
+# What the rock shows beside the water, so it isn't a stack of blocks.
+for at, turn, length, height, seed in (((7240, 2760, QUAY), 1, 104, 266, 2), ((7240, 2340, QUAY), 1, 104, 266, 3),
+                                       ((7360, 2760, 330), 1, 104, 260, 4), ((7360, 2340, 330), 1, 104, 260, 5),
+                                       ((7240, 2860, QUAY), 0, 312, 530, 6), ((7552, 2340, QUAY), 2, 312, 530, 7)):
+    level.prefab('rock_wall', at, turn=turn, length=length, height=height, depth=56, material=ROCK, seed=seed)
+level.prefab('rubble', (7330, 2610, 330), material=ROCK)
+course = falling(STOPS)
+sheets = [ribbon(course, 2452, 2748, 11, ripple=10), ribbon(course, 2440, 2600, 12, ripple=12),
+          ribbon(course, 2610, 2760, 13, ripple=12)]
+FOOT = (7190, 2600, -23)
+HALF = 260
+foam = ([(FOOT[0] - HALF, FOOT[1] - HALF, FOOT[2]), (FOOT[0] + HALF, FOOT[1] - HALF, FOOT[2]),
+         (FOOT[0] + HALF, FOOT[1] + HALF, FOOT[2]), (FOOT[0] - HALF, FOOT[1] + HALF, FOOT[2])],
+        [(0, 0), (1, 0), (1, 1), (0, 1)], [(0, 1, 2), (0, 2, 3)])
+spray = random.Random(21)
+mist = [(7130 - spray.uniform(0, 90), spray.uniform(2440, 2760), -30 + spray.uniform(0, 30), spray.uniform(110, 190))
+        for _ in range(12)]
+mist += [(7215 - spray.uniform(0, 40), spray.uniform(2450, 2750), 320, spray.uniform(60, 100)) for _ in range(6)]
+mist += [(7335 - spray.uniform(0, 40), spray.uniform(2450, 2750), 586, spray.uniform(50, 90)) for _ in range(6)]
+write_mesh('vesper_fall', [('fall_deep', *ribbon(course, 2460, 2740, 10, back=6, ripple=6))]
+           + [('fall', *sheet) for sheet in sheets] + [('fall_foam', *foam), ('fall_mist', *puffs(mist, 22))])
+level.mesh('vesper_fall', only_seen=1)
+for x, y, z, power in ((7020, 2600, 120, 520), (7100, 2600, 420, 420), (7230, 2600, 700, 380)):
+    glow(x, y, z, power, (0.62, 0.8, 0.9))
 for x, y, z, seed in ((6300, 3100, 320, 1), (6300, 3900, 320, 2), (7000, 3100, 320, 3), (7000, 3900, 512, 4),
                       (6300, 4600, 512, 5)):
     level.prefab('tower', (x, y, QUAY), width=224, height=z - QUAY, material=(GREY, LIME, MOSSY)[seed % 3],

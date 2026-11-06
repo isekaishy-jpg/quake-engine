@@ -5,8 +5,9 @@ use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, apply_bake, attach_side_files, bake_folder,
-    bake_light, compile, map_hash, placeholder_texture, read_map, side_files, write_bake,
+    BakeInput, CompileError, LoadedMesh, MaterialLibrary, apply_bake, attach_side_files,
+    bake_folder, bake_light, compile, map_hash, placeholder_texture, read_map, read_mesh,
+    resolve_meshes, side_files, write_bake,
 };
 use engine_core::math::Vec3;
 use engine_format::from_text;
@@ -117,6 +118,54 @@ fn a_pillar_casts_a_shadow() {
     let shaded_map = baked(&blocked, &[]);
     let (_, shaded) = layer_light(&shaded_map, face_of(&shaded_map, "east"), 0).expect("a layer");
     assert!(shaded < clear * 0.8, "shadow {shaded} against {clear}");
+}
+
+/// How much of a lamp reaches the east wall past a pane placed by `field`.
+fn past_a_pane(field: &str) -> f32 {
+    let pane = "format 1 mesh
+part pane {
+    material = stone
+    points = 0 -256 -256  0 256 -256  0 256 256  0 -256 256
+    uvs = 0 0  1 0  1 1  0 1
+    triangles = 0 1 2  0 2 3  2 1 0  3 2 0
+}
+hull { cuboid = -1 -256 -256 1 256 256 }
+";
+    let text = format!(
+        "{ROOM}mesh {{ source = pane {field} }}
+entity lamp {{ type = light origin = -200 0 0 intensity = 800 }}
+"
+    );
+    let mut working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    let mesh = read_mesh(&from_text(pane).expect("parses")).expect("a mesh");
+    let mut read = |_: &str| {
+        Ok(LoadedMesh {
+            mesh: Arc::new(mesh.clone()),
+            occluders: Vec::new(),
+        })
+    };
+    resolve_meshes(&mut working, &mut read).expect("placed");
+    let mut source = |name: &str| placeholder_texture(name);
+    let mut map = compile(&working, &mut source).expect("compiles");
+    let mut images = |path: &str| -> Result<Arc<Vec<MipLevel>>, CompileError> {
+        Err(CompileError::Bad(path.to_owned()))
+    };
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    layer_light(&map, face_of(&map, "east"), 0)
+        .expect("a layer")
+        .1
+}
+
+/// Light goes through what's only seen, as it wouldn't through anything else.
+#[test]
+fn light_goes_through_a_mesh_only_to_be_seen() {
+    let blocked = past_a_pane("");
+    let clear = past_a_pane("only_seen = 1");
+    assert!(blocked < clear * 0.5, "{blocked} against {clear}");
 }
 
 #[test]

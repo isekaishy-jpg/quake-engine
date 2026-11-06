@@ -55,7 +55,7 @@ struct Frame {
     pool_low: array<vec4<f32>, 8>,
     pool_high: array<vec4<f32>, 8>,
     pool_color: array<vec4<f32>, 8>,
-    // x how many pools, y how far details reach.
+    // x how many pools, y how far details reach, z 1 under the open sky.
     pool_params: vec4<f32>,
     // The probes: their corner with w their spacing, and how many there are
     // along each axis, with w 1 if fog reads them.

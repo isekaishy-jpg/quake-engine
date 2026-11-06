@@ -1,0 +1,9 @@
+format 1 material
+
+surface {
+    base = textures/canal_water.png
+    kind = liquid
+    alpha = blend
+    shading = unlit
+    scroll = 0.03 0.02
+}

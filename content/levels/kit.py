@@ -6,7 +6,9 @@ space it faces. Detail goes in on top: brushes, entities and prefabs. `save`
 writes the map's text, and a batch of prefabs for `engine-tool` to place.
 """
 import json
+import math
 import os
+import random
 import subprocess
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -65,6 +67,85 @@ def minus(solid, hole):
             left.append(tuple(piece))
             rest[axis + 3] = hole[axis + 3]
     return left
+
+
+def write_mesh(name, parts):
+    """Writes `content/meshes/<name>.emesh`, from (material, points, uvs, triangles)."""
+    def numbers(rows):
+        return ' '.join(f'{value:g}' for row in rows for value in row)
+    lines = ['format 1 mesh', '']
+    for index, (material, points, uvs, triangles) in enumerate(parts):
+        lines += [f'part part_{index} {{', f'    material = {material}', f'    points = {numbers(points)}',
+                  f'    uvs = {numbers(uvs)}', f'    triangles = {numbers(triangles)}', '}']
+    with open(os.path.join(ROOT, 'meshes', name + '.emesh'), 'w', encoding='utf-8', newline='\n') as out:
+        out.write('\n'.join(lines) + '\n')
+
+
+def falling(stops, drop_speed=70, pull=800):
+    """The course of water through `stops`, a list of (x, z): it runs level to
+    each one, then falls in an arc to the height of the next."""
+    out = [stops[0]]
+    for (x, z), (_, below) in zip(stops[1:], stops[2:]):
+        out.append((x, z))
+        seconds = math.sqrt(2 * (z - below) / pull)
+        out += [(x - drop_speed * seconds * step / 12, z - (z - below) * (step / 12) ** 2) for step in range(1, 13)]
+    return out
+
+
+def ribbon(course, y0, y1, seed, *, back=0.0, ripple=8.0, drop_speed=70, pull=800):
+    """A sheet of water down `course`, a list of (x, z), between y0 and y1, as
+    (points, uvs, triangles). Along it, `v` counts seconds, so that a texture
+    moving at one speed stretches as the water falls faster."""
+    rng = random.Random(seed)
+    phases = [rng.uniform(0, math.tau) for _ in range(6)]
+    columns = max(2, int((y1 - y0) / 24))
+    points, uvs, triangles = [], [], []
+    seconds = 0.0
+    top = course[0][1]
+    for row, (x, z) in enumerate(course):
+        before, after = course[max(row - 1, 0)], course[min(row + 1, len(course) - 1)]
+        along_x, along_z = after[0] - before[0], after[1] - before[1]
+        length = math.hypot(along_x, along_z) or 1.0
+        # The side of the water that shows, here to the west or upwards.
+        normal_x, normal_z = along_z / length, -along_x / length
+        if normal_x > 0 or (normal_x == 0 and normal_z < 0):
+            normal_x, normal_z = -normal_x, -normal_z
+        if row:
+            step = math.hypot(x - course[row - 1][0], z - course[row - 1][1])
+            speed = math.sqrt(drop_speed ** 2 + 2 * pull * max(top - z, 0.0)) * 0.5 + 90
+            seconds += step / speed
+        pinch = 10 * math.sin(row * 0.7 + phases[0])
+        for column in range(columns + 1):
+            share = column / columns
+            y = y0 + (y1 - y0) * share + pinch * (1 - 2 * share)
+            bulge = sum(math.sin(y * rate + phases[index + 1] + row * 0.3)
+                        for index, rate in enumerate((0.021, 0.047, 0.093))) / 3
+            lift = bulge * ripple - back
+            points.append((x + normal_x * lift, y, z + normal_z * lift))
+            uvs.append((y / 256, -seconds))
+    for row in range(len(course) - 1):
+        for column in range(columns):
+            a = row * (columns + 1) + column
+            b, c, d = a + 1, a + columns + 1, a + columns + 2
+            triangles += [(a, b, d), (a, d, c), (a, d, b), (a, c, d)]
+    return points, uvs, triangles
+
+
+def puffs(places, seed):
+    """Soft quads at `places`, a list of (x, y, z, size), turned this way and
+    that about the west, as (points, uvs, triangles)."""
+    rng = random.Random(seed)
+    points, uvs, triangles = [], [], []
+    for x, y, z, size in places:
+        turn = rng.uniform(-0.6, 0.6)
+        across_x, across_y = math.sin(turn) * size / 2, math.cos(turn) * size / 2
+        first = len(points)
+        points += [(x - across_x, y - across_y, z), (x + across_x, y + across_y, z),
+                   (x + across_x, y + across_y, z + size), (x - across_x, y - across_y, z + size)]
+        uvs += [(0, 1), (1, 1), (1, 0), (0, 0)]
+        triangles += [(first, first + 1, first + 2), (first, first + 2, first + 3),
+                      (first + 2, first + 1, first), (first + 3, first + 2, first)]
+    return points, uvs, triangles
 
 
 class Level:
@@ -141,6 +222,11 @@ class Level:
         body = '\n'.join(
             f'    brush {{ material = {value_text(material)} cuboid = {value_text(list(box))} }}' for box in boxes)
         self.lines.append(f'entity{label} {{ type = {value_text(kind)} {fields_text(fields)}\n{body}\n}}')
+
+    def mesh(self, source, at=(0, 0, 0), **fields):
+        """A mesh from `content/meshes`, placed in the world."""
+        fields = {'source': source, 'origin': at, **fields}
+        self.lines.append(f'mesh {{ {fields_text(fields)} }}')
 
     def prefab(self, which, at, /, **params):
         """A prefab, placed by the platform's tools when the level's saved."""

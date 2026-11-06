@@ -282,6 +282,18 @@ fn a_hull_collides_without_cutting_faces() {
     assert_eq!(contents_at(&map, middle), Contents::Solid);
 }
 
+/// A mesh that's only seen is drawn, and there's nothing to bump into.
+#[test]
+fn a_mesh_only_to_be_seen_has_no_hull() {
+    let plain = room();
+    let map = Arc::new(room_with_mesh(
+        "mesh { source = square origin = -128 -128 -200 only_seen = 1 }",
+    ));
+    assert_eq!(map.faces.len(), plain.faces.len() + 2, "it's drawn");
+    let world = CollisionWorld::new(Arc::clone(&map));
+    assert!(!world.in_solid(Vec3::new(-100.0, -100.0, -204.0)));
+}
+
 /// An entity's mesh is its model, and its sidecar goes with it.
 #[test]
 fn a_mesh_entity_has_a_model_and_a_shade() {

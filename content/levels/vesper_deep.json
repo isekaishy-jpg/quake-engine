@@ -2376,6 +2376,134 @@
 {
 "op": "place_prefab",
 "args": {
+"prefab": "rock_wall",
+"at": [
+7240,
+2760,
+64
+],
+"params": {
+"turn": 1,
+"length": 104,
+"height": 266,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 2
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+7240,
+2340,
+64
+],
+"params": {
+"turn": 1,
+"length": 104,
+"height": 266,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 3
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+7360,
+2760,
+330
+],
+"params": {
+"turn": 1,
+"length": 104,
+"height": 260,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 4
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+7360,
+2340,
+330
+],
+"params": {
+"turn": 1,
+"length": 104,
+"height": 260,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 5
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+7240,
+2860,
+64
+],
+"params": {
+"turn": 0,
+"length": 312,
+"height": 530,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 6
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rock_wall",
+"at": [
+7552,
+2340,
+64
+],
+"params": {
+"turn": 2,
+"length": 312,
+"height": 530,
+"depth": 56,
+"material": "qg03_elder_crypt_rock",
+"seed": 7
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
+"prefab": "rubble",
+"at": [
+7330,
+2610,
+330
+],
+"params": {
+"material": "qg03_elder_crypt_rock"
+}
+}
+},
+{
+"op": "place_prefab",
+"args": {
 "prefab": "tower",
 "at": [
 6300,

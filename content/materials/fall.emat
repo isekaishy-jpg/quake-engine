@@ -1,0 +1,11 @@
+format 1 material
+
+surface {
+    base = textures/fall.png
+    alpha = blend
+    shading = unlit
+    scroll = 0 1.1
+    flow = textures/flow_fall.png
+    flow_strength = 0.5
+    flow_speed = 0.8
+}

@@ -1,7 +1,7 @@
 //! Leaf lookups and visible sets.
 
 use engine_core::math::Vec3;
-use engine_map::{Leaf, Node, NodeChild, Plane, Spline, Tree};
+use engine_map::{Contents, Leaf, Map, Model, Node, NodeChild, Plane, Spline, Tree};
 
 /// A tree split at x = 0: leaf 1 in front and leaf 2 behind.
 fn tree() -> Tree {
@@ -17,6 +17,25 @@ fn tree() -> Tree {
         leaves: vec![Leaf::default(); 3],
         ..Tree::default()
     }
+}
+
+/// A mirror under a roof can't see the sky, and one in the open can.
+#[test]
+fn a_roof_stands_over_what_is_under_it() {
+    let mut map = Map {
+        tree: tree(),
+        ..Map::default()
+    };
+    map.tree.leaves[2].contents = Contents::Solid;
+    map.models.push(Model {
+        maxs: Vec3::new(0.0, 0.0, 256.0),
+        ..Model::default()
+    });
+    assert!(
+        map.open_above(Vec3::new(64.0, 0.0, 0.0)),
+        "nothing that way"
+    );
+    assert!(!map.open_above(Vec3::new(-64.0, 0.0, 0.0)), "it's solid");
 }
 
 #[test]
