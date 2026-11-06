@@ -115,6 +115,12 @@ const SHADOW_TILE_SIZE: f32 = 512.0;
 const SHADOW_LIFT_FACING: f32 = 1.5;
 const SHADOW_LIFT_EDGE_ON: f32 = 6.0;
 
+// How many of a shadow's pixels apart its samples are: close to its light, far
+// from it, and how many world units it takes to add one.
+const SHADOW_SOFT_NEAR: f32 = 1.5;
+const SHADOW_SOFT_FAR: f32 = 5.0;
+const SHADOW_SOFT_RATE: f32 = 96.0;
+
 // How much of a light reaches `point`, whose surface faces `normal`, by its
 // shadow tile. A pixel of a shadow map covers a patch of surface, and on a
 // surface at a shallow angle that patch dips below what was drawn, so it would
@@ -146,27 +152,32 @@ fn live_shadow(
     let pixel = 2.0 * max(size.x, max(size.y, size.z)) / SHADOW_TILE_SIZE;
     let facing = abs(dot(normal, normalize(from_light)));
     let edge_on = sqrt(max(1.0 - facing * facing, 0.0));
-    let lift = mix(SHADOW_LIFT_FACING, SHADOW_LIFT_EDGE_ON, edge_on);
+    // A shadow softens the further it falls, as a real light has some size. The
+    // wider it looks, the further off the surface it has to look from, or its
+    // far samples fall below a slanted surface and shade it in stripes.
+    let spread = clamp(SHADOW_SOFT_NEAR + length(from_light) / SHADOW_SOFT_RATE, SHADOW_SOFT_NEAR, SHADOW_SOFT_FAR);
+    let lift = mix(SHADOW_LIFT_FACING, SHADOW_LIFT_EDGE_ON, edge_on) * spread * 0.75;
     let lifted = point + normal * pixel * lift;
     let clip = live.shadows[tile] * vec4<f32>(lifted, 1.0);
     let ndc = clip.xyz / clip.w;
-    let inner = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(0.01), vec2<f32>(0.99));
+    let margin = (spread * 1.5 + 1.0) / SHADOW_TILE_SIZE;
+    let inner = clamp(vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5), vec2<f32>(margin), vec2<f32>(1.0 - margin));
     let cell = vec2<f32>(f32(tile % 8), f32(tile / 8));
     let uv = (cell + inner) / 8.0;
-    // Two pixels apart, so that the blur is wider than a stair step on a surface
-    // nearly edge on. The sampler's own blend leaves no gaps between them.
-    let step_size = 2.0 / (SHADOW_TILE_SIZE * 8.0);
-    // A tent over nine samples, each already blended by the sampler. It has no
-    // noise in it, as noise on a surface reads as specks.
+    let step_size = spread / (SHADOW_TILE_SIZE * 8.0);
+    // A tent over sixteen samples, each already blended by the sampler. It's
+    // wider than a stair step on a surface nearly edge on, and has no noise in
+    // it, as noise on a surface reads as specks.
+    let weights = vec4<f32>(1.0, 3.0, 3.0, 1.0);
     var total = 0.0;
-    for (var y = -1; y <= 1; y = y + 1) {
-        for (var x = -1; x <= 1; x = x + 1) {
-            let offset = vec2<f32>(f32(x), f32(y)) * step_size;
-            let weight = f32((2 - abs(x)) * (2 - abs(y)));
+    for (var y = 0; y < 4; y = y + 1) {
+        for (var x = 0; x < 4; x = x + 1) {
+            let offset = (vec2<f32>(f32(x), f32(y)) - vec2<f32>(1.5)) * step_size;
+            let weight = weights[x] * weights[y];
             total = total + weight * textureSampleCompareLevel(shadow_atlas, shadow_sampler, uv + offset, ndc.z);
         }
     }
-    return total / 16.0;
+    return total / 64.0;
 }
 
 // What reaches a pixel: a bit for each moving light, then each capsule.
@@ -184,12 +195,18 @@ fn cluster_at(world: vec3<f32>, screen: vec2<f32>) -> vec2<u32> {
 }
 
 // Moving lights on a surface. A pixel's cluster says which to look at.
-fn live_light(world: vec3<f32>, cluster: vec2<u32>) -> vec3<f32> {
+fn live_light(world: vec3<f32>, cluster: vec2<u32>, smooth_normal: vec3<f32>) -> vec3<f32> {
     let masks = vec2<u32>(cluster.x, cluster.y & 0xffffu);
     if (masks.x | masks.y) == 0u {
         return vec3<f32>(0.0);
     }
     let normal = normalize(cross(dpdx(world), dpdy(world)));
+    // A mesh's light follows its own normal, or each triangle would be a band.
+    let rounded = dot(smooth_normal, smooth_normal) > 0.01;
+    var round_normal = vec3<f32>(0.0);
+    if rounded {
+        round_normal = normalize(smooth_normal);
+    }
     var total = vec3<f32>(0.0);
     for (var half_mask = 0u; half_mask < 2u; half_mask = half_mask + 1u) {
         var bits = masks[half_mask];
@@ -206,7 +223,10 @@ fn live_light(world: vec3<f32>, cluster: vec2<u32>) -> vec3<f32> {
             let toward = offset / max(distance_to, 0.001);
             // Depth derivatives can point either way, and light only lands on
             // the side that faces it.
-            let facing = abs(dot(normal, toward));
+            var facing = abs(dot(normal, toward));
+            if rounded {
+                facing = max(dot(round_normal, toward), 0.0);
+            }
             let fall = 1.0 - (distance_to * distance_to) / (reach * reach);
             var strength = facing * fall * fall;
             if dot(light.spot.xyz, light.spot.xyz) > 0.5 {
@@ -260,7 +280,7 @@ fn light(in: VertexOut) -> vec3<f32> {
         + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
-    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster);
+    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster, in.normal.xyz);
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
     return pow(keep_hue(2.0 * (shaded + moving), 2.0), vec3<f32>(frame.color_params.x));

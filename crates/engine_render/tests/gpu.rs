@@ -1520,6 +1520,35 @@ fn pixel(capture: &Capture, x: u32, y: u32) -> [u8; 4] {
     ]
 }
 
+/// How blue the middle of the square is under a light, if it says it faces
+/// `normal`.
+fn blue_with_normal(renderer: &mut Renderer, normal: [i8; 3]) -> u8 {
+    let mut built = map(1);
+    built.normals = vec![normal; built.points.len()];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let lights = [blue_light(Vec3::new(64.0, 64.0, 80.0), false)];
+    let drawables = Drawables {
+        live_lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 16, 16)
+        .expect("capture");
+    centre(&capture)[2]
+}
+
+/// A moving light goes by which way a mesh says it faces, not by its triangle, or
+/// each triangle of a curve shows as a band.
+#[test]
+fn a_moving_light_follows_a_meshs_normal() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let toward = blue_with_normal(&mut renderer, [0, 0, 127]);
+    let aside = blue_with_normal(&mut renderer, [127, 0, 0]);
+    assert!(toward > aside, "{toward} and {aside}");
+}
+
 /// A moving light adds its colour where it reaches, and nothing further off.
 #[test]
 fn a_live_light_brightens_what_it_reaches() {
