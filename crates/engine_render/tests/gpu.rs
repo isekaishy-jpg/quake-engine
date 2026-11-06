@@ -1025,6 +1025,106 @@ fn pool_map(look: PoolLook) -> Map {
     built
 }
 
+/// A blue wall standing at the far side of a calm pool, seen at a low angle, with
+/// the pool mirroring by `reflect`.
+fn wall_over_a_pool(renderer: &mut Renderer, reflect: f32) -> Capture {
+    let mut built = map(2);
+    // The first square is wide enough that no edge of it shows, and the second
+    // stands up along its far side, in a light of its own.
+    let corners = [
+        [-2000.0, -2000.0],
+        [2000.0, -2000.0],
+        [2000.0, 128.0],
+        [-2000.0, 128.0],
+    ];
+    for (at, [x, y]) in corners.into_iter().enumerate() {
+        built.points[at] = Vec3::new(x, y, 0.0);
+    }
+    let first = built.faces[1].first_point as usize;
+    built.points[first] = Vec3::new(-2000.0, 128.0, 0.0);
+    built.points[first + 1] = Vec3::new(2000.0, 128.0, 0.0);
+    built.points[first + 2] = Vec3::new(2000.0, 128.0, 60.0);
+    built.points[first + 3] = Vec3::new(-2000.0, 128.0, 60.0);
+    built.light.extend([[0, 0, 200]; 81]);
+    if let Some(light) = &mut built.faces[1].light {
+        light.first_sample = 81;
+    }
+    built.pools.push(Pool {
+        low: Vec3::new(-2000.0, -2000.0, -8.0),
+        high: Vec3::new(2000.0, 127.0, 1.0),
+        look: PoolLook {
+            color: [0.0, 0.0, 0.1],
+            absorption: 0.0,
+            caustics: 0.0,
+            reflect,
+            waves: 0.0,
+            refraction: 0.0,
+        },
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(0.0, -120.0, 24.0),
+        yaw: 90.0,
+        pitch: 6.0,
+        ..view_from_above()
+    };
+    let instances = [ModelInstance {
+        model: 1,
+        origin: Vec3::ZERO,
+        visible: true,
+        ..ModelInstance::default()
+    }];
+    renderer
+        .capture(&view, with_instance(&instances), 128, 128)
+        .expect("capture")
+}
+
+/// A calm surface mirrors evenly. Noise in how it looked showed as a stipple, on
+/// the edge of what it mirrors: here the top of a wall, which runs straight across
+/// the view, so pixels side by side should match.
+#[test]
+fn a_calm_surface_has_no_stipple() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let capture = wall_over_a_pool(&mut renderer, 1.0);
+    let mut uneven = 0;
+    for y in 0..128 {
+        for x in 66..104 {
+            let [r, g, b, _] = pixel(&capture, x, y);
+            let [nr, ng, nb, _] = pixel(&capture, x + 1, y);
+            let gap = |a: u8, b: u8| (i32::from(a) - i32::from(b)).abs();
+            if gap(r, nr).max(gap(g, ng)).max(gap(b, nb)) > 6 {
+                uneven += 1;
+            }
+        }
+    }
+    assert!(
+        uneven < 8,
+        "{uneven} pixels differ from the one beside them"
+    );
+}
+
+/// A surface mirrors what its pool says, and one that says nothing doesn't.
+#[test]
+fn how_much_a_surface_mirrors_is_up_to_its_pool() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let matt = wall_over_a_pool(&mut renderer, 0.0);
+    let shiny = wall_over_a_pool(&mut renderer, 1.0);
+    let bluer = |capture: &Capture| {
+        let [_, _, b, _] = pixel(capture, 84, 70);
+        b
+    };
+    assert!(
+        bluer(&shiny) > bluer(&matt),
+        "{} {}",
+        bluer(&shiny),
+        bluer(&matt)
+    );
+}
+
 /// Depth takes things towards a pool's colour, more the further they are.
 #[test]
 fn depth_tints_towards_a_pools_colour() {
@@ -1032,6 +1132,9 @@ fn depth_tints_towards_a_pools_colour() {
         color: [0.0, 0.0, 1.0],
         absorption: 0.02,
         caustics: 0.0,
+        reflect: 0.0,
+        waves: 0.0,
+        refraction: 0.0,
     };
     let thick = PoolLook {
         absorption: 0.2,

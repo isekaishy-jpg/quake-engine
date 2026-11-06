@@ -239,6 +239,12 @@ pub struct WaterSource {
     pub absorption: Option<f32>,
     /// How strong caustics and shafts are.
     pub caustics: Option<f32>,
+    /// How much its surface mirrors.
+    pub reflect: Option<f32>,
+    /// How tall its waves look.
+    pub waves: Option<f32>,
+    /// How far its surface bends what's seen through it.
+    pub refraction: Option<f32>,
 }
 
 /// What `name` is as contents.
@@ -585,6 +591,9 @@ fn read_water(block: &Block) -> WaterSource {
             .then(|| color_of(block, "color", [0.0; 3])),
         absorption: number("absorption"),
         caustics: number("caustics"),
+        reflect: number("reflect"),
+        waves: number("waves"),
+        refraction: number("refraction"),
     }
 }
 

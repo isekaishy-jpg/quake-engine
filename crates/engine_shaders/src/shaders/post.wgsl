@@ -229,25 +229,40 @@ fn on_screen(point: vec3<f32>) -> vec3<f32> {
 }
 
 // What's seen along `direction` from `start`, by walking it across the screen.
-// Past the picture's edge it can only be sky, if there is one.
-fn mirrored(start: vec3<f32>, direction: vec3<f32>, fallback: vec3<f32>, jitter: f32) -> vec3<f32> {
+// Past the picture's edge it can only be sky, if there is one. Where a step goes
+// past a surface it closes in on it, so what's mirrored is sharp, with no need of
+// noise to hide the steps. That noise showed on a calm surface as a stipple.
+fn mirrored(start: vec3<f32>, direction: vec3<f32>, fallback: vec3<f32>) -> vec3<f32> {
     let size = vec2<f32>(textureDimensions(scene));
     var reach = 24.0;
-    var point = start + direction * reach * jitter;
+    var point = start;
     for (var step = 0; step < 20; step = step + 1) {
+        let before = point;
         point = point + direction * reach;
         reach = reach * 1.18;
         let place = on_screen(point);
         if place.x < 0.0 || place.x > 1.0 || place.y < 0.0 || place.y > 1.0 || place.z > 1.0 {
             break;
         }
-        let at = vec2<i32>(place.xy * size);
-        let surface = load_depth(at);
+        let surface = load_depth(vec2<i32>(place.xy * size));
         if surface < place.z && surface < 1.0 {
-            let found = world_at(place.xy, surface);
-            if length(found - point) < reach * 2.0 {
+            var near = before;
+            var far = point;
+            for (var turn = 0; turn < 5; turn = turn + 1) {
+                let middle = (near + far) * 0.5;
+                let there = on_screen(middle);
+                if load_depth(vec2<i32>(there.xy * size)) < there.z {
+                    far = middle;
+                } else {
+                    near = middle;
+                }
+            }
+            let hit = on_screen(far);
+            let at = vec2<i32>(hit.xy * size);
+            let found = world_at(hit.xy, load_depth(at));
+            if length(found - far) < reach {
                 // Fading out by the picture's edges hides where it runs out.
-                let margin = min(min(place.x, 1.0 - place.x), min(place.y, 1.0 - place.y));
+                let margin = min(min(hit.x, 1.0 - hit.x), min(hit.y, 1.0 - hit.y));
                 return mix(fallback, load_color(at), smoothstep(0.0, 0.12, margin));
             }
         }
@@ -272,13 +287,12 @@ fn reflected(
     point: vec3<f32>,
     normal: vec3<f32>,
     strength: f32,
-    jitter: f32,
 ) -> vec3<f32> {
     let view = normalize(point - frame.eye.xyz);
     let bounce = reflect(view, normal);
-    let glance = pow(1.0 - clamp(-dot(view, normal), 0.0, 1.0), 3.0);
-    let amount = strength * (0.25 + 0.75 * glance);
-    let seen = mirrored(point + normal * 0.5, bounce, sky_towards(bounce, color), jitter);
+    let glance = pow(1.0 - clamp(-dot(view, normal), 0.0, 1.0), 5.0);
+    let amount = strength * (0.08 + 0.92 * glance);
+    let seen = mirrored(point + normal * 0.5, bounce, sky_towards(bounce, color));
     return mix(color, seen, amount);
 }
 
@@ -397,9 +411,41 @@ fn surface_above(point: vec3<f32>, top: f32) -> vec2<f32> {
     return point.xy + sun.xy * (top - point.z) / sun.z;
 }
 
+// Which way a pool's surface faces at `place`, with waves `height` tall. Sines at
+// odd angles don't line up, so no pattern shows, and they're smooth, so nothing
+// about them speckles.
+fn water_normal(place: vec2<f32>, height: f32) -> vec3<f32> {
+    let time = frame.params.x;
+    var slope = vec2<f32>(0.0);
+    let at = place * 0.03;
+    slope = slope + vec2<f32>(0.8, 0.3) * cos(dot(at, vec2<f32>(0.8, 0.3)) * 1.0 + time * 0.9);
+    slope = slope + vec2<f32>(-0.4, 0.9) * cos(dot(at, vec2<f32>(-0.4, 0.9)) * 2.3 + time * 1.3) * 0.6;
+    slope = slope + vec2<f32>(0.6, -0.7) * cos(dot(at, vec2<f32>(0.6, -0.7)) * 5.1 + time * 1.9) * 0.3;
+    return normalize(vec3<f32>(-slope * 0.04 * height, 1.0));
+}
+
+// What's seen through a surface at `uv`, bent by `normal`, or `color` if the place
+// it lands on isn't under the surface, as that wouldn't be seen through it.
+fn bent_through(
+    color: vec3<f32>,
+    uv: vec2<f32>,
+    normal: vec3<f32>,
+    amount: f32,
+    top: f32,
+) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let bent = clamp(uv + normal.xy * amount * 0.4, vec2<f32>(0.0), vec2<f32>(0.999));
+    let at = vec2<i32>(bent * size);
+    let depth = load_depth(at);
+    if world_at(bent, min(depth, 0.9999)).z >= top {
+        return color;
+    }
+    return load_color(at);
+}
+
 // Light in the pools a view passes through: depth tints it, what's in a pool
 // shows caustics, and a view through one sees them as shafts.
-fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32> {
+fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
     var color = start;
     let eye = frame.eye.xyz;
     let far = world_at(uv, min(depth, 0.9999));
@@ -421,12 +467,15 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f3
         if path < 0.5 {
             continue;
         }
-        // A view from above meets the surface first, which mirrors the sky.
+        // A view from above meets the surface first, which bends what's seen
+        // through it, and mirrors what's over it.
         let entry = eye + ray * enter;
-        if eye.z > high.z && abs(entry.z - high.z) < 1.0 {
-            let ripple = caustic(entry.xy * 0.5) * 0.04;
-            let normal = normalize(vec3<f32>(ripple, ripple * 0.5, 1.0));
-            color = reflected(color, entry, normal, 0.6, jitter);
+        let from_above = eye.z > high.z && abs(entry.z - high.z) < 1.0;
+        let surface_look = frame.pool_surface[index];
+        var normal = vec3<f32>(0.0, 0.0, 1.0);
+        if from_above {
+            normal = water_normal(entry.xy, surface_look.x);
+            color = bent_through(color, uv, normal, surface_look.y, high.z);
         }
         let inside = all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0));
         if inside && depth < 1.0 && high.w > 0.0 {
@@ -439,13 +488,17 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f3
         if high.w > 0.0 {
             var shafts = 0.0;
             for (var step = 0; step < 8; step = step + 1) {
-                let share = mix(enter, leave, (f32(step) + jitter) / 8.0);
+                let share = mix(enter, leave, (f32(step) + 0.5) / 8.0);
                 let point = eye + ray * share;
                 let below = high.z - point.z;
                 shafts = shafts + caustic(surface_above(point, high.z)) * exp(-below / 200.0);
             }
             let amount = shafts / 8.0 * min(path / 256.0, 1.0) * high.w;
             color = color + frame.pool_color[index].rgb * amount * 2.5;
+        }
+        // What the surface mirrors isn't under it, so depth doesn't tint it.
+        if from_above && frame.pool_color[index].w > 0.0 {
+            color = reflected(color, entry, normal, frame.pool_color[index].w);
         }
     }
     return color;
@@ -601,11 +654,11 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     if shine > 0.02 && depth < 1.0 {
         let size = vec2<f32>(textureDimensions(scene));
         let normal = pixel_normal(at, in.uv, depth, size);
-        color = reflected(color, world_at(in.uv, depth), -normal, shine, noise);
+        color = reflected(color, world_at(in.uv, depth), -normal, shine);
     }
     let edge = outline_strength(at, in.uv, depth);
     color = mix(color, frame.outline.rgb, edge);
-    color = in_pools(color, in.uv, depth, noise);
+    color = in_pools(color, in.uv, depth);
     color = fogged(color, in.uv, depth, noise);
     if frame.stencil_params.x > 0.5 {
         color = color + textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0).rgb;

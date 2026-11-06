@@ -651,3 +651,19 @@ fn a_brush_leaves_faces_it_does_not_touch_whole() {
     assert_eq!(floating, floor + 6, "only its own faces");
     assert!(standing <= floor + 5 + 8, "{standing}");
 }
+
+#[test]
+fn a_level_says_how_its_water_looks() {
+    let text = "format 1 map
+water { reflect = 0.2 waves = 0 refraction = 0.5 }
+brush { material = stone cuboid = -128 -128 -64 128 128 -32 }
+brush { material = stone contents = water cuboid = -64 -64 -32 64 64 0 }
+";
+    let working = read_map_text(text).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile(&working, &mut source).expect("compiles");
+    let look = map.pools[0].look;
+    assert_eq!(look.reflect, 0.2);
+    assert_eq!(look.waves, 0.0);
+    assert_eq!(look.refraction, 0.5);
+}

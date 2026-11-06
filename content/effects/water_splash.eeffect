@@ -1,0 +1,24 @@
+format 1 effect
+
+# Something going into water.
+emitter drops {
+    burst = 40
+    duration = 0.05
+    shape = ball
+    radius = 8
+    life = 0.4 0.8
+    speed = 80 220
+    direction = 0 0 1
+    spread = 35
+    gravity = 1
+    size = 2
+    color = 0 0.9 0.95 1 0.8 1 0.9 0.95 1 0
+}
+emitter ring {
+    kind = decal
+    burst = 1
+    duration = 0.05
+    life = 0.6 0.6
+    size = 0 8 1 90
+    color = 0 1 1 1 0.5 1 1 1 1 0
+}

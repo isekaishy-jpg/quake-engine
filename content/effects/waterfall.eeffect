@@ -1,0 +1,18 @@
+format 1 effect
+
+# Falling water: a sheet of drops, with spray where it lands. Put it at the top,
+# and set `half_size` to how wide the fall is.
+emitter sheet {
+    gpu = true
+    rate = 1800
+    shape = box
+    half_size = 64 8 2
+    life = 1.2 1.2
+    speed = 40 40
+    direction = 0 0 -1
+    spread = 6
+    gravity = 0.5
+    turbulence = 4
+    size = 0 3 1 7
+    color = 0 0.8 0.9 1 0.35 1 0.8 0.9 1 0.1
+}

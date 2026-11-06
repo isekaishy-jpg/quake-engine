@@ -75,7 +75,7 @@ const FRAME_SIZE: usize =
 const EXTRA_BYTES: usize = EXTRA_FLOATS * 4;
 
 /// Floats of stencil and capsule values in the frame uniforms.
-const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 12 + 4 + 8 + 4;
+const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 16 + 4 + 8 + 4;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;

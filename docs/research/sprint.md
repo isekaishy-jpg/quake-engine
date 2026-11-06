@@ -25,7 +25,7 @@ Earlier items unblock later ones.
 | 11 | Baked shadows: several rays per sample, more than one sharp light, joins at an angle, light order and layer limits | [Note](shadow-rendering.md) | done |
 | 12 | Moving lights' shadows: soft, without sawtooth or bands | [Note](shadow-rendering.md) | done |
 | 13 | Particles: graph and modules, CPU and GPU, attach points | [Note](effects-water-shaders.md) | done |
-| 14 | Water: the general system, reflections without stipple, depth, murk | [Note](effects-water-shaders.md) | todo |
+| 14 | Water: the general system, reflections without stipple, depth, murk | [Note](effects-water-shaders.md) | done |
 | 15 | Zones: research, then regions, sub zones, names, music, ambient light | Open questions | todo |
 | 16 | Engine UI: text, nine-slice, menus, splash, console, animated pictures | Open questions | todo |
 | 17 | Status bar and menus as scripts | Open questions | todo |

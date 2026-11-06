@@ -384,8 +384,12 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         ]);
         let at = base + MAX_POOLS * 8 + index * 4;
         out[at..at + 3].copy_from_slice(&pool.look.color.map(linear));
+        out[at + 3] = pool.look.reflect;
+        let at = base + MAX_POOLS * 12 + index * 4;
+        out[at] = pool.look.waves;
+        out[at + 1] = pool.look.refraction;
     }
-    let base = base + MAX_POOLS * 12;
+    let base = base + MAX_POOLS * 16;
     #[expect(clippy::cast_precision_loss, reason = "eight at most")]
     let pool_count = pools.len() as f32;
     out[base] = pool_count;

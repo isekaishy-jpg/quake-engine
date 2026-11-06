@@ -805,6 +805,9 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
             look.color = water.color.unwrap_or(look.color);
             look.absorption = water.absorption.unwrap_or(look.absorption);
             look.caustics = water.caustics.unwrap_or(look.caustics);
+            look.reflect = water.reflect.unwrap_or(look.reflect);
+            look.waves = water.waves.unwrap_or(look.waves);
+            look.refraction = water.refraction.unwrap_or(look.refraction);
         }
         let corners = solid_corners(&brush.planes());
         let Some(first) = corners.first() else {

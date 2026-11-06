@@ -51,10 +51,12 @@ struct Frame {
     // x how many capsules.
     capsule_params: vec4<f32>,
     // Per pool: its low corner with w its absorption, its high corner with w
-    // its caustics, and its colour.
+    // its caustics, its colour with w how much it mirrors, and x how tall its
+    // waves look and y how far it bends what's seen through it.
     pool_low: array<vec4<f32>, 8>,
     pool_high: array<vec4<f32>, 8>,
     pool_color: array<vec4<f32>, 8>,
+    pool_surface: array<vec4<f32>, 8>,
     // x how many pools, y how far details reach, z 1 under the open sky.
     pool_params: vec4<f32>,
     // The probes: their corner with w their spacing, and how many there are

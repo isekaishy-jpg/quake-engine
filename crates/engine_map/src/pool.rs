@@ -13,6 +13,12 @@ pub struct PoolLook {
     pub absorption: f32,
     /// How strong caustics and shafts are.
     pub caustics: f32,
+    /// How much its surface mirrors, at a glance.
+    pub reflect: f32,
+    /// How tall its waves look.
+    pub waves: f32,
+    /// How far its surface bends what's seen through it.
+    pub refraction: f32,
 }
 
 impl PoolLook {
@@ -24,16 +30,25 @@ impl PoolLook {
                 color: [0.05, 0.22, 0.28],
                 absorption: 0.006,
                 caustics: 0.6,
+                reflect: 0.6,
+                waves: 1.0,
+                refraction: 1.0,
             }),
             Contents::Slime => Some(Self {
                 color: [0.12, 0.3, 0.05],
                 absorption: 0.02,
                 caustics: 0.3,
+                reflect: 0.25,
+                waves: 0.5,
+                refraction: 0.4,
             }),
             Contents::Lava => Some(Self {
                 color: [0.75, 0.2, 0.03],
                 absorption: 0.05,
                 caustics: 0.0,
+                reflect: 0.0,
+                waves: 0.0,
+                refraction: 0.0,
             }),
             _ => None,
         }
