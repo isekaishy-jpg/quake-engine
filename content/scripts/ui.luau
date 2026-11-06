@@ -73,17 +73,17 @@ end
 function menu_key(state, key)
 	local _, list = items(state)
 	local item = list[selected]
-	if key == "UPARROW" or key == "W" then
+	if key == "UPARROW" or key == "UP" or key == "W" then
 		selected = if selected <= 1 then #list else selected - 1
 		changed_at = state.time
 		ui.sound("misc/menu1.wav")
-	elseif key == "DOWNARROW" or key == "S" then
+	elseif key == "DOWNARROW" or key == "DOWN" or key == "S" then
 		selected = if selected >= #list then 1 else selected + 1
 		changed_at = state.time
 		ui.sound("misc/menu1.wav")
-	elseif item.slider and (key == "LEFTARROW" or key == "A") then
+	elseif item.slider and (key == "LEFTARROW" or key == "LEFT" or key == "A") then
 		nudge(state, item.slider, -1)
-	elseif item.slider and (key == "RIGHTARROW" or key == "D") then
+	elseif item.slider and (key == "RIGHTARROW" or key == "RIGHT" or key == "D") then
 		nudge(state, item.slider, 1)
 	elseif key == "ESCAPE" then
 		if screen == "main" then

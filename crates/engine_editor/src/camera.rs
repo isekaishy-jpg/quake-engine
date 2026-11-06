@@ -53,6 +53,14 @@ impl Camera {
         self.pitch = (self.pitch + y * LOOK_SPEED).clamp(-89.0, 89.0);
     }
 
+    /// Takes one step: `ahead` units along the floor, and turns by `turn` degrees.
+    /// It's for buttons, for whoever can't fly with a mouse and keys held down.
+    pub fn step(&mut self, ahead: f32, turn: f32) {
+        self.yaw += turn;
+        let [forward, ..] = view_axes(self.yaw, 0.0);
+        self.origin = self.origin + forward * ahead;
+    }
+
     /// Moves for `seconds` with `keys` held.
     pub fn fly(&mut self, keys: Keys, seconds: f32) {
         let [forward, right, _] = view_axes(self.yaw, self.pitch);

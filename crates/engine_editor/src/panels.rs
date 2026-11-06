@@ -17,6 +17,27 @@ const TEXT: Color32 = Color32::from_rgb(0xd6, 0xda, 0xdf);
 /// The accent, on what's active.
 pub(crate) const ACCENT: Color32 = Color32::from_rgb(0xe8, 0xa3, 0x3d);
 
+/// Takes colours to their plainest, or back: white on black, with yellow on what
+/// matters.
+pub(crate) fn apply_contrast(context: &Context, on: bool) {
+    apply_style(context);
+    if !on {
+        return;
+    }
+    let mut visuals = Visuals::dark();
+    visuals.panel_fill = Color32::BLACK;
+    visuals.window_fill = Color32::BLACK;
+    visuals.extreme_bg_color = Color32::BLACK;
+    visuals.override_text_color = Some(Color32::WHITE);
+    visuals.selection.bg_fill = Color32::from_rgb(0x60, 0x50, 0x00);
+    visuals.selection.stroke = Stroke::new(2.0, Color32::YELLOW);
+    visuals.widgets.inactive.weak_bg_fill = Color32::BLACK;
+    visuals.widgets.inactive.bg_stroke = Stroke::new(2.0, Color32::WHITE);
+    visuals.widgets.hovered.weak_bg_fill = Color32::from_gray(50);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(2.0, Color32::YELLOW);
+    context.set_visuals(visuals);
+}
+
 /// Applies the look.
 pub(crate) fn apply_style(context: &Context) {
     let mut visuals = Visuals::dark();

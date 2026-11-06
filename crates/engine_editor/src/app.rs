@@ -19,10 +19,13 @@ use engine_platform::{
 use engine_render::{
     Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, TileStreamer, View,
 };
-use engine_tools::{Session, prefab_names, run};
+use engine_tools::{Plan, Session, Square, is_plan_map, prefab_names, run};
 use serde_json::{Value, json};
 
-use crate::panels::{ACCENT, apply_style};
+use crate::easy::{
+    Brush, Easy, LOOKS, PlanClick, PlanView, TOOLS, big_button, draw_plan, plan_keys, word_for,
+};
+use crate::panels::{ACCENT, apply_contrast, apply_style};
 use crate::ui_bridge::{UiInput, UiTextures, ui_frame};
 
 /// How often the service runs.
@@ -174,6 +177,8 @@ pub(crate) struct Editor {
     quit: bool,
     /// Whether the pointer is over the 3D view.
     over_view: bool,
+    /// The easy way of working.
+    easy: Easy,
 }
 
 /// Reads standard input on its own thread.
@@ -365,7 +370,10 @@ impl Editor {
             capture: None,
             quit: false,
             over_view: false,
+            easy: Easy::default(),
         };
+        editor.easy.on = is_plan_map(&editor.session);
+        editor.refresh_plan();
         editor.refresh_things();
         editor.frame_start_position();
         if let Ok(listed) = run(&mut editor.session, "list", &json!({})) {
@@ -418,6 +426,7 @@ impl Editor {
             Err(error) => self.note(format!("{name} failed: {error}")),
         }
         self.refresh_things();
+        self.refresh_plan();
         self.stale = true;
         result
     }
@@ -496,6 +505,16 @@ impl Editor {
         let name = request.get("op").and_then(Value::as_str).unwrap_or("");
         let args = request.get("args").cloned().unwrap_or_else(|| json!({}));
         match name {
+            "easy" => {
+                if let Some(on) = args.get("on").and_then(Value::as_bool) {
+                    self.easy.on = on;
+                }
+                if let Some(seeing) = args.get("seeing").and_then(Value::as_bool) {
+                    self.easy.seeing = seeing;
+                    self.frame_start_position();
+                }
+                emit(&json!({ "ok": true }));
+            }
             "capture" => {
                 let path = args
                     .get("path")
@@ -798,6 +817,11 @@ impl Editor {
                 .map_or_else(|| "unsaved".to_owned(), |path| path.display().to_string());
             ui.label(name);
             ui.separator();
+            if ui.button("Easy").clicked() {
+                self.easy.on = true;
+                self.refresh_plan();
+            }
+            ui.separator();
             let mut run_op = None;
             if ui.button("Save").clicked() {
                 run_op = Some("save");
@@ -823,6 +847,234 @@ impl Editor {
                 let _result = self.operate(name, &json!({}));
             }
         });
+    }
+
+    /// Reads the floor plan back from the map.
+    fn refresh_plan(&mut self) {
+        let plan = Plan::of(&self.session);
+        let pick = |wanted: Square| -> Vec<(i32, i32)> {
+            plan.squares
+                .iter()
+                .filter(|(_, square)| **square == wanted)
+                .map(|(place, _)| *place)
+                .collect()
+        };
+        self.easy.plan = PlanView {
+            floor: pick(Square::Floor),
+            water: pick(Square::Water),
+            things: plan
+                .things
+                .iter()
+                .map(|(place, name)| (*place, word_for(name)))
+                .collect(),
+            missing: plan
+                .missing()
+                .iter()
+                .map(|line| (*line).to_owned())
+                .collect(),
+            look: plan.look.clone(),
+        };
+    }
+
+    /// Does the chosen tool's work on `square`, and says in plain words what
+    /// happened, or why it couldn't.
+    fn use_brush(&mut self, square: (i32, i32)) {
+        self.easy.cursor = square;
+        let cells = json!([[square.0, square.1]]);
+        let (name, args) = match self.easy.brush {
+            Brush::Room => ("plan_paint", json!({ "cells": cells, "kind": "floor" })),
+            Brush::Water => ("plan_paint", json!({ "cells": cells, "kind": "water" })),
+            Brush::Erase => ("plan_paint", json!({ "cells": cells, "kind": "none" })),
+            Brush::Thing(thing) => ("plan_thing", json!({ "cells": cells, "thing": thing })),
+        };
+        let _result = self.operate(name, &args);
+        self.refresh_plan();
+    }
+
+    /// Saves, giving a new level a name if it hasn't one.
+    fn save_easily(&mut self) {
+        if self.session.saved_path().is_none() {
+            let maps = self.content.join("maps");
+            let free = (1..10_000)
+                .map(|number| maps.join(format!("my_level_{number}.emap")))
+                .find(|path| !path.exists());
+            if let Some(path) = free {
+                let _saved = self.operate("save", &json!({ "path": path.display().to_string() }));
+            }
+            return;
+        }
+        let _saved = self.operate("save", &json!({}));
+    }
+
+    /// Saves, lights the level, and plays it.
+    fn play_easily(&mut self) {
+        self.save_easily();
+        let _compiled = self.operate("compile", &json!({}));
+        let _played = self.operate("playtest", &json!({}));
+    }
+
+    /// The top of the easy view.
+    fn easy_top(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            if big_button(ui, "Undo", false, 70.0) {
+                let _undone = self.operate("undo", &json!({}));
+                self.refresh_plan();
+            }
+            if big_button(ui, "Redo", false, 70.0) {
+                let _redone = self.operate("redo", &json!({}));
+                self.refresh_plan();
+            }
+            if big_button(ui, "Save", false, 70.0) {
+                self.save_easily();
+            }
+            let ready = self.easy.plan.missing.is_empty();
+            if ui
+                .add_enabled_ui(ready, |ui| big_button(ui, "Play", false, 90.0))
+                .inner
+            {
+                self.play_easily();
+            }
+            ui.separator();
+            let seeing = self.easy.seeing;
+            if big_button(
+                ui,
+                if seeing { "Back to plan" } else { "See it" },
+                false,
+                110.0,
+            ) {
+                self.easy.seeing = !seeing;
+                self.frame_start_position();
+            }
+            ui.separator();
+            if big_button(ui, "Bigger", false, 70.0) {
+                self.easy.size = (self.easy.size + 0.25).min(3.0);
+            }
+            if big_button(ui, "Smaller", false, 70.0) {
+                self.easy.size = (self.easy.size - 0.25).max(1.0);
+            }
+            if big_button(ui, "Plain colours", self.easy.contrast, 120.0) {
+                self.easy.contrast = !self.easy.contrast;
+                apply_contrast(&self.context, self.easy.contrast);
+            }
+            ui.separator();
+            if big_button(ui, "Advanced", false, 90.0) {
+                self.easy.on = false;
+                self.context.set_zoom_factor(1.0);
+            }
+        });
+    }
+
+    /// The tools, one to a line.
+    fn easy_tools(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("Choose a tool").size(16.0));
+        for (number, (brush, words, ..)) in (1..).zip(&TOOLS) {
+            let label = format!("{} {words}", number % 10);
+            if big_button(ui, &label, self.easy.brush == *brush, 170.0) {
+                self.easy.brush = *brush;
+            }
+        }
+        ui.add_space(10.0);
+        ui.label(RichText::new("What it's made of").size(16.0));
+        for (words, look) in LOOKS {
+            if big_button(ui, words, self.easy.plan.look == look, 170.0) {
+                let _changed = self.operate("plan_look", &json!({ "look": look }));
+                self.refresh_plan();
+            }
+        }
+    }
+
+    /// What to do next.
+    fn easy_next(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("What's next").size(16.0));
+        if self.easy.plan.missing.is_empty() {
+            ui.label(RichText::new("Your level is ready. Press Play!").size(15.0));
+        }
+        for line in &self.easy.plan.missing {
+            ui.label(RichText::new(format!("- {line}")).size(15.0));
+        }
+        ui.add_space(10.0);
+        let hint = TOOLS.iter().find(|tool| tool.0 == self.easy.brush);
+        if let Some((.., hint)) = hint {
+            ui.label(RichText::new(*hint).size(15.0));
+        }
+        ui.add_space(10.0);
+        ui.label(RichText::new("With the keyboard").size(15.0));
+        for line in [
+            "Arrows: move",
+            "Space: use the tool",
+            "1 to 0: choose a tool",
+            "U: undo",
+            "P: play",
+        ] {
+            ui.label(line);
+        }
+        ui.add_space(10.0);
+        let line = self.log.last().cloned().unwrap_or_default();
+        if let Some((_, trouble)) = line.split_once(" failed: ") {
+            ui.label(RichText::new(trouble).size(15.0).color(ACCENT));
+        }
+    }
+
+    /// Buttons that look round the level, for what doesn't suit a mouse.
+    fn easy_walk(&mut self, ui: &mut egui::Ui) {
+        ui.horizontal_wrapped(|ui| {
+            for (words, ahead, turn) in [
+                ("Turn left", 0.0, 20.0),
+                ("Forward", 96.0, 0.0),
+                ("Back", -96.0, 0.0),
+                ("Turn right", 0.0, -20.0),
+            ] {
+                if big_button(ui, words, false, 90.0) {
+                    self.camera.step(ahead, turn);
+                }
+            }
+        });
+    }
+
+    /// The easy view.
+    fn easy_ui(&mut self, root: &mut egui::Ui) {
+        egui::Panel::top("easy_top").show(root, |ui| self.easy_top(ui));
+        egui::Panel::left("easy_tools")
+            .default_size(190.0)
+            .show(root, |ui| {
+                egui::ScrollArea::vertical().show(ui, |ui| self.easy_tools(ui));
+            });
+        egui::Panel::right("easy_next")
+            .default_size(230.0)
+            .show(root, |ui| self.easy_next(ui));
+        if self.easy.seeing {
+            egui::Panel::bottom("easy_walk").show(root, |ui| self.easy_walk(ui));
+        }
+        let seeing = self.easy.seeing;
+        let central = egui::CentralPanel::default()
+            .frame(egui::Frame::NONE)
+            .show(root, |ui| {
+                let rect = ui.max_rect();
+                self.view_rect = rect;
+                let keys = plan_keys(ui, &mut self.easy);
+                let clicked = if seeing {
+                    let _response = ui.allocate_rect(rect, egui::Sense::hover());
+                    None
+                } else {
+                    draw_plan(ui, rect, &self.easy)
+                };
+                (keys, clicked)
+            });
+        self.over_view = seeing;
+        let (keys, clicked) = central.inner;
+        if let Some(PlanClick::Use(square)) = clicked {
+            self.use_brush(square);
+        }
+        if keys.use_tool && !seeing {
+            self.use_brush(self.easy.cursor);
+        }
+        if keys.undo {
+            let _undone = self.operate("undo", &json!({}));
+            self.refresh_plan();
+        }
+        if keys.play && self.easy.plan.missing.is_empty() {
+            self.play_easily();
+        }
     }
 
     /// The left panel: what can be added, and what's in the map.
@@ -1079,6 +1331,12 @@ impl Editor {
 
     /// Builds the UI for a frame.
     fn build_ui(&mut self, root: &mut egui::Ui) {
+        self.context
+            .set_zoom_factor(if self.easy.on { self.easy.size } else { 1.0 });
+        if self.easy.on {
+            self.easy_ui(root);
+            return;
+        }
         egui::Panel::top("toolbar").show(root, |ui| self.toolbar(ui));
         egui::Panel::bottom("status").show(root, |ui| {
             let line = self.log.last().cloned().unwrap_or_default();

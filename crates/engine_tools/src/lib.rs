@@ -10,10 +10,12 @@ mod features;
 mod game_run;
 mod json;
 mod operations;
+mod plan;
 mod prefab;
 mod session;
 
 pub use game_run::GameRunner;
 pub use operations::{OPERATIONS, OperationInfo, run};
+pub use plan::{CELL, Plan, Square, is_plan_map};
 pub use prefab::{PrefabOutput, build_prefab, prefab_names};
 pub use session::Session;

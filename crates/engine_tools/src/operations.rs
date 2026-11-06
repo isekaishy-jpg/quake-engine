@@ -15,6 +15,7 @@ use serde_json::{Value as Json, json};
 use crate::features;
 use crate::game_run::GameRunner;
 use crate::json::{block_to_json, move_block, numbers, point_from_json, value_from_json};
+use crate::plan;
 use crate::prefab::{build_prefab, prefab_names};
 use crate::session::{ID_FIELD, Session, id_of};
 
@@ -158,6 +159,22 @@ pub const OPERATIONS: &[OperationInfo] = &[
         help: "Brings a glTF model in, as a mesh with its materials and pictures. path: the .gltf or .glb. name: what to call it. Optional scale: world units to a metre, 32 if not given.",
     },
     OperationInfo {
+        name: "plan_read",
+        help: "What the level's floor plan is, and what's still missing, in plain words.",
+    },
+    OperationInfo {
+        name: "plan_paint",
+        help: "Paints squares of the floor plan. cells: a list of column and row pairs. kind: floor, water or none.",
+    },
+    OperationInfo {
+        name: "plan_thing",
+        help: "Puts a thing on squares of the floor plan. cells: a list of column and row pairs. thing: start, light, door, health, ammo, enemy, fire or none.",
+    },
+    OperationInfo {
+        name: "plan_look",
+        help: "Changes what the floor plan's level is made of. look: the start of its materials' names.",
+    },
+    OperationInfo {
         name: "validate",
         help: "Compiles the map in memory and reports problems.",
     },
@@ -233,6 +250,10 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "check_shaders" => features::check_shaders(session, args),
         "import_gltf" => features::import_gltf(session, args),
         "check_effects" => features::check_effects(session, args),
+        "plan_read" => Ok(plan::plan_read(session)),
+        "plan_paint" => plan::plan_paint(session, args),
+        "plan_thing" => plan::plan_thing(session, args),
+        "plan_look" => plan::plan_look(session, args),
         "add_block" => features::add_block(session, args),
         "set_block" => features::set_block(session, args),
         "place_mesh" => features::place_mesh(session, args),
