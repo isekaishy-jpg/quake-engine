@@ -62,9 +62,10 @@ impl Hull<'_> {
     }
 
     /// Whether a walker at `point` would be clear of walls, with a little room,
-    /// so a path doesn't run along the very edge of where it fits.
+    /// so a path doesn't run along the very edge of where it fits. It looks from
+    /// a step's height, as the next stair up isn't a wall.
     fn has_room(&self, point: Vec3) -> bool {
-        let lift = Vec3::new(0.0, 0.0, 4.0);
+        let lift = Vec3::new(0.0, 0.0, STEP + 1.0);
         [(1.0, 0.0), (-1.0, 0.0), (0.0, 1.0), (0.0, -1.0)]
             .iter()
             .all(|(x, y)| !self.solid(point + lift + Vec3::new(*x, *y, 0.0) * CLEARANCE))

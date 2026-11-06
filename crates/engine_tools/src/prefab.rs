@@ -51,8 +51,55 @@ fn value_from_script(value: &ScriptValue) -> Option<Value> {
     }
 }
 
+/// `point` turned anticlockwise by `quarters` quarter turns, seen from above.
+fn turned(point: [f64; 2], quarters: u8) -> [f64; 2] {
+    (0..quarters % 4).fold(point, |[x, y], _| [-y, x])
+}
+
+/// Replaces the field `key` of `block`.
+fn replace(block: &mut Block, key: &str, new: Value) {
+    if let Some((_, value)) = block.fields.iter_mut().find(|(name, _)| name == key) {
+        *value = new;
+    }
+}
+
+/// Turns a three-number field of `block`.
+fn turn_point(block: &mut Block, key: &str, quarters: u8) {
+    let Some(numbers) = block.get(key).and_then(Value::numbers) else {
+        return;
+    };
+    if let [x, y, z] = numbers.as_slice() {
+        let [x, y] = turned([*x, *y], quarters);
+        let list = [x, y, *z].map(Value::Number).to_vec();
+        replace(block, key, Value::List(list));
+    }
+}
+
+/// Turns `block` about the origin, before it's moved into place.
+fn turn_block(block: &mut Block, quarters: u8) {
+    turn_point(block, "origin", quarters);
+    turn_point(block, "normal", quarters);
+    if let Some(numbers) = block.get("cuboid").and_then(Value::numbers)
+        && let [x0, y0, z0, x1, y1, z1] = numbers.as_slice()
+    {
+        let ([ax, ay], [bx, by]) = (turned([*x0, *y0], quarters), turned([*x1, *y1], quarters));
+        let corners = [ax.min(bx), ay.min(by), *z0, ax.max(bx), ay.max(by), *z1];
+        replace(
+            block,
+            "cuboid",
+            Value::List(corners.map(Value::Number).to_vec()),
+        );
+    }
+    if let Some(angle) = block.get("angle").and_then(Value::number)
+        && angle >= 0.0
+    {
+        let angle = (angle + f64::from(quarters) * 90.0) % 360.0;
+        replace(block, "angle", Value::Number(angle));
+    }
+}
+
 /// A block from `{ block = "brush", cuboid = {...}, ... }`.
-fn block_from_script(value: &ScriptValue, offset: [f64; 3]) -> Result<Block, String> {
+fn block_from_script(value: &ScriptValue, offset: [f64; 3], quarters: u8) -> Result<Block, String> {
     let ScriptValue::Fields(fields) = value else {
         return Err("a prefab must return blocks".to_owned());
     };
@@ -66,7 +113,9 @@ fn block_from_script(value: &ScriptValue, offset: [f64; 3]) -> Result<Block, Str
             ("name", ScriptValue::Text(name)) => block.name = Some(name.clone()),
             ("children", ScriptValue::List(children)) => {
                 for child in children {
-                    block.children.push(block_from_script(child, offset)?);
+                    block
+                        .children
+                        .push(block_from_script(child, offset, quarters)?);
                 }
             }
             _ => {
@@ -76,6 +125,7 @@ fn block_from_script(value: &ScriptValue, offset: [f64; 3]) -> Result<Block, Str
             }
         }
     }
+    turn_block(&mut block, quarters);
     move_block(&mut block, offset);
     Ok(block)
 }
@@ -106,7 +156,8 @@ fn with_kit(content: &Path, source: String) -> String {
     }
 }
 
-/// Runs the prefab `name` with `params` as JSON, placing it at `at`.
+/// Runs the prefab `name` with `params` as JSON, placing it at `at`. A `turn`
+/// among them turns it first, by quarter turns given in degrees.
 ///
 /// # Errors
 ///
@@ -125,13 +176,20 @@ pub fn build_prefab(
         content,
         std::fs::read_to_string(&path).map_err(|error| format!("prefab {name}: {error}"))?,
     );
+    let quarters = params.get("turn").and_then(Json::as_f64).unwrap_or(0.0) / 90.0;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "wrapped to four quarters"
+    )]
+    let quarters = quarters.round().rem_euclid(4.0) as u8;
     let made = run_builder(name, &source, &script_from_json(params))?;
     let ScriptValue::List(items) = made else {
         return Err(format!("prefab {name} must return a list of blocks"));
     };
     let mut output = PrefabOutput::default();
     for item in &items {
-        output.blocks.push(block_from_script(item, at)?);
+        output.blocks.push(block_from_script(item, at, quarters)?);
     }
     Ok(output)
 }

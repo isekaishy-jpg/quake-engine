@@ -4,18 +4,19 @@
 "args": {
 "prefab": "stone_bridge",
 "at": [
-1408,
+1664,
 -1216,
 0
 ],
 "params": {
+"turn": 90,
 "length": 896,
 "width": 256,
-"rise": 0,
+"rise": 24,
 "depth": 256,
 "material": "qg01_ashen_abbey_floor_flags",
 "parapet": "qg01_ashen_abbey_wall_blocks",
-"segments": 4
+"segments": 8
 }
 }
 },
@@ -29,7 +30,7 @@
 112
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -44,7 +45,7 @@
 112
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -59,7 +60,7 @@
 -32
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -74,7 +75,7 @@
 -32
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -197,7 +198,7 @@
 -32
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -356,7 +357,7 @@
 96
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -371,7 +372,7 @@
 96
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -386,7 +387,7 @@
 96
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -401,7 +402,7 @@
 96
 ],
 "params": {
-"intensity": 240,
+"intensity": 340,
 "style": 1
 }
 }
@@ -428,12 +429,12 @@
 "args": {
 "prefab": "walkway",
 "at": [
-2240,
+2320,
 1160,
 256
 ],
 "params": {
-"length": 384,
+"length": 304,
 "width": 80,
 "deck": "qg01_ashen_abbey_wood_planks",
 "rail": "qg01_ashen_abbey_trim_metal",
@@ -452,10 +453,11 @@
 ],
 "params": {
 "length": 80,
-"width": 920,
+"width": 1000,
 "deck": "qg01_ashen_abbey_wood_planks",
 "rail": "qg01_ashen_abbey_trim_metal",
-"post": "qg01_ashen_abbey_trim_metal"
+"post": "qg01_ashen_abbey_trim_metal",
+"rails": false
 }
 }
 },
@@ -591,7 +593,7 @@
 "prefab": "lift",
 "at": [
 896,
-2100,
+2104,
 -192
 ],
 "params": {
@@ -607,12 +609,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1152,
+1112,
 1760,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -625,12 +627,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1920,
+1960,
 1760,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -643,12 +645,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1152,
+1112,
 2000,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -661,12 +663,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1920,
+1960,
 2000,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -679,12 +681,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1152,
+1112,
 2240,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -697,12 +699,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1920,
+1960,
 2240,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -715,12 +717,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1152,
+1112,
 2480,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",
@@ -733,12 +735,12 @@
 "args": {
 "prefab": "column",
 "at": [
-1920,
+1960,
 2480,
 0
 ],
 "params": {
-"radius": 32,
+"radius": 22,
 "height": 704,
 "sides": 10,
 "material": "qg02_iron_cathedral_wall_blocks",

@@ -36,26 +36,26 @@ SILVER, GOLD = 16, 8
 
 level = Level(
     'ember_keep',
-    (-256, -1792, -512, 3584, 3072, 1408),
+    (-448, -1856, -512, 3584, 3136, 864),
     ROCK,
-    {'ambient': 8, 'light_spacing': 16, 'bounce': 1, 'cell_size': 512, 'sun_intensity': 90,
+    {'ambient': 22, 'light_spacing': 16, 'bounce': 1, 'cell_size': 512, 'sun_intensity': 200,
      'sun_crisp': True, 'worldtype': 1},
     blocks='''sky {
-    zenith = 0.10 0.07 0.10
-    horizon = 0.75 0.34 0.16
+    zenith = 0.20 0.13 0.20
+    horizon = 0.95 0.48 0.22
     sun_direction = -0.55 -0.5 0.45
     sun_color = 1 0.62 0.38
-    clouds { coverage = 0.75 }
+    clouds { color = 0.45 0.28 0.26 coverage = 0.6 scale = 1 }
 }
-fog { color = 0.5 0.26 0.16 density = 0.00035 height = 0 falloff = 0.004 }''')
+fog { color = 0.6 0.32 0.2 density = 0.00008 height = 0 falloff = 0.004 }''')
 
 
-def torch(x, y, z, intensity=240):
+def torch(x, y, z, intensity=340):
     level.prefab('torch', (x, y, z), intensity=intensity, style=1)
 
 
 def lamp(x, y, z, intensity=260, color=(1, 0.72, 0.45)):
-    level.entity('light', (x, y, z), intensity=intensity, color=list(color))
+    level.entity('light', (x, y, z), intensity=intensity * 1.7, color=list(color))
 
 
 def monster(kind, x, y, z, angle=0, flags=None, target=None):
@@ -68,19 +68,37 @@ def item(kind, x, y, z):
 
 # --- The Causeway ---------------------------------------------------------
 # Out of doors, on a neck of rock in a moat of lava, under a burning sky.
-level.carve(512, -1600, -256, 2560, -128, 1280, floor=ROCK, wall=ROCK, ceiling='sky')
+level.carve(512, -1600, -256, 2560, -128, 320, floor=ROCK, wall=ROCK)
+# Open air over the cliffs and the keep: the sky is what's left where there's
+# nothing, and it's what lets the sun in.
+level.carve(-448, -1856, 320, 3584, -128, 864, floor=ROCK, wall=ROCK)
+level.carve(-448, -1856, 864, 3584, 3136, 1600, floor=BASALT_FLOOR, wall=ROCK)
+# Beside and behind the keep, so it stands alone.
+level.carve(-448, -128, 320, 512, 3136, 864, floor=ROCK, wall=STONE)
+level.carve(2560, -128, 544, 3584, 3136, 864, floor=BASALT_FLOOR, wall=STONE)
+level.carve(512, 2720, 320, 2560, 3136, 864, floor=ROCK, wall=STONE)
+# The keep's towers and its great roof, seen from the start.
+for x, y, side, top in ((560, 40, 240, 1216), (2320, 40, 240, 1216), (1440, 1000, 300, 1408)):
+    level.box(STONE, x, y, 864, x + side, y + side, top)
+    level.box(BASALT, x - 12, y - 12, top, x + side + 12, y + side + 12, top + 24)
+    for step in range(0, side, 64):
+        level.box(STONE, x + step, y - 12, top + 24, x + step + 32, y + 12, top + 64)
+        level.box(STONE, x + step, y + side - 12, top + 24, x + step + 32, y + side + 12, top + 64)
 level.liquid('lava', LAVA, 512, -1600, -256, 2560, -128, -176)
 # The neck of rock you start on, and the way across.
 level.box(ROCK, 1120, -1600, -256, 1952, -1216, 0)
-level.prefab('stone_bridge', (1408, -1216, 0), length=896, width=256, rise=0, depth=256,
-             material=FLAGS, parapet=STONE, segments=4)
+level.prefab('stone_bridge', (1664, -1216, 0), turn=90, length=896, width=256, rise=24, depth=256,
+             material=FLAGS, parapet=STONE, segments=8)
 level.box(FLAGS, 1120, -320, -256, 1952, -128, 0)
 level.box(FLAGS, 640, -320, -256, 1120, -128, 0)
 # The keep's face over the moat, with arrow slits and buttresses.
-for x in (704, 1120, 1952, 2368):
+for x in (576, 1120, 1952, 2368):
     level.box(STONE, x - 48, -192, 0, x + 48, -128, 768)
     level.box(BASALT, x - 56, -200, 768, x + 56, -128, 800)
-level.box(STONE, 512, -160, 0, 2560, -128, 672)
+# The wall's face stands proud, but for the side door and the gate.
+for x0, z0, x1, z1 in ((512, 0, 704, 672), (704, 128, 832, 672), (832, 0, 1408, 672),
+                       (1408, 224, 1664, 672), (1664, 0, 2560, 672)):
+    level.box(STONE, x0, -160, z0, x1, -128, z1)
 level.box(IRON, 512, -176, 672, 2560, -128, 704)
 for x in range(544, 2560, 128):
     level.box(STONE, x, -176, 704, x + 64, -128, 768)
@@ -88,7 +106,7 @@ for x in range(544, 2560, 128):
 # --- The gate -------------------------------------------------------------
 # Seen from the start, shut. The tower's button lifts it, late on.
 level.carve(1408, -128, 0, 1664, 256, 224, floor=FLAGS, wall=STONE, ceiling=COFFER)
-level.moving('func_door', [(1408, -136, 0, 1664, -120, 224)], GATE, name='main_gate',
+level.moving('func_door', [(1408, -152, 0, 1664, -136, 224)], GATE, name='main_gate',
              targetname='gate_up', angle=-1, wait=-1, speed=80, lip=8)
 torch(1360, -200, 112)
 torch(1712, -200, 112)
@@ -96,8 +114,8 @@ torch(1712, -200, 112)
 # --- The Undercroft -------------------------------------------------------
 # The only way in: a door at the end of the ledge, and stairs down.
 level.carve(640, -128, -128, 896, 576, 128, floor=FLAGS, wall=BRICK, ceiling=STONE)
-level.moving('func_door', [(704, -136, 0, 832, -120, 128)], PLATE, angle=-1, speed=100, wait=4, lip=4)
-level.carve(704, -128, 0, 832, 0, 128, floor=FLAGS, wall=BRICK, ceiling=STONE)
+level.moving('func_door', [(704, -152, 0, 832, -136, 128)], 'qg01_ashen_abbey_door', angle=-1, speed=100,
+             wait=4, lip=4)
 for step in range(8):
     level.box(FLAGS, 640, -128 + step * 32, -128, 896, -128 + step * 32 + 32, -step * 16)
 torch(652, 256, -32)
@@ -163,7 +181,7 @@ level.box(RELIEF, 1472, 1400, 176, 1600, 1408, 304)
 
 # --- The Forge ------------------------------------------------------------
 level.carve(1856, 640, 0, 2176, 800, 160, floor=FLAGS, wall=BASALT, ceiling=STONE)
-level.moving('func_door', [(1864, 640, 0, 1880, 800, 160)], RUST, angle=90, speed=120, wait=4, lip=4)
+level.moving('func_door', [(1864, 640, 0, 1880, 800, 160)], RUST, angle=-1, speed=120, wait=4, lip=4)
 level.carve(2176, 128, -160, 3200, 1280, 448, floor=BASALT_FLOOR, wall=BASALT, ceiling=RUST)
 level.liquid('lava', MOLTEN, 2176, 128, -160, 3200, 1280, -48)
 # Stone walks over the channels, in a cross.
@@ -176,8 +194,8 @@ level.box(GATE, 3032, 624, 32, 3040, 816, 224)
 level.entity('light', (3000, 720, 128), intensity=500, color=[1, 0.45, 0.15])
 # A lift up to the gantry, and the gantry to the key.
 level.prefab('lift', (2624, 1120, 0), size=160, height=256, name='forge_lift', material=RUST)
-level.prefab('walkway', (2240, 1160, 256), length=384, width=80, deck=WOOD, rail=IRON, post=IRON)
-level.prefab('walkway', (2240, 240, 256), length=80, width=920, deck=WOOD, rail=IRON, post=IRON)
+level.prefab('walkway', (2320, 1160, 256), length=304, width=80, deck=WOOD, rail=IRON, post=IRON)
+level.prefab('walkway', (2240, 240, 256), length=80, width=1000, deck=WOOD, rail=IRON, post=IRON, rails=False)
 level.box(BASALT_FLOOR, 2912, 160, -160, 3120, 368, 256)
 level.prefab('walkway', (2320, 240, 256), length=592, width=80, deck=WOOD, rail=IRON, post=IRON)
 item('item_key1', 3016, 264, 256)
@@ -205,14 +223,13 @@ lamp(3300, 720, 96, 140)
 # From the gantry, a passage to the tower over the gate. Its button opens the
 # way back to the start.
 level.carve(1856, 288, 256, 2240, 416, 400, floor=FLAGS, wall=STONE, ceiling=STONE)
+level.box(WOOD, 2176, 288, 248, 2240, 416, 256)
 level.carve(1920, -112, 256, 2240, 288, 512, floor=TILES, wall=STONE, ceiling=COFFER)
 level.moving('func_button', [(1928, 80, 320, 1936, 144, 384)], PLATE, angle=180, target='gate_up',
              wait=-1, lip=4)
 lamp(2080, 96, 440, 240)
 monster('army', 2120, 40, 256, angle=180)
 item('item_health', 2180, 200, 256)
-# A ladder of light down to the hall's balcony, by the same passage.
-level.carve(1856, 288, 256, 1860, 416, 400, floor=FLAGS, wall=STONE, ceiling=STONE)
 
 # --- The silver door, and the Crypt ---------------------------------------
 level.carve(1088, 1120, 0, 1216, 1248, 144, floor=FLAGS, wall=CRYPT, ceiling=STONE)
@@ -233,9 +250,9 @@ for y in (1400, 1656, 1912):
         level.prefab('column', (x, y, -320), radius=30, height=512, sides=8, material=CRYPT,
                      trim='qg03_elder_crypt_trim_metal')
 # The altar, and the key on it. Taking it opens the walls.
-level.box(CRYPT, 416, 2080, -192, 544, 2176, -144)
+level.box(CRYPT, 416, 2148, -192, 544, 2212, -144)
 level.box('qg03_elder_crypt_relief_panel', 400, 2224, -160, 560, 2240, 0)
-item('item_key2', 480, 2128, -144)
+item('item_key2', 480, 2180, -144)
 level.moving('trigger_once', [(400, 2064, -192, 560, 2200, -64)], 'hidden', target='crypt_trap')
 for x, side in ((192, 90), (704, 90)):
     level.carve(x - 48, 2240, -192, x + 48, 2368, -48, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
@@ -253,17 +270,26 @@ for y in (1400, 1900):
 level.entity('light', (480, 2120, -60), intensity=320, color=[0.5, 1, 0.9])
 level.entity('light', (160, 1200, 40), intensity=130, color=[0.5, 0.9, 0.8])
 # A flooded way to a secret, under the walk.
-level.carve(128, 1696, -320, 400, 1824, -224)
-level.carve(-128, 1696, -320, 128, 1824, -128, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
-level.moving('trigger_secret', [(-96, 1696, -300, -64, 1824, -128)], 'hidden', message='A drowned reliquary')
-item('item_artifact_invulnerability', -40, 1760, -320)
+level.carve(0, 1696, -320, 128, 1824, -240, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
+level.liquid('water', CRYPT_WATER, 0, 1696, -320, 128, 1824, -240)
+level.carve(-224, 1632, -320, 0, 1888, -64, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
+level.liquid('water', CRYPT_WATER, -224, 1632, -320, 0, 1888, -250)
+level.box(CRYPT_FLOOR, -224, 1632, -320, -96, 1888, -232)
+level.moving('trigger_secret', [(-96, 1632, -300, -64, 1888, -100)], 'hidden', message='A drowned reliquary')
+item('item_artifact_invulnerability', -160, 1760, -232)
+level.entity('light', (-160, 1760, -130), intensity=200, color=[0.5, 1, 0.9])
 
 # The lift out, up to the balcony.
-level.carve(832, 2096, -192, 1120, 2240, 272, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
-level.prefab('lift', (896, 2100, -192), size=128, height=464, name='crypt_lift', material=PLATE)
-level.carve(1024, 1248, 256, 1216, 2240, 416, floor=FLAGS, wall=STONE, ceiling=STONE)
-lamp(1120, 1600, 380, 160)
-lamp(1120, 2150, 380, 160)
+level.carve(832, 2096, -192, 1024, 2240, 416, floor=CRYPT_FLOOR, wall=CRYPT, ceiling=CRYPT)
+level.prefab('lift', (896, 2104, -192), size=128, height=464, name='crypt_lift', material=PLATE)
+level.carve(960, 1248, 256, 1088, 2240, 416, floor=FLAGS, wall=STONE, ceiling=STONE)
+level.carve(1088, 1248, 256, 1216, 1408, 416, floor=FLAGS, wall=STONE, ceiling=STONE)
+# It only opens from this side, so the balcony is no way into the Crypt.
+level.moving('func_door', [(1200, 1248, 256, 1216, 1408, 416)], 'qg03_elder_crypt_door', angle=-1,
+             targetname='balcony_link', wait=-1, speed=120, lip=4)
+level.moving('trigger_once', [(960, 1800, 256, 1088, 1832, 416)], 'hidden', target='balcony_link')
+lamp(1024, 1600, 380, 160)
+lamp(1024, 2150, 380, 160)
 
 # --- The Sanctum ----------------------------------------------------------
 level.carve(1088, 1536, -64, 1984, 2624, 704, floor=TILES, wall=BASALT, ceiling=COFFER)
@@ -273,14 +299,14 @@ level.box(BASALT_FLOOR, 1088, 1792, -64, 1216, 2624, 0)
 level.box(BASALT_FLOOR, 1856, 1792, -64, 1984, 2624, 0)
 level.box(BASALT_FLOOR, 1216, 2368, -64, 1856, 2624, 0)
 for y in (1760, 2000, 2240, 2480):
-    for x in (1152, 1920):
-        level.prefab('column', (x, y, 0), radius=32, height=704, sides=10, material=BASALT, trim=IRON)
+    for x in (1112, 1960):
+        level.prefab('column', (x, y, 0), radius=22, height=704, sides=10, material=BASALT, trim=IRON)
 level.entity('light', (1536, 2080, 40), intensity=500, color=[1, 0.42, 0.14])
 lamp(1536, 1640, 400, 340, (1, 0.6, 0.4))
 lamp(1536, 2480, 400, 340, (1, 0.6, 0.4))
 monster('shambler', 1536, 2480, 0, angle=270)
-monster('knight', 1160, 2200, 0, angle=0)
-monster('knight', 1912, 2200, 0, angle=180)
+monster('knight', 1180, 2200, 0, angle=0)
+monster('knight', 1892, 2200, 0, angle=180)
 item('item_health', 1140, 1600, 0)
 item('item_shells', 1940, 1600, 0)
 # The way out.

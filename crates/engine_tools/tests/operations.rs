@@ -439,3 +439,19 @@ fn every_prefab_builds() {
         assert!(!built.blocks.is_empty(), "{name}");
     }
 }
+
+/// A prefab can be turned to face any way, shape and all.
+#[test]
+fn a_prefab_turns_before_it_is_placed() {
+    let content = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../content");
+    let at = [100.0, 200.0, 0.0];
+    let params = json!({ "turn": 90, "material": "stone", "size": 64, "height": 32 });
+    let built = build_prefab(&content, "lift", &params, at).expect("builds");
+    let brush = &built.blocks[0].children[0];
+    let box_of = brush.get("cuboid").and_then(engine_format::Value::numbers);
+    assert_eq!(
+        box_of.expect("a box"),
+        vec![36.0, 200.0, 24.0, 100.0, 264.0, 32.0],
+        "turned about the origin, then moved"
+    );
+}
