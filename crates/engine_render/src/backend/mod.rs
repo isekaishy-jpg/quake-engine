@@ -34,7 +34,7 @@ use vulkane::safe::{
 
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
-use crate::error::RenderError;
+use crate::error::{RenderError, vulkan_is_new_enough};
 use crate::instances::InstanceBatch;
 use crate::live::LIVE_BYTES;
 use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
@@ -566,7 +566,15 @@ fn pick_device(
     surface: Option<&Surface>,
 ) -> Result<(PhysicalDevice, u32), RenderError> {
     let devices = instance.enumerate_physical_devices()?;
+    let mut too_old = None;
     for physical in devices {
+        let properties = physical.properties();
+        let version = properties.api_version();
+        let version = (version.major(), version.minor());
+        if !vulkan_is_new_enough(version) {
+            too_old = Some(RenderError::too_old(&properties.device_name(), version));
+            continue;
+        }
         for (family, properties) in physical.queue_family_properties().iter().enumerate() {
             let family = u32::try_from(family).unwrap_or(u32::MAX);
             if properties.queue_flags().contains(QueueFlags::GRAPHICS)
@@ -576,7 +584,7 @@ fn pick_device(
             }
         }
     }
-    Err(RenderError::no_device())
+    Err(too_old.unwrap_or_else(RenderError::no_device))
 }
 
 impl Backend {
@@ -595,7 +603,7 @@ impl Backend {
             .enable_raw(vulkane::raw::bindings::KHR_WIN32_SURFACE_EXTENSION_NAME);
         let instance = Instance::new(InstanceCreateInfo {
             application_name: Some("Quake Engine"),
-            api_version: ApiVersion::V1_1,
+            api_version: ApiVersion::V1_3,
             enabled_extensions: window.as_ref().map(|_| &extensions),
             ..InstanceCreateInfo::default()
         })
@@ -608,7 +616,8 @@ impl Backend {
         let device_extensions = DeviceExtensions::new().khr_swapchain();
         let features = DeviceFeatures::new()
             .with_sampler_anisotropy()
-            .with_texture_compression_bc();
+            .with_texture_compression_bc()
+            .with_synchronization2();
         let device = physical.create_device(DeviceCreateInfo {
             queue_create_infos: &[QueueCreateInfo::single(queue_family)],
             enabled_extensions: surface.as_ref().map(|_| &device_extensions),

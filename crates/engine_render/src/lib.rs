@@ -25,7 +25,7 @@ mod world;
 pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::{Atlas, AtlasSpace};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
-pub use error::RenderError;
+pub use error::{NEEDED_VULKAN, RenderError, vulkan_is_new_enough};
 pub use instances::{
     INSTANCE_BYTES, InstanceBatch, LevelView, ball_in_view, choose_level, height_share,
     instance_batches, view_planes, write_instance,
