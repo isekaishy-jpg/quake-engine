@@ -18,6 +18,7 @@
   - [Shader graphs and compute](research/shader-graphs.md): what a graph is underneath, and what compute is for
   - [Effects](research/effects.md): pictures, drawing, compute particles, budgets and making them
   - [Fog and water](research/fog-and-water.md): fog in a place, water of any shape, ripples and shores
+  - [Sky and light](research/sky-and-light.md): beams and floors, cloud planes, a sun that moves, a day, and baked sun angles
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Making the UI and menus usable](research/ui-and-menus.md): what good menus need, and how we measured up
@@ -195,6 +196,7 @@
     - [0145: shader graphs and compute](proposals/0145-shader-graphs-and-compute.md)
     - [0146: effects that reach](proposals/0146-effects-that-reach.md)
     - [0147: fog in a place, and water of any shape](proposals/0147-fog-and-water.md)
+    - [0148: sky and light](proposals/0148-sky-and-light.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

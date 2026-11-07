@@ -1,0 +1,74 @@
+# Proposal 0148: sky and light
+
+Status: proposed, 2026-11-07, for items 62 to 69 of the [work list](../research/work-list.md). The research is in [sky and light](../research/sky-and-light.md).
+
+## Why
+
+Beams go through floors. The sky has one layer of cloud and nothing comes down from it. The sun is set once and baked in with everything else, so a level can't have a day.
+
+## What changes
+
+### Beams stop at what's in the way (62)
+
+Each stencil gets a grid of how far light gets past each of its cells, by the same 16 by 16 cells as its occlusion. The client traces a few cells a frame, so doors count. A step along a view ray reads it, blended between cells, and goes dark past that distance.
+
+### Cloud planes (63)
+
+A sky has up to four `clouds` blocks, drawn lowest first. New fields:
+
+| Field | Means |
+|---|---|
+| `height` | How high it is, which sets how fast it goes by as the view moves |
+| `curve` | 0 for a flat plane, up to 1 for a dome |
+| `lit` | How much the sun's colour falls on it, and how dark its middle is |
+
+One block with no new fields looks as it did.
+
+### Rays from the sky (64)
+
+`sky_rays` in a sky says what shapes them: `clouds` for the generated clouds' own gaps, or a picture. `sky_rays_reach = level` lets them in, past the sky. It's a stencil that follows the view, on one more slot, and it uses the grid from 62.
+
+### How a sun works (65, 68)
+
+`sun = baked`, `live` or `arc` in the world.
+
+- **`baked`** goes on a layer of its own, along with what it bounces. Its colour can change with no new bake.
+- **`live`** isn't baked at all, apart from what it bounces. Three cascades of shadows follow the view, the nearest each frame and the others in turn.
+- **`arc`** gives each sample of the sun's layer 32 bits, one for each angle through `sun_arc`, and the sun moves along it. It needs a final bake. Until there is one it's drawn as `baked`.
+
+The moon works the same way as the sun, from the other side of the day, with a `moon_color`, `moon_size` and `stars`. Whichever is higher casts the shadows.
+
+### A day (66)
+
+`day_length` in the world says how many seconds a day takes, and `day_start` when a level starts. 0 stops the clock. The server keeps the time and sends it, and scripts can read and set it with `engine.time_of_day`. The sun goes round by `sun_path`, a tilt and how far off overhead it gets.
+
+### Sets of light (67)
+
+```text
+light_set autumn {
+    key 6 { zenith = [..] horizon = [..] sun_color = [..] fog_color = [..] }
+    key 12 { .. }
+}
+```
+
+Keys go round through a day, with what's between blended. They can say sky, cloud, fog, water, ambient, sun and specular colours, and any left out are blended from the keys that have them. The world's `light_set` names one for a map. A zone's `light_set` names its own, and `light_blend` says how far in it takes to get all of it. Sub zones go on top of what they're in.
+
+### Final bake (69)
+
+`engine-compile --final` runs what's too slow for each build, today the heat map and more samples. Its results go in a side file, and an everyday build leaves that file alone, so a level keeps its last final bake. `--final-area low high` only redoes what's in a box. The editor gets a button for it in stage 15, and a tool op now.
+
+## What it doesn't do
+
+- Clouds aren't volumes.
+- Rays from the sky only follow a live sun's shadows through their own grid.
+- What the sun bounces doesn't move with it.
+
+Each of those comes from the research, and none needs more for what the items ask.
+
+## Order
+
+62, 63, 64, 69, 65, 66, 67, 68, each committed by itself.
+
+## What came of it
+
+Filled in as each part lands.
