@@ -80,3 +80,15 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **Mesh shapes** come with mesh particles.
 
 Filled in as each part lands.
+
+### Compute (90)
+
+- **Tried in the game:** 100,000 drops falling from the ceiling of a room and coming off the floor, in a box of their own, drawn out along how they move. It looks like rain. A swirl round a ring, by a vortex and wind, stays the shape the same forces give it on the CPU.
+- **What it costs,** at 1920 by 1200 on the card here: 100,000 take 0.19 ms a frame to step, and no more of the scene than the clock's own wander. A million take 1.5 ms to step and about 2.5 ms to draw.
+- **Everything an emitter says works.** The first version had two colours, a ball for most shapes, and no sheets, turning or stretching. Rain needs a box, so that wasn't enough. Colour and size are now eight steps along a life, turning comes from the slot's number, and `lit` takes one light for the whole effect.
+- **Stick** is its own thing: it stops at the surface, and stays, gravity and all.
+- **What ends isn't heard of.** `on_death` and `on_hit` would want a list back from the GPU a frame late, for what the usual kind already does. So they're an error, and so is another `kind`.
+- **What another emitter starts** starts where that one was, so compute isn't told of it. It runs as usual.
+- **Stopping** fades them as a whole, over what's asked. They're kept stepping until then.
+- **The depth a step reads is the last frame's,** so it's read with the last frame's view. Reading it with the new one missed everything when the view jumped.
+- **Bugs found in review:** a field that wouldn't build moved every later one along by one. Changing `r_msaa` left a level's particle shaders and motions made for the old samples. Two emitters at one step threw the same way, and slots near each other could too, as a slot's number and the step were added. `strength` and `far` weren't in a burst. The slots had no barrier against the last frame still reading them.

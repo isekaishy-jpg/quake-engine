@@ -522,11 +522,21 @@ fn check_shaders_says_whats_wrong() {
     let post = "fn shader_post(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> { return color; }";
     fs::write(root.join("shaders/post.wgsl"), post).expect("writes");
     fs::write(root.join("shaders/bad.wgsl"), "fn shader_uv(").expect("writes");
+    let motion = "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    return particle;
+}";
+    fs::write(root.join("shaders/motion.wgsl"), motion).expect("writes");
+    let wrong = "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    return 1.0;
+}";
+    fs::write(root.join("shaders/wrong.wgsl"), wrong).expect("writes");
     let mut session = Session::new(&root);
     let answer = run(&mut session, "check_shaders", &json!({})).expect("runs");
     assert!(answer.get("good").is_none(), "{answer}");
     assert!(answer.get("post").is_none(), "{answer}");
     assert!(answer.get("bad").is_some(), "{answer}");
+    assert!(answer.get("motion").is_none(), "{answer}");
+    assert!(answer.get("wrong").is_some(), "{answer}");
 }
 
 #[test]
@@ -535,6 +545,17 @@ fn the_shaders_that_come_with_the_engine_compile() {
     let mut session = Session::new(&root);
     let answer = run(&mut session, "check_shaders", &json!({})).expect("runs");
     assert_eq!(answer, json!({}));
+}
+
+#[test]
+fn check_effects_finds_a_motion_that_is_not_there() {
+    let root = content("check_motion");
+    fs::create_dir_all(root.join("effects")).expect("directory");
+    let text = "format 1 effect\nemitter rain { gpu = sim motion = gone }\n";
+    fs::write(root.join("effects/rain.eeffect"), text).expect("writes");
+    let mut session = Session::new(&root);
+    let answer = run(&mut session, "check_effects", &json!({})).expect("runs");
+    assert!(answer["rain"].to_string().contains("gone"), "{answer}");
 }
 
 #[test]

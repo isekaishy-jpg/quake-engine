@@ -9,17 +9,17 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, FieldDef, Fog,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, EffectDef, FieldDef, Fog,
     LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough,
-    MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT,
-    RayStencil, Rows, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart, SideFiles,
-    Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TerrainData, TerrainLayer,
-    TerrainSheet, Texture, TextureKind, TileLight, mip_chain,
+    MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter, ParticleForce, PixelForm, Pool,
+    PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading, SharedMesh, SharedMorph,
+    SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
+    TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
-    MovingDraw, ParticleColor, ParticleDraw, ParticleShape, PostSettings, Renderer, SpriteDraw,
-    Target, TileStreamer, View, build_world,
+    MovingDraw, ParticleColor, ParticleDraw, ParticleShape, ParticleSim, PostSettings, Renderer,
+    SimForce, SpriteDraw, Target, TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -4230,6 +4230,955 @@ fn a_broken_particle_shader_says_so() {
     assert!(shown[0] > 200, "{shown:?}");
     let told = renderer.take_shader_problems().join(" ");
     assert!(told.contains("wrong"), "{told}");
+}
+
+/// A map whose effects have compute particles, so that it has room for them.
+fn map_with_sims() -> Map {
+    let mut built = map(1);
+    built.effects.push(Arc::new(EffectDef {
+        name: "sim".to_owned(),
+        emitters: vec![ParticleEmitter {
+            sim: true,
+            ..ParticleEmitter::default()
+        }],
+        timeline: Vec::new(),
+    }));
+    built
+}
+
+/// One compute particle going up from the middle of the view at 60 units a second.
+fn one_sim() -> ParticleSim {
+    ParticleSim {
+        id: 1,
+        origin: Vec3::new(64.0, 64.0, 20.0),
+        seconds: 1.0 / 60.0,
+        direction: Vec3::new(0.0, 0.0, 1.0),
+        spread: 1.0,
+        speed: [60.0, 60.0],
+        life: [100.0, 100.0],
+        count: 4,
+        spawn: 1,
+        ramp: [[0.0, 0.0, 1.0, 1.0]; 8],
+        sizes: [30.0; 8],
+        sheet: [1, 1],
+        ..ParticleSim::default()
+    }
+}
+
+/// Runs `sim` for `steps`, with one starting at the first, and the state of its first slot.
+fn run_sim(renderer: &mut Renderer, sim: ParticleSim, steps: u32) -> [f32; 8] {
+    let view = view_from_above();
+    for step in 0..steps {
+        let now = ParticleSim {
+            spawn: if step == 0 { sim.spawn } else { 0 },
+            time: step as f32 / 60.0,
+            seed: step,
+            ..sim
+        };
+        let sims = [now];
+        let drawables = Drawables {
+            particle_sims: &sims,
+            ..Drawables::default()
+        };
+        let _shot = renderer.capture(&view, drawables, 32, 32).expect("capture");
+    }
+    renderer.read_sim(sim.id).expect("reads")[0]
+}
+
+/// Compute keeps what it works out from step to step.
+#[test]
+fn compute_moves_a_particle_on_from_where_it_was() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let slot = run_sim(&mut renderer, one_sim(), 31);
+    assert!((slot[2] - 50.0).abs() < 0.5, "half a second up: {slot:?}");
+    assert!(
+        (slot[3] - 0.5).abs() < 0.02,
+        "and half a second old: {slot:?}"
+    );
+    assert!((slot[6] - 60.0).abs() < 0.01, "as fast as it was: {slot:?}");
+    let falling = ParticleSim {
+        id: 2,
+        gravity: 120.0,
+        ..one_sim()
+    };
+    let slot = run_sim(&mut renderer, falling, 31);
+    assert!((slot[6] - 0.0).abs() < 0.1, "gravity took it all: {slot:?}");
+}
+
+/// Forces in compute are the map's sums, step by step.
+#[test]
+fn compute_pushes_as_the_map_says_forces_do() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let forces = [
+        (
+            ParticleForce::Attract {
+                at: Vec3::new(40.0, 0.0, 0.0),
+                strength: 90.0,
+                reach: 200.0,
+            },
+            SimForce {
+                kind: 1.0,
+                strength: 90.0,
+                extra: 200.0,
+                at: Vec3::new(40.0, 0.0, 0.0),
+                axis: Vec3::ZERO,
+            },
+        ),
+        (
+            ParticleForce::Vortex {
+                at: Vec3::new(-30.0, 0.0, 0.0),
+                axis: Vec3::new(0.0, 0.0, 1.0),
+                strength: 80.0,
+                inward: 20.0,
+            },
+            SimForce {
+                kind: 2.0,
+                strength: 80.0,
+                extra: 20.0,
+                at: Vec3::new(-30.0, 0.0, 0.0),
+                axis: Vec3::new(0.0, 0.0, 1.0),
+            },
+        ),
+        (
+            ParticleForce::Wind {
+                blowing: Vec3::new(20.0, 40.0, 0.0),
+                gusts: 0.5,
+            },
+            SimForce {
+                kind: 3.0,
+                extra: 0.5,
+                at: Vec3::new(20.0, 40.0, 0.0),
+                ..SimForce::default()
+            },
+        ),
+    ];
+    for (number, (on_map, on_gpu)) in (10..).zip(forces) {
+        renderer.load_map(Arc::new(map_with_sims())).expect("load");
+        let mut sim = one_sim();
+        sim.id = number;
+        sim.forces[0] = on_gpu;
+        let seconds = sim.seconds;
+        let mut place = sim.origin;
+        let mut moving = Vec3::new(0.0, 0.0, 60.0);
+        // The first step starts it, and those after move it.
+        for step in 1..40_u32 {
+            let push = on_map.push(place, sim.origin, step as f32 / 60.0);
+            moving = moving + push * seconds;
+            place = place + moving * seconds;
+        }
+        let slot = run_sim(&mut renderer, sim, 40);
+        let found = Vec3::new(slot[0], slot[1], slot[2]);
+        assert!(
+            (found - place).length() < 0.25,
+            "{on_map:?}: {found:?} and {place:?}"
+        );
+    }
+}
+
+/// When its slots run out, what starts goes in the oldest, and what's gone draws nothing.
+#[test]
+fn a_ring_of_slots_goes_round_and_the_dead_draw_nothing() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let sim = ParticleSim {
+        life: [0.05, 0.05],
+        speed: [0.0, 0.0],
+        spawn: 2,
+        count: 3,
+        ..one_sim()
+    };
+    let plain = {
+        let shot = renderer
+            .capture(&view_from_above(), Drawables::default(), 32, 32)
+            .expect("capture");
+        centre(&shot)
+    };
+    let mut drew = false;
+    for step in 0..8_u32 {
+        let now = ParticleSim {
+            spawn: if step < 3 { 2 } else { 0 },
+            seed: step,
+            ..sim
+        };
+        let sims = [now];
+        let drawables = Drawables {
+            particle_sims: &sims,
+            ..Drawables::default()
+        };
+        let shot = renderer
+            .capture(&view_from_above(), drawables, 32, 32)
+            .expect("capture");
+        drew |= centre(&shot) != plain;
+    }
+    assert!(drew, "they showed");
+    let slots = renderer.read_sim(sim.id).expect("reads");
+    assert_eq!(slots.len(), 3);
+    assert!(
+        slots.iter().all(|slot| slot[3] >= slot[7]),
+        "all gone: {slots:?}"
+    );
+    let sims = [ParticleSim { spawn: 0, ..sim }];
+    let drawables = Drawables {
+        particle_sims: &sims,
+        ..Drawables::default()
+    };
+    let shot = renderer
+        .capture(&view_from_above(), drawables, 32, 32)
+        .expect("capture");
+    assert_eq!(centre(&shot), plain, "and nothing's drawn of them");
+}
+
+/// One a step goes round the slots, and what starts next goes in the oldest.
+#[test]
+fn a_ring_fills_and_then_takes_the_oldest() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let sim = ParticleSim {
+        speed: [0.0, 0.0],
+        ..one_sim()
+    };
+    let step = |renderer: &mut Renderer, seed: u32| {
+        let sims = [ParticleSim { seed, ..sim }];
+        let drawables = Drawables {
+            particle_sims: &sims,
+            ..Drawables::default()
+        };
+        let _shot = renderer
+            .capture(&view_from_above(), drawables, 32, 32)
+            .expect("capture");
+        let slots = renderer.read_sim(sim.id).expect("reads");
+        slots.iter().map(|slot| slot[3]).collect::<Vec<_>>()
+    };
+    let (one, two) = (1.0 / 60.0, 2.0 / 60.0);
+    for (seed, wanted) in [
+        (0, [0.0, 1.0, 1.0, 1.0]),
+        (1, [one, 0.0, 1.0, 1.0]),
+        (2, [two, one, 0.0, 1.0]),
+    ] {
+        let ages = step(&mut renderer, seed);
+        for (age, should) in ages.iter().zip(wanted) {
+            assert!((age - should).abs() < 0.001, "{ages:?} and {wanted:?}");
+        }
+    }
+    let _fourth = step(&mut renderer, 3);
+    let ages = step(&mut renderer, 4);
+    assert!(ages[0] < 0.001, "the first went round again: {ages:?}");
+    assert!(ages[1] > ages[2] && ages[2] > ages[3], "{ages:?}");
+}
+
+/// Drawn with a shader of its own, it looks as that says.
+#[test]
+fn a_compute_particle_has_its_own_shader() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_with_sims();
+    built.effect_shaders.push(Arc::new(ShaderCode {
+        name: "green".to_owned(),
+        code: "fn shader_particle(look: ParticleLook) -> vec4<f32> {
+    return vec4<f32>(0.0, 1.0, 0.0, 1.0);
+}
+"
+        .to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let sims = [ParticleSim {
+        speed: [0.0, 0.0],
+        shader: 1,
+        ..one_sim()
+    }];
+    let drawables = Drawables {
+        particle_sims: &sims,
+        ..Drawables::default()
+    };
+    let shot = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    let green = centre(&shot);
+    assert!(green[1] > 200 && green[2] < 60, "{green:?}");
+}
+
+/// What goes out of the list stops, and its slots go to what comes next.
+#[test]
+fn an_emitter_that_ends_gives_its_slots_up() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let _first = run_sim(&mut renderer, one_sim(), 2);
+    let _none = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
+    assert!(renderer.read_sim(1).expect("reads").is_empty());
+    let next = ParticleSim { id: 2, ..one_sim() };
+    let slot = run_sim(&mut renderer, next, 2);
+    assert!(slot[7] > 50.0, "new in its place: {slot:?}");
+}
+
+/// A compute particle draws where it is, and its colour is its own.
+#[test]
+fn a_compute_particle_shows() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let sim = ParticleSim {
+        speed: [0.0, 0.0],
+        ..one_sim()
+    };
+    let sims = [sim];
+    let drawables = Drawables {
+        particle_sims: &sims,
+        ..Drawables::default()
+    };
+    let shot = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    let blue = centre(&shot);
+    assert!(blue[2] > 200, "{blue:?}");
+}
+
+/// What falls onto what the view can see comes off it.
+#[test]
+fn a_compute_particle_bounces_off_what_the_view_sees() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let sim = ParticleSim {
+        direction: Vec3::new(0.0, 0.0, -1.0),
+        speed: [300.0, 300.0],
+        bounce: 0.5,
+        collide: 1,
+        ..one_sim()
+    };
+    let slot = run_sim(&mut renderer, sim, 16);
+    assert!(slot[2] > 0.0, "it stayed above the floor: {slot:?}");
+    assert!(slot[6] > 0.0, "and it's going up: {slot:?}");
+    assert!(
+        (slot[6] - 150.0).abs() < 2.0,
+        "with half its speed: {slot:?}"
+    );
+}
+
+/// A level's own motion shader goes into the step, and can read a field.
+#[test]
+fn a_motion_shader_moves_what_it_is_on() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_with_sims();
+    built.effect_motions.push(Arc::new(ShaderCode {
+        name: "sideways".to_owned(),
+        code: "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    var out = particle;
+    out.place.x = out.place.x + 60.0 * seconds + field_at(vec2<f32>(0.5)).x * 60.0 * seconds;
+    return out;
+}
+"
+        .to_owned(),
+    }));
+    built.fields.push(FieldDef {
+        name: "grid".to_owned(),
+        shader: Arc::new(ShaderCode {
+            name: "grid".to_owned(),
+            code: "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return vec4<f32>(1.0);
+}
+"
+            .to_owned(),
+        }),
+        size: 4,
+        rate: 1000.0,
+        params: [0.0; 8],
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let sim = ParticleSim {
+        motion: 1,
+        ..one_sim()
+    };
+    let without_field = run_sim(&mut renderer, sim, 31);
+    assert!(without_field[0] - 64.0 > 25.0, "{without_field:?}");
+    assert!(
+        without_field[0] - 64.0 < 35.0,
+        "and no field: {without_field:?}"
+    );
+    let next = ParticleSim {
+        id: 2,
+        field: 1,
+        ..sim
+    };
+    // The field wants to have stepped, and capture's time comes from the view.
+    let view = View {
+        time: 1.0,
+        ..view_from_above()
+    };
+    let _stepped = renderer
+        .capture(&view, Drawables::default(), 32, 32)
+        .expect("capture");
+    let with_field = run_sim(&mut renderer, next, 31);
+    assert!(with_field[0] - 64.0 > 50.0, "{with_field:?}");
+    assert!(renderer.take_shader_problems().is_empty());
+}
+
+/// The slots of `sim` once all of it has started, in one step.
+fn started(renderer: &mut Renderer, sim: ParticleSim) -> Vec<[f32; 8]> {
+    let sims = [ParticleSim {
+        spawn: sim.count,
+        ..sim
+    }];
+    let drawables = Drawables {
+        particle_sims: &sims,
+        ..Drawables::default()
+    };
+    let view = view_from_above();
+    let _shot = renderer.capture(&view, drawables, 32, 32).expect("capture");
+    renderer.read_sim(sim.id).expect("reads")
+}
+
+/// Particles start in the shape they're told to, all of it.
+#[test]
+fn compute_starts_particles_in_their_shape() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let many = ParticleSim {
+        count: 512,
+        origin: Vec3::ZERO,
+        ..one_sim()
+    };
+    let in_box = started(
+        &mut renderer,
+        ParticleSim {
+            id: 2,
+            shape: 5,
+            extent: Vec3::new(10.0, 20.0, 30.0),
+            ..many
+        },
+    );
+    for (axis, half) in [10.0, 20.0, 30.0].into_iter().enumerate() {
+        let most = in_box.iter().map(|slot| slot[axis]).fold(-1e9, f32::max);
+        let least = in_box.iter().map(|slot| slot[axis]).fold(1e9, f32::min);
+        assert!(most <= half && most > half * 0.9, "{axis}: {most}");
+        assert!(least >= -half && least < -half * 0.9, "{axis}: {least}");
+    }
+    let flat = in_box
+        .iter()
+        .filter(|slot| (slot[1] - slot[0] * 2.0).abs() > 1.0);
+    assert!(flat.count() > 256, "and not along a line");
+    let on_line = started(
+        &mut renderer,
+        ParticleSim {
+            id: 3,
+            shape: 4,
+            extent: Vec3::new(10.0, 20.0, 0.0),
+            ..many
+        },
+    );
+    assert!(
+        on_line
+            .iter()
+            .all(|slot| (slot[1] - slot[0] * 2.0).abs() < 0.01)
+    );
+    assert!(on_line.iter().any(|slot| slot[0] > 9.0), "to its end");
+    assert!(on_line.iter().any(|slot| slot[0] < -9.0), "and the other");
+    let in_cone = started(
+        &mut renderer,
+        ParticleSim {
+            id: 4,
+            shape: 3,
+            radius: 10.0,
+            extent: Vec3::new(0.0, 0.0, 40.0),
+            ..many
+        },
+    );
+    for slot in &in_cone {
+        let out = slot[0].hypot(slot[1]);
+        assert!(
+            out <= slot[2] * 0.25 + 0.01,
+            "it widens as it rises: {slot:?}"
+        );
+    }
+    assert!(in_cone.iter().any(|slot| slot[2] > 36.0), "up to its top");
+    let in_ring = started(
+        &mut renderer,
+        ParticleSim {
+            id: 5,
+            shape: 1,
+            radius: 10.0,
+            ..many
+        },
+    );
+    assert!(
+        in_ring
+            .iter()
+            .all(|slot| (slot[0].hypot(slot[1]) - 10.0).abs() < 0.01)
+    );
+    let in_disc = started(
+        &mut renderer,
+        ParticleSim {
+            id: 6,
+            shape: 2,
+            radius: 10.0,
+            ..many
+        },
+    );
+    assert!(in_disc.iter().all(|slot| slot[2] == 0.0));
+    assert!(
+        in_disc.iter().any(|slot| slot[0].hypot(slot[1]) < 5.0),
+        "and inside"
+    );
+    let in_ball = started(
+        &mut renderer,
+        ParticleSim {
+            id: 7,
+            shape: 0,
+            radius: 10.0,
+            ..many
+        },
+    );
+    assert!(
+        in_ball
+            .iter()
+            .all(|slot| Vec3::new(slot[0], slot[1], slot[2]).length() <= 10.01)
+    );
+    assert!(in_ball.iter().any(|slot| slot[2] < -5.0), "below as well");
+}
+
+/// Those told to go outward head away from the middle, whatever way the emitter's facing.
+#[test]
+fn compute_sends_particles_outward() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let slots = started(
+        &mut renderer,
+        ParticleSim {
+            count: 64,
+            origin: Vec3::ZERO,
+            shape: 1,
+            radius: 10.0,
+            outward: true,
+            ..one_sim()
+        },
+    );
+    for slot in slots {
+        let out = Vec3::new(slot[0], slot[1], slot[2]).normalized();
+        let moving = Vec3::new(slot[4], slot[5], slot[6]).normalized();
+        assert!(out.dot(moving) > 0.999, "{slot:?}");
+    }
+}
+
+/// Emitters at the same step don't throw the same way, as their seeds differ.
+#[test]
+fn what_starts_differs_from_slot_to_slot_and_step_to_step() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let many = ParticleSim {
+        count: 64,
+        spread: -1.0,
+        ..one_sim()
+    };
+    let one = started(&mut renderer, ParticleSim { seed: 1, ..many });
+    let same = started(
+        &mut renderer,
+        ParticleSim {
+            id: 2,
+            seed: 1,
+            ..many
+        },
+    );
+    let other = started(
+        &mut renderer,
+        ParticleSim {
+            id: 3,
+            seed: 9,
+            ..many
+        },
+    );
+    assert_eq!(one, same, "a seed says all of it");
+    let alike = one.iter().zip(&other).filter(|(a, b)| a == b).count();
+    assert_eq!(alike, 0, "and another says otherwise");
+    // Anything that's only moved along by a slot would show up here.
+    let moved = one[1..].iter().zip(&other).filter(|(a, b)| a == b).count();
+    assert_eq!(moved, 0);
+}
+
+/// What sticks stays where it hit, and what dies goes.
+#[test]
+fn a_compute_particle_sticks_or_dies_on_what_it_hits() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let falling = ParticleSim {
+        direction: Vec3::new(0.0, 0.0, -1.0),
+        speed: [300.0, 300.0],
+        gravity: 100.0,
+        ..one_sim()
+    };
+    let stuck = run_sim(
+        &mut renderer,
+        ParticleSim {
+            collide: 3,
+            ..falling
+        },
+        30,
+    );
+    assert!(
+        stuck[2] >= -2.0 && stuck[2] < 8.0,
+        "on the floor: {stuck:?}"
+    );
+    assert!(stuck[3] < stuck[7], "and there still: {stuck:?}");
+    let dead = run_sim(
+        &mut renderer,
+        ParticleSim {
+            id: 2,
+            collide: 2,
+            ..falling
+        },
+        30,
+    );
+    assert!(dead[3] >= dead[7], "{dead:?}");
+}
+
+/// A particle has the colour its life has come to, between the ones it's told.
+#[test]
+fn a_compute_particle_goes_along_its_colours() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let blue = [0.0, 0.0, 1.0, 1.0];
+    let red = [1.0, 0.0, 0.0, 1.0];
+    let sim = ParticleSim {
+        speed: [0.0, 0.0],
+        life: [1.0, 1.0],
+        ramp: [blue, blue, blue, red, red, blue, blue, blue],
+        ..one_sim()
+    };
+    let shade_at = |renderer: &mut Renderer, steps: u32, id: u64| {
+        let sim = ParticleSim { id, ..sim };
+        let _went = run_sim(renderer, sim, steps);
+        let now = [ParticleSim {
+            spawn: 0,
+            seconds: 0.0,
+            ..sim
+        }];
+        let drawables = Drawables {
+            particle_sims: &now,
+            ..Drawables::default()
+        };
+        centre(
+            &renderer
+                .capture(&view_from_above(), drawables, 64, 64)
+                .expect("capture"),
+        )
+    };
+    let young = shade_at(&mut renderer, 2, 2);
+    assert!(young[2] > 200 && young[0] < 40, "{young:?}");
+    let middle = shade_at(&mut renderer, 31, 3);
+    assert!(middle[0] > 200 && middle[2] < 40, "{middle:?}");
+    let old = shade_at(&mut renderer, 58, 4);
+    assert!(old[2] > 200 && old[0] < 40, "{old:?}");
+}
+
+/// Sheets, turning and drawing out work on what compute runs as on the rest.
+#[test]
+fn a_compute_particle_has_a_frame_a_turn_and_a_length() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // Two frames: red on its left, and blue on its right.
+    let sheet = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 0, 0, 255]
+        } else {
+            [0, 0, 255, 255]
+        }
+    });
+    let mut built = map_with_sims();
+    built.effect_pictures = vec![Arc::new(sheet)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let white = ParticleSim {
+        speed: [0.0, 0.0],
+        ramp: [[1.0; 4]; 8],
+        sizes: [60.0; 8],
+        picture: 1,
+        sheet: [2, 1],
+        flip_rate: 1.0,
+        ..one_sim()
+    };
+    let shot_after = |renderer: &mut Renderer, sim: ParticleSim, steps: u32| {
+        let _went = run_sim(renderer, sim, steps);
+        let now = [ParticleSim {
+            spawn: 0,
+            seconds: 0.0,
+            ..sim
+        }];
+        let drawables = Drawables {
+            particle_sims: &now,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture")
+    };
+    let first = centre(&shot_after(
+        &mut renderer,
+        ParticleSim { id: 2, ..white },
+        2,
+    ));
+    assert!(first[0] > 150 && first[2] < 90, "{first:?}");
+    let second = centre(&shot_after(
+        &mut renderer,
+        ParticleSim { id: 3, ..white },
+        61,
+    ));
+    assert!(second[2] > 150 && second[0] < 90, "{second:?}");
+    // Half red and half white, with its red turned to one side and then the other.
+    let halves = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 0, 0, 255]
+        } else {
+            [255, 255, 255, 0]
+        }
+    });
+    let mut built = map_with_sims();
+    built.effect_pictures = vec![Arc::new(halves)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let turning = ParticleSim {
+        id: 4,
+        sheet: [1, 1],
+        spin: [std::f32::consts::PI, std::f32::consts::PI],
+        flip_rate: 0.0,
+        ..white
+    };
+    let red_side = |shot: &Capture| {
+        let left = pixel_at(shot, 24, 32)[0].saturating_sub(pixel_at(shot, 24, 32)[1]);
+        let right = pixel_at(shot, 40, 32)[0].saturating_sub(pixel_at(shot, 40, 32)[1]);
+        (left, right)
+    };
+    let now = red_side(&shot_after(&mut renderer, turning, 2));
+    let turned = red_side(&shot_after(
+        &mut renderer,
+        ParticleSim { id: 5, ..turning },
+        61,
+    ));
+    assert!(now.0.abs_diff(now.1) > 60, "one side: {now:?}");
+    assert!(
+        (now.0 > now.1) != (turned.0 > turned.1) && turned.0.abs_diff(turned.1) > 60,
+        "and the other: {now:?} and {turned:?}"
+    );
+    // Going up the view and drawn out along it, it's longer than it's wide.
+    let mut built = map_with_sims();
+    built.effect_pictures = Vec::new();
+    renderer.load_map(Arc::new(built)).expect("load");
+    let long = ParticleSim {
+        id: 6,
+        direction: Vec3::new(1.0, 0.0, 0.0),
+        speed: [60.0, 60.0],
+        sizes: [8.0; 8],
+        ramp: [[0.0, 1.0, 0.0, 1.0]; 8],
+        stretch: 1.0,
+        picture: 0,
+        origin: Vec3::new(60.0, 64.0, 20.0),
+        flip_rate: 0.0,
+        ..white
+    };
+    let shot = shot_after(&mut renderer, long, 6);
+    let plain = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let changed = |at: (u32, u32)| {
+        let (was, is) = (pixel_at(&plain, at.0, at.1), pixel_at(&shot, at.0, at.1));
+        was.iter().zip(is).any(|(a, b)| a.abs_diff(b) > 30)
+    };
+    let across = (0..64).filter(|x| changed((*x, 32))).count();
+    let up = (0..64).filter(|y| changed((32, *y))).count();
+    assert!(up > across * 3, "{up} along it and {across} across");
+}
+
+/// The depth a step reads was drawn from the last view, whatever the view has done since.
+#[test]
+fn a_step_reads_depth_as_it_was_seen() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_sims())).expect("load");
+    let sim = ParticleSim {
+        origin: Vec3::new(64.0, 64.0, 2.0),
+        direction: Vec3::new(0.0, 0.0, -1.0),
+        speed: [300.0, 300.0],
+        bounce: 1.0,
+        collide: 1,
+        ..one_sim()
+    };
+    // The floor's seen, and then the view's gone high above it.
+    let plain = view_from_above();
+    let high = View {
+        origin: Vec3::new(64.0, 64.0, 2000.0),
+        ..plain
+    };
+    let steps = [(&plain, 0, 0.0), (&plain, 1, 0.0), (&high, 0, 1.0 / 60.0)];
+    for (view, spawn, seconds) in steps {
+        let sims = [ParticleSim {
+            spawn,
+            seconds,
+            ..sim
+        }];
+        let drawables = Drawables {
+            particle_sims: &sims,
+            ..Drawables::default()
+        };
+        let _shot = renderer.capture(view, drawables, 32, 32).expect("capture");
+    }
+    let slot = renderer.read_sim(sim.id).expect("reads")[0];
+    assert!(slot[6] > 0.0, "it came off the floor: {slot:?}");
+}
+
+/// With another number of samples, what a level has of its own is made for those.
+#[test]
+fn a_change_of_samples_makes_a_levels_particles_again() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_with_sims();
+    built.effect_motions.push(Arc::new(ShaderCode {
+        name: "still".to_owned(),
+        code: "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    return particle;
+}
+"
+        .to_owned(),
+    }));
+    built.effect_motions.push(Arc::new(ShaderCode {
+        name: "wrong_motion".to_owned(),
+        code: "this isn't code".to_owned(),
+    }));
+    built.effect_shaders.push(Arc::new(ShaderCode {
+        name: "wrong_look".to_owned(),
+        code: "this isn't code".to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let _told = renderer.take_shader_problems();
+    renderer.set_antialiasing(4).expect("samples");
+    let told = renderer.take_shader_problems().join(" ");
+    assert!(told.contains("wrong_motion"), "made again: {told}");
+    assert!(told.contains("wrong_look"), "both of them: {told}");
+    let sim = ParticleSim {
+        direction: Vec3::new(0.0, 0.0, -1.0),
+        speed: [300.0, 300.0],
+        bounce: 0.5,
+        collide: 1,
+        motion: 1,
+        ..one_sim()
+    };
+    let slot = run_sim(&mut renderer, sim, 16);
+    renderer.set_antialiasing(1).expect("samples");
+    assert!(slot[6] > 0.0, "the depth it read had samples: {slot:?}");
+}
+
+/// A field that won't build takes its place, and the next is still the next.
+#[test]
+fn a_broken_field_leaves_the_next_where_it_was() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_with_sims();
+    let field = |name: &str, code: &str| FieldDef {
+        name: name.to_owned(),
+        shader: Arc::new(ShaderCode {
+            name: name.to_owned(),
+            code: code.to_owned(),
+        }),
+        size: 4,
+        rate: 1000.0,
+        params: [0.0; 8],
+    };
+    built.fields.push(field("broken", "this isn't code"));
+    built.fields.push(field(
+        "fine",
+        "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return vec4<f32>(1.0);
+}
+",
+    ));
+    built.effect_motions.push(Arc::new(ShaderCode {
+        name: "reads".to_owned(),
+        code: "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    var out = particle;
+    out.place.x = field_at(vec2<f32>(0.5)).x;
+    return out;
+}
+"
+        .to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        time: 1.0,
+        ..view_from_above()
+    };
+    let _stepped = renderer
+        .capture(&view, Drawables::default(), 32, 32)
+        .expect("capture");
+    let reader = ParticleSim {
+        motion: 1,
+        ..one_sim()
+    };
+    let none = run_sim(&mut renderer, ParticleSim { field: 1, ..reader }, 3);
+    assert!(none[0].abs() < 0.01, "there's nothing there: {none:?}");
+    let some = run_sim(
+        &mut renderer,
+        ParticleSim {
+            id: 2,
+            field: 2,
+            ..reader
+        },
+        3,
+    );
+    assert!(
+        (some[0] - 1.0).abs() < 0.01,
+        "the second is the second: {some:?}"
+    );
+}
+
+/// A motion that won't compile says so, and they go on as if it wasn't there.
+#[test]
+fn a_broken_motion_says_so_and_they_go_on() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_with_sims();
+    built.effect_motions.push(Arc::new(ShaderCode {
+        name: "wrong".to_owned(),
+        code: "this isn't code".to_owned(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let told = renderer.take_shader_problems().join(" ");
+    assert!(told.contains("wrong"), "{told}");
+    let slot = run_sim(
+        &mut renderer,
+        ParticleSim {
+            motion: 1,
+            ..one_sim()
+        },
+        31,
+    );
+    assert!((slot[2] - 50.0).abs() < 0.5, "{slot:?}");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

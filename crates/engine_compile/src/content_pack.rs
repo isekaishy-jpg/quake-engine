@@ -86,6 +86,8 @@ struct EffectExtras {
     pictures: Vec<SlotImage>,
     /// Their shaders.
     shaders: Vec<Arc<ShaderCode>>,
+    /// Their shaders for how compute moves them.
+    motions: Vec<Arc<ShaderCode>>,
 }
 
 /// `effects`, with their emitters told where their pictures and shaders are, and those pictures
@@ -93,9 +95,11 @@ struct EffectExtras {
 fn effect_extras(
     library: &mut MaterialLibrary<'_>,
     effects: Vec<Arc<EffectDef>>,
+    fields: &[String],
 ) -> Result<EffectExtras, CompileError> {
     let mut paths: Vec<String> = Vec::new();
     let mut shaders: Vec<String> = Vec::new();
+    let mut motions: Vec<String> = Vec::new();
     let mut out = Vec::with_capacity(effects.len());
     for effect in effects {
         let mut effect = EffectDef::clone(&effect);
@@ -115,6 +119,18 @@ fn effect_extras(
                     shaders.len() - 1
                 });
                 emitter.shader_number = u32::try_from(at + 1).unwrap_or(0);
+            }
+            if let Some(name) = &emitter.motion {
+                let at = motions.iter().position(|known| known == name);
+                let at = at.unwrap_or_else(|| {
+                    motions.push(name.clone());
+                    motions.len() - 1
+                });
+                emitter.motion_number = u32::try_from(at + 1).unwrap_or(0);
+            }
+            if let Some(name) = &emitter.field {
+                let at = fields.iter().position(|known| known == name);
+                emitter.field_number = at.map_or(0, |at| u32::try_from(at + 1).unwrap_or(0));
             }
         }
         out.push(Arc::new(effect));
@@ -138,10 +154,12 @@ fn effect_extras(
         .map(|top| Arc::new(mip_chain(side, side, scaled(top, side))))
         .collect();
     let shaders = shaders.iter().map(|name| library.shader(name)).collect();
+    let motions = motions.iter().map(|name| library.shader(name)).collect();
     Ok(EffectExtras {
         effects: out,
         pictures,
         shaders,
+        motions,
     })
 }
 
@@ -197,10 +215,13 @@ pub fn play_map(
     let post = world.and_then(|world| world.text("post_shader"));
     map.post_shader = post.map(|name| textures.library.shader(name));
     map.effects = effects_in(filesystem)?;
-    let extras = effect_extras(&mut textures.library, std::mem::take(&mut map.effects))?;
+    let fields: Vec<String> = map.fields.iter().map(|field| field.name.clone()).collect();
+    let effects = std::mem::take(&mut map.effects);
+    let extras = effect_extras(&mut textures.library, effects, &fields)?;
     map.effects = extras.effects;
     map.effect_pictures = extras.pictures;
     map.effect_shaders = extras.shaders;
+    map.effect_motions = extras.motions;
     for entity in working.entities.iter().filter(|e| e.kind == "effect") {
         let name = entity.text("effect").unwrap_or_default();
         let [x, y, z] = entity.point("origin").unwrap_or([0.0; 3]);

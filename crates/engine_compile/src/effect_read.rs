@@ -153,6 +153,17 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         reason = "held to a sensible count"
     )]
     let burst = number(block, "burst", 0.0).clamp(0.0, 65_536.0) as u32;
+    if text("gpu") == Some("sim") {
+        let name = block.name.as_deref().unwrap_or("emitter");
+        if kind != ParticleKind::Sprite {
+            let problem = format!("{name} runs in compute, which only has sprites");
+            return Err(CompileError::Bad(problem));
+        }
+        if text("on_death").is_some() || text("on_hit").is_some() {
+            let problem = format!("{name} runs in compute, where nothing hears of what ends");
+            return Err(CompileError::Bad(problem));
+        }
+    }
     Ok(ParticleEmitter {
         name: block.name.clone().unwrap_or_default(),
         kind,
@@ -173,6 +184,9 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         color: color_curve(block, "color"),
         reach: number(block, "reach", 200.0),
         gpu: block.get("gpu").and_then(Value::flag) == Some(true),
+        sim: text("gpu") == Some("sim"),
+        motion: text("motion").map(str::to_owned),
+        field: text("field").map(str::to_owned),
         on_death: text("on_death").map(str::to_owned),
         image: text("image").map(str::to_owned),
         flipbook: flipbook_of(block),

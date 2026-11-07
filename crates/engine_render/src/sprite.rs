@@ -180,6 +180,169 @@ pub(crate) fn behind_first<'a>(
     (behind.into_iter().chain(rest).collect(), count)
 }
 
+/// Bytes in what a step of compute particles is told.
+pub(crate) const SIM_EMITTER_BYTES: usize = 656;
+
+/// A force on compute particles, as its kind, three numbers and two places.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SimForce {
+    /// 0 for none, 1 attract, 2 vortex and 3 wind.
+    pub kind: f32,
+    /// How hard.
+    pub strength: f32,
+    /// Its reach, how hard it draws in, or how much it comes and goes.
+    pub extra: f32,
+    /// Where it is, from the effect's middle, or which way wind blows.
+    pub at: Vec3,
+    /// Which way a vortex's line goes.
+    pub axis: Vec3,
+}
+
+/// An emitter compute runs, for one frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ParticleSim {
+    /// Which it is, which goes on being it from frame to frame.
+    pub id: u64,
+    /// Where it is.
+    pub origin: Vec3,
+    /// How long this step is.
+    pub seconds: f32,
+    /// Which way they head.
+    pub direction: Vec3,
+    /// How far from that they can go, as a cosine.
+    pub spread: f32,
+    /// The slowest and fastest they start.
+    pub speed: [f32; 2],
+    /// The shortest and longest they live.
+    pub life: [f32; 2],
+    /// How far from `origin` they start.
+    pub radius: f32,
+    /// How hard gravity pulls.
+    pub gravity: f32,
+    /// How much they slow, as a share a second.
+    pub drag: f32,
+    /// How hard they're pushed about.
+    pub turbulence: f32,
+    /// How many slots it has.
+    pub count: u32,
+    /// How many start this step.
+    pub spawn: u32,
+    /// Their colour at eight even steps along a life.
+    pub ramp: [[f32; 4]; 8],
+    /// Their size at those steps.
+    pub sizes: [f32; 8],
+    /// Their picture, plus one, or 0 for a soft dot.
+    pub picture: u32,
+    /// The columns and rows of its sheet.
+    pub sheet: [u32; 2],
+    /// Its frames a second, or 0 to go through them once over a life.
+    pub flip_rate: f32,
+    /// How far they're drawn out along how they're moving, in seconds of it.
+    pub stretch: f32,
+    /// The least and most they start turned, in radians.
+    pub rotation: [f32; 2],
+    /// The least and most they turn a second, in radians.
+    pub spin: [f32; 2],
+    /// Whether they add to what's behind them.
+    pub adds: bool,
+    /// How far they fade into what's behind them.
+    pub soft: f32,
+    /// The time.
+    pub time: f32,
+    /// A number that makes this step differ from the last.
+    pub seed: u32,
+    /// How much speed they keep when they bounce.
+    pub bounce: f32,
+    /// What they do when they hit something: 0 nothing, 1 bounce, 2 die, 3 stick.
+    pub collide: u32,
+    /// Their shape: 0 a ball, 1 a ring, 2 a disc, 3 a cone, 4 a line, 5 a box.
+    pub shape: u32,
+    /// Half of a line or box, or a cone's height in z.
+    pub extent: Vec3,
+    /// Whether they head away from the middle of their shape.
+    pub outward: bool,
+    /// What pushes them.
+    pub forces: [SimForce; 4],
+    /// Which of the level's particle shaders they're drawn by, plus one, or 0 for none.
+    pub shader: u32,
+    /// Which of the level's motions they have, plus one, or 0 for none.
+    pub motion: u32,
+    /// Which of the level's fields they can read, plus one, or 0 for none.
+    pub field: u32,
+}
+
+/// What a step of `sim` is told, with the view and the way back from it, where its slots are, and
+/// whether they're new and there's depth to read.
+pub(crate) fn sim_emitter_bytes(
+    sim: &ParticleSim,
+    (view, back): (&[f32; 16], &[f32; 16]),
+    ring: [u32; 4],
+    [fresh, depth_ok]: [u32; 2],
+) -> [u8; SIM_EMITTER_BYTES] {
+    let mut out = [0; SIM_EMITTER_BYTES];
+    let mut at = 0;
+    let mut put = |word: u32| {
+        out[at..at + 4].copy_from_slice(&word.to_le_bytes());
+        at += 4;
+    };
+    let floats = |list: &[f32], put: &mut dyn FnMut(u32)| {
+        for number in list {
+            put(number.to_bits());
+        }
+    };
+    floats(view, &mut put);
+    floats(back, &mut put);
+    let (origin, way) = (sim.origin, sim.direction);
+    floats(&[origin.x, origin.y, origin.z, sim.seconds], &mut put);
+    floats(&[way.x, way.y, way.z, sim.spread], &mut put);
+    floats(
+        &[sim.speed[0], sim.speed[1], sim.life[0], sim.life[1]],
+        &mut put,
+    );
+    floats(
+        &[sim.radius, sim.gravity, sim.drag, sim.turbulence],
+        &mut put,
+    );
+    for word in ring {
+        put(word);
+    }
+    for color in &sim.ramp {
+        floats(color, &mut put);
+    }
+    floats(&sim.sizes, &mut put);
+    #[expect(clippy::cast_precision_loss, reason = "few pictures")]
+    let picture = sim.picture as f32;
+    floats(
+        &[
+            picture,
+            f32::from(u8::from(sim.adds)),
+            sim.flip_rate,
+            sim.stretch,
+        ],
+        &mut put,
+    );
+    floats(&[sim.soft, sim.time], &mut put);
+    put(sim.seed);
+    floats(&[sim.bounce], &mut put);
+    for word in [fresh, depth_ok, sim.collide, sim.shape] {
+        put(word);
+    }
+    let reach = sim.extent;
+    let outward = f32::from(u8::from(sim.outward));
+    floats(&[reach.x, reach.y, reach.z, outward], &mut put);
+    let [least, most] = sim.rotation;
+    floats(&[least, most, sim.spin[0], sim.spin[1]], &mut put);
+    #[expect(clippy::cast_precision_loss, reason = "few frames")]
+    let sheet = [sim.sheet[0] as f32, sim.sheet[1] as f32, 0.0, 0.0];
+    floats(&sheet, &mut put);
+    for force in sim.forces {
+        floats(&[force.kind, force.strength, force.extra, 0.0], &mut put);
+        floats(&[force.at.x, force.at.y, force.at.z, 0.0], &mut put);
+        floats(&[force.axis.x, force.axis.y, force.axis.z, 0.0], &mut put);
+    }
+    out
+}
+
 /// Bytes of what a draw of [`GpuParticles`] pushes.
 pub(crate) const GPU_PARTICLE_PUSH: u32 = 112;
 

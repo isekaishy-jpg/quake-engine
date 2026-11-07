@@ -572,6 +572,8 @@ pub struct Map {
     pub effect_pictures: Vec<crate::SlotImage>,
     /// The shaders of effects' particles.
     pub effect_shaders: Vec<Arc<crate::ShaderCode>>,
+    /// The shaders of how compute moves effects' particles.
+    pub effect_motions: Vec<Arc<crate::ShaderCode>>,
     /// What land's painted with, each picture once.
     pub land_pictures: Vec<crate::LandPicture>,
     /// Named places in the level, from `point` blocks and what placed meshes have.

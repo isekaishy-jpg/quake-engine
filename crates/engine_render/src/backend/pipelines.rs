@@ -219,7 +219,19 @@ impl Backend {
             .samples(samples)
             .premultiplied_blending(true)
             .build(device)?;
-        Ok(ParticlePipelines { listed, worked_out })
+        let simulated = GraphicsPipelineBuilder::new(&layouts.sim_particle, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_sim_particle")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .samples(samples)
+            .premultiplied_blending(true)
+            .build(device)?;
+        Ok(ParticlePipelines {
+            listed,
+            worked_out,
+            simulated,
+        })
     }
 
     /// What draws surfaces with `code`, if it compiles.

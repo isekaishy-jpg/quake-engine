@@ -30,6 +30,8 @@ pub(super) struct SceneTarget {
     pub(super) particle_set: DescriptorSet,
     /// Kept alive for the set.
     _particle_pool: DescriptorPool,
+    /// Whether anything's been drawn here, so that its depth can be read.
+    pub(super) drawn: std::cell::Cell<bool>,
     /// Kept alive for the framebuffer.
     _color: GpuImage,
     /// Kept alive for the framebuffer.
@@ -355,7 +357,7 @@ impl Backend {
             )?;
             self.pipelines.surfaces.push(surface);
         }
-        Ok(())
+        self.remake_map_particles()
     }
 
     /// Draws the final pass with `shader`, or with none. If it won't compile
@@ -506,6 +508,7 @@ impl Backend {
             particle_framebuffer,
             particle_set,
             _particle_pool: particle_pool,
+            drawn: std::cell::Cell::new(false),
             set,
             _pool: pool,
             framebuffer,

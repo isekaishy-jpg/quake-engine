@@ -2,7 +2,9 @@
 //! meshes, decals, stamps, paint, splines, and a map's own script and materials
 //! (proposal 0091).
 
-use engine_shaders::{check_field_code, check_particle_code, check_post_code, check_surface_code};
+use engine_shaders::{
+    check_field_code, check_motion_code, check_particle_code, check_post_code, check_surface_code,
+};
 use std::path::{Path, PathBuf};
 
 use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
@@ -740,15 +742,20 @@ fn missing_of_effect(session: &Session, effect: &engine_map::EffectDef) -> Optio
             .image
             .as_ref()
             .filter(|path| !session.content.join(path).exists());
-        let shader = emitter.shader.as_ref().filter(|name| {
+        let no_shader = |name: &&String| {
             let shaders = session.content.join("shaders");
             !["wgsl", "egraph"]
                 .iter()
                 .any(|kind| shaders.join(format!("{name}.{kind}")).exists())
-        });
+        };
+        let shader = emitter.shader.as_ref().filter(no_shader);
+        let motion = emitter.motion.as_ref().filter(no_shader);
         picture
             .map(|path| format!("{}: there's no picture {path}", emitter.name))
-            .or_else(|| shader.map(|name| format!("{}: there's no shader {name}", emitter.name)))
+            .or_else(|| {
+                let named = shader.or(motion)?;
+                Some(format!("{}: there's no shader {named}", emitter.name))
+            })
     })
 }
 
@@ -872,6 +879,8 @@ pub(crate) fn write_shader(session: &Session, args: &Json) -> Result<Json, Strin
 fn check_code(code: &str) -> Result<(), String> {
     if code.contains("fn shader_field") {
         check_field_code(code)
+    } else if code.contains("fn shader_motion") {
+        check_motion_code(code)
     } else if code.contains("fn shader_particle") {
         check_particle_code(code)
     } else if code.contains("fn shader_post") {

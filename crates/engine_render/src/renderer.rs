@@ -15,7 +15,7 @@ use crate::canvas::UiFrame;
 use crate::error::RenderError;
 use crate::instances::MovingDraw;
 use crate::live::LiveLight;
-use crate::sprite::{GpuParticles, LightDraw, ParticleDraw, SpriteDraw};
+use crate::sprite::{GpuParticles, LightDraw, ParticleDraw, ParticleSim, SpriteDraw};
 use crate::visible::VisibleSet;
 use crate::world::{
     ShownTiles, WorldMesh, build_world, detail_chunks, detail_patches, far_chunks, far_patches,
@@ -77,6 +77,8 @@ pub struct Drawables<'a> {
     pub live_lights: &'a [LiveLight],
     /// Particles the GPU works out.
     pub gpu_particles: &'a [GpuParticles],
+    /// Particles compute runs, which it keeps from frame to frame.
+    pub particle_sims: &'a [ParticleSim],
     /// Where each stencil's light is now.
     pub stencil_lights: &'a [Vec3],
     /// How open each stencil's cells are.
@@ -444,6 +446,16 @@ impl Renderer {
         sheet: &engine_map::TerrainSheet,
     ) -> Result<(), RenderError> {
         self.backend.update_land(number, sheet)
+    }
+
+    /// What's in the slots of compute particles `id`, for what checks it: each as a place and an
+    /// age, then which way it's moving and how long it has.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn read_sim(&mut self, id: u64) -> Result<Vec<[f32; 8]>, RenderError> {
+        self.backend.read_sim(id)
     }
 
     /// Starts or stops timing what the GPU does. Says if it can.

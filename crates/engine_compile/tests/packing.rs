@@ -328,7 +328,7 @@ fn every_shader_a_game_could_want_is_compiled() {
 ";
     fs::write(root.join("shaders").join("twice.wgsl"), code).expect("write");
     let count = engine_compile::compile_shaders(&root).expect("compiles");
-    let modules = engine_shaders::all_modules(&[code], &[], &[], &[]);
+    let modules = engine_shaders::all_modules(&[code], &[], &[], (&[], &[]));
     assert_eq!(count, modules.len());
     for module in &modules {
         let bytes = fs::read(root.join(module.path())).expect("it's there");

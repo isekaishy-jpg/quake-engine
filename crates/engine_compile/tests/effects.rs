@@ -212,3 +212,99 @@ fn what_starts_what_has_to_be_there() {
         assert!(read(text).is_err(), "{text}");
     }
 }
+
+/// `gpu = sim` runs in compute, and says what it moves by and reads.
+#[test]
+fn an_emitter_can_run_in_compute() {
+    let effect = read(
+        "format 1 effect
+emitter rain { gpu = sim motion = sway field = wind }
+emitter dust { gpu = true }
+emitter ash { }
+",
+    )
+    .expect("reads");
+    let [rain, dust, ash] = &effect.emitters[..] else {
+        panic!("three of them");
+    };
+    assert!(rain.sim && !rain.gpu);
+    assert_eq!(rain.motion.as_deref(), Some("sway"));
+    assert_eq!(rain.field.as_deref(), Some("wind"));
+    assert!(dust.gpu && !dust.sim);
+    assert!(!ash.gpu && !ash.sim);
+}
+
+/// What compute can't do is an error where it's written, not something that doesn't happen.
+#[test]
+fn compute_turns_down_what_it_cannot_do() {
+    for (line, told) in [
+        ("gpu = sim kind = ribbon", "sprites"),
+        ("gpu = sim on_death = next", "ends"),
+        ("gpu = sim on_hit = next", "ends"),
+    ] {
+        let text = format!("format 1 effect\nemitter rain {{ {line} }}\nemitter next {{ }}\n");
+        let problem = read(&text).expect_err("turned down").to_string();
+        assert!(
+            problem.contains(told) && problem.contains("rain"),
+            "{problem}"
+        );
+    }
+}
+
+/// A level holds each motion once, and numbers emitters' fields as it has them.
+#[test]
+fn a_level_numbers_what_compute_reads() {
+    let root = std::env::temp_dir().join(format!("engine-sims-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&root);
+    for folder in ["maps", "effects", "shaders"] {
+        std::fs::create_dir_all(root.join(folder)).expect("folder");
+    }
+    std::fs::write(
+        root.join("shaders/sway.wgsl"),
+        "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle { return particle; }
+",
+    )
+    .expect("write");
+    std::fs::write(
+        root.join("shaders/flow.wgsl"),
+        "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> { return vec4<f32>(0.0); }
+",
+    )
+    .expect("write");
+    std::fs::write(
+        root.join("effects/one.eeffect"),
+        "format 1 effect
+emitter a { gpu = sim motion = sway field = second }
+emitter b { gpu = sim motion = sway field = first }
+emitter c { gpu = sim field = unknown }
+emitter d { gpu = sim }
+",
+    )
+    .expect("write");
+    let level = "format 1 map
+field { name = first shader = flow }
+field { name = second shader = flow }
+entity world { type = worldspawn }
+brush { material = rock cuboid = -64 -64 -96 64 64 -64 }
+";
+    std::fs::write(root.join("maps/level.emap"), level).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let document = engine_compile::document_of(level.as_bytes()).expect("reads");
+    let played = engine_compile::play_map(&filesystem, "level", &document).expect("loads");
+    let map = played.map;
+    assert_eq!(map.effect_motions.len(), 1);
+    assert!(map.effect_motions[0].code.contains("shader_motion"));
+    let found = map
+        .effects
+        .iter()
+        .find(|effect| effect.name == "one")
+        .expect("there");
+    let numbers: Vec<_> = found
+        .emitters
+        .iter()
+        .map(|emitter| (emitter.motion_number, emitter.field_number))
+        .collect();
+    assert_eq!(numbers, [(1, 2), (1, 1), (0, 0), (0, 0)]);
+    let _gone = std::fs::remove_dir_all(&root);
+}

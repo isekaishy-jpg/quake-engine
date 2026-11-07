@@ -783,3 +783,172 @@ fn what_sticks_to_a_wall_stays_up() {
         "it stayed up"
     );
 }
+
+/// An emitter compute runs.
+fn computed(rate: f32, burst: u32) -> ParticleEmitter {
+    ParticleEmitter {
+        sim: true,
+        rate,
+        burst,
+        life: [2.0, 2.0],
+        ..ParticleEmitter::default()
+    }
+}
+
+/// How many start in compute over `steps` of a hundredth of a second, and the slots they asked for.
+fn computed_starts(effects: &mut EffectSystem, steps: u32) -> (u32, u32) {
+    let mut started = 0;
+    let mut slots = 0;
+    for _ in 0..steps {
+        effects.update(0.01, &quiet());
+        for (sim, _) in effects.sims() {
+            started += sim.spawn;
+            slots = sim.count;
+        }
+    }
+    (started, slots)
+}
+
+/// What compute runs starts by the same sums as the rest, and none of it's on the CPU.
+#[test]
+fn compute_is_told_how_many_start() {
+    let mut effects = system(vec![computed(100.0, 30)]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
+    let (started, slots) = computed_starts(&mut effects, 100);
+    assert!((128..=131).contains(&started), "{started}");
+    assert!(slots >= 230, "room for all that can be alive: {slots}");
+    assert_eq!(effects.count(), 0, "none on the CPU");
+}
+
+/// An instance that's stronger makes more, and has room for them.
+#[test]
+fn compute_makes_as_many_as_an_instance_says() {
+    let mut effects = system(vec![computed(100.0, 30)]);
+    let settings = EffectSettings {
+        strength: 0.5,
+        ..EffectSettings::default()
+    };
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (0, settings));
+    let (started, slots) = computed_starts(&mut effects, 100);
+    assert!((63..=66).contains(&started), "{started}");
+    assert!(slots >= 130, "{slots}");
+    let (sim, _) = effects.sims()[0];
+    assert_eq!(sim.settings, settings);
+    let mut effects = system(vec![computed(100.0, 30)]);
+    let settings = EffectSettings {
+        strength: 2.0,
+        ..EffectSettings::default()
+    };
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (0, settings));
+    let (started, slots) = computed_starts(&mut effects, 100);
+    assert!((258..=261).contains(&started), "{started}");
+    assert!(slots >= 460, "all of it: {slots}");
+}
+
+/// Each emitter is its own, from frame to frame, and steps differ.
+#[test]
+fn computed_emitters_keep_their_names_and_differ() {
+    let mut effects = system(vec![computed(10.0, 0), computed(10.0, 0)]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
+    effects.update(0.01, &quiet());
+    let first: Vec<_> = effects
+        .sims()
+        .iter()
+        .map(|(sim, _)| (sim.id, sim.seed))
+        .collect();
+    assert_eq!(first.len(), 2);
+    assert_ne!(first[0].0, first[1].0, "two emitters");
+    assert_ne!(first[0].1, first[1].1, "that don't throw alike");
+    effects.update(0.01, &quiet());
+    let next: Vec<_> = effects
+        .sims()
+        .iter()
+        .map(|(sim, _)| (sim.id, sim.seed))
+        .collect();
+    assert_eq!(first[0].0, next[0].0, "the same one");
+    assert_ne!(first[0].1, next[0].1, "a step on");
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
+    effects.update(0.01, &quiet());
+    let both: Vec<_> = effects.sims().iter().map(|(sim, _)| sim.id).collect();
+    assert_eq!(both.len(), 4);
+    assert!(
+        !both[..2].contains(&both[2]),
+        "a new start is another: {both:?}"
+    );
+}
+
+/// Told to stop, it starts no more and fades, then its slots go.
+#[test]
+fn computed_particles_fade_when_told_to_stop() {
+    let mut effects = system(vec![computed(100.0, 0)]);
+    let settings = EffectSettings::default();
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (7, settings));
+    effects.update(0.1, &quiet());
+    assert!(effects.sims()[0].0.spawn > 0);
+    assert!((effects.sims()[0].0.fade - 1.0).abs() < 0.001);
+    effects.stop(7, 1.0);
+    assert_eq!(effects.sims()[0].0.spawn, 0, "at once");
+    effects.update(0.5, &quiet());
+    let (sim, _) = effects.sims()[0];
+    assert_eq!(sim.spawn, 0);
+    assert!((sim.fade - 0.5).abs() < 0.01, "{}", sim.fade);
+    effects.update(0.6, &quiet());
+    assert!(effects.sims().is_empty(), "and then there's no more of it");
+}
+
+/// Stopped with no time to fade, it's gone.
+#[test]
+fn computed_particles_stopped_at_once_are_gone() {
+    let mut effects = system(vec![computed(100.0, 0)]);
+    let settings = EffectSettings::default();
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (7, settings));
+    effects.update(0.1, &quiet());
+    effects.stop(7, 0.0);
+    effects.update(0.01, &quiet());
+    assert!(effects.sims().is_empty());
+}
+
+/// What another emitter starts begins where that one was, so it isn't run from the middle.
+#[test]
+fn what_starts_from_another_is_not_run_by_compute() {
+    let first = ParticleEmitter {
+        name: "first".to_owned(),
+        burst: 1,
+        life: [0.01, 0.01],
+        on_death: Some("second".to_owned()),
+        ..ParticleEmitter::default()
+    };
+    let second = ParticleEmitter {
+        name: "second".to_owned(),
+        burst: 4,
+        life: [1.0, 1.0],
+        sim: true,
+        ..ParticleEmitter::default()
+    };
+    let mut effects = system(vec![first, second]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.update(0.001, &quiet());
+    assert!(effects.sims().is_empty());
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 4, "it still starts");
+}
+
+/// One that's waiting or done starts nothing, and it stays until what it made has gone.
+#[test]
+fn compute_waits_for_a_delay_and_stops_at_a_duration() {
+    let mut effects = system(vec![ParticleEmitter {
+        delay: 0.5,
+        duration: 0.5,
+        ..computed(100.0, 0)
+    }]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    let (early, _) = computed_starts(&mut effects, 40);
+    assert_eq!(early, 0);
+    let (during, _) = computed_starts(&mut effects, 60);
+    assert!((45..=55).contains(&during), "{during}");
+    let (late, _) = computed_starts(&mut effects, 50);
+    assert_eq!(late, 0);
+    assert!(!effects.sims().is_empty(), "what it made still goes on");
+    effects.update(3.0, &quiet());
+    assert!(effects.sims().is_empty());
+}

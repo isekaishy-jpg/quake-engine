@@ -703,8 +703,9 @@ impl Backend {
         let moving = self.upload_moving(map)?;
         let terrain = self.upload_terrain(map, mesh.chunk_lights.clone())?;
         let fields = self.upload_fields(map)?;
+        let sims = self.upload_sims(map, &fields)?;
         let particle_pictures = self.upload_particle_pictures(map)?;
-        let particle_shaders = self.upload_particle_shaders(map)?;
+        let particle_shaders = self.upload_particle_shaders(&map.effect_shaders)?;
         let shadow_instances = map
             .mesh_instances
             .iter()
@@ -955,8 +956,10 @@ impl Backend {
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
             instance_centers: std::array::from_fn(|_| Vec::new()),
+            sims,
             particle_pictures,
             particle_shaders,
+            particle_codes: map.effect_shaders.clone(),
             fields,
             terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
@@ -1324,6 +1327,12 @@ impl Backend {
         } else {
             self.particle_order.clear();
             self.particles_behind = 0;
+        }
+        if let Some(scene) = scene {
+            let angles = [view.yaw, view.pitch, view.roll];
+            let seen = view_projection(view.origin, angles, view.fov, aspect);
+            let back = inverse(&seen).unwrap_or(seen);
+            self.plan_sims(scene.drawables.particle_sims, (&seen, &back), slot)?;
         }
         if let (Some(scene), Some(map)) = (scene, &mut self.map) {
             let angles = [view.yaw, view.pitch, view.roll];

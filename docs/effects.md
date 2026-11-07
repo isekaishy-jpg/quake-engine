@@ -39,7 +39,8 @@ emitter flame {
 | `size` | One number, or pairs of when and how big, from 0 to 1 of a life |
 | `color` | Red, green, blue and alpha, or a when before each four. Past 1 glows |
 | `reach` | How far a light reaches, or a beam goes |
-| `gpu` | `true` for great numbers. See below |
+| `gpu` | `true` or `sim` for great numbers. See below |
+| `motion`, `field` | With `gpu = sim`, a shader that moves them, and a field it can read. See below |
 | `on_death` | An emitter that starts where each one ends, by its `burst` |
 | `image` | A picture, in place of a soft dot. Its alpha is what shows |
 | `flipbook`, `flip_rate` | The columns and rows of frames in `image`, and frames a second, or 0 to go through them over a life |
@@ -100,7 +101,32 @@ fn shader_particle(look: ParticleLook) -> vec4<f32> {
 
 ## Great numbers
 
-With `gpu = true`, the GPU works every particle out from its number and the time, so 100,000 cost the CPU nothing. Nothing is kept from frame to frame, so what follows from what came before can't be done: no `drag`, no `on_death`, no curve past its two ends, and only `sprite`. Use it for dust, snow and rain.
+There are two ways.
+
+With `gpu = true`, the GPU works every particle out from its number and the time, so 100,000 cost the CPU nothing. Nothing is kept from frame to frame, so what follows from what came before can't be done: no `drag`, no `on_death`, no curve past its two ends, and only `sprite`. Use it for dust that hangs in the air.
+
+With `gpu = sim`, compute runs them. Each emitter has a ring of slots, and each frame steps all of them, so a particle goes on from where it was. It has everything an emitter says: gravity, drag, turbulence, forces, every shape, `outward`, `image` and its frames, `rotation`, `spin`, `stretch`, `soft`, `shader`, `far`, and what an instance says of itself. `size` and `color` are read at eight steps along a life. Use it for rain, snow, and anything that wants a lot of what moves.
+
+Three things differ.
+
+- `collide` hits what the view saw last frame, not the world, so it's free, and what can't be seen can't be hit. `stick`, `bounce` and `die` all work.
+- `lit` takes one light, from where the effect is.
+- An effect file that asks for another `kind`, `on_death` or `on_hit` is an error, as nothing hears of what ends in compute. An emitter that another starts runs in the usual way, as it starts where that one was.
+
+`motion = name` adds a shader of your own to the step:
+
+```wgsl
+fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    var out = particle;
+    let flow = field_at(fract(out.place.xy / 512.0));
+    out.moving = vec4<f32>(out.moving.xyz + flow.xyz * seconds, out.moving.w);
+    return out;
+}
+```
+
+`place` is where it is, with its age in `w`, and `moving` how it's going, with how long it has in `w`. `field_at` reads the level's field named by `field`, from 0 to 1 across it. A level without that field reads 0. `shader_time` is there too. A motion that won't compile says so, and they move as if it wasn't there.
+
+100,000 at once cost about 0.2 ms a frame to step and a fraction of a millisecond to draw. A million cost about 1.5 ms to step. A level can have 2 million slots and 1,024 emitters going.
 
 ## Checking
 

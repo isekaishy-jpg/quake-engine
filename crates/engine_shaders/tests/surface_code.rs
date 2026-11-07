@@ -37,7 +37,13 @@ fn every_module_compiles() {
     return look.color * shader_noise(look.uv);
 }
 ";
-    for module in all_modules(&[], &[], &[field], &[particle]) {
+    let motion = "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
+    var out = particle;
+    out.moving = out.moving + field_at(out.place.xy) * seconds;
+    return out;
+}
+";
+    for module in all_modules(&[], &[], &[field], (&[particle], &[motion])) {
         assert!(compile(&module).is_ok(), "{module:?}");
     }
 }

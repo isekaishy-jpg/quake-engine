@@ -183,6 +183,17 @@ pub struct ParticleEmitter {
     pub outward: bool,
     /// How far from the view it thins out to nothing, or 0 for no limit.
     pub far: f32,
+    /// Whether compute runs it, which keeps each one from step to step, for great numbers of them
+    /// that hit things and are pushed about.
+    pub sim: bool,
+    /// A shader for how compute moves it, by name.
+    pub motion: Option<String>,
+    /// Which of [`crate::Map::effect_motions`] that is, plus one, once a level's read it.
+    pub motion_number: u32,
+    /// A field it can read, by name.
+    pub field: Option<String>,
+    /// Which of [`crate::Map::fields`] that is, plus one, once a level's read it.
+    pub field_number: u32,
 }
 
 /// What a particle does when it hits something.
@@ -316,6 +327,11 @@ impl Default for ParticleEmitter {
             forces: Vec::new(),
             outward: false,
             far: 0.0,
+            sim: false,
+            motion: None,
+            motion_number: 0,
+            field: None,
+            field_number: 0,
         }
     }
 }

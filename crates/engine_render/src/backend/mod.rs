@@ -8,6 +8,7 @@ mod pipelines;
 mod post;
 mod record;
 mod shadow;
+mod sim;
 mod smaa;
 mod terrain;
 mod upload;
@@ -20,7 +21,7 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, SharedPart, Sprite};
+use engine_map::{AliasModel, Map, ShaderCode, SharedPart, Sprite};
 use engine_shaders::BUILT_IN;
 use pipelines::make_pass;
 use upload::{depth_image, device_image, host_buffer, uniform_buffer};
@@ -41,6 +42,7 @@ use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
 use self::field::{FieldLayout, GpuField};
+use self::sim::{GpuSims, SIM_PUSH, SimLayout};
 use self::terrain::GpuTerrain;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
@@ -264,6 +266,10 @@ struct GpuMap {
     particle_pictures: ParticlePictures,
     /// The pipelines of the shaders effects have of their own.
     particle_shaders: Vec<ParticlePipelines>,
+    /// What those were made from.
+    particle_codes: Vec<Arc<ShaderCode>>,
+    /// Particles compute runs, if its effects have any.
+    sims: Option<GpuSims>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -389,6 +395,8 @@ struct Layouts {
     particle: PipelineLayout,
     /// Those the GPU works out.
     gpu_particle: PipelineLayout,
+    /// Particles compute runs.
+    sim_particle: PipelineLayout,
 }
 
 /// What draws surfaces with one shader.
@@ -469,6 +477,8 @@ struct ParticlePipelines {
     listed: GraphicsPipeline,
     /// Those the GPU works out.
     worked_out: GraphicsPipeline,
+    /// Those compute runs.
+    simulated: GraphicsPipeline,
 }
 
 /// Everything Vulkan. Fields drop in order, so each comes before what it
@@ -603,6 +613,10 @@ pub(crate) struct Backend {
     particle_pipelines: ParticlePipelines,
     /// How pictures of particles are read.
     particle_sampler: Sampler,
+    /// What compute particles' steps are bound by.
+    sim_layout: SimLayout,
+    /// What a step with no field reads.
+    sim_blank: Option<GpuImage>,
     /// What fields' steps are bound by.
     field_layout: FieldLayout,
     /// The time this frame's field steps are told.
@@ -821,7 +835,7 @@ impl Backend {
                 binding: 2,
                 descriptor_type: DescriptorType::SAMPLED_IMAGE,
                 descriptor_count: 1,
-                stage_flags: ShaderStageFlags::FRAGMENT,
+                stage_flags: ShaderStageFlags::FRAGMENT | ShaderStageFlags::COMPUTE,
             }],
         )?;
         let particle_picture_layout = DescriptorSetLayout::new(
@@ -841,6 +855,7 @@ impl Backend {
                 },
             ],
         )?;
+        let sim_layout = SimLayout::new(&device, &particle_depth_layout)?;
         let terrain_set_layout = DescriptorSetLayout::new(
             &device,
             &[
@@ -883,6 +898,20 @@ impl Backend {
                     &particle_depth_layout,
                     &particle_picture_layout,
                 ],
+            )?,
+            sim_particle: PipelineLayout::with_push_constants(
+                &device,
+                &[
+                    &frame_layout,
+                    &particle_depth_layout,
+                    &particle_picture_layout,
+                    &sim_layout.set_layout,
+                ],
+                &[PushConstantRange {
+                    stage_flags: ShaderStageFlags::VERTEX,
+                    offset: 0,
+                    size: SIM_PUSH,
+                }],
             )?,
             gpu_particle: PipelineLayout::with_push_constants(
                 &device,
@@ -1036,6 +1065,8 @@ impl Backend {
             particles_behind: 0,
             particle_pipelines,
             particle_sampler,
+            sim_layout,
+            sim_blank: None,
             field_layout,
             field_time: 0.0,
             moving_overflow: false,
@@ -1338,6 +1369,7 @@ impl Backend {
         self.clock.start(rec, self.slot, Span::Deform);
         self.record_deform(rec);
         self.record_fields(rec);
+        self.record_sims(rec);
         self.clock.end(rec, self.slot, Span::Deform);
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
@@ -1387,6 +1419,7 @@ impl Backend {
             let rest = self.particles_behind..self.particle_order.len();
             self.record_particle_pass(rec, &recorder, scene, target, (size, rest));
         }
+        target.drawn.set(true);
         self.clock.end(rec, self.slot, Span::Scene);
         // The final pass reads what this wrote.
         rec.memory_barrier(

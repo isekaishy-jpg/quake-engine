@@ -1,7 +1,9 @@
 //! Fields on the GPU: pictures worked out a step at a time, by a level's own compute shaders
 //! (proposal 0145).
 
-use engine_map::{FieldDef, Map, SlotImage};
+use std::sync::Arc;
+
+use engine_map::{FieldDef, Map, ShaderCode, SlotImage};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags, BufferImageCopy, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize,
@@ -74,7 +76,7 @@ pub(super) struct GpuField {
     /// What it was given.
     params: [f32; 8],
     /// What's read: by a step, and by what shows it.
-    pub(super) shown: GpuImage,
+    pub(crate) shown: GpuImage,
     /// What a step writes.
     _next: GpuImage,
     /// Reads `shown` and writes `_next`.
@@ -244,10 +246,10 @@ impl Backend {
     /// if it wasn't there, and says so.
     pub(super) fn upload_particle_shaders(
         &mut self,
-        map: &Map,
+        shaders: &[Arc<ShaderCode>],
     ) -> Result<Vec<ParticlePipelines>, RenderError> {
-        let mut out = Vec::with_capacity(map.effect_shaders.len());
-        for shader in &map.effect_shaders {
+        let mut out = Vec::with_capacity(shaders.len());
+        for shader in shaders {
             let made = Self::make_particle_pipelines(
                 &self.device,
                 &self.layouts,

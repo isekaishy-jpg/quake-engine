@@ -38,7 +38,15 @@ const SPRITE_SHADER: &str = include_str!("shaders/sprite.wgsl");
 /// What particle code joins.
 const PARTICLE_SHADER: &str = concat!(
     include_str!("shaders/noise.wgsl"),
+    include_str!("shaders/sim_common.wgsl"),
     include_str!("shaders/particle.wgsl"),
+);
+
+/// What motion code joins.
+const MOTION_SHADER: &str = concat!(
+    include_str!("shaders/noise.wgsl"),
+    include_str!("shaders/sim_common.wgsl"),
+    include_str!("shaders/motion.wgsl"),
 );
 
 /// The canvas's shader.
@@ -90,6 +98,23 @@ const PARTICLE_HOOK: (&str, &str) = (
     "fn shader_particle",
     "fn shader_particle(look: ParticleLook) -> vec4<f32> { return look.color; }\n",
 );
+
+/// The hook of compute particles, and what it does if it's left alone.
+const MOTION_HOOK: (&str, &str) = (
+    "fn shader_motion",
+    "fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle { return particle; }\n",
+);
+
+/// The whole module of compute particles with `code`.
+pub fn motion_source(code: &str) -> String {
+    let (name, standing_in) = MOTION_HOOK;
+    let mut source = MOTION_SHADER.to_owned();
+    if !code.contains(name) {
+        source.push_str(standing_in);
+    }
+    source.push_str(code);
+    source
+}
 
 /// The whole module of particles with `code`.
 pub fn particle_source(code: &str) -> String {
@@ -147,6 +172,14 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::Field(code) => field_source(code),
+        Module::Motion { code, samples } => {
+            let source = motion_source(code);
+            if *samples {
+                source.replace("texture_depth_2d", "texture_depth_multisampled_2d")
+            } else {
+                source
+            }
+        }
         Module::Particle { code, samples } => {
             let source = particle_source(code);
             if *samples {
@@ -209,6 +242,15 @@ fn check_module(source: &str) -> Result<(), String> {
 /// Returns what the compiler said.
 pub fn check_surface_code(code: &str) -> Result<(), String> {
     check_module(&surface_source(code))
+}
+
+/// What's wrong with `code` as compute particles', if anything.
+///
+/// # Errors
+///
+/// Returns what the compiler said.
+pub fn check_motion_code(code: &str) -> Result<(), String> {
+    check_module(&motion_source(code))
 }
 
 /// What's wrong with `code` as a particle's, if anything.

@@ -128,6 +128,33 @@ pub struct GpuEmitter {
     pub soft: f32,
 }
 
+/// An emitter compute runs, for one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SimEmitter {
+    /// Which it is, which goes on being it from frame to frame.
+    pub id: u64,
+    /// Where it is.
+    pub origin: Vec3,
+    /// How many slots it wants.
+    pub count: u32,
+    /// How many start this step.
+    pub spawn: u32,
+    /// How long this step is.
+    pub seconds: f32,
+    /// The time.
+    pub time: f32,
+    /// How hard gravity pulls.
+    pub gravity: f32,
+    /// A number that makes this step differ from the last, and this emitter from others.
+    pub seed: u32,
+    /// What its instance says of itself.
+    pub settings: EffectSettings,
+    /// How much of it's left as it fades away, from 1 to 0.
+    pub fade: f32,
+    /// Which effect it's of, by its place in the list of those going.
+    pub emitter: usize,
+}
+
 /// One particle.
 #[derive(Clone, Debug)]
 struct Live {
@@ -191,8 +218,12 @@ struct Going {
     settings: EffectSettings,
     /// Whether it's been told to stop, so that it makes no more.
     stopped: bool,
+    /// How long what compute runs of it has left to fade, of how long it was given.
+    fading: Option<(f32, f32)>,
     /// How many of its timeline have gone off.
     timeline_done: usize,
+    /// How many each emitter compute runs starts this step.
+    sim_spawn: Vec<u32>,
 }
 
 /// What an effect follows to go with `model`. A model isn't an entity, so it has numbers of its
@@ -232,6 +263,8 @@ pub struct EffectSystem {
     budget: usize,
     /// How long it's been going, for what comes and goes.
     time: f32,
+    /// How long the last step was.
+    last_seconds: f32,
 }
 
 impl Default for EffectSystem {
@@ -245,6 +278,7 @@ impl Default for EffectSystem {
             eye: Vec3::ZERO,
             budget: MAX_EFFECT_PARTICLES,
             time: 0.0,
+            last_seconds: 0.0,
         }
     }
 }
@@ -300,6 +334,9 @@ impl EffectSystem {
         for effect in self.going.iter_mut().filter(|e| e.handle == handle) {
             effect.stopped = true;
             effect.lasting = false;
+            effect.sim_spawn.fill(0);
+            let computed = effect.def.emitters.iter().any(|emitter| emitter.sim);
+            effect.fading = (computed && seconds > 0.0).then_some((seconds, seconds));
         }
         if seconds <= 0.0 {
             self.live.retain(|particle| particle.owner != handle);
@@ -375,7 +412,9 @@ impl EffectSystem {
             handle,
             settings,
             stopped: false,
+            fading: None,
             timeline_done: 0,
+            sim_spawn: vec![0; count],
         });
     }
 
@@ -491,6 +530,8 @@ impl EffectSystem {
     /// `ground` how far down something is from a point, for a mark to land on.
     pub fn update(&mut self, seconds: f32, world: &EffectWorld<'_>) {
         self.time += seconds;
+        self.last_seconds = seconds;
+        self.seed = self.seed.wrapping_add(1);
         let mut going = std::mem::take(&mut self.going);
         for effect in &mut going {
             if let Some(origin) = effect.follows.and_then(world.place) {
@@ -499,6 +540,9 @@ impl EffectSystem {
             effect.age += seconds;
             let def = Arc::clone(&effect.def);
             if effect.stopped {
+                if let Some((left, _)) = &mut effect.fading {
+                    *left -= seconds;
+                }
                 continue;
             }
             for (number, emitter) in def.emitters.iter().enumerate() {
@@ -506,7 +550,13 @@ impl EffectSystem {
             }
             self.run_timeline(effect, &def);
         }
-        going.retain(|effect| effect.lasting || !(effect.stopped || effect_is_over(effect)));
+        going.retain(|effect| {
+            if effect.stopped {
+                effect.fading.is_some_and(|(left, _)| left > 0.0)
+            } else {
+                effect.lasting || !effect_is_over(effect)
+            }
+        });
         self.going = going;
         let gravity = self.gravity;
         let mut ended = Vec::new();
@@ -660,6 +710,7 @@ impl EffectSystem {
         emitter: &ParticleEmitter,
         seconds: f32,
     ) {
+        effect.sim_spawn[number] = 0;
         if emitter.gpu || started_by_another(def, emitter) || effect.age < emitter.delay {
             return;
         }
@@ -668,6 +719,10 @@ impl EffectSystem {
             return;
         }
         let share = self.share_made(emitter, effect.origin) * effect.settings.strength;
+        if emitter.sim {
+            run_sim(effect, number, emitter, seconds, share);
+            return;
+        }
         let from = (effect.handle, effect.settings);
         if !effect.burst[number] {
             effect.burst[number] = true;
@@ -769,11 +824,62 @@ impl EffectSystem {
         (draws, lights)
     }
 
+    /// What compute runs this frame, as each emitter with where it is and what's new, and the
+    /// effect and emitter it comes from.
+    #[must_use]
+    pub fn sims(&self) -> Vec<(SimEmitter, &ParticleEmitter)> {
+        let mut out = Vec::new();
+        for (place, effect) in self.going.iter().enumerate() {
+            let fade = effect
+                .fading
+                .map_or(1.0, |(left, whole)| (left / whole).clamp(0.0, 1.0));
+            // What another starts begins where that one was, so it's a burst of the usual kind.
+            for (number, emitter) in effect
+                .def
+                .emitters
+                .iter()
+                .enumerate()
+                .filter(|(_, e)| e.sim && !started_by_another(&effect.def, e))
+            {
+                let own = effect.seed.wrapping_mul(0x9e37_79b1);
+                let own = own.wrapping_add(u32::try_from(number).unwrap_or(0));
+                let life = emitter.life[1].max(0.01);
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "counts are small"
+                )]
+                let count = ((emitter.rate * life + emitter.burst as f32)
+                    * effect.settings.strength)
+                    .ceil()
+                    .max(0.0) as u32
+                    + 16;
+                out.push((
+                    SimEmitter {
+                        id: (u64::from(effect.seed) << 8) | number as u64,
+                        origin: effect.origin,
+                        count,
+                        spawn: effect.sim_spawn.get(number).copied().unwrap_or(0),
+                        seconds: self.last_seconds,
+                        time: self.time,
+                        gravity: self.gravity * emitter.gravity,
+                        seed: self.seed.wrapping_add(own),
+                        settings: effect.settings,
+                        fade,
+                        emitter: place,
+                    },
+                    emitter,
+                ));
+            }
+        }
+        out
+    }
+
     /// What the GPU works out this frame.
     #[must_use]
     pub fn gpu_emitters(&self) -> Vec<GpuEmitter> {
         let mut out = Vec::new();
-        for effect in &self.going {
+        for effect in self.going.iter().filter(|effect| !effect.stopped) {
             for emitter in effect.def.emitters.iter().filter(|e| e.gpu) {
                 let running = effect.age - emitter.delay;
                 if running < 0.0 {
@@ -832,6 +938,35 @@ fn frame_of(emitter: &ParticleEmitter, age: f32, share: f32) -> f32 {
         // Over its life, ending on its last frame, with nothing past it to mix with.
         (share * (frames - 1.0)).clamp(0.0, frames - 1.0)
     }
+}
+
+/// Works out how many of `emitter`, which compute runs, start in `seconds`.
+fn run_sim(effect: &mut Going, number: usize, emitter: &ParticleEmitter, seconds: f32, share: f32) {
+    let mut spawn = 0;
+    if !effect.burst[number] {
+        effect.burst[number] = true;
+        #[expect(clippy::cast_precision_loss, reason = "a count of particles")]
+        let many = emitter.burst as f32 * share;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a count of particles"
+        )]
+        {
+            spawn += many.round().max(0.0) as u32;
+        }
+    }
+    effect.owed[number] += emitter.rate * seconds * share;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of particles"
+    )]
+    let whole = effect.owed[number].floor().max(0.0) as u32;
+    #[expect(clippy::cast_precision_loss, reason = "a count of particles")]
+    let taken = whole as f32;
+    effect.owed[number] -= taken;
+    effect.sim_spawn[number] = spawn + whole;
 }
 
 /// Whether another emitter starts `emitter`, so it doesn't run by itself.

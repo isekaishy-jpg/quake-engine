@@ -67,16 +67,6 @@ fn billboard(position: vec3<f32>, offset: vec2<f32>) -> vec3<f32> {
     return position + axes[0] * offset.x + axes[1] * offset.y;
 }
 
-// Two directions along a surface facing `normal`.
-fn flat_axes(normal: vec3<f32>) -> array<vec3<f32>, 2> {
-    var other = vec3<f32>(0.0, 0.0, 1.0);
-    if abs(normal.z) > 0.9 {
-        other = vec3<f32>(1.0, 0.0, 0.0);
-    }
-    let side = normalize(cross(other, normal));
-    return array<vec3<f32>, 2>(side, cross(normal, side));
-}
-
 // A square that shrinks with distance down to a limit, from `D_DrawParticle`,
 // with sizes in pixels of a 240 line screen.
 @vertex
@@ -220,24 +210,6 @@ struct GpuParticles {
 
 var<immediate> batch: GpuParticles;
 
-// A number from 0 to 1 from two others.
-fn hash_of(a: u32, b: u32) -> f32 {
-    var value = a * 0x9e3779b1u + b * 0x85ebca77u;
-    value = (value ^ (value >> 15u)) * 0x2c1b3c6du;
-    value = (value ^ (value >> 12u)) * 0x297a2d39u;
-    value = value ^ (value >> 15u);
-    return f32(value & 0xffffffu) / 16777216.0;
-}
-
-// A direction within `spread` of `axis`, from three random numbers.
-fn scatter(axis: vec3<f32>, spread: f32, one: f32, two: f32) -> vec3<f32> {
-    let z = 1.0 - one * (1.0 - spread);
-    let angle = two * 6.2831853;
-    let ring = sqrt(max(1.0 - z * z, 0.0));
-    let axes = flat_axes(axis);
-    return axes[0] * (ring * cos(angle)) + axes[1] * (ring * sin(angle)) + axis * z;
-}
-
 @vertex
 fn vs_gpu_particle(
     @builtin(vertex_index) index: u32,
@@ -281,5 +253,73 @@ fn vs_gpu_particle(
     out.uv = vec2<f32>(from_zero.x, 1.0 - from_zero.y);
     out.picture = vec4<f32>(batch.look.x, 0.0, 1.0, 1.0);
     out.finish = vec3<f32>(batch.look.z, batch.look.y, share);
+    return out;
+}
+
+// Which emitter's particles are being drawn.
+struct SimDraw {
+    emitter: u32,
+    spare: vec3<u32>,
+}
+
+var<immediate> sim_draw: SimDraw;
+
+@group(3) @binding(0) var<storage, read> sim_particles: array<SimParticle>;
+@group(3) @binding(1) var<storage, read> sim_emitters: array<SimEmitter>;
+
+// What compute has worked out, one to a slot. A slot with nothing in it draws nothing.
+@vertex
+fn vs_sim_particle(
+    @builtin(vertex_index) index: u32,
+    @builtin(instance_index) number: u32,
+) -> ParticleOut {
+    let emitter = sim_emitters[sim_draw.emitter];
+    let particle = sim_particles[emitter.ring.x + number];
+    var out: ParticleOut;
+    if particle.place.w >= particle.moving.w {
+        out.clip = vec4<f32>(2.0, 2.0, 2.0, 1.0);
+        return out;
+    }
+    let age = particle.place.w;
+    let share = age / max(particle.moving.w, 0.001);
+    let along = share * 7.0;
+    let step = min(u32(along), 6u);
+    let part = along - f32(step);
+    let next = step + 1u;
+    let size = mix(emitter.sizes[step / 4u][step % 4u], emitter.sizes[next / 4u][next % 4u], part) * 0.5;
+    let from_zero = corner(index);
+    let square = from_zero * 2.0 - 1.0;
+    let place = particle.place.xyz;
+    var world = place;
+    out.across = square;
+    if emitter.look.w > 0.0 {
+        // Drawn out along how it's moving, as a line through where it is.
+        let drawn_out = particle.moving.xyz * emitter.look.w;
+        let side = normalize(cross(drawn_out, frame.eye.xyz - place));
+        world = place + drawn_out * (square.y * 0.5) + side * square.x * size;
+        out.across = vec2<f32>(square.x, 0.0);
+    } else {
+        let spin = mix(emitter.turn.z, emitter.turn.w, hash_of(number, 12u));
+        let angle = mix(emitter.turn.x, emitter.turn.y, hash_of(number, 11u)) + spin * age;
+        let turn = vec2<f32>(cos(angle), sin(angle));
+        let turned = vec2<f32>(
+            square.x * turn.x - square.y * turn.y,
+            square.x * turn.y + square.y * turn.x,
+        );
+        world = billboard(place, turned * size);
+    }
+    out.clip = frame.view_projection * vec4<f32>(world, 1.0);
+    out.away = out.clip.w;
+    out.world = world;
+    out.color = mix(emitter.ramp[step], emitter.ramp[next], part);
+    out.soft = 1.0;
+    out.uv = vec2<f32>(from_zero.x, 1.0 - from_zero.y);
+    let frames = max(emitter.sheet.x * emitter.sheet.y, 1.0);
+    var at_frame = clamp(share * (frames - 1.0), 0.0, frames - 1.0);
+    if emitter.look.z > 0.0 {
+        at_frame = (age * emitter.look.z) % frames;
+    }
+    out.picture = vec4<f32>(emitter.look.x, at_frame, emitter.sheet.xy);
+    out.finish = vec3<f32>(emitter.extra.x, emitter.look.y, share);
     return out;
 }

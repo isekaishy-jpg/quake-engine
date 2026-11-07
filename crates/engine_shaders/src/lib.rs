@@ -17,8 +17,8 @@ use std::sync::OnceLock;
 
 #[cfg(feature = "compiler")]
 pub use compiler::{
-    check_field_code, check_particle_code, check_post_code, check_surface_code, compile,
-    field_source, particle_source, post_source, surface_source,
+    check_field_code, check_motion_code, check_particle_code, check_post_code, check_surface_code,
+    compile, field_source, motion_source, particle_source, post_source, surface_source,
 };
 
 /// Changes when any of the engine's own shader code does, so that what was compiled from
@@ -63,6 +63,13 @@ pub enum Module<'a> {
     Surface(&'a str),
     /// A field with this code.
     Field(&'a str),
+    /// Compute particles with this motion code, reading depth as it was drawn if `samples`.
+    Motion {
+        /// The motion code.
+        code: &'a str,
+        /// Whether the scene has samples.
+        samples: bool,
+    },
     /// A surface with nothing unusual about it.
     PlainSurface,
     /// The final pass with this post code, reading depth as it was drawn if it has samples.
@@ -95,6 +102,13 @@ impl Module<'_> {
             Self::PlainSurface => "plain".to_owned(),
             Self::Surface(code) => format!("surface_{:016x}", code_id(code)),
             Self::Field(code) => format!("field_{:016x}", code_id(code)),
+            Self::Motion { code, samples } => {
+                format!(
+                    "motion{}_{:016x}",
+                    if *samples { "_samples" } else { "" },
+                    code_id(code)
+                )
+            }
             Self::Post { code, samples } => {
                 format!(
                     "post{}_{:016x}",
@@ -163,14 +177,14 @@ pub fn spirv(module: &Module<'_>) -> Result<Vec<u32>, String> {
     }
 }
 
-/// Every module a game could want, for `surfaces`, `posts`, `fields` and `particles`, which are
-/// surface code, post code, field code and particle code. What's built in is always among them.
+/// Every module a game could want, for `surfaces`, `posts`, `fields`, and `particles` and
+/// `motions`, which are the code of each. What's built in is always among them.
 #[must_use]
 pub fn all_modules<'a>(
     surfaces: &[&'a str],
     posts: &[&'a str],
     fields: &[&'a str],
-    particles: &[&'a str],
+    (particles, motions): (&[&'a str], &[&'a str]),
 ) -> Vec<Module<'a>> {
     let mut modules = vec![
         Module::Canvas,
@@ -192,6 +206,16 @@ pub fn all_modules<'a>(
             samples: false,
         });
         modules.push(Module::Particle {
+            code,
+            samples: true,
+        });
+    }
+    for code in std::iter::once(&"").chain(motions) {
+        modules.push(Module::Motion {
+            code,
+            samples: false,
+        });
+        modules.push(Module::Motion {
             code,
             samples: true,
         });

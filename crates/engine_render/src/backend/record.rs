@@ -886,6 +886,11 @@ impl Recorder<'_> {
     /// Whether there are particles to draw.
     pub(super) fn has_particles(&self, scene: &Scene<'_>) -> bool {
         !scene.drawables.particles.is_empty()
+            || self
+                .map
+                .sims
+                .as_ref()
+                .is_some_and(|sims| !sims.runs[self.slot].is_empty())
             || scene
                 .drawables
                 .gpu_particles
@@ -959,6 +964,26 @@ impl Recorder<'_> {
                 &gpu_particle_bytes(batch),
             );
             rec.draw(6, batch.count, 0, 0);
+        }
+        if let Some(sims) = &self.map.sims {
+            let layout = &self.layouts.sim_particle;
+            let sets = [
+                &self.map.frame_set,
+                depth,
+                &self.map.particle_pictures.set,
+                &sims.sets[self.slot],
+            ];
+            for run in &sims.runs[self.slot] {
+                rec.bind_graphics_descriptor_sets(layout, 0, &sets);
+                let own = (run.shader as usize).checked_sub(1);
+                let pipelines = own.and_then(|at| self.map.particle_shaders.get(at));
+                let pipelines = pipelines.unwrap_or(self.default_particles);
+                rec.bind_graphics_pipeline(&pipelines.simulated);
+                let mut push = [0; super::sim::SIM_PUSH as usize];
+                push[..4].copy_from_slice(&run.emitter.to_le_bytes());
+                rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &push);
+                rec.draw(6, run.count, 0, 0);
+            }
         }
     }
 }
