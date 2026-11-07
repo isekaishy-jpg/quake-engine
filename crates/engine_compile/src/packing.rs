@@ -8,6 +8,7 @@ use engine_assets::{Archive, DirectoryArchive, FileIds, FileSystem, PackSummary,
 use crate::content_pack::play_map;
 use crate::error::CompileError;
 use crate::material::document_of;
+use crate::shader_graph::{graph_code, read_graph};
 use crate::texture_pack::{pack_textures, packed_path};
 
 /// Whether a game has any use for the file at `path`. What's only for making
@@ -50,6 +51,18 @@ pub fn compile_shaders(root: &Path) -> Result<usize, CompileError> {
             let path = file.map_err(failed)?.path();
             if path.extension().is_some_and(|kind| kind == "wgsl") {
                 codes.push(std::fs::read_to_string(path).map_err(failed)?);
+            } else if path.extension().is_some_and(|kind| kind == "egraph") {
+                // A WGSL file of the same name goes ahead of it, so this one's not used.
+                if !path.with_extension("wgsl").exists() {
+                    let text = std::fs::read_to_string(&path).map_err(failed)?;
+                    let made = read_graph(&text)
+                        .map_err(|problem| vec![problem])
+                        .and_then(|graph| graph_code(&graph));
+                    let bad = |problems: Vec<String>| {
+                        CompileError::Bad(format!("{}: {}", path.display(), problems.join("; ")))
+                    };
+                    codes.push(made.map_err(bad)?);
+                }
             }
         }
     }

@@ -26,6 +26,7 @@ mod nav;
 #[cfg(feature = "packing")]
 mod packing;
 mod ray_grid;
+mod shader_graph;
 #[cfg(feature = "packing")]
 mod simplify;
 mod source;
@@ -60,6 +61,10 @@ pub use mesh::{
 #[cfg(feature = "packing")]
 pub use packing::{compile_shaders, pack_content};
 pub use ray_grid::RayGrid;
+pub use shader_graph::{
+    GRAPH_KINDS, GRAPH_OUTPUTS, GraphHook, GraphInput, GraphKind, GraphNode, GraphType,
+    ShaderGraph, graph_code, graph_kind, read_graph, write_graph,
+};
 #[cfg(feature = "packing")]
 pub use simplify::add_levels;
 pub use source::{

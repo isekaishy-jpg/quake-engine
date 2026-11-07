@@ -641,6 +641,24 @@ pub const OPERATIONS: &[OperationInfo] = &[
         ],
     },
     OperationInfo {
+        name: "write_graph",
+        help: "Writes a shader graph, refusing one that's wrong or doesn't compile.",
+        args: &[
+            needs("name", ArgKind::Text, "A graph, by name"),
+            needs("text", ArgKind::Text, "Its whole text"),
+        ],
+    },
+    OperationInfo {
+        name: "describe_graph",
+        help: "Says what a shader graph comes to as code, and what's wrong with it.",
+        args: &[needs("name", ArgKind::Text, "A graph, by name")],
+    },
+    OperationInfo {
+        name: "graph_kinds",
+        help: "Lists the kinds of node a shader graph can have, and its outputs.",
+        args: &[],
+    },
+    OperationInfo {
         name: "read_effect",
         help: "Reads an effect's text.",
         args: &[needs("name", ArgKind::Text, "An effect, by name")],
@@ -779,6 +797,9 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "write_material" => features::write_material(session, args),
         "read_shader" => features::read_text(session, "shaders", ".wgsl", args),
         "write_shader" => features::write_shader(session, args),
+        "write_graph" => features::write_graph(session, args),
+        "describe_graph" => features::describe_graph(session, args),
+        "graph_kinds" => Ok(features::graph_kinds()),
         "read_effect" => features::read_text(session, "effects", ".eeffect", args),
         "write_effect" => features::write_effect(session, args),
         "read_prefab" => features::read_text(session, "prefabs", ".luau", args),

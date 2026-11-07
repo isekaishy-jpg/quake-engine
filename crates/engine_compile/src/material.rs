@@ -15,6 +15,7 @@ use crate::convex::fit_convex;
 use crate::error::CompileError;
 use crate::land_pictures::{SurfaceMaps, packed_pictures, surface_pixels};
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
+use crate::shader_graph::{graph_code, read_graph};
 use crate::source::{WorkingMap, read_map};
 use crate::terrain::{read_terrain_data, write_terrain};
 use crate::texture::placeholder_texture;
@@ -753,9 +754,28 @@ impl<'a> MaterialLibrary<'a> {
     pub fn shader(&self, name: &str) -> Arc<ShaderCode> {
         let bytes = self.filesystem.read(&format!("shaders/{name}.wgsl")).ok();
         let code = bytes.and_then(|bytes| String::from_utf8(bytes).ok());
+        let code = code.or_else(|| self.graph_shader(name));
         Arc::new(ShaderCode {
             name: name.to_owned(),
             code: code.unwrap_or_default(),
         })
+    }
+
+    /// What the graph called `name` comes to, if there's one. One that's wrong is code that won't
+    /// compile, and says why, so that it's shown as any broken shader is.
+    fn graph_shader(&self, name: &str) -> Option<String> {
+        let bytes = self
+            .filesystem
+            .read(&format!("shaders/{name}.egraph"))
+            .ok()?;
+        let text = String::from_utf8(bytes).ok()?;
+        let made = read_graph(&text)
+            .map_err(|problem| vec![problem])
+            .and_then(|graph| graph_code(&graph));
+        Some(
+            made.unwrap_or_else(|problems| {
+                format!("graph {name} is wrong: {}", problems.join("; "))
+            }),
+        )
     }
 }

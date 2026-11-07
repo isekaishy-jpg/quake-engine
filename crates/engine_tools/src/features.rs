@@ -752,6 +752,16 @@ pub(crate) fn check_shaders(session: &Session, _args: &Json) -> Result<Json, Str
             found.insert(name, json!(problem));
         }
     }
+    for name in names_in(session, "shaders", ".egraph") {
+        let path = session
+            .content
+            .join("shaders")
+            .join(format!("{name}.egraph"));
+        let text = std::fs::read_to_string(&path).map_err(|error| error.to_string())?;
+        if let Err(problem) = checked_graph(&text) {
+            found.insert(name, json!(problem));
+        }
+    }
     Ok(Json::Object(found))
 }
 
@@ -826,6 +836,58 @@ pub(crate) fn write_shader(session: &Session, args: &Json) -> Result<Json, Strin
         check_surface_code(text)?;
     }
     write_text(&file, text)
+}
+
+/// What the graph in `text` comes to as code, which has compiled.
+fn checked_graph(text: &str) -> Result<String, String> {
+    let graph = engine_compile::read_graph(text)?;
+    let code = engine_compile::graph_code(&graph).map_err(|problems| problems.join("; "))?;
+    if code.contains("fn shader_post") {
+        check_post_code(&code)?;
+    } else {
+        check_surface_code(&code)?;
+    }
+    Ok(code)
+}
+
+/// `write_graph`.
+pub(crate) fn write_graph(session: &Session, args: &Json) -> Result<Json, String> {
+    let text = text_of(args, "text")?;
+    let file = file_of(session, "shaders", ".egraph", text_of(args, "name")?)?;
+    checked_graph(text)?;
+    write_text(&file, text)
+}
+
+/// `describe_graph`.
+pub(crate) fn describe_graph(session: &Session, args: &Json) -> Result<Json, String> {
+    let file = file_of(session, "shaders", ".egraph", text_of(args, "name")?)?;
+    let text =
+        std::fs::read_to_string(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+    Ok(match checked_graph(&text) {
+        Ok(code) => json!({ "ok": true, "code": code }),
+        Err(problem) => json!({ "ok": false, "problem": problem }),
+    })
+}
+
+/// `graph_kinds`.
+pub(crate) fn graph_kinds() -> Json {
+    let kinds: Vec<Json> = engine_compile::GRAPH_KINDS
+        .iter()
+        .map(|kind| {
+            let inputs: Vec<&str> = kind.inputs.iter().map(|(name, _)| *name).collect();
+            json!({
+                "name": kind.name,
+                "group": kind.group,
+                "inputs": inputs,
+                "settings": kind.settings,
+            })
+        })
+        .collect();
+    let outputs: Vec<&str> = engine_compile::GRAPH_OUTPUTS
+        .iter()
+        .map(|(name, ..)| *name)
+        .collect();
+    json!({ "kinds": kinds, "outputs": outputs })
 }
 
 /// `write_effect`: an effect that doesn't make sense is refused.

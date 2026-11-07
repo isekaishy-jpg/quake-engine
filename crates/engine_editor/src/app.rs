@@ -9,10 +9,13 @@ use std::time::Duration;
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map, write_terrain,
+    GRAPH_KINDS, GraphInput, MaterialLibrary, ShaderGraph, apply_bake, attach_side_files, compile,
+    graph_code, graph_kind, map_hash, read_graph, read_map, write_graph, write_terrain,
 };
 use engine_core::math::Vec3;
 use engine_editor::camera::{Camera, FOV, Keys};
+use engine_editor::graph_edit::{add_node, apply, join, remove_node, view_of};
+use engine_editor::graph_view::{GraphView, ViewEvent};
 use engine_format::from_text;
 use engine_map::{
     Map, SideFiles, Spline, TerrainBrush, TerrainData, TerrainLayer, TerrainSheet, TerrainStroke,
@@ -208,6 +211,25 @@ enum Tab {
     Materials,
     /// The map's own script.
     Script,
+    /// A shader graph.
+    Graph,
+}
+
+/// A shader graph being worked on.
+#[derive(Default)]
+struct GraphEditing {
+    /// What it's called, which says where it's kept.
+    name: String,
+    /// The graph.
+    graph: ShaderGraph,
+    /// What it's been, to go back to.
+    undo: Vec<ShaderGraph>,
+    /// The node that's chosen.
+    chosen: Option<usize>,
+    /// The canvas.
+    view: GraphView,
+    /// Where it was last drawn.
+    rect: Option<egui::Rect>,
 }
 
 /// The editor.
@@ -258,6 +280,8 @@ pub(crate) struct Editor {
     land: Vec<LandSheet>,
     /// How much of a land brush fades, and how strong it is.
     land_brush: (f32, f32),
+    /// The graph that's open.
+    graph: GraphEditing,
     /// The sheet whose layers are shown, which is the one last touched.
     land_chosen: usize,
     /// The layer that's painted with.
@@ -476,6 +500,7 @@ impl Editor {
             press: (64.0, 8.0),
             land: Vec::new(),
             land_brush: (0.6, 1.0),
+            graph: GraphEditing::default(),
             land_chosen: 0,
             land_layer: 0,
             new_layer: String::new(),
@@ -706,6 +731,63 @@ impl Editor {
                 }
                 emit(&json!({ "tool": self.tool.as_ref().map(Tool::describe) }));
             }
+            "tab" => {
+                self.tab = match args.get("name").and_then(Value::as_str) {
+                    Some("graph") => Tab::Graph,
+                    Some("surfaces") => Tab::Surfaces,
+                    _ => Tab::Build,
+                };
+                emit(&json!({ "ok": true }));
+            }
+            "mouse" => {
+                let number = |key: &str| args.get(key).and_then(Value::as_f64).unwrap_or(0.0);
+                self.input.event(&InputEvent::Pointer {
+                    x: number("x"),
+                    y: number("y"),
+                });
+                if let Some(pressed) = args.get("down").and_then(Value::as_bool) {
+                    self.input.event(&InputEvent::Button {
+                        button: MouseButton::Left,
+                        pressed,
+                    });
+                }
+                emit(&json!({ "ok": true }));
+            }
+            "graph_open" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                self.graph.name = name.to_owned();
+                self.open_graph();
+                emit(&json!({ "nodes": self.graph.graph.nodes.len() }));
+            }
+            "graph_name" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                self.graph.name = name.to_owned();
+                emit(&json!({ "ok": true }));
+            }
+            "graph_add" => {
+                let kind = args.get("kind").and_then(Value::as_str).unwrap_or("");
+                self.add_graph_node(kind);
+                emit(&json!({ "nodes": self.graph.graph.nodes.len() }));
+            }
+            "graph_join" => {
+                let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
+                let before = self.graph.graph.clone();
+                let done = join(
+                    &mut self.graph.graph,
+                    text("from"),
+                    text("to"),
+                    text("input"),
+                );
+                if done {
+                    self.graph.undo.push(before);
+                }
+                emit(&json!({ "joined": done }));
+            }
+            "graph_save" => {
+                self.save_graph();
+                let told = graph_code(&self.graph.graph);
+                emit(&json!({ "code": told.as_ref().ok(), "problems": told.as_ref().err() }));
+            }
             "land_layer" => {
                 let material = args.get("material").and_then(Value::as_str).unwrap_or("");
                 self.add_land_layer(material);
@@ -871,6 +953,188 @@ impl Editor {
         }
         self.land_layer = next;
         self.land_stroke_ends();
+    }
+
+    /// A shader graph: the kinds to add, a node's values, what's wrong, and the code it comes to.
+    fn graph_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("GRAPH").color(ACCENT));
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.graph.name);
+        });
+        ui.horizontal(|ui| {
+            if ui.button("Open").clicked() {
+                self.open_graph();
+            }
+            if ui.button("Save").clicked() {
+                self.save_graph();
+            }
+            if ui.button("Undo").clicked()
+                && let Some(last) = self.graph.undo.pop()
+            {
+                self.graph.graph = last;
+            }
+        });
+        egui::ScrollArea::vertical()
+            .id_salt("kinds")
+            .max_height(220.0)
+            .show(ui, |ui| {
+                for group in ["there", "values", "sums", "code"] {
+                    ui.label(RichText::new(group).color(ACCENT));
+                    ui.horizontal_wrapped(|ui| {
+                        for kind in GRAPH_KINDS.iter().filter(|kind| kind.group == group) {
+                            if ui.button(kind.name).clicked() {
+                                self.add_graph_node(kind.name);
+                            }
+                        }
+                    });
+                }
+            });
+        self.chosen_node(ui);
+        ui.label(RichText::new("WHAT IT MAKES").color(ACCENT));
+        match graph_code(&self.graph.graph) {
+            Ok(code) => {
+                egui::ScrollArea::vertical()
+                    .id_salt("graph code")
+                    .max_height(160.0)
+                    .show(ui, |ui| {
+                        ui.label(RichText::new(code).monospace().size(10.0));
+                    });
+            }
+            Err(problems) => {
+                for problem in problems {
+                    ui.colored_label(ACCENT, problem);
+                }
+            }
+        }
+    }
+
+    /// The values of the node that's chosen.
+    fn chosen_node(&mut self, ui: &mut egui::Ui) {
+        let Some(at) = self
+            .graph
+            .chosen
+            .filter(|at| *at < self.graph.graph.nodes.len())
+        else {
+            return;
+        };
+        let id = self.graph.graph.nodes[at].id.clone();
+        ui.label(RichText::new(&id).color(ACCENT));
+        let kind = graph_kind(&self.graph.graph.nodes[at].kind);
+        let node = &mut self.graph.graph.nodes[at];
+        for setting in kind.map_or(&[][..], |kind| kind.settings) {
+            ui.label(*setting);
+            let value = node.settings.entry((*setting).to_owned()).or_default();
+            ui.text_edit_singleline(value);
+        }
+        for (name, default) in kind.map_or(&[][..], |kind| kind.inputs) {
+            if matches!(node.inputs.get(*name), Some(GraphInput::Node(_))) {
+                continue;
+            }
+            let mut value = match node.inputs.get(*name) {
+                Some(GraphInput::Number(number)) => *number,
+                _ => *default,
+            };
+            ui.horizontal(|ui| {
+                ui.label(*name);
+                if ui
+                    .add(egui::DragValue::new(&mut value).speed(0.01))
+                    .changed()
+                {
+                    node.inputs
+                        .insert((*name).to_owned(), GraphInput::Number(value));
+                }
+            });
+        }
+        if ui.button("Remove").clicked() {
+            self.graph.undo.push(self.graph.graph.clone());
+            remove_node(&mut self.graph.graph, &id);
+            self.graph.chosen = None;
+        }
+    }
+
+    /// The boxes and curves of the graph.
+    fn graph_canvas(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        self.graph.rect = Some(rect);
+        let (nodes, wires) = view_of(&self.graph.graph);
+        let chosen = self.graph.chosen;
+        let events = self
+            .graph
+            .view
+            .show(ui, rect, (&nodes, &wires), chosen, ACCENT);
+        for event in events {
+            self.graph_event(event);
+        }
+    }
+
+    /// Does what was done in the node view.
+    fn graph_event(&mut self, event: ViewEvent) {
+        if let ViewEvent::Chosen(number) = event {
+            self.graph.chosen = Some(number);
+            return;
+        }
+        let before = self.graph.graph.clone();
+        if apply(&mut self.graph.graph, event) {
+            self.graph.undo.push(before);
+        }
+    }
+
+    /// Adds a node, in the middle of what's showing.
+    fn add_graph_node(&mut self, kind: &str) {
+        let before = self.graph.graph.clone();
+        let middle = self
+            .graph
+            .rect
+            .map_or([100.0, 100.0], |rect| self.graph.view.middle(rect));
+        // Each a little from the last, so that one doesn't hide another.
+        #[expect(clippy::cast_precision_loss, reason = "a graph has few nodes")]
+        let step = (self.graph.graph.nodes.len() % 8) as f32 * 26.0;
+        let at = [middle[0] - 200.0 + step, middle[1] - 100.0 + step];
+        if add_node(&mut self.graph.graph, kind, at).is_some() {
+            self.graph.undo.push(before);
+            self.graph.chosen = Some(self.graph.graph.nodes.len() - 1);
+        }
+    }
+
+    /// Where the file of the graph that's open is.
+    fn graph_file(&self) -> PathBuf {
+        let name = format!("{}.egraph", self.graph.name.trim());
+        self.content.join("shaders").join(name)
+    }
+
+    /// Reads the graph of the name that's given.
+    fn open_graph(&mut self) {
+        let file = self.graph_file();
+        let read = std::fs::read_to_string(&file)
+            .map_err(|error| error.to_string())
+            .and_then(|text| read_graph(&text));
+        match read {
+            Ok(graph) => {
+                self.graph.graph = graph;
+                self.graph.undo.clear();
+                self.graph.chosen = None;
+            }
+            Err(problem) => self.note(format!("{}: {problem}", file.display())),
+        }
+    }
+
+    /// Keeps the graph, and builds the map again, as what's in the level is its preview.
+    fn save_graph(&mut self) {
+        if self.graph.name.trim().is_empty() {
+            self.note("a graph needs a name".to_owned());
+            return;
+        }
+        let file = self.graph_file();
+        if let Some(folder) = file.parent() {
+            let _made = std::fs::create_dir_all(folder);
+        }
+        match std::fs::write(&file, write_graph(&self.graph.graph)) {
+            Ok(()) => {
+                self.note(format!("wrote {}", file.display()));
+                self.stale = true;
+            }
+            Err(error) => self.note(format!("{}: {error}", file.display())),
+        }
     }
 
     /// Goes back on the last stroke of land.
@@ -1444,6 +1708,7 @@ impl Editor {
                 (Tab::World, "World"),
                 (Tab::Materials, "Materials"),
                 (Tab::Script, "Script"),
+                (Tab::Graph, "Graph"),
             ] {
                 if ui.selectable_label(self.tab == tab, name).clicked() {
                     self.tab = tab;
@@ -1463,6 +1728,7 @@ impl Editor {
             Tab::World => self.world_tab(ui),
             Tab::Materials => self.materials_tab(ui),
             Tab::Script => self.script_tab(ui),
+            Tab::Graph => self.graph_tab(ui),
         }
         ui.separator();
         ui.label(RichText::new("MAP").color(ACCENT));
@@ -1755,6 +2021,11 @@ impl Editor {
         egui::Panel::right("right")
             .default_size(300.0)
             .show(root, |ui| self.right_panel(ui));
+        if self.tab == Tab::Graph {
+            egui::Panel::bottom("graph")
+                .default_size(360.0)
+                .show(root, |ui| self.graph_canvas(ui));
+        }
         let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(root, |ui| {

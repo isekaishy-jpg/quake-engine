@@ -7,7 +7,7 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 1
 ### A graph is surface code (13)
 
 - A graph is `shaders/<name>.egraph`, and a material names it as it would a shader: `shader = <name>`. With both, the WGSL wins, so a person can take a graph's code and go on by hand.
-- `engine_shaders::graph` turns one into WGSL. That text then goes where any shader's goes, so the renderer doesn't know graphs exist.
+- `engine_compile` turns one into WGSL. That text then goes where any shader's goes, so the renderer doesn't know graphs exist.
 - A node has an id, a kind, and inputs that name other nodes or give a number. An input left out has a default.
 - **Types:** a number, or two, three or four of them. A number goes wider by filling, and more goes narrower by dropping the end. Each kind says what it gives from what it's given.
 - **Outputs** say which hook a node lands in: `vertex` for `shader_vertex`, `uv` for `shader_uv`, `base`, `normal` and `emissive` for `shader_surface`, and `color` for `shader_post`.
@@ -53,5 +53,15 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 1
   - What a field costs is measured.
 
 ## Review
+
+### Graphs (13)
+
+- **The same picture.** A graph and the same look written by hand came out the same in the game, with no pixel apart. It takes the same way from there, so that's what was meant to happen.
+- **The compiler's in `engine_compile`, not `engine_shaders`.** A game has to read a graph as it loads, to know which compiled shader it's asking for, and that crate already reads files. `engine_shaders` is left with what compiles.
+- **Every kind is compiled by the real compiler,** on its own, as a test. That found that `smoothstep` won't take numbers with no type, so every number a graph writes has one.
+- **A wrong graph** is green in the game, and the console gives the node and the reason, as the graph's own words reach the compiler's error. `write_graph` refuses one, and `check_shaders` finds one put there by hand.
+- **The view** was tried with the mouse's own events through a new `mouse` line command. That found what no test of it had: a drag's only reported after the pointer has moved, so a port it began on had been left, and every curve panned the canvas instead. It takes hold of where the press began now. Boxes moved and curves joined after that.
+- **Nodes added** step away from each other, as they all landed in one place at first.
+- **Every test here was seen failing** with its bug put back, thirteen in all. One of those was too weak the first time, a loop check that had only been moved, so it was done again with the check gone, and the test blew its stack as it should.
 
 Filled in as each part lands.

@@ -592,7 +592,7 @@ const LAND_HEX_REACH: f32 = 2400.0;
 const LAND_HEIGHT_DOUBLINGS: f32 = 10.0;
 
 // Soft noise from 0 to 1, for what doesn't want to show a repeat.
-fn land_noise(at: vec2<f32>) -> f32 {
+fn shader_noise(at: vec2<f32>) -> f32 {
     let cell = floor(at);
     let inside = fract(at);
     let smooth_at = inside * inside * (vec2<f32>(3.0) - inside * 2.0);
@@ -604,10 +604,10 @@ fn land_noise(at: vec2<f32>) -> f32 {
 // A large soft change of colour over the land, which is nearly free, and hides a repeat that a
 // pixel would need many more reads to hide.
 fn land_tint(world: vec3<f32>) -> vec3<f32> {
-    let wide = land_noise(world.xy / 1900.0);
-    let close = land_noise(world.xy / 430.0 + vec2<f32>(17.0, 5.0));
+    let wide = shader_noise(world.xy / 1900.0);
+    let close = shader_noise(world.xy / 430.0 + vec2<f32>(17.0, 5.0));
     let light = 0.84 + wide * 0.22 + close * 0.1;
-    let warm = (land_noise(world.xy / 2700.0 + vec2<f32>(3.0, 11.0)) - 0.5) * 0.08;
+    let warm = (shader_noise(world.xy / 2700.0 + vec2<f32>(3.0, 11.0)) - 0.5) * 0.08;
     return vec3<f32>(light + warm, light, light - warm);
 }
 

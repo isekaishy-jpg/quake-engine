@@ -57,6 +57,26 @@ For a level's final pass, set `post_shader = <name>` on `worldspawn` and write:
 
 A surface that moves its corners or uses `discard` doesn't go through the depth pass, so it costs more than one that doesn't.
 
+## Graphs
+
+A graph is a shader made of nodes. It's `shaders/<name>.egraph`, and a material names it as it would a shader. If a `.wgsl` of the same name is there, that goes ahead of it, so you can take the code a graph made and go on by hand.
+
+```text
+format 1 graph
+node { id = time kind = time }
+node { id = wave kind = sin a = time }
+outputs { emissive = wave }
+```
+
+- **In the editor,** the **Graph** tab has the kinds to add, the boxes under the view, and the code it makes. Drag from a box's output on its right to an input on the left. Click an input to take what's joined to it off, and drag a box by its title. **Save** builds the map again, so what's in the level is the preview.
+- **With tools,** `graph_kinds` lists what there is, `write_graph` writes one and refuses one that's wrong, and `describe_graph` says what it comes to.
+- **Outputs** say where a node lands: `vertex` where corners go, `uv` where pictures are read, `base`, `normal` and `emissive` what a surface is, and `color` a level's final pass, which goes alone. `vertex` and `uv` are the new place, not how far it's moved.
+- **Types** go wider and narrower by themselves. A number fills what it goes into, and more goes narrower by dropping its end.
+- **An input left out** has a default, and a picture left with no place reads where the pixel is.
+- **`code`** takes an expression in WGSL with inputs `a` to `d`, for what the other kinds can't do. Say what it `gives`: `number`, `vec2`, `vec3` or `vec4`.
+
+A graph has no branches. `step` and `mix` do most of that, and `code` the rest. One that's wrong shows green, and the console says which node and why.
+
 ## Checking
 
 ```bash

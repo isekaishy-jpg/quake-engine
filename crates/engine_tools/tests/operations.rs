@@ -848,3 +848,59 @@ fn land_is_painted_in_its_file() {
     let told = problems(&mut session);
     assert!(told.contains("land has no material moss"), "{told}");
 }
+
+/// Time through a sine, into a surface's own light.
+const WAVE: &str = "format 1 graph
+node { id = time kind = time }
+node { id = wave kind = sin a = time }
+outputs { emissive = wave }
+";
+
+#[test]
+fn a_graph_is_written_and_says_what_it_comes_to() {
+    let root = content("graph");
+    let mut session = Session::new(&root);
+    ok(
+        &mut session,
+        "write_graph",
+        json!({ "name": "wave", "text": WAVE }),
+    );
+    let told = ok(&mut session, "describe_graph", json!({ "name": "wave" }));
+    assert_eq!(told["ok"], true, "{told}");
+    let code = told["code"].as_str().expect("code");
+    assert!(code.contains("fn shader_surface"), "{code}");
+    let checked = ok(&mut session, "check_shaders", json!({}));
+    assert_eq!(checked, json!({}), "{checked}");
+}
+
+#[test]
+fn a_wrong_graph_is_refused_with_what_is_wrong() {
+    let root = content("wrong-graph");
+    let mut session = Session::new(&root);
+    let wrong = WAVE.replace("a = time", "a = nothing");
+    let refused = run(
+        &mut session,
+        "write_graph",
+        &json!({ "name": "wave", "text": wrong }),
+    );
+    let told = refused.expect_err("it's refused");
+    assert!(told.contains("wave reads nothing"), "{told}");
+    assert!(!root.join("shaders/wave.egraph").exists());
+    // One put there by hand is found.
+    fs::create_dir_all(root.join("shaders")).expect("folder");
+    fs::write(root.join("shaders/wave.egraph"), &wrong).expect("write");
+    let checked = ok(&mut session, "check_shaders", json!({}));
+    assert!(checked["wave"].as_str().is_some(), "{checked}");
+    let described = ok(&mut session, "describe_graph", json!({ "name": "wave" }));
+    assert_eq!(described["ok"], false);
+}
+
+#[test]
+fn the_kinds_of_node_are_listed() {
+    let root = content("kinds");
+    let mut session = Session::new(&root);
+    let told = ok(&mut session, "graph_kinds", json!({}));
+    let kinds = told["kinds"].as_array().expect("kinds");
+    assert!(kinds.iter().any(|kind| kind["name"] == "mix"));
+    assert!(told["outputs"].as_array().expect("outputs").len() >= 6);
+}
