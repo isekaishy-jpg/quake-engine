@@ -12,6 +12,7 @@
   - [Effects, water and shaders](research/effects-water-shaders.md): a direction, for the workflow later
   - [Shadow rendering](research/shadow-rendering.md): lamps, curved surfaces and moving lights, for design later
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
+  - [Meshes at run time](research/mesh-runtime.md): research for instancing, level of detail, skeletons and morphs
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Making the UI and menus usable](research/ui-and-menus.md): what good menus need, and how we measured up
