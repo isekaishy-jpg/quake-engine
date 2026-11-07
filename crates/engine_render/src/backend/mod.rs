@@ -102,7 +102,8 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 4
     + MAX_FOG_VOLUMES * 16
     + 4
-    + FOG_LIGHTS * 8;
+    + FOG_LIGHTS * 8
+    + MAX_POOLS * 16;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -641,6 +642,8 @@ pub(crate) struct Backend {
     sim_blank: Option<GpuImage>,
     /// Whether this frame has fog to go through a step at a time.
     fog_marched: bool,
+    /// What's over water's surfaces, as an array.
+    water_pictures: Option<GpuImage>,
     /// The pass the surfaces of shaped water are drawn in.
     water_pass: RenderPass,
     /// What their draws are laid out by.
@@ -834,6 +837,8 @@ impl Backend {
                 image_binding(9, DescriptorType::SAMPLED_IMAGE),
                 image_binding(10, DescriptorType::SAMPLED_IMAGE),
                 image_binding(11, DescriptorType::SAMPLED_IMAGE),
+                image_binding(12, DescriptorType::SAMPLED_IMAGE),
+                image_binding(13, DescriptorType::SAMPLER),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -1102,6 +1107,7 @@ impl Backend {
             sim_layout,
             sim_blank: None,
             fog_marched: false,
+            water_pictures: None,
             water_pass,
             water_layout,
             water_pipeline,

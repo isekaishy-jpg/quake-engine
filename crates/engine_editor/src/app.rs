@@ -9,6 +9,7 @@ use std::time::Duration;
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_client::{EffectSystem, EffectWorld};
+use engine_compile::water_pictures;
 use engine_compile::{
     GRAPH_KINDS, GraphInput, MaterialLibrary, ShaderGraph, apply_bake, attach_side_files, compile,
     graph_code, graph_kind, keep_effect_meshes, map_hash, read_effect, read_effects_with,
@@ -706,6 +707,7 @@ impl Editor {
                 return;
             }
         };
+        let water_pictures = water_pictures(&mut library, &working);
         if let Err(problem) = keep_effect_meshes(&filesystem, &mut library, &mut working) {
             self.log.push(format!("effects: {problem}"));
         }
@@ -721,6 +723,10 @@ impl Editor {
                 return;
             }
         };
+        match water_pictures {
+            Ok(pictures) => map.water_pictures = pictures,
+            Err(problem) => self.log.push(format!("water: {problem}")),
+        }
         if let Some(path) = saved_map_path(&self.session)
             && let Ok(bytes) = std::fs::read(path.with_extension("ebake"))
         {

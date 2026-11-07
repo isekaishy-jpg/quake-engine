@@ -2,14 +2,14 @@
 //! read (proposal 0147).
 
 use engine_core::math::Vec3;
-use engine_map::{Map, Pool, WaterSheet};
+use engine_map::{Map, Pool, SlotImage, WaterSheet};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, BufferUsage, ClearValue, CullMode,
-    DescriptorSetLayout, Device, Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder,
-    GraphicsShaderStage, Image, Image2dCreateInfo, ImageLayout, ImageUsage, InputRate,
-    PipelineLayout, PushConstantRange, RenderPass, RenderPassCreateInfo, ShaderModule,
-    ShaderStageFlags, VertexInputAttribute, VertexInputBinding,
+    DescriptorSet, DescriptorSetLayout, Device, Format, Framebuffer, GraphicsPipeline,
+    GraphicsPipelineBuilder, GraphicsShaderStage, Image, Image2dCreateInfo, ImageLayout,
+    ImageUsage, InputRate, PipelineLayout, PushConstantRange, RenderPass, RenderPassCreateInfo,
+    ShaderModule, ShaderStageFlags, VertexInputAttribute, VertexInputBinding,
 };
 
 use super::upload::{device_image, nearest_bodies};
@@ -147,6 +147,23 @@ impl Backend {
             _depth: depth,
             framebuffer,
         })
+    }
+
+    /// Puts what `map` has over its water on the GPU, and has the final pass read it.
+    pub(super) fn upload_water_pictures(&mut self, map: &Map) -> Result<(), RenderError> {
+        let pictures: Vec<&SlotImage> = map.water_pictures.iter().collect();
+        self.water_pictures = Some(self.upload_array(&pictures, Format::R8G8B8A8_SRGB)?);
+        if let Some(target) = &self.scene_target {
+            self.write_water_pictures(&target.set);
+        }
+        Ok(())
+    }
+
+    /// Points `set` at what's over water, if that's there yet.
+    pub(super) fn write_water_pictures(&self, set: &DescriptorSet) {
+        if let Some(image) = &self.water_pictures {
+            set.write_sampled_image(12, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
     }
 
     /// Puts `map`'s surfaces on the GPU, if it has any.

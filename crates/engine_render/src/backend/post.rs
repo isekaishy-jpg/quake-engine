@@ -457,11 +457,11 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 10,
+                    descriptor_count: 11,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
-                    descriptor_count: 1,
+                    descriptor_count: 2,
                 },
             ],
         )?;
@@ -508,6 +508,11 @@ impl Backend {
         set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let water = self.water_target(size)?;
         set.write_sampled_image(11, &water.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        if self.water_pictures.is_none() {
+            self.water_pictures = Some(self.upload_array(&[], Format::R8G8B8A8_SRGB)?);
+        }
+        self.write_water_pictures(&set);
+        set.write_sampler(13, &self.particle_sampler);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             particle_framebuffer,

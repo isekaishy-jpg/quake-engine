@@ -320,6 +320,14 @@ pub struct WaterSource {
     pub cell: Option<f32>,
     /// What a body with a shape is, by name.
     pub contents: Option<String>,
+    /// What's over its surface: a picture, how wide it is, how it flows, and how much shows.
+    pub overlays: Vec<(String, f32, [f32; 2], f32)>,
+    /// How far from the shore foam reaches, by depth.
+    pub foam: Option<f32>,
+    /// What foam looks like, and how wide that is.
+    pub foam_image: Option<(String, f32)>,
+    /// How deep it has to get before it stops fading into what's under it.
+    pub shore: Option<f32>,
     /// The effect that goes with the view while the eye's in it.
     pub view_effect: Option<String>,
 }
@@ -693,6 +701,15 @@ fn read_sky(block: &Block) -> SkySource {
     }
 }
 
+/// A picture over a surface, from its block.
+fn read_overlay(block: &Block) -> Option<(String, f32, [f32; 2], f32)> {
+    let image = block.get("image").and_then(Value::text)?.to_owned();
+    let [x, y, _] = three_of(block, "flow", [0.0; 3]);
+    let size = number_of(block, "size", 256.0).max(1.0);
+    let strength = number_of(block, "strength", 1.0).clamp(0.0, 1.0);
+    Some((image, size, [x, y], strength))
+}
+
 /// Reads a `water` block.
 #[expect(clippy::cast_possible_truncation, reason = "the look stores f32")]
 fn read_water(block: &Block) -> WaterSource {
@@ -720,6 +737,16 @@ fn read_water(block: &Block) -> WaterSource {
             .get("contents")
             .and_then(Value::text)
             .map(str::to_owned),
+        overlays: block
+            .children_of("overlay")
+            .filter_map(read_overlay)
+            .collect(),
+        foam: number("foam"),
+        foam_image: block
+            .get("foam_image")
+            .and_then(Value::text)
+            .map(|image| (image.to_owned(), number("foam_size").unwrap_or(128.0))),
+        shore: number("shore"),
         view_effect: block
             .get("view_effect")
             .and_then(Value::text)
@@ -736,11 +763,12 @@ fn number_of(block: &Block, key: &str, usual: f32) -> f32 {
         .map_or(usual, |number| number as f32)
 }
 
-/// Three numbers from `block`, or `usual`.
+/// Three numbers from `block`, or `usual`. Two leave the third as it was.
 #[expect(clippy::cast_possible_truncation, reason = "these store f32")]
 fn three_of(block: &Block, key: &str, usual: [f32; 3]) -> [f32; 3] {
     match block.get(key).and_then(Value::numbers).as_deref() {
         Some([x, y, z, ..]) => [*x as f32, *y as f32, *z as f32],
+        Some([x, y]) => [*x as f32, *y as f32, usual[2]],
         _ => usual,
     }
 }

@@ -4,6 +4,29 @@ use engine_core::math::Vec3;
 
 use crate::tree::Contents;
 
+/// A picture over a surface, scrolling.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterOverlay {
+    /// Which of [`crate::Map::water_pictures`] it is, plus one, or 0 for none.
+    pub picture: u32,
+    /// How wide it is, in world units.
+    pub size: f32,
+    /// How fast it goes, and which way, in world units a second.
+    pub flow: [f32; 2],
+    /// How much of it shows, from 0 to 1.
+    pub strength: f32,
+}
+
+impl WaterOverlay {
+    /// None at all.
+    pub const NONE: Self = Self {
+        picture: 0,
+        size: 256.0,
+        flow: [0.0; 2],
+        strength: 1.0,
+    };
+}
+
 /// How a body of liquid looks from inside.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct PoolLook {
@@ -25,6 +48,14 @@ pub struct PoolLook {
     pub deep: f32,
     /// The effect that goes with the view while the eye's in it, by its id, or 0.
     pub view_effect: u32,
+    /// What's over its surface.
+    pub overlays: [WaterOverlay; 2],
+    /// How far from the shore foam reaches, by depth, or 0 for none.
+    pub foam: f32,
+    /// What foam looks like, or a noise if it says no picture.
+    pub foam_look: WaterOverlay,
+    /// How deep it has to get before it stops fading into what's under it, or 0 for a hard edge.
+    pub shore: f32,
 }
 
 impl PoolLook {
@@ -42,6 +73,10 @@ impl PoolLook {
                 tint: [130.0 / 255.0, 80.0 / 255.0, 50.0 / 255.0, 128.0 / 255.0],
                 deep: 0.0,
                 view_effect: 0,
+                overlays: [WaterOverlay::NONE; 2],
+                foam: 0.0,
+                foam_look: WaterOverlay::NONE,
+                shore: 0.0,
             }),
             Contents::Slime => Some(Self {
                 color: [0.12, 0.3, 0.05],
@@ -53,6 +88,10 @@ impl PoolLook {
                 tint: [0.0, 25.0 / 255.0, 5.0 / 255.0, 150.0 / 255.0],
                 deep: 0.0,
                 view_effect: 0,
+                overlays: [WaterOverlay::NONE; 2],
+                foam: 0.0,
+                foam_look: WaterOverlay::NONE,
+                shore: 0.0,
             }),
             Contents::Lava => Some(Self {
                 color: [0.75, 0.2, 0.03],
@@ -64,6 +103,10 @@ impl PoolLook {
                 tint: [1.0, 80.0 / 255.0, 0.0, 150.0 / 255.0],
                 deep: 0.0,
                 view_effect: 0,
+                overlays: [WaterOverlay::NONE; 2],
+                foam: 0.0,
+                foam_look: WaterOverlay::NONE,
+                shore: 0.0,
             }),
             _ => None,
         }

@@ -92,4 +92,11 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **`flood` fills to a level,** as most land wants a flat lake, and depth by itself can only follow the land.
 - **What's solid comes first.** A sheet on land goes down as far as the deepest water, and land stops it, so it needs no bed of its own.
 
+### What's on it (100, 101)
+
+- **Tried in the game:** the lake from before, with foam along its shore, a fade into the bank, and a cloud drifting over it.
+- **Foam goes by how deep it is at that pixel,** which is the surface's height less where the scene is. That's exact for a shore, and needs nothing baked.
+- **Overlays are in one array,** as effects' pictures are, so that a level's waters don't each cost a binding.
+- **How much shows rides in the fraction of how wide it is,** to keep a body's overlay to one entry of the frame.
+
 Filled in as each part lands.

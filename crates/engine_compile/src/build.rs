@@ -11,7 +11,7 @@ use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
     MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
     OccluderSphere, Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree,
-    WaterSheet, Zone, ZonePlane,
+    WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -1027,8 +1027,8 @@ fn water_named<'a>(
     Ok(found)
 }
 
-/// Has `look` take up what `water` says of it.
-fn take_look(look: &mut PoolLook, water: &WaterSource) {
+/// Has `look` take up what `water` says of it, with `paths` being pictures by number.
+fn take_look(look: &mut PoolLook, water: &WaterSource, paths: &[String]) {
     look.color = water.color.unwrap_or(look.color);
     look.absorption = water.absorption.unwrap_or(look.absorption);
     look.caustics = water.caustics.unwrap_or(look.caustics);
@@ -1041,6 +1041,39 @@ fn take_look(look: &mut PoolLook, water: &WaterSource) {
     look.refraction = water.refraction.unwrap_or(look.refraction);
     look.deep = water.deep.unwrap_or(look.deep);
     look.view_effect = water.view_effect.as_deref().map_or(0, effect_id);
+    look.foam = water.foam.unwrap_or(look.foam);
+    look.shore = water.shore.unwrap_or(look.shore);
+    let number = |path: &str| {
+        let at = paths.iter().position(|known| known == path);
+        at.map_or(0, |at| u32::try_from(at + 1).unwrap_or(0))
+    };
+    for (slot, (image, size, flow, strength)) in look.overlays.iter_mut().zip(&water.overlays) {
+        *slot = WaterOverlay {
+            picture: number(image),
+            size: *size,
+            flow: *flow,
+            strength: *strength,
+        };
+    }
+    if let Some((image, size)) = &water.foam_image {
+        look.foam_look.picture = number(image);
+        look.foam_look.size = *size;
+    }
+}
+
+/// Every picture `working`'s waters show, each once.
+#[must_use]
+pub fn water_picture_paths(working: &WorkingMap) -> Vec<String> {
+    let mut paths: Vec<String> = Vec::new();
+    for water in &working.water {
+        let overlays = water.overlays.iter().map(|overlay| &overlay.0);
+        for path in overlays.chain(water.foam_image.iter().map(|foam| &foam.0)) {
+            if !paths.contains(path) {
+                paths.push(path.clone());
+            }
+        }
+    }
+    paths
 }
 
 /// How far apart a sheet's heights are, if its water doesn't say.
@@ -1065,7 +1098,7 @@ fn sheet_look(
         ));
     };
     if let Some(water) = water {
-        take_look(&mut look, water);
+        take_look(&mut look, water, &water_picture_paths(working));
     }
     let cell = water.and_then(|water| water.cell).unwrap_or(SHEET_CELL);
     let depth = water.and_then(|water| water.depth).unwrap_or(SHEET_DEPTH);
@@ -1223,7 +1256,7 @@ fn pools_of(working: &WorkingMap) -> Result<Vec<Pool>, CompileError> {
         };
         let said = brush.water.as_deref();
         if let Some(water) = water_named(working, said)? {
-            take_look(&mut look, water);
+            take_look(&mut look, water, &water_picture_paths(working));
         }
         let corners = solid_corners(&brush.planes());
         let Some(first) = corners.first() else {

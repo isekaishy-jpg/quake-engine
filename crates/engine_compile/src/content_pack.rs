@@ -12,6 +12,7 @@ use engine_map::{
 };
 
 use crate::bake::map_hash;
+use crate::build::water_picture_paths;
 use crate::build::{TextureSource, compile, compile_known};
 use crate::compiled::read_geometry;
 use crate::effect_read::read_effect;
@@ -96,6 +97,22 @@ pub struct EffectExtras {
     pub motions: Vec<Arc<ShaderCode>>,
     /// The meshes they're made of that the level hasn't got, as it was read before they were said.
     pub missing_meshes: Vec<String>,
+}
+
+/// What `working`'s waters show, at one size, for one array.
+///
+/// # Errors
+///
+/// Returns an error if one can't be read.
+pub fn water_pictures(
+    library: &mut MaterialLibrary<'_>,
+    working: &WorkingMap,
+) -> Result<Vec<SlotImage>, CompileError> {
+    let mut read = Vec::new();
+    for path in water_picture_paths(working) {
+        read.push(library.image_at(&path)?);
+    }
+    Ok(one_size(read))
 }
 
 /// What `level` has that effects go by: the names of its fields and its moving meshes.
@@ -191,6 +208,23 @@ pub fn effect_files(filesystem: &FileSystem) -> Vec<(String, SystemTime)> {
     dated.collect()
 }
 
+/// `read`, all at the size of the widest, up to the most there is, for one array.
+fn one_size(read: Vec<SlotImage>) -> Vec<SlotImage> {
+    let widest = read
+        .iter()
+        .filter_map(|image| image.first())
+        .map(|top| top.width.max(top.height));
+    let side = widest
+        .max()
+        .unwrap_or(1)
+        .next_power_of_two()
+        .min(WIDEST_PICTURE);
+    read.iter()
+        .filter_map(|image| image.first())
+        .map(|top| Arc::new(mip_chain(side, side, scaled(top, side))))
+        .collect()
+}
+
 /// `effects`, with their emitters told where their pictures and shaders are, and those pictures
 /// and shaders, each once. Pictures come to one size, for one array.
 fn effect_extras(
@@ -262,20 +296,7 @@ fn effect_extras(
     for path in &paths {
         read.push(library.image_at(path)?);
     }
-    let widest = read
-        .iter()
-        .filter_map(|image| image.first())
-        .map(|top| top.width.max(top.height));
-    let side = widest
-        .max()
-        .unwrap_or(1)
-        .next_power_of_two()
-        .min(WIDEST_PICTURE);
-    let pictures = read
-        .iter()
-        .filter_map(|image| image.first())
-        .map(|top| Arc::new(mip_chain(side, side, scaled(top, side))))
-        .collect();
+    let pictures = one_size(read);
     let shaders = shaders.iter().map(|name| library.shader(name)).collect();
     let motions = motions.iter().map(|name| library.shader(name)).collect();
     Ok(EffectExtras {
@@ -340,6 +361,7 @@ pub fn play_map(
     let post = world.and_then(|world| world.text("post_shader"));
     map.post_shader = post.map(|name| textures.library.shader(name));
     map.effects = effects_in(filesystem)?;
+    map.water_pictures = water_pictures(&mut textures.library, &working)?;
     let (fields, meshes) = names_in(&map);
     let effects = std::mem::take(&mut map.effects);
     let extras = effect_extras(&mut textures.library, effects, (&fields, &meshes))?;

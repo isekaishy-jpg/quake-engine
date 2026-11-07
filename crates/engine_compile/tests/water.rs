@@ -224,3 +224,62 @@ fn land_with_no_water_has_no_body() {
     assert_eq!(read.water.len(), read.heights.len());
     assert!(read.water.contains(&20.0));
 }
+
+/// A level from files, with pictures for its water.
+fn level_with_pictures(text: &str) -> Map {
+    let root =
+        std::env::temp_dir().join(format!("engine-foam-{}-{}", std::process::id(), text.len()));
+    let _gone = std::fs::remove_dir_all(&root);
+    for folder in ["maps", "textures"] {
+        std::fs::create_dir_all(root.join(folder)).expect("folder");
+    }
+    let picture = |side: u32| {
+        let pixels = [200, 100, 50, 255].repeat((side * side) as usize);
+        engine_compile::encode_png(side, side, &pixels).expect("encodes")
+    };
+    std::fs::write(root.join("textures/small.png"), picture(16)).expect("write");
+    std::fs::write(root.join("textures/large.png"), picture(64)).expect("write");
+    let level = format!(
+        "format 1 map
+entity world {{ type = worldspawn }}
+brush {{ material = rock cuboid = -64 -64 -96 64 64 -64 }}
+{text}
+"
+    );
+    std::fs::write(root.join("maps/level.emap"), &level).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let document = engine_compile::document_of(level.as_bytes()).expect("reads");
+    let played = engine_compile::play_map(&filesystem, "level", &document).expect("loads");
+    let _gone = std::fs::remove_dir_all(&root);
+    played.map
+}
+
+/// What's on water is read once each, at one size, and each look knows where.
+#[test]
+fn a_water_says_what_is_on_it() {
+    let map = level_with_pictures(
+        "water scum {
+    foam = 12
+    foam_image = textures/small.png
+    foam_size = 40
+    shore = 6
+    overlay { image = textures/large.png size = 90 flow = 3 4 strength = 0.5 }
+    overlay { image = textures/small.png }
+}
+brush { material = rock contents = water water = scum cuboid = 0 0 0 9 9 9 }",
+    );
+    assert_eq!(map.water_pictures.len(), 2);
+    assert_eq!(map.water_pictures[0][0].width, 64);
+    assert_eq!(map.water_pictures[1][0].width, 64);
+    let look = map.pools[0].look;
+    assert_eq!(look.overlays[0].picture, 1);
+    assert_eq!(look.overlays[0].size, 90.0);
+    assert_eq!(look.overlays[0].flow, [3.0, 4.0]);
+    assert_eq!(look.overlays[0].strength, 0.5);
+    assert_eq!(look.overlays[1].picture, 2);
+    assert_eq!(look.foam, 12.0);
+    assert_eq!(look.foam_look.picture, 2);
+    assert_eq!(look.foam_look.size, 40.0);
+    assert_eq!(look.shore, 6.0);
+}

@@ -63,6 +63,30 @@ terrain { source = hills material = ground water = lake }
 
 The land hides what's under it, so the shore is exactly where the two meet, and a pond in a dip is as wide as the dip.
 
+## What's on it, and how it meets the shore
+
+```text
+water bog {
+    foam = 14
+    foam_image = textures/fx_puff.png
+    foam_size = 128
+    shore = 8
+    overlay { image = textures/scum.png size = 300 flow = 6 2 strength = 0.5 }
+}
+```
+
+| Field | Means |
+|---|---|
+| `foam` | How deep it can be and still have foam, in units. It goes by how deep it is under the surface, so it follows any shore |
+| `foam_image`, `foam_size` | What foam looks like, by the picture's alpha, and how wide that is. With none it has a noise of its own |
+| `shore` | How deep it has to be before it stops fading into what's under it, so that the edge doesn't show as a line |
+| `overlay` | A picture over its surface, by its alpha. A water can have two |
+| `size` | How wide an overlay's picture is, in units |
+| `flow` | Which way it goes, in units a second |
+| `strength` | How much of it shows, from 0 to 1 |
+
+Depth is only known where the view can see what's under the water, so an edge that's off the screen has no foam.
+
 ## A murky look
 
 Quake's water is a flat warped picture you can hardly see through. For that, turn the rest off, and use a liquid with no material, which swims as the original's does:

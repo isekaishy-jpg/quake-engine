@@ -15,7 +15,7 @@ use engine_map::{
     ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
     Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
     SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture,
-    TextureKind, TileLight, WaterSheet, mip_chain,
+    TextureKind, TileLight, WaterOverlay, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -1066,6 +1066,10 @@ fn wall_over_a_pool(renderer: &mut Renderer, reflect: f32) -> Capture {
             tint: [0.0; 4],
             deep: 0.0,
             view_effect: 0,
+            overlays: [WaterOverlay::NONE; 2],
+            foam: 0.0,
+            foam_look: WaterOverlay::NONE,
+            shore: 0.0,
         },
     });
     renderer.load_map(Arc::new(built)).expect("load");
@@ -1145,6 +1149,10 @@ fn water_can_thicken_with_depth() {
         tint: [0.0; 4],
         deep: 0.0,
         view_effect: 0,
+        overlays: [WaterOverlay::NONE; 2],
+        foam: 0.0,
+        foam_look: WaterOverlay::NONE,
+        shore: 0.0,
     };
     let even = post_centre(pool_map(look), PostSettings::default());
     let deep = post_centre(
@@ -1170,6 +1178,10 @@ fn depth_tints_towards_a_pools_colour() {
         tint: [0.0; 4],
         deep: 0.0,
         view_effect: 0,
+        overlays: [WaterOverlay::NONE; 2],
+        foam: 0.0,
+        foam_look: WaterOverlay::NONE,
+        shore: 0.0,
     };
     let thick = PoolLook {
         absorption: 0.2,
@@ -5512,6 +5524,10 @@ fn blue_look() -> PoolLook {
         tint: [0.0; 4],
         deep: 0.0,
         view_effect: 0,
+        overlays: [WaterOverlay::NONE; 2],
+        foam: 0.0,
+        foam_look: WaterOverlay::NONE,
+        shore: 0.0,
     }
 }
 
@@ -5643,6 +5659,176 @@ fn sheets_take_their_turn_among_the_pools() {
         &view_from_above(),
     );
     assert_eq!(many, one);
+}
+
+/// The middle of the view over a sheet `high` above the floor, of `look`, with `pictures`.
+fn over_look(
+    renderer: &mut Renderer,
+    look: PoolLook,
+    high: f32,
+    pictures: Vec<Vec<MipLevel>>,
+    time: f32,
+) -> [u8; 4] {
+    let mut built = map(1);
+    built.water_sheets = vec![WaterSheet {
+        look,
+        ..sheet_over(high, high)
+    }];
+    built.water_pictures = pictures.into_iter().map(Arc::new).collect();
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        time,
+        ..view_from_above()
+    };
+    centre(
+        &renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// A picture lies over a surface, as much of it as it says.
+#[test]
+fn a_surface_can_have_a_picture_over_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let green = image_of(8, |_, _| [0, 255, 0, 255]);
+    let plain = blue_look();
+    let bare = over_look(&mut renderer, plain, 30.0, vec![green.clone()], 0.0);
+    let over = |strength: f32| PoolLook {
+        overlays: [
+            WaterOverlay {
+                picture: 1,
+                size: 64.0,
+                flow: [0.0; 2],
+                strength,
+            },
+            WaterOverlay::NONE,
+        ],
+        ..plain
+    };
+    let some = over_look(&mut renderer, over(0.5), 30.0, vec![green.clone()], 0.0);
+    let all = over_look(&mut renderer, over(0.999), 30.0, vec![green], 0.0);
+    assert!(some[1] > bare[1] + 40, "{some:?} from {bare:?}");
+    assert!(all[1] > some[1] + 30, "{all:?} and {some:?}");
+    assert!(all[0] < 40 && all[2] < 40, "{all:?}");
+}
+
+/// Both overlays show, and a picture goes the way it flows.
+#[test]
+fn what_is_on_a_surface_flows() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // Green on the left half, and nothing on the right.
+    let half = image_of(8, |x, _| {
+        if x < 4 {
+            [0, 255, 0, 255]
+        } else {
+            [0, 255, 0, 0]
+        }
+    });
+    let second = |flow: [f32; 2]| PoolLook {
+        overlays: [
+            WaterOverlay::NONE,
+            WaterOverlay {
+                picture: 1,
+                size: 64.0,
+                flow,
+                strength: 0.999,
+            },
+        ],
+        ..blue_look()
+    };
+    let shades: Vec<u8> = (0..8)
+        .map(|step| {
+            let look = second([16.0, 0.0]);
+            over_look(
+                &mut renderer,
+                look,
+                30.0,
+                vec![half.clone()],
+                step as f32 * 0.5,
+            )[1]
+        })
+        .collect();
+    let least = shades.iter().copied().min().unwrap_or(0);
+    let most = shades.iter().copied().max().unwrap_or(0);
+    assert!(most > least + 80, "{shades:?}");
+    let still = second([0.0, 0.0]);
+    let one = over_look(&mut renderer, still, 30.0, vec![half.clone()], 0.0);
+    let two = over_look(&mut renderer, still, 30.0, vec![half], 3.0);
+    assert_eq!(one, two);
+}
+
+/// Foam's where it's shallow, and not where it's deep.
+#[test]
+fn foam_goes_by_how_shallow_it_is() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let solid = image_of(8, |_, _| [255, 255, 255, 255]);
+    let foamy = PoolLook {
+        foam: 20.0,
+        foam_look: WaterOverlay {
+            picture: 1,
+            size: 64.0,
+            flow: [0.0; 2],
+            strength: 0.999,
+        },
+        ..blue_look()
+    };
+    let shallow = over_look(&mut renderer, foamy, 2.0, vec![solid.clone()], 0.0);
+    let deep = over_look(&mut renderer, foamy, 50.0, vec![solid.clone()], 0.0);
+    let plain = over_look(&mut renderer, blue_look(), 50.0, vec![solid], 0.0);
+    assert!(shallow[1] > 150, "{shallow:?}");
+    assert_eq!(deep, plain, "it doesn't reach");
+}
+
+/// With no picture foam has a shape of its own, that comes and goes.
+#[test]
+fn foam_needs_no_picture() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let foamy = PoolLook {
+        foam: 20.0,
+        ..blue_look()
+    };
+    let shades: Vec<u8> = (0..8)
+        .map(|step| over_look(&mut renderer, foamy, 2.0, Vec::new(), step as f32 * 1.3)[1])
+        .collect();
+    let least = shades.iter().copied().min().unwrap_or(0);
+    let most = shades.iter().copied().max().unwrap_or(0);
+    assert!(most > least + 40, "{shades:?}");
+}
+
+/// A shore fades into what's under it, so the edge of water doesn't show as a line.
+#[test]
+fn water_fades_out_at_the_shore() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let dry = over_sheets(&mut renderer, Vec::new(), &view_from_above());
+    let dark = PoolLook {
+        absorption: 0.2,
+        ..blue_look()
+    };
+    let hard = over_look(&mut renderer, dark, 5.0, Vec::new(), 0.0);
+    let soft = PoolLook {
+        shore: 100.0,
+        ..dark
+    };
+    let soft = over_look(&mut renderer, soft, 5.0, Vec::new(), 0.0);
+    let away = |shot: [u8; 4]| shot[2].abs_diff(dry[2]);
+    assert!(
+        away(soft) * 3 < away(hard),
+        "{soft:?} and {hard:?} from {dry:?}"
+    );
+    let deep = PoolLook { shore: 2.0, ..dark };
+    let deep = over_look(&mut renderer, deep, 5.0, Vec::new(), 0.0);
+    assert_eq!(deep, hard, "and past that it's as it was");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

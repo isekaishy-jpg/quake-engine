@@ -43,11 +43,13 @@ mod visibility;
 pub use bake::{
     apply_bake, attach_side_files, bake_folder, map_hash, side_files, source_hash, write_bake,
 };
-pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
+pub use build::{
+    TextureSource, compile, compile_known, compile_text, read_map_text, water_picture_paths,
+};
 pub use compiled::{Geometry, read_geometry, write_geometry};
 pub use content_pack::{
     EffectExtras, PlayMap, effect_files, keep_effect_meshes, play_map, read_effects,
-    read_effects_with,
+    read_effects_with, water_pictures,
 };
 pub use convex::{ConvexPiece, fit_convex};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};

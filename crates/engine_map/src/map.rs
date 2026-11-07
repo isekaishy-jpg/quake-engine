@@ -670,6 +670,8 @@ pub struct Map {
     pub pools: Vec<Pool>,
     /// Bodies of liquid of any shape.
     pub water_sheets: Vec<WaterSheet>,
+    /// What's over the surfaces of bodies of liquid.
+    pub water_pictures: Vec<crate::SlotImage>,
     /// Surfaces that shape visible rays.
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.

@@ -444,7 +444,23 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 13] = extra.look.exposure;
     let [red, green, blue] = extra.light_shift;
     out[base + 16..base + 19].copy_from_slice(&[1.0 + red, 1.0 + green, 1.0 + blue]);
-    fog_values(&mut out[base + 20..], extra);
+    let base = base + 20;
+    fog_values(&mut out[base..], extra);
+    let base = base + MAX_FOG_VOLUMES * 16 + 4 + FOG_LIGHTS * 8;
+    for (body, (pool, _)) in bodies.iter().enumerate() {
+        let look = &pool.look;
+        for (slot, overlay) in look.overlays.iter().chain([&look.foam_look]).enumerate() {
+            let at = base + (body * 3 + slot) * 4;
+            #[expect(clippy::cast_precision_loss, reason = "a few pictures")]
+            let picture = overlay.picture as f32;
+            let [x, y] = overlay.flow;
+            // How much shows is what's left of how wide it is, in the fraction.
+            let shows = overlay.size.round() + overlay.strength.clamp(0.0, 0.999);
+            out[at..at + 4].copy_from_slice(&[picture, shows, x, y]);
+        }
+        let at = base + MAX_POOLS * 12 + body * 4;
+        out[at..at + 2].copy_from_slice(&[look.foam, look.shore]);
+    }
     out
 }
 
@@ -794,6 +810,7 @@ impl Backend {
         let fields = self.upload_fields(map)?;
         let sims = self.upload_sims(map, &fields)?;
         let water = self.upload_water(map)?;
+        self.upload_water_pictures(map)?;
         let particle_pictures = self.upload_particle_pictures(map)?;
         let particle_shaders = self.upload_particle_shaders(&map.effect_shaders)?;
         let shadow_instances = map

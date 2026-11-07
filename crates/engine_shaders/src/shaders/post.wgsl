@@ -14,6 +14,9 @@
 @group(0) @binding(10) var ray_light: texture_2d<f32>;
 // Where shaped water's surfaces are: how far, which body, plus one, and how it slopes.
 @group(0) @binding(11) var water_surface: texture_2d<f32>;
+// What's over water: pictures that repeat.
+@group(0) @binding(12) var water_pictures: texture_2d_array<f32>;
+@group(0) @binding(13) var water_sampler: sampler;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -608,6 +611,29 @@ fn bent_through(
     return load_color(at);
 }
 
+// What overlay `slot` shows at `place`, with its alpha how much of it to take.
+fn overlay_at(slot: i32, place: vec2<f32>) -> vec4<f32> {
+    let overlay = frame.pool_overlay[slot];
+    if overlay.x < 0.5 {
+        return vec4<f32>(0.0);
+    }
+    let size = max(floor(overlay.y), 1.0);
+    let uv = (place - overlay.zw * frame.params.x) / size;
+    let seen = textureSampleLevel(water_pictures, water_sampler, uv, i32(overlay.x) - 1, 0.0);
+    return vec4<f32>(seen.rgb, seen.a * fract(overlay.y) / 0.999);
+}
+
+// Foam's shape at `place`, from a picture or a noise, from 0 to 1.
+fn foam_at(slot: i32, place: vec2<f32>) -> f32 {
+    if frame.pool_overlay[slot].x > 0.5 {
+        let seen = overlay_at(slot, place);
+        return seen.a;
+    }
+    let time = frame.params.x;
+    let flow = vec3<f32>(place / 24.0, time * 0.3);
+    return smoothstep(0.35, 0.7, fog_noise(flow) * 0.6 + fog_noise(flow * 2.7) * 0.4);
+}
+
 // Light in the pools a view passes through: depth tints it, what's in a pool
 // shows caustics, and a view through one sees them as shafts.
 fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
@@ -647,6 +673,7 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
         if leave <= enter {
             continue;
         }
+        let dry = color;
         let path = (leave - enter) * reach;
         // A ray that stops on an opaque liquid's surface only touches its box,
         // and rounding says which side of it each pixel lands. Going by that
@@ -690,9 +717,27 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
             let amount = shafts / 8.0 * min(path / 256.0, 1.0) * high.w;
             color = color + frame.pool_color[index].rgb * amount * 2.5;
         }
+        if from_above {
+            for (var slot = 0; slot < 2; slot = slot + 1) {
+                let over = overlay_at(index * 3 + slot, entry.xy);
+                color = mix(color, over.rgb, over.a);
+            }
+        }
         // What the surface mirrors isn't under it, so depth doesn't tint it.
         if from_above && frame.pool_color[index].w > 0.0 {
             color = reflected(color, entry, normal, frame.pool_color[index].w);
+        }
+        // The shore goes by how deep it is under the surface, here.
+        let edge = frame.pool_edge[index];
+        if from_above && depth < 1.0 && (edge.x > 0.0 || edge.y > 0.0) {
+            let shallow = max(top - far.z, 0.0);
+            if edge.x > 0.0 {
+                let reach_of = 1.0 - smoothstep(0.0, edge.x, shallow);
+                color = mix(color, vec3<f32>(1.0), reach_of * foam_at(index * 3 + 2, entry.xy));
+            }
+            if edge.y > 0.0 {
+                color = mix(dry, color, smoothstep(0.0, edge.y, shallow));
+            }
         }
     }
     return color;

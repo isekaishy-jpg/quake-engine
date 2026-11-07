@@ -83,6 +83,11 @@ struct Frame {
     // The moving lights nearest the eye, for fog: where with w how far it reaches, and its colour.
     fog_light_place: array<vec4<f32>, 4>,
     fog_light_color: array<vec4<f32>, 4>,
+    // Each body's two overlays, then its foam, three to a body: its picture, plus one, how wide it
+    // is and how much shows, and the way it flows in zw of `pool_flow`.
+    pool_overlay: array<vec4<f32>, 24>,
+    // x how far from the shore foam reaches, and y how deep it has to be to stop fading.
+    pool_edge: array<vec4<f32>, 8>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.
