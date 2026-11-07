@@ -1,0 +1,294 @@
+format 1 map
+
+entity world {
+    type = "worldspawn"
+    ambient = 14
+    bounce = 0.6
+    light_spacing = 32
+    sun_crisp = true
+    sun_intensity = 170
+    id = 1
+}
+
+sky {
+    horizon = [0.72 0.68 0.6]
+    sun_color = [1 0.92 0.78]
+    sun_direction = [0.5 0.35 0.6]
+    zenith = [0.22 0.34 0.52]
+    id = 2
+}
+
+fog {
+    color = [0.45 0.5 0.55]
+    density = 0.0001
+    falloff = 0.002
+    height = 0
+    id = 3
+}
+
+water {
+    absorption = 0.008
+    caustics = 0.4
+    color = [0.03 0.1 0.12]
+    id = 4
+}
+
+brush {
+    material = "qg01_ashen_abbey_floor_flags"
+    cuboid = [-1024 -768 -32 0 768 0]
+    id = 5
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [-1040 -784 -32 -1024 784 512]
+    id = 6
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [-1040 -784 -32 16 -768 512]
+    id = 7
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [-1040 768 -32 16 784 512]
+    id = 8
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [0 -768 0 16 -272 512]
+    id = 9
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [0 272 0 16 768 512]
+    id = 10
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [0 -272 240 16 272 512]
+    id = 11
+}
+
+brush {
+    material = "sky"
+    contents = "sky"
+    cuboid = [-1040 -784 512 16 784 528]
+    id = 12
+}
+
+brush {
+    material = "qg01_ashen_abbey_ceiling_coffer"
+    cuboid = [-16 -272 224 656 272 240]
+    id = 13
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [-16 -256 0 0 -48 224]
+    id = 14
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [-16 -48 112 0 48 224]
+    id = 15
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [-16 48 0 0 256 224]
+    id = 16
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [640 -256 0 656 256 224]
+    id = 17
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [-16 -272 0 656 -256 224]
+    id = 18
+}
+
+brush {
+    material = "qg01_ashen_abbey_wall_blocks"
+    cuboid = [-16 256 0 656 272 224]
+    id = 19
+}
+
+brush {
+    material = "qg01_ashen_abbey_floor_flags"
+    cuboid = [-16 -272 -16 192 272 0]
+    id = 20
+}
+
+brush {
+    material = "qg01_ashen_abbey_floor_flags"
+    cuboid = [320 -272 -16 656 272 0]
+    id = 21
+}
+
+brush {
+    material = "qg01_ashen_abbey_floor_flags"
+    cuboid = [192 -272 -16 320 -64 0]
+    id = 22
+}
+
+brush {
+    material = "qg01_ashen_abbey_floor_flags"
+    cuboid = [192 64 -16 320 272 0]
+    id = 23
+}
+
+entity {
+    angle = -1
+    lip = 8
+    speed = 200
+    type = "func_door"
+    wait = 3
+    prefab = "door"
+    id = 24
+    brush {
+        cuboid = [-16 -48 0 0 48 112]
+        material = "qg01_ashen_abbey_wood_planks"
+    }
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 -208 -336 656 208 -320]
+    id = 25
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 -192 -320 192 192 -128]
+    id = 26
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [640 -192 -320 656 192 -128]
+    id = 27
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 -208 -320 656 -192 -128]
+    id = 28
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 192 -320 656 208 -128]
+    id = 29
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 -208 -128 192 208 -112]
+    id = 30
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [320 -208 -128 656 208 -112]
+    id = 31
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [192 -208 -128 320 -64 -112]
+    id = 32
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [192 64 -128 320 208 -112]
+    id = 33
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [176 -80 -112 192 80 -16]
+    id = 34
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [320 -80 -112 336 80 -16]
+    id = 35
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [192 -80 -112 320 -64 -16]
+    id = 36
+}
+
+brush {
+    material = "qg01_ashen_abbey_rock"
+    cuboid = [192 64 -112 320 80 -16]
+    id = 37
+}
+
+entity {
+    height = 320
+    speed = 150
+    type = "func_plat"
+    prefab = "lift"
+    id = 38
+    brush {
+        cuboid = [192 -64 -8 320 64 0]
+        material = "qg01_ashen_abbey_wood_planks"
+    }
+}
+
+brush {
+    material = "canal_water"
+    contents = "water"
+    cuboid = [352 -192 -320 640 192 -272]
+    id = 39
+}
+
+entity {
+    type = "info_player_start"
+    origin = [-400 0 24]
+    angle = 0
+    id = 40
+}
+
+entity {
+    type = "light"
+    origin = [320 0 180]
+    light = 300
+    id = 41
+}
+
+entity {
+    type = "light"
+    origin = [420 0 -160]
+    light = 260
+    id = 42
+}
+
+entity {
+    type = "effect"
+    origin = [-700 300 8]
+    effect = "campfire"
+    id = 43
+}
+
+mesh {
+    origin = [-600 260 0]
+    source = "barrel"
+    id = 44
+}
