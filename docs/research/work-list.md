@@ -449,3 +449,6 @@ Newest last. One line for each thing finished, with its commit.
 - Stage 9, shaders, proposal 0145. Item 13: cf65589. Item 14: 32e73e3
 - Stage 10, effects, proposal 0146. Items 78 to 85: 4b6c67f. Items 86 to 89 and 91 to 93: 8c1d46d. Item 90: 0ecd8ed. Item 94: ad358e2. Item 95: 32551c8. Item 96: faa09d5. Item 97: 9af1bae. Item 16 and the rest of 89: 8ae2ac7. Item 9 was done at stage 7
 - Stage 11, fog and water, proposal 0147. Items 70 to 72: e5bf844. Items 73, 75 and 76: b85f395, and item 74 needed no change. Items 17 and 130: 10a9853. Items 100 and 101: 3a62e97. Items 98, 99 and 102: b4c914f
+- Item 62: f36817b. Item 63: 17e7eef. Item 64: 95cb9fb
+- Item 153, enemies going evenly: 369f8e0, and the human found them smooth. Item 154, level pictures out of the repository: 332dc60
+- What the play session found: level text in words, and the body at the end of a level: f41e2a8
