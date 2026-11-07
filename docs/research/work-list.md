@@ -414,3 +414,4 @@ Newest last. One line for each thing finished, with its commit.
 - Items 56 to 60: 71b1a6a
 - Item 60 made static, by the human: 292cee9
 - Items 1, 2 and 6: 5fc5127
+- Item 7: c193fd5
