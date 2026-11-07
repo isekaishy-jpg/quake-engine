@@ -287,7 +287,7 @@ fn open_menu(console: &mut Console<World>, world: &mut World, args: &Args) {
 
 /// `bf`: flashes the view.
 fn bonus_flash(_console: &mut Console<World>, world: &mut World, _args: &Args) {
-    world.hud.bonus_flash();
+    world.view_tint.bonus_flash();
 }
 
 /// `pause`: stops the game, or starts it again.

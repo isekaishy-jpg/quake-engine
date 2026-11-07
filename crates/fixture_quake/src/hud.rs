@@ -3,7 +3,6 @@
 //! `screen.c` and `view.c`, for one player (proposal 0040).
 
 use engine_core::canvas::{CHARACTER_SIZE, Canvas};
-use engine_map::Contents;
 
 use crate::stats::{
     IT_ARMOR1, IT_ARMOR2, IT_ARMOR3, IT_CELLS, IT_INVISIBILITY, IT_INVULNERABILITY, IT_NAILS,
@@ -68,13 +67,6 @@ const FACES: [[&str; 2]; 5] = [
     ["face1", "face_p1"],
 ];
 
-/// `cshift_water`.
-const WATER_SHIFT: Shift = Shift::new([130, 80, 50], 128.0);
-/// `cshift_slime`.
-const SLIME_SHIFT: Shift = Shift::new([0, 25, 5], 150.0);
-/// `cshift_lava`.
-const LAVA_SHIFT: Shift = Shift::new([255, 80, 0], 150.0);
-
 /// A line of the scores.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Score {
@@ -115,22 +107,6 @@ impl Intermission {
     }
 }
 
-/// A colour over the view, from `cshift_t`.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
-struct Shift {
-    /// The colour.
-    color: [u8; 3],
-    /// How strong it is, out of 255.
-    percent: f32,
-}
-
-impl Shift {
-    /// A colour at a strength.
-    const fn new(color: [u8; 3], percent: f32) -> Self {
-        Self { color, percent }
-    }
-}
-
 /// Text in the middle of the screen.
 #[derive(Clone, Debug, Default, PartialEq)]
 struct CenterText {
@@ -153,12 +129,6 @@ pub struct Hud {
     time: f64,
     /// When the face stops showing pain.
     face_pain_until: f64,
-    /// Being in a liquid.
-    contents_shift: Shift,
-    /// Being hurt.
-    damage_shift: Shift,
-    /// Picking something up.
-    bonus_shift: Shift,
     /// The middle of the screen.
     center: CenterText,
     /// The end of level screen.
@@ -182,9 +152,6 @@ impl Default for Hud {
             item_times: [0.0; 32],
             time: 0.0,
             face_pain_until: 0.0,
-            contents_shift: Shift::default(),
-            damage_shift: Shift::default(),
-            bonus_shift: Shift::default(),
             center: CenterText::default(),
             intermission: Intermission::None,
             completed_time: 0.0,
@@ -253,23 +220,9 @@ impl Hud {
         self.stats[STAT_HEALTH] <= 0
     }
 
-    /// Reddens the view and pains the face, from `V_ParseDamage`.
-    pub fn damage(&mut self, armor: u8, blood: u8) {
-        let count = (f32::from(blood) * 0.5 + f32::from(armor) * 0.5).max(10.0);
+    /// Pains the face.
+    pub fn damage(&mut self) {
         self.face_pain_until = self.time + FACE_PAIN_SECONDS;
-        self.damage_shift.percent = (self.damage_shift.percent + 3.0 * count).clamp(0.0, 150.0);
-        self.damage_shift.color = if armor > blood {
-            [200, 100, 100]
-        } else if armor != 0 {
-            [220, 50, 50]
-        } else {
-            [255, 0, 0]
-        };
-    }
-
-    /// Flashes the view, from `V_BonusFlash_f`.
-    pub fn bonus_flash(&mut self) {
-        self.bonus_shift = Shift::new([215, 186, 69], 50.0);
     }
 
     /// Shows `text` in the middle of the screen, from `SCR_CenterPrint`.
@@ -424,71 +377,22 @@ impl Hud {
         self.show_scores = show;
     }
 
-    /// Lets flashes fade by `seconds`, with the eye in `contents`, from
-    /// `V_UpdatePalette` and `V_SetContentsColor`.
-    pub fn update_view(&mut self, seconds: f32, contents: Contents) {
-        self.contents_shift = match contents {
-            Contents::Empty | Contents::Solid => Shift::default(),
-            Contents::Lava => LAVA_SHIFT,
-            Contents::Slime => SLIME_SHIFT,
-            Contents::Water | Contents::Sky => WATER_SHIFT,
-        };
-        self.damage_shift.percent = (self.damage_shift.percent - seconds * 150.0).max(0.0);
-        self.bonus_shift.percent = (self.bonus_shift.percent - seconds * 100.0).max(0.0);
-    }
-
-    /// The colour of a powerup, from `V_CalcPowerupCshift`.
-    fn powerup_shift(&self) -> Shift {
-        let items = self.items();
-        if items & IT_QUAD != 0 {
-            Shift::new([0, 0, 255], 30.0)
-        } else if items & IT_SUIT != 0 {
-            Shift::new([0, 255, 0], 20.0)
-        } else if items & IT_INVISIBILITY != 0 {
-            Shift::new([100, 100, 100], 100.0)
-        } else if items & IT_INVULNERABILITY != 0 {
-            Shift::new([255, 255, 0], 30.0)
-        } else {
-            Shift::default()
-        }
-    }
-
-    /// The colour over the view, from `V_CalcBlend`.
+    /// The colour a powerup puts over the view, and how strong, from `V_CalcPowerupCshift`.
     #[must_use]
-    pub fn tint(&self) -> [f32; 4] {
-        let (mut red, mut green, mut blue, mut alpha) = (0.0, 0.0, 0.0, 0.0);
-        for shift in [
-            self.contents_shift,
-            self.damage_shift,
-            self.bonus_shift,
-            self.powerup_shift(),
-        ] {
-            let strength = shift.percent / 255.0;
-            if strength == 0.0 {
-                continue;
-            }
-            alpha += strength * (1.0 - alpha);
-            let share: f32 = strength / alpha;
-            let [r, g, b] = shift.color.map(f32::from);
-            red = red * (1.0 - share) + r * share;
-            green = green * (1.0 - share) + g * share;
-            blue = blue * (1.0 - share) + b * share;
-        }
-        [
-            red / 255.0,
-            green / 255.0,
-            blue / 255.0,
-            f32::clamp(alpha, 0.0, 1.0),
-        ]
-    }
-
-    /// Fills the view with its tint.
-    pub fn draw_tint(&self, canvas: &mut Canvas<'_>) {
-        let tint = self.tint();
-        if tint[3] > 0.0 {
-            let place = [0.0, 0.0, canvas.width(), canvas.height()];
-            canvas.fill(place, tint);
-        }
+    pub fn powerup_tint(&self) -> [f32; 4] {
+        let items = self.items();
+        let ([red, green, blue], strength) = if items & IT_QUAD != 0 {
+            ([0.0, 0.0, 255.0], 30.0)
+        } else if items & IT_SUIT != 0 {
+            ([0.0, 255.0, 0.0], 20.0)
+        } else if items & IT_INVISIBILITY != 0 {
+            ([100.0, 100.0, 100.0], 100.0)
+        } else if items & IT_INVULNERABILITY != 0 {
+            ([255.0, 255.0, 0.0], 30.0)
+        } else {
+            ([0.0, 0.0, 0.0], 0.0)
+        };
+        [red / 255.0, green / 255.0, blue / 255.0, strength / 255.0]
     }
 
     /// Draws what's over the game itself. `playing` says no menu or console is

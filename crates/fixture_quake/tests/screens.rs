@@ -3,7 +3,6 @@
 use std::collections::HashMap;
 
 use engine_core::canvas::{Canvas, Picture, PictureSource, Quad};
-use engine_map::Contents;
 use fixture_quake::{Hud, Intermission, Menu, MenuHost, SAVE_SLOTS, Score, Screen};
 
 /// Pictures of 16 by 16, each with its own number, remembering what was asked.
@@ -77,7 +76,7 @@ fn the_bar_shows_the_face_for_the_health_left() {
 fn being_hurt_pains_the_face_then_it_passes() {
     let mut hud = Hud::new();
     hud.set_stats(&stats(100, 0), 10.0);
-    hud.damage(0, 10);
+    hud.damage();
     assert!(has(&bar(&hud), "face_p1"));
     hud.set_stats(&stats(100, 0), 10.3);
     assert!(has(&bar(&hud), "face1"));
@@ -233,22 +232,13 @@ fn the_finale_types_its_text_out() {
 }
 
 #[test]
-fn water_tints_the_view_and_damage_fades() {
+fn a_powerup_says_what_colour_it_puts_over_the_view() {
     let mut hud = Hud::new();
-    assert_eq!(hud.tint()[3], 0.0);
-    hud.update_view(0.0, Contents::Water);
-    let tint = hud.tint();
-    assert!((tint[3] - 128.0 / 255.0).abs() < 0.001);
-    assert!(tint[0] > tint[2], "it's brown");
-    hud.update_view(0.0, Contents::Empty);
-    assert_eq!(hud.tint()[3], 0.0);
-    hud.damage(0, 20);
-    let hurt = hud.tint();
-    assert_eq!(hurt[..3], [1.0, 0.0, 0.0]);
-    hud.update_view(0.1, Contents::Empty);
-    assert!(hud.tint()[3] < hurt[3]);
-    hud.update_view(1.0, Contents::Empty);
-    assert_eq!(hud.tint()[3], 0.0);
+    hud.set_stats(&stats(100, 0), 0.0);
+    assert_eq!(hud.powerup_tint()[3], 0.0);
+    hud.set_stats(&stats(100, 1 << 22), 0.0);
+    let tint = hud.powerup_tint();
+    assert!(tint[2] > 0.9 && tint[3] > 0.0, "{tint:?}");
 }
 
 /// A pretend engine.

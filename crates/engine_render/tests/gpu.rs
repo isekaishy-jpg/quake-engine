@@ -1060,6 +1060,7 @@ fn wall_over_a_pool(renderer: &mut Renderer, reflect: f32) -> Capture {
             reflect,
             waves: 0.0,
             refraction: 0.0,
+            tint: [0.0; 4],
         },
     });
     renderer.load_map(Arc::new(built)).expect("load");
@@ -1136,6 +1137,7 @@ fn depth_tints_towards_a_pools_colour() {
         reflect: 0.0,
         waves: 0.0,
         refraction: 0.0,
+        tint: [0.0; 4],
     };
     let thick = PoolLook {
         absorption: 0.2,

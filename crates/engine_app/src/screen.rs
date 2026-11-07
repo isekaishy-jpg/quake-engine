@@ -362,7 +362,10 @@ impl World {
         let blink = ((run_time * 4.0) as u64).is_multiple_of(2);
         let mut failed = None;
         if running {
-            self.hud.draw_tint(&mut canvas);
+            let tint = self.view_tint.color();
+            if tint[3] > 0.0 {
+                canvas.fill([0.0, 0.0, canvas.width(), canvas.height()], tint);
+            }
             if self.crosshair && playing && self.hud.intermission() == Intermission::None {
                 let (x, y) = (canvas.width() / 2.0 - 4.0, canvas.height() / 2.0 - 4.0);
                 canvas.character(x, y, b'+');

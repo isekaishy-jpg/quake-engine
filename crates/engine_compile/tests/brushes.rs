@@ -664,6 +664,33 @@ brush { material = stone contents = water cuboid = -64 -64 -32 64 64 0 }
     assert_eq!(look.refraction, 0.5);
 }
 
+/// The look of the water in a map with `water`, a block.
+fn water_look(water: &str) -> PoolLook {
+    let text = format!(
+        "format 1 map
+{water}
+brush {{ material = stone cuboid = -128 -128 -64 128 128 -32 }}
+brush {{ material = stone contents = water cuboid = -64 -64 -32 64 64 0 }}
+"
+    );
+    let working = read_map_text(&text).expect("reads");
+    let mut source = |name: &str| placeholder_texture(name);
+    compile(&working, &mut source).expect("compiles").pools[0].look
+}
+
+#[test]
+fn water_sets_the_tint_of_the_view() {
+    let set = water_look("water { tint = [0.5 0.25 0] tint_strength = 0.75 }");
+    assert_eq!(set.tint, [0.5, 0.25, 0.0, 0.75]);
+    let coloured = water_look("water { color = [0.1 0.2 0.3] }");
+    assert_eq!(coloured.tint[..3], [0.1, 0.2, 0.3]);
+    let plain = water_look("");
+    assert_eq!(
+        plain.tint,
+        PoolLook::of(Contents::Water).expect("a look").tint
+    );
+}
+
 #[test]
 fn a_zone_is_a_shape_and_nothing_to_see_or_touch() {
     let text = "format 1 map

@@ -170,6 +170,7 @@
     - [0131: containers and file ids](proposals/0131-containers-and-file-ids.md)
     - [0132: common.pkt](proposals/0132-common-pkt.md)
     - [0133: precompiled shaders](proposals/0133-precompiled-shaders.md)
+    - [0134: the colour over the view](proposals/0134-the-view-tint.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

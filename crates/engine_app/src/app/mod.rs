@@ -21,7 +21,7 @@ use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
-    LookScale, ShotClock, StepSmoother, ViewKick, ZoneTracker,
+    LookScale, ShotClock, StepSmoother, ViewKick, ViewTint, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
@@ -180,6 +180,8 @@ pub(crate) struct World {
     map: Option<Arc<Map>>,
     /// The status bar and the rest of what's over the view.
     pub(crate) hud: Hud,
+    /// The colour over the view.
+    pub(crate) view_tint: ViewTint,
     /// The menus.
     pub(crate) menu: Menu,
     /// The console, as it's drawn.
@@ -362,6 +364,7 @@ impl World {
         let map = Arc::clone(map);
         self.map_time = 0.0;
         self.hud = Hud::new();
+        self.view_tint = ViewTint::default();
         self.hud.set_palette(&palette);
         self.kick = ViewKick::default();
         self.paused = false;
@@ -674,6 +677,7 @@ impl Engine {
                 level: Level::default(),
                 map: None,
                 hud: Hud::new(),
+                view_tint: ViewTint::default(),
                 menu: Menu::new(),
                 console_view: ConsoleView::new(),
                 pictures: PictureBank::default(),

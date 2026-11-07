@@ -19,6 +19,8 @@ pub struct PoolLook {
     pub waves: f32,
     /// How far its surface bends what's seen through it.
     pub refraction: f32,
+    /// The colour over the view with the eye in it: red, green, blue and strength.
+    pub tint: [f32; 4],
 }
 
 impl PoolLook {
@@ -33,6 +35,7 @@ impl PoolLook {
                 reflect: 0.6,
                 waves: 1.0,
                 refraction: 1.0,
+                tint: [130.0 / 255.0, 80.0 / 255.0, 50.0 / 255.0, 128.0 / 255.0],
             }),
             Contents::Slime => Some(Self {
                 color: [0.12, 0.3, 0.05],
@@ -41,6 +44,7 @@ impl PoolLook {
                 reflect: 0.25,
                 waves: 0.5,
                 refraction: 0.4,
+                tint: [0.0, 25.0 / 255.0, 5.0 / 255.0, 150.0 / 255.0],
             }),
             Contents::Lava => Some(Self {
                 color: [0.75, 0.2, 0.03],
@@ -49,6 +53,7 @@ impl PoolLook {
                 reflect: 0.0,
                 waves: 0.0,
                 refraction: 0.0,
+                tint: [1.0, 80.0 / 255.0, 0.0, 150.0 / 255.0],
             }),
             _ => None,
         }
@@ -64,4 +69,22 @@ pub struct Pool {
     pub high: Vec3,
     /// How it looks.
     pub look: PoolLook,
+}
+
+/// The look of what's around `eye`, which is in `contents`: the pool it's in, or failing that
+/// what such a liquid usually looks like, as original levels have no pools.
+#[must_use]
+pub fn look_around(pools: &[Pool], eye: Vec3, contents: Contents) -> Option<PoolLook> {
+    let inside = |pool: &&Pool| {
+        (pool.low.x..=pool.high.x).contains(&eye.x)
+            && (pool.low.y..=pool.high.y).contains(&eye.y)
+            && (pool.low.z..=pool.high.z).contains(&eye.z)
+    };
+    let liquid = match contents {
+        // Quake colours the view the same inside a sky.
+        Contents::Sky => Contents::Water,
+        other => other,
+    };
+    let usual = PoolLook::of(liquid)?;
+    Some(pools.iter().find(inside).map_or(usual, |pool| pool.look))
 }

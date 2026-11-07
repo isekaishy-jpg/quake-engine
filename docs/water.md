@@ -21,6 +21,7 @@ water {
 | `reflect` | How much its surface mirrors, at a glance |
 | `waves` | How tall its waves look |
 | `refraction` | How far its surface bends what's seen through it |
+| `tint`, `tint_strength` | The colour over the view with your eyes in it, and how strong, from 0 to 1. With no `tint` it's `color`. Cheap, and goes well with fog and particles, so that none has to do it all |
 
 Each setting left out keeps what that liquid usually has. Water is clear and mirrors, slime is thick and dull, and lava mirrors nothing.
 

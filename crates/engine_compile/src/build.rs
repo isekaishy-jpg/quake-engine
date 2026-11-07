@@ -873,6 +873,10 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
             look.color = water.color.unwrap_or(look.color);
             look.absorption = water.absorption.unwrap_or(look.absorption);
             look.caustics = water.caustics.unwrap_or(look.caustics);
+            let [red, green, blue, strength] = look.tint;
+            // Water that says its colour is tinted by it, unless it says otherwise.
+            let [red, green, blue] = water.tint.or(water.color).unwrap_or([red, green, blue]);
+            look.tint = [red, green, blue, water.tint_strength.unwrap_or(strength)];
             look.reflect = water.reflect.unwrap_or(look.reflect);
             look.waves = water.waves.unwrap_or(look.waves);
             look.refraction = water.refraction.unwrap_or(look.refraction);

@@ -10,8 +10,8 @@ use engine_client::{
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
-use engine_map::Contents;
 use engine_map::ParticleKind;
+use engine_map::{Contents, look_around};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, ParticleColor,
     ParticleDraw, ParticleShape, SpriteDraw, View,
@@ -116,7 +116,8 @@ impl World {
         reason = "f32 keeps angles to a few thousandths of a degree"
     )]
     pub(super) fn hurt(&mut self, armor: u8, blood: u8, from: Vec3) {
-        self.hud.damage(armor, blood);
+        self.hud.damage();
+        self.view_tint.hurt(armor, blood);
         let Some(client) = &self.client else {
             return;
         };
@@ -403,7 +404,14 @@ impl World {
         } else {
             0.0
         };
-        self.hud.update_view(fade, contents);
+        let look = self
+            .map
+            .as_ref()
+            .and_then(|map| look_around(&map.pools, origin, contents));
+        self.view_tint
+            .set_surroundings(look.map_or([0.0; 4], |look| look.tint));
+        self.view_tint.set_held(self.hud.powerup_tint());
+        self.view_tint.pass(fade);
         let view = View {
             origin,
             yaw: self.look.yaw() as f32 + punch.y + sway.1,

@@ -245,6 +245,10 @@ pub struct WaterSource {
     pub waves: Option<f32>,
     /// How far its surface bends what's seen through it.
     pub refraction: Option<f32>,
+    /// The colour over the view with the eye in it.
+    pub tint: Option<[f32; 3]>,
+    /// How strong that is, from 0 to 1.
+    pub tint_strength: Option<f32>,
 }
 
 /// What `name` is as contents.
@@ -594,6 +598,11 @@ fn read_water(block: &Block) -> WaterSource {
         reflect: number("reflect"),
         waves: number("waves"),
         refraction: number("refraction"),
+        tint: block
+            .get("tint")
+            .is_some()
+            .then(|| color_of(block, "tint", [0.0; 3])),
+        tint_strength: number("tint_strength"),
     }
 }
 
