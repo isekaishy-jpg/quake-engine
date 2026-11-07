@@ -74,4 +74,22 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **`deep` is exact,** as depth changes evenly along a ray, so its middle gives the whole of it.
 - **What goes with the view** is started and stopped by the look, and moved each frame, under a handle no script can get.
 
+### Water of any shape (17)
+
+- **Tried in the game:** a river down a slope, made from a mesh of four corners. From above it falls away between its banks and mirrors them. Under it the surface shows from below, with shafts through it and motes round the view. Dropped in without noclip, the player sank 71 units in about 1.7 seconds, which is swimming.
+- **What it costs,** at 1280 by 720: the final pass goes from 0.16 ms to between 0.42 and 0.63 ms with a river in view, most of which any water costs.
+- **The picture of surfaces holds 32 bit floats.** A shore goes by the gap between the surface and what's behind it, and a half float can't tell that to a unit at any distance.
+- **A sheet's box is only where it might be.** What a ray does in one comes from the picture, or from being in it, and not from its box.
+- **`Map::liquid_or`** is the one place that says open air is water, and physics, the view and the look all go through it, so that none can disagree.
+- **A sample a little past a mesh's edge** takes the plane of what's nearest, or the edge of a sheet would stop a cell short of the mesh.
+- **The picture doesn't look at the scene's depth.** It did at first, and putting the bug back showed that doing nothing changed: the final pass already leaves out a surface further than what's in front of it. So that went, and its binding, its barrier and a version for samples went with it.
+
+### Water on land (130)
+
+- **Land says how deep water is at each of its samples,** which is another thing to paint. The same grid does what a mesh's does, so all that's new is how it's made.
+- **Tried in the game:** a dip lowered in flat land and flooded to a level, with the tools, seen from the bank, from above and from under it.
+- **Samples next to water carry on at its height, and the land hides them.** At first they sat on the ground, so that the surface came down to nothing at the shore, and from above that shore was a saw blade, the shape of the grid. Now it's where the two meet, to the pixel.
+- **`flood` fills to a level,** as most land wants a flat lake, and depth by itself can only follow the land.
+- **What's solid comes first.** A sheet on land goes down as far as the deepest water, and land stops it, so it needs no bed of its own.
+
 Filled in as each part lands.

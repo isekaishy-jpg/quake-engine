@@ -13,11 +13,14 @@ use engine_shaders::{Module, spirv};
 
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
+use super::water::WaterTarget;
 use super::{Backend, DEPTH_FORMAT, FRAME_SIZE, GpuImage, SCENE_FORMAT};
 use crate::error::RenderError;
 
 /// Where a scene is drawn before the final pass.
 pub(super) struct SceneTarget {
+    /// Where water's surfaces are.
+    pub(super) water: WaterTarget,
     /// The final pass's set.
     pub(super) set: DescriptorSet,
     /// Kept alive for the set.
@@ -454,7 +457,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 9,
+                    descriptor_count: 10,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -503,6 +506,8 @@ impl Backend {
         );
         let rays = self.ray_target(size)?;
         set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let water = self.water_target(size)?;
+        set.write_sampled_image(11, &water.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             particle_framebuffer,
@@ -517,6 +522,7 @@ impl Backend {
             _resolved: resolved,
             smaa,
             rays,
+            water,
             size,
         });
         Ok(())

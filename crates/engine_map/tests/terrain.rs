@@ -226,3 +226,64 @@ fn a_layer_that_is_not_there_paints_nothing() {
     stroke_land(&mut data, &brush, TerrainStroke::Paint(9, 1.0));
     assert_eq!(data.paint, before);
 }
+
+/// Water goes on by a brush, and off again, and never goes below nothing.
+#[test]
+fn water_goes_on_land_by_a_brush() {
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    assert!(
+        data.water.is_empty(),
+        "there's none to keep until there's some"
+    );
+    stroke_land(&mut data, &CIRCLE, TerrainStroke::Water(10.0));
+    assert_eq!(data.water.len(), data.heights.len());
+    let wet = data.water.iter().filter(|depth| **depth > 0.0).count();
+    assert!(wet > 0 && wet < data.water.len(), "only under it: {wet}");
+    assert_eq!(data.water.iter().copied().fold(0.0, f32::max), 10.0);
+    stroke_land(&mut data, &CIRCLE, TerrainStroke::Water(-40.0));
+    assert!(data.water.iter().all(|depth| *depth == 0.0));
+    assert!(
+        data.heights.iter().all(|height| *height == 0.0),
+        "the land's as it was"
+    );
+}
+
+/// Flooding fills a dip to a level, and leaves what's over that dry.
+#[test]
+fn flooding_leaves_water_flat() {
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    let across = data.across() as usize;
+    data.heights[3 * across + 3] = -10.0;
+    data.heights[3 * across + 4] = 8.0;
+    let brush = TerrainBrush {
+        middle: [3.0 * 32.0, 3.0 * 32.0],
+        radius: 80.0,
+        soft: 0.0,
+    };
+    stroke_land(&mut data, &brush, TerrainStroke::Flood(5.0));
+    assert_eq!(data.water[3 * across + 3], 15.0);
+    assert_eq!(data.water[3 * across + 4], 0.0, "that's over the level");
+    assert_eq!(data.water[3 * across + 2], 5.0);
+    assert_eq!(
+        data.water[12 * across + 12],
+        0.0,
+        "and that's off the brush"
+    );
+}
+
+/// A soft brush brings water in less towards its edge.
+#[test]
+fn water_fades_out_with_a_soft_brush() {
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    let brush = TerrainBrush {
+        middle: [256.0, 256.0],
+        radius: 200.0,
+        soft: 1.0,
+    };
+    stroke_land(&mut data, &brush, TerrainStroke::Water(10.0));
+    let some = data
+        .water
+        .iter()
+        .filter(|depth| **depth > 0.0 && **depth < 9.0);
+    assert!(some.count() > 8, "{:?}", data.water);
+}

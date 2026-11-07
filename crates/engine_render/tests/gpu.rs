@@ -9,13 +9,13 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, EffectDef, FieldDef, Fog,
-    FogVolume, LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance,
-    MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter, ParticleForce,
-    PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading,
-    SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Contents, EffectDef,
+    FieldDef, Fog, FogVolume, LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner,
+    MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter,
+    ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
+    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
     SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture,
-    TextureKind, TileLight, mip_chain,
+    TextureKind, TileLight, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -5498,6 +5498,151 @@ fn the_nearest_fog_is_what_shows() {
     volumes.push(fog_box());
     let shade = through_fog(&mut renderer, &volumes, 0.0, &[]);
     assert!(shade[1] > 200, "{shade:?}");
+}
+
+/// A look that's only a blue that gets thick with distance.
+fn blue_look() -> PoolLook {
+    PoolLook {
+        color: [0.0, 0.0, 1.0],
+        absorption: 0.02,
+        caustics: 0.0,
+        reflect: 0.0,
+        waves: 0.0,
+        refraction: 0.0,
+        tint: [0.0; 4],
+        deep: 0.0,
+        view_effect: 0,
+    }
+}
+
+/// A sheet over the map's square, from `left` high along its low x to `right` along its high x.
+fn sheet_over(left: f32, right: f32) -> WaterSheet {
+    WaterSheet {
+        origin: [-200.0, -200.0],
+        cell: 400.0 / 4.0,
+        size: [5, 5],
+        heights: (0..25)
+            .map(|at| left + (right - left) * ((at % 5) as f32 / 4.0))
+            .collect(),
+        depth: 400.0,
+        contents: Contents::Water,
+        look: blue_look(),
+    }
+}
+
+/// The middle of the view, with `sheets` in the level.
+fn over_sheets(renderer: &mut Renderer, sheets: Vec<WaterSheet>, view: &View) -> [u8; 4] {
+    let mut built = map(1);
+    built.water_sheets = sheets;
+    renderer.load_map(Arc::new(built)).expect("load");
+    centre(
+        &renderer
+            .capture(view, Drawables::default(), 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// Looked down on, a sheet tints what's under it by how far the view goes in it.
+#[test]
+fn a_sheet_tints_what_is_under_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let view = view_from_above();
+    let plain = over_sheets(&mut renderer, Vec::new(), &view);
+    let shallow = over_sheets(&mut renderer, vec![sheet_over(10.0, 10.0)], &view);
+    let deep = over_sheets(&mut renderer, vec![sheet_over(50.0, 50.0)], &view);
+    assert!(shallow[2] > plain[2], "{shallow:?} from {plain:?}");
+    assert!(deep[2] > shallow[2] + 20, "{deep:?} and {shallow:?}");
+    let under = over_sheets(&mut renderer, vec![sheet_over(-10.0, -10.0)], &view);
+    assert_eq!(under, plain, "under the floor it's not seen");
+}
+
+/// A sloping sheet is as deep as it is where the view meets it.
+#[test]
+fn a_sheet_goes_by_its_own_height_where_it_is_seen() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let view = view_from_above();
+    let flat = over_sheets(&mut renderer, vec![sheet_over(30.0, 30.0)], &view);
+    // It's at 30 at the middle of the map's square, by going from 62 down to -2 over 400 units
+    // from -200, with the middle of the view at 64.
+    let sloped = sheet_over(30.0 + 264.0 * 0.16, 30.0 - 136.0 * 0.16);
+    let sloped = over_sheets(&mut renderer, vec![sloped], &view);
+    assert!(flat[2].abs_diff(sloped[2]) < 12, "{flat:?} and {sloped:?}");
+}
+
+/// With the eye in one, what's seen goes through it from the eye.
+#[test]
+fn an_eye_in_a_sheet_sees_through_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let view = view_from_above();
+    let above = over_sheets(&mut renderer, vec![sheet_over(50.0, 50.0)], &view);
+    let inside = over_sheets(&mut renderer, vec![sheet_over(100.0, 100.0)], &view);
+    // It's 64 units of water to the floor, against 50 from above.
+    assert!(inside[0] + 15 < above[0], "{inside:?} and {above:?}");
+    assert!(inside[2] > above[2], "{inside:?} and {above:?}");
+}
+
+/// Fog stops at a sheet, as it does at a pool.
+#[test]
+fn fog_stops_at_a_sheet() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let green = FogVolume {
+        low: Vec3::new(0.0, 0.0, 1.0),
+        high: Vec3::new(128.0, 128.0, 60.0),
+        color: [0.0, 1.0, 0.0],
+        density: 0.02,
+        ..FogVolume::default()
+    };
+    let fog_over = |renderer: &mut Renderer, sheets: Vec<WaterSheet>| {
+        let mut built = map(1);
+        built.fog_volumes = vec![green];
+        built.water_sheets = sheets;
+        renderer.load_map(Arc::new(built)).expect("load");
+        centre(
+            &renderer
+                .capture(&view_from_above(), Drawables::default(), 64, 64)
+                .expect("capture"),
+        )
+    };
+    let all = fog_over(&mut renderer, Vec::new());
+    let cut = fog_over(&mut renderer, vec![sheet_over(50.0, 50.0)]);
+    assert!(cut[1] + 25 < all[1], "{cut:?} and {all:?}");
+}
+
+/// More bodies than can be looked at are taken nearest first, sheets among them.
+#[test]
+fn sheets_take_their_turn_among_the_pools() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    for at in 0..12 {
+        built.pools.push(Pool {
+            low: Vec3::new(9000.0 + at as f32 * 100.0, 0.0, 0.0),
+            high: Vec3::new(9050.0 + at as f32 * 100.0, 50.0, 50.0),
+            look: blue_look(),
+        });
+    }
+    built.water_sheets = vec![sheet_over(50.0, 50.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let many = centre(
+        &renderer
+            .capture(&view_from_above(), Drawables::default(), 64, 64)
+            .expect("capture"),
+    );
+    let one = over_sheets(
+        &mut renderer,
+        vec![sheet_over(50.0, 50.0)],
+        &view_from_above(),
+    );
+    assert_eq!(many, one);
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

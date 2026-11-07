@@ -449,6 +449,7 @@ impl<'a> MaterialLibrary<'a> {
             let shape = TerrainData {
                 layers: Vec::new(),
                 paint: Vec::new(),
+                water: Vec::new(),
                 ..sheet.data.clone()
             };
             read.push_str(&String::from_utf8_lossy(&write_terrain(&shape)));

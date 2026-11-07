@@ -12,7 +12,7 @@ use engine_client::{
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
-use engine_map::{Contents, Rows, look_around};
+use engine_map::{Contents, Rows};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
     ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
@@ -165,9 +165,8 @@ impl World {
     /// What's at the eye, for the colour of the view.
     pub(super) fn contents_at(&self, eye: Vec3) -> Contents {
         self.map.as_ref().map_or(Contents::Empty, |map| {
-            map.tree
-                .leaf(map.tree.leaf_at(eye))
-                .map_or(Contents::Empty, |leaf| leaf.contents)
+            let leaf = map.tree.leaf(map.tree.leaf_at(eye));
+            map.liquid_or(eye, leaf.map_or(Contents::Empty, |leaf| leaf.contents))
         })
     }
 
@@ -500,7 +499,7 @@ impl World {
         let look = self
             .map
             .as_ref()
-            .and_then(|map| look_around(&map.pools, origin, contents));
+            .and_then(|map| map.look_at(origin, contents));
         self.view_tint
             .set_surroundings(look.map_or([0.0; 4], |look| look.tint));
         self.follow_view_effect(look.map_or(0, |look| look.view_effect), origin);

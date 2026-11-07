@@ -9,8 +9,9 @@ use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
-    MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, Node, NodeChild, OccluderSphere,
-    Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
+    MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
+    OccluderSphere, Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree,
+    WaterSheet, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -29,10 +30,11 @@ use crate::mesh::{
     shared_mesh, with_hit_capsules,
 };
 use crate::source::{
-    Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
+    Brush, BrushFace, DecalSource, EntitySource, StampSource, WaterSource, WorkingMap,
+    contents_named, read_map,
 };
 use crate::stamp::stamp_piece;
-use crate::terrain::{chunk_face, chunk_points};
+use crate::terrain::{TerrainSource, chunk_face, chunk_points};
 use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
 /// A direction, as a map keeps it.
@@ -1009,6 +1011,208 @@ fn field_text(value: &Value) -> String {
     }
 }
 
+/// The water block called `said`, or the one with no name, if there is one. A name nobody gave is
+/// a mistake.
+fn water_named<'a>(
+    working: &'a WorkingMap,
+    said: Option<&str>,
+) -> Result<Option<&'a WaterSource>, CompileError> {
+    let found = working
+        .water
+        .iter()
+        .find(|water| water.name.as_deref() == said);
+    if let (Some(name), None) = (said, found) {
+        return Err(CompileError::Bad(format!("no water is called {name}")));
+    }
+    Ok(found)
+}
+
+/// Has `look` take up what `water` says of it.
+fn take_look(look: &mut PoolLook, water: &WaterSource) {
+    look.color = water.color.unwrap_or(look.color);
+    look.absorption = water.absorption.unwrap_or(look.absorption);
+    look.caustics = water.caustics.unwrap_or(look.caustics);
+    let [red, green, blue, strength] = look.tint;
+    // Water that says its colour is tinted by it, unless it says otherwise.
+    let [red, green, blue] = water.tint.or(water.color).unwrap_or([red, green, blue]);
+    look.tint = [red, green, blue, water.tint_strength.unwrap_or(strength)];
+    look.reflect = water.reflect.unwrap_or(look.reflect);
+    look.waves = water.waves.unwrap_or(look.waves);
+    look.refraction = water.refraction.unwrap_or(look.refraction);
+    look.deep = water.deep.unwrap_or(look.deep);
+    look.view_effect = water.view_effect.as_deref().map_or(0, effect_id);
+}
+
+/// How far apart a sheet's heights are, if its water doesn't say.
+const SHEET_CELL: f32 = 16.0;
+
+/// How far down a sheet goes, if its water doesn't say.
+const SHEET_DEPTH: f32 = 128.0;
+
+/// What a water block makes of a body with a shape: its contents, look, cell and depth.
+fn sheet_look(
+    working: &WorkingMap,
+    said: Option<&str>,
+) -> Result<(Contents, PoolLook, f32, f32), CompileError> {
+    let water = water_named(working, said)?;
+    let contents = match water.and_then(|water| water.contents.as_deref()) {
+        Some(name) => contents_named(name)?,
+        None => Contents::Water,
+    };
+    let Some(mut look) = PoolLook::of(contents) else {
+        return Err(CompileError::Bad(
+            "a body of water has to be liquid".to_owned(),
+        ));
+    };
+    if let Some(water) = water {
+        take_look(&mut look, water);
+    }
+    let cell = water.and_then(|water| water.cell).unwrap_or(SHEET_CELL);
+    let depth = water.and_then(|water| water.depth).unwrap_or(SHEET_DEPTH);
+    Ok((contents, look, cell.max(1.0), depth.max(1.0)))
+}
+
+/// The water on `source`, as a sheet: each sample with water over it, and those beside them at the
+/// height of what's next to them. There the land's over the water, and hides it, which puts the
+/// shore where the two meet, and not on the grid.
+#[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+fn sheet_on_land(working: &WorkingMap, source: &TerrainSource) -> Result<WaterSheet, CompileError> {
+    let (contents, look, _, _) = sheet_look(working, source.water.as_deref())?;
+    let data = &source.data;
+    let across = data.across() as usize;
+    let down = data.heights.len() / across.max(1);
+    let surface = |at: usize| source.origin[2] as f32 + data.heights[at] + data.water[at];
+    let mut heights = vec![NO_WATER; data.heights.len()];
+    for y in 0..down {
+        for x in 0..across {
+            let at = y * across + x;
+            if data.water[at] > 0.0 {
+                heights[at] = surface(at);
+                continue;
+            }
+            let mut sum = 0.0;
+            let mut count = 0.0;
+            for near_y in y.saturating_sub(1)..(y + 2).min(down) {
+                for near_x in x.saturating_sub(1)..(x + 2).min(across) {
+                    let near = near_y * across + near_x;
+                    if data.water[near] > 0.0 {
+                        sum += surface(near);
+                        count += 1.0;
+                    }
+                }
+            }
+            if count > 0.0 {
+                heights[at] = sum / count;
+            }
+        }
+    }
+    let deepest = data.water.iter().copied().fold(0.0, f32::max);
+    Ok(WaterSheet {
+        origin: [source.origin[0] as f32, source.origin[1] as f32],
+        cell: data.cell,
+        size: [data.across(), u32::try_from(down).unwrap_or(0)],
+        heights,
+        // Land is what stops it, so all this has to do is reach.
+        depth: deepest + 1.0,
+        contents,
+        look,
+    })
+}
+
+/// The bodies of liquid made from meshes, each mesh's top as a grid of heights, and from land.
+fn sheets_of(working: &WorkingMap) -> Result<Vec<WaterSheet>, CompileError> {
+    let mut out = Vec::new();
+    for source in &working.terrain {
+        if source.data.water.iter().any(|depth| *depth > 0.0) {
+            out.push(sheet_on_land(working, source)?);
+        }
+    }
+    for (placement, placed) in working.meshes.iter().zip(&working.placed) {
+        let Some(name) = placement.water.as_deref() else {
+            continue;
+        };
+        let (contents, look, cell, depth) = sheet_look(working, Some(name))?;
+        out.extend(
+            sheet_of_triangles(&placed.triangles, cell).map(|(origin, size, heights)| WaterSheet {
+                origin,
+                cell,
+                size,
+                heights,
+                depth,
+                contents,
+                look,
+            }),
+        );
+    }
+    Ok(out)
+}
+
+/// Where `triangles` are, seen from above: the corner of a grid `cell` apart, how many samples it
+/// has, and the highest of them over each. A sample a little past an edge goes by its nearest
+/// neighbour, so that what's drawn reaches the edge.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "grids are small, and these store f32"
+)]
+fn sheet_of_triangles(
+    triangles: &[PlacedTriangle],
+    cell: f32,
+) -> Option<([f32; 2], [u32; 2], Vec<f32>)> {
+    let corners = triangles.iter().flat_map(|triangle| triangle.points);
+    let mut low = [f64::MAX; 2];
+    let mut high = [f64::MIN; 2];
+    for point in corners {
+        for axis in 0..2 {
+            low[axis] = low[axis].min(point[axis]);
+            high[axis] = high[axis].max(point[axis]);
+        }
+    }
+    if low[0] > high[0] {
+        return None;
+    }
+    let cell = f64::from(cell);
+    let size = [
+        ((high[0] - low[0]) / cell).ceil() as u32 + 1,
+        ((high[1] - low[1]) / cell).ceil() as u32 + 1,
+    ];
+    let mut heights = vec![NO_WATER; size[0] as usize * size[1] as usize];
+    for triangle in triangles {
+        let [a, b, c] = triangle.points;
+        let across = (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0]);
+        if across.abs() < 1e-6 {
+            continue;
+        }
+        let least = |axis: usize| a[axis].min(b[axis]).min(c[axis]);
+        let most = |axis: usize| a[axis].max(b[axis]).max(c[axis]);
+        let from = [
+            ((least(0) - low[0]) / cell).floor().max(0.0) as u32,
+            ((least(1) - low[1]) / cell).floor().max(0.0) as u32,
+        ];
+        let to = [
+            (((most(0) - low[0]) / cell).ceil() as u32).min(size[0] - 1),
+            (((most(1) - low[1]) / cell).ceil() as u32).min(size[1] - 1),
+        ];
+        for y in from[1]..=to[1] {
+            for x in from[0]..=to[0] {
+                let (px, py) = (low[0] + f64::from(x) * cell, low[1] + f64::from(y) * cell);
+                let one = ((px - a[0]) * (c[1] - a[1]) - (py - a[1]) * (c[0] - a[0])) / across;
+                let two = ((py - a[1]) * (b[0] - a[0]) - (px - a[0]) * (b[1] - a[1])) / across;
+                // A sample a cell past a corner still takes this triangle's plane, so that an
+                // edge between samples isn't left short.
+                let slack = cell / across.abs().sqrt();
+                if one < -slack || two < -slack || one + two > 1.0 + slack {
+                    continue;
+                }
+                let height = a[2] + (b[2] - a[2]) * one + (c[2] - a[2]) * two;
+                let at = y as usize * size[0] as usize + x as usize;
+                heights[at] = heights[at].max(height as f32);
+            }
+        }
+    }
+    Some(([low[0] as f32, low[1] as f32], size, heights))
+}
+
 /// The bodies of liquid among a map's brushes.
 #[expect(clippy::cast_possible_truncation, reason = "pools store f32")]
 fn pools_of(working: &WorkingMap) -> Result<Vec<Pool>, CompileError> {
@@ -1018,26 +1222,8 @@ fn pools_of(working: &WorkingMap) -> Result<Vec<Pool>, CompileError> {
             continue;
         };
         let said = brush.water.as_deref();
-        let water = working
-            .water
-            .iter()
-            .find(|water| water.name.as_deref() == said);
-        if let (Some(name), None) = (said, water) {
-            return Err(CompileError::Bad(format!("no water is called {name}")));
-        }
-        if let Some(water) = water {
-            look.color = water.color.unwrap_or(look.color);
-            look.absorption = water.absorption.unwrap_or(look.absorption);
-            look.caustics = water.caustics.unwrap_or(look.caustics);
-            let [red, green, blue, strength] = look.tint;
-            // Water that says its colour is tinted by it, unless it says otherwise.
-            let [red, green, blue] = water.tint.or(water.color).unwrap_or([red, green, blue]);
-            look.tint = [red, green, blue, water.tint_strength.unwrap_or(strength)];
-            look.reflect = water.reflect.unwrap_or(look.reflect);
-            look.waves = water.waves.unwrap_or(look.waves);
-            look.refraction = water.refraction.unwrap_or(look.refraction);
-            look.deep = water.deep.unwrap_or(look.deep);
-            look.view_effect = water.view_effect.as_deref().map_or(0, effect_id);
+        if let Some(water) = water_named(working, said)? {
+            take_look(&mut look, water);
         }
         let corners = solid_corners(&brush.planes());
         let Some(first) = corners.first() else {
@@ -1153,7 +1339,14 @@ fn compile_with(
             .collect(),
         ..PlacedMesh::default()
     };
-    let mut world_meshes: Vec<&PlacedMesh> = working.placed.iter().collect();
+    // What's the surface of a body of water is drawn as that, not as a mesh.
+    let is_water = |at: usize| {
+        let placement = working.meshes.get(at);
+        placement.is_some_and(|placement| placement.water.is_some())
+    };
+    let shown = working.placed.iter().enumerate();
+    let shown = shown.filter(|(at, _)| !is_water(*at));
+    let mut world_meshes: Vec<&PlacedMesh> = shown.map(|(_, placed)| placed).collect();
     world_meshes.push(&flame_faces);
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
@@ -1248,6 +1441,7 @@ fn compile_with(
         .filter_map(build_live_light)
         .collect();
     builder.map.pools = pools_of(working)?;
+    builder.map.water_sheets = sheets_of(working)?;
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;
         builder.map.stencils.push(stencil);

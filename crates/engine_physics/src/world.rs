@@ -371,8 +371,9 @@ impl CollisionWorld {
             return Contents::Solid;
         }
         let tree = &self.map.tree;
-        tree.leaf(tree.leaf_at(point))
-            .map_or(Contents::Solid, |leaf| leaf.contents)
+        let held = tree.leaf(tree.leaf_at(point));
+        self.map
+            .liquid_or(point, held.map_or(Contents::Solid, |leaf| leaf.contents))
     }
 
     /// The solids of model `number`.
@@ -521,12 +522,7 @@ impl<'a> Collision<'a> {
     /// What fills `point`.
     #[must_use]
     pub fn contents(&self, point: Vec3) -> PointContents {
-        if in_land(&self.world.map, point) {
-            return PointContents::Solid;
-        }
-        let tree = &self.world.map.tree;
-        let leaf = tree.leaf(tree.leaf_at(point));
-        match leaf.map_or(Contents::Solid, |leaf| leaf.contents) {
+        match self.world.map_contents(point) {
             Contents::Empty | Contents::Sky => PointContents::Empty,
             Contents::Solid => PointContents::Solid,
             Contents::Water => PointContents::Liquid(Liquid::Water),

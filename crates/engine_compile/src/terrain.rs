@@ -21,6 +21,8 @@ pub struct TerrainSource {
     pub material: String,
     /// Its heights, once they've been read.
     pub data: TerrainData,
+    /// Which of a level's waters is on it, or the one with no name.
+    pub water: Option<String>,
 }
 
 /// Reads a `terrain` block.
@@ -42,6 +44,7 @@ pub(crate) fn read_terrain(block: &Block) -> Result<TerrainSource, CompileError>
             .unwrap_or(0.0),
         material: text("material").unwrap_or("ground").to_owned(),
         data: TerrainData::default(),
+        water: text("water").map(str::to_owned),
     })
 }
 
@@ -57,6 +60,8 @@ pub fn write_terrain(data: &TerrainData) -> Vec<u8> {
     block.set("heights", Value::Bytes(bytes.collect()));
     block.set("holes", Value::Bytes(data.holes.clone()));
     block.set("paint", Value::Bytes(data.paint.as_flattened().to_vec()));
+    let water = data.water.iter().flat_map(|depth| depth.to_le_bytes());
+    block.set("water", Value::Bytes(water.collect()));
     document.blocks.push(block);
     for layer in &data.layers {
         let mut block = Block::new("layer");
@@ -129,6 +134,16 @@ pub fn read_terrain_data(bytes: &[u8]) -> Result<TerrainData, CompileError> {
     if layers.len() > MOST_LAND_LAYERS {
         return Err(bad("has too many layers"));
     }
+    let water = block.get("water").and_then(Value::bytes).unwrap_or(&[]);
+    let water: Vec<f32> = water
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .map(|bytes| f32::from_le_bytes(*bytes))
+        .collect();
+    if !water.is_empty() && water.len() != heights.len() {
+        return Err(bad("has the wrong amount of water"));
+    }
     Ok(TerrainData {
         cell,
         cells,
@@ -136,6 +151,7 @@ pub fn read_terrain_data(bytes: &[u8]) -> Result<TerrainData, CompileError> {
         holes: holes.to_vec(),
         layers,
         paint: paint.to_vec(),
+        water,
     })
 }
 

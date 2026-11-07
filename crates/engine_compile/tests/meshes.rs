@@ -26,6 +26,7 @@ fn in_place() -> MeshPlacement {
         scale: [1.0; 3],
         only_seen: false,
         by_probe: false,
+        water: None,
     }
 }
 

@@ -614,6 +614,29 @@ pub(crate) fn paint_terrain(session: &Session, args: &Json) -> Result<Json, Stri
     keep_land(&data, &file)
 }
 
+/// `water_terrain`: makes water on land deeper by `amount`, or shallower if it's negative, or with
+/// `level`, fills what's under the brush up to that height.
+pub(crate) fn water_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let amount = args.get("amount").and_then(Json::as_f64).unwrap_or(8.0) as f32;
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let level = args
+        .get("level")
+        .and_then(Json::as_f64)
+        .map(|level| level as f32);
+    let stroke = level.map_or(
+        engine_map::TerrainStroke::Water(amount),
+        engine_map::TerrainStroke::Flood,
+    );
+    engine_map::stroke_land(&mut data, &land_brush(args)?, stroke);
+    keep_land(&data, &file)
+}
+
 /// `stamp_terrain`.
 pub(crate) fn stamp_terrain(session: &Session, args: &Json) -> Result<Json, String> {
     let name = args

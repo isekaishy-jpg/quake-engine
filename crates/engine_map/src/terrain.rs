@@ -42,6 +42,8 @@ pub struct TerrainData {
     pub layers: Vec<TerrainLayer>,
     /// How much of each layer is at each sample, row by row, if it has layers.
     pub paint: Vec<LandPaint>,
+    /// How deep water is over each sample, row by row, if it has any.
+    pub water: Vec<f32>,
 }
 
 impl TerrainData {
@@ -57,6 +59,7 @@ impl TerrainData {
             holes: vec![0; (cells[0] as usize * cells[1] as usize).div_ceil(8)],
             layers: Vec::new(),
             paint: Vec::new(),
+            water: Vec::new(),
         }
     }
 

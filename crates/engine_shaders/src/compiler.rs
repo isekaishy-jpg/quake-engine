@@ -35,6 +35,12 @@ const ALIAS_SHADER: &str = concat!(
 /// The shader of sprites.
 const SPRITE_SHADER: &str = include_str!("shaders/sprite.wgsl");
 
+/// Where shaped water's surfaces are.
+const WATER_SHADER: &str = concat!(
+    include_str!("shaders/frame.wgsl"),
+    include_str!("shaders/water.wgsl"),
+);
+
 /// What particle code joins.
 const PARTICLE_SHADER: &str = concat!(
     include_str!("shaders/noise.wgsl"),
@@ -172,6 +178,7 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::Field(code) => field_source(code),
+        Module::Water => WATER_SHADER.to_owned(),
         Module::Motion { code, samples } => {
             let source = motion_source(code);
             if *samples {

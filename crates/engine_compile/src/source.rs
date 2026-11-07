@@ -166,6 +166,8 @@ pub struct MeshPlacement {
     /// Whether it's lit from one place, as a small prop is, and not by a light
     /// map of its own.
     pub by_probe: bool,
+    /// Which of a level's waters it's the surface of. It isn't drawn as a mesh, then.
+    pub water: Option<String>,
 }
 
 /// A map as it's edited.
@@ -312,12 +314,18 @@ pub struct WaterSource {
     pub tint_strength: Option<f32>,
     /// How much thicker it gets with each unit of depth.
     pub deep: Option<f32>,
+    /// How far down a body with a shape goes.
+    pub depth: Option<f32>,
+    /// How far apart the heights of a body with a shape are.
+    pub cell: Option<f32>,
+    /// What a body with a shape is, by name.
+    pub contents: Option<String>,
     /// The effect that goes with the view while the eye's in it.
     pub view_effect: Option<String>,
 }
 
 /// What `name` is as contents.
-fn contents_named(name: &str) -> Result<Contents, CompileError> {
+pub(crate) fn contents_named(name: &str) -> Result<Contents, CompileError> {
     match name {
         "solid" => Ok(Contents::Solid),
         "water" => Ok(Contents::Water),
@@ -631,6 +639,7 @@ fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileErro
             .and_then(Value::number)
             .is_some_and(|flag| flag != 0.0),
         by_probe: block.get("light").and_then(Value::text) == Some("probe"),
+        water: block.get("water").and_then(Value::text).map(str::to_owned),
     })
 }
 
@@ -705,6 +714,12 @@ fn read_water(block: &Block) -> WaterSource {
             .then(|| color_of(block, "tint", [0.0; 3])),
         tint_strength: number("tint_strength"),
         deep: number("deep"),
+        depth: number("depth"),
+        cell: number("cell"),
+        contents: block
+            .get("contents")
+            .and_then(Value::text)
+            .map(str::to_owned),
         view_effect: block
             .get("view_effect")
             .and_then(Value::text)

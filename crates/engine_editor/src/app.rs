@@ -113,6 +113,12 @@ pub(crate) enum TerrainTool {
     Fill,
     /// Paints the layer that's chosen.
     Paint,
+    /// Makes the water over land deeper.
+    Water,
+    /// Makes it shallower.
+    Dry,
+    /// Fills what's under the brush up to where the stroke began.
+    Flood,
 }
 
 impl TerrainTool {
@@ -126,6 +132,9 @@ impl TerrainTool {
             Self::Hole => "hole",
             Self::Fill => "fill",
             Self::Paint => "paint",
+            Self::Water => "water",
+            Self::Dry => "dry",
+            Self::Flood => "flood",
         }
     }
 
@@ -136,7 +145,7 @@ impl TerrainTool {
 }
 
 /// Every land tool.
-const LAND_TOOLS: [TerrainTool; 7] = [
+const LAND_TOOLS: [TerrainTool; 10] = [
     TerrainTool::Raise,
     TerrainTool::Lower,
     TerrainTool::Flatten,
@@ -144,6 +153,9 @@ const LAND_TOOLS: [TerrainTool; 7] = [
     TerrainTool::Hole,
     TerrainTool::Fill,
     TerrainTool::Paint,
+    TerrainTool::Water,
+    TerrainTool::Dry,
+    TerrainTool::Flood,
 ];
 
 /// How far a brush goes in a step of a stroke, at full strength.
@@ -1029,6 +1041,9 @@ impl Editor {
             TerrainTool::Hole => TerrainStroke::Hole(true),
             TerrainTool::Fill => TerrainStroke::Hole(false),
             TerrainTool::Paint => TerrainStroke::Paint(self.land_layer, strength * PAINT_STEP),
+            TerrainTool::Water => TerrainStroke::Water(LAND_STEP * strength),
+            TerrainTool::Dry => TerrainStroke::Water(-LAND_STEP * strength),
+            TerrainTool::Flood => TerrainStroke::Flood(level - origin.z),
         };
         stroke_land(&mut land.sheet.data, &brush, stroke);
         if let Some(renderer) = &mut self.renderer

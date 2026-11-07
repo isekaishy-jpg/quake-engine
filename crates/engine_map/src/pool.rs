@@ -98,3 +98,120 @@ pub fn look_around(pools: &[Pool], eye: Vec3, contents: Contents) -> Option<Pool
     let usual = PoolLook::of(liquid)?;
     Some(pools.iter().find(inside).map_or(usual, |pool| pool.look))
 }
+
+/// What a sample of a [`WaterSheet`] holds where there's no water.
+pub const NO_WATER: f32 = f32::MIN;
+
+/// A body of liquid of any shape: a grid of heights, and what's under it. It can't overhang.
+#[derive(Clone, Debug, PartialEq)]
+pub struct WaterSheet {
+    /// Where its first sample is.
+    pub origin: [f32; 2],
+    /// How far apart its samples are.
+    pub cell: f32,
+    /// How many samples it has each way.
+    pub size: [u32; 2],
+    /// Each sample's height, row by row, or [`NO_WATER`].
+    pub heights: Vec<f32>,
+    /// How far down it goes from its surface.
+    pub depth: f32,
+    /// What it is.
+    pub contents: Contents,
+    /// How it looks.
+    pub look: PoolLook,
+}
+
+impl WaterSheet {
+    /// The height of sample `at`, if there's water there.
+    fn sample(&self, at: [u32; 2]) -> Option<f32> {
+        if at[0] >= self.size[0] || at[1] >= self.size[1] {
+            return None;
+        }
+        let number = at[1] as usize * self.size[0] as usize + at[0] as usize;
+        self.heights.get(number).copied().filter(|h| *h > NO_WATER)
+    }
+
+    /// How high its surface is at `x` and `y`, if it's there. Where only some of a cell has water,
+    /// it goes by those that have.
+    #[must_use]
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "held to the grid"
+    )]
+    pub fn height_at(&self, x: f32, y: f32) -> Option<f32> {
+        let across = (x - self.origin[0]) / self.cell;
+        let down = (y - self.origin[1]) / self.cell;
+        if across < 0.0 || down < 0.0 {
+            return None;
+        }
+        let (first, second) = (across.floor(), down.floor());
+        let (part_x, part_y) = (across - first, down - second);
+        let at = [first as u32, second as u32];
+        let mut sum = 0.0;
+        let mut weight = 0.0;
+        for (dx, dy, share) in [
+            (0, 0, (1.0 - part_x) * (1.0 - part_y)),
+            (1, 0, part_x * (1.0 - part_y)),
+            (0, 1, (1.0 - part_x) * part_y),
+            (1, 1, part_x * part_y),
+        ] {
+            if let Some(height) = self.sample([at[0] + dx, at[1] + dy]) {
+                sum += height * share;
+                weight += share;
+            }
+        }
+        (weight > 0.001).then(|| sum / weight)
+    }
+
+    /// Whether `point` is in it.
+    #[must_use]
+    pub fn holds(&self, point: Vec3) -> bool {
+        self.height_at(point.x, point.y)
+            .is_some_and(|top| point.z <= top && point.z >= top - self.depth)
+    }
+
+    /// Its lowest and highest corners.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss, reason = "a grid is well below 2^24")]
+    pub fn bounds(&self) -> (Vec3, Vec3) {
+        let there = self.heights.iter().copied().filter(|h| *h > NO_WATER);
+        let (low, high) = there.fold((f32::MAX, f32::MIN), |(low, high), height| {
+            (low.min(height), high.max(height))
+        });
+        let far = [
+            self.origin[0] + self.size[0].saturating_sub(1) as f32 * self.cell,
+            self.origin[1] + self.size[1].saturating_sub(1) as f32 * self.cell,
+        ];
+        (
+            Vec3::new(self.origin[0], self.origin[1], low - self.depth),
+            Vec3::new(far[0], far[1], high),
+        )
+    }
+
+    /// Its surface as triangles, three corners each. A cell needs water at all four corners.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss, reason = "a grid is well below 2^24")]
+    pub fn triangles(&self) -> Vec<Vec3> {
+        let mut out = Vec::new();
+        let place = |x: u32, y: u32, height: f32| {
+            Vec3::new(
+                self.origin[0] + x as f32 * self.cell,
+                self.origin[1] + y as f32 * self.cell,
+                height,
+            )
+        };
+        for y in 0..self.size[1].saturating_sub(1) {
+            for x in 0..self.size[0].saturating_sub(1) {
+                let corners = [[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]];
+                let [Some(a), Some(b), Some(c), Some(d)] = corners.map(|at| self.sample(at)) else {
+                    continue;
+                };
+                let (a, b) = (place(x, y, a), place(x + 1, y, b));
+                let (c, d) = (place(x + 1, y + 1, c), place(x, y + 1, d));
+                out.extend([a, b, c, a, c, d]);
+            }
+        }
+        out
+    }
+}

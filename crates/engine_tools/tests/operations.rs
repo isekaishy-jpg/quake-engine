@@ -548,6 +548,26 @@ fn the_shaders_that_come_with_the_engine_compile() {
 }
 
 #[test]
+fn water_terrain_puts_water_on_land() {
+    let root = content("water_terrain");
+    let mut session = Session::new(&root);
+    let make = json!({ "name": "pond", "chunks": 1 });
+    run(&mut session, "make_terrain", &make).expect("makes");
+    let file = root.join("terrain/pond.eterrain");
+    let read = || {
+        let bytes = fs::read(&file).expect("reads");
+        engine_compile::read_terrain_data(&bytes).expect("land")
+    };
+    assert!(read().water.is_empty());
+    let circle = json!({ "name": "pond", "at": [100, 100], "radius": 64, "soft": 0, "amount": 9 });
+    run(&mut session, "water_terrain", &circle).expect("runs");
+    assert_eq!(read().water.iter().copied().fold(0.0, f32::max), 9.0);
+    let level = json!({ "name": "pond", "at": [100, 100], "radius": 64, "soft": 0, "level": 30 });
+    run(&mut session, "water_terrain", &level).expect("runs");
+    assert_eq!(read().water.iter().copied().fold(0.0, f32::max), 30.0);
+}
+
+#[test]
 fn check_effects_finds_a_motion_that_is_not_there() {
     let root = content("check_motion");
     fs::create_dir_all(root.join("effects")).expect("directory");

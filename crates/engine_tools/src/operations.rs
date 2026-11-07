@@ -513,6 +513,30 @@ pub const OPERATIONS: &[OperationInfo] = &[
         ],
     },
     OperationInfo {
+        name: "water_terrain",
+        help: "Puts water on land with a circle, or takes it off.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet, by name"),
+            needs(
+                "at",
+                ArgKind::Point,
+                "The circle's middle, from the sheet's low corner",
+            ),
+            needs("radius", ArgKind::Number, "How far it reaches"),
+            may("soft", ArgKind::Number, "How much of it fades, from 0 to 1"),
+            may(
+                "amount",
+                ArgKind::Number,
+                "How much deeper at the middle, or shallower if it's negative",
+            ),
+            may(
+                "level",
+                ArgKind::Number,
+                "A height to fill up to, in place of that, from the sheet's own",
+            ),
+        ],
+    },
+    OperationInfo {
         name: "stamp_terrain",
         help: "Presses one sheet's shape into another, or scatters it over a circle with count.",
         args: &[
@@ -795,6 +819,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "shape_terrain" => features::shape_terrain(session, args),
         "set_terrain_layer" => features::set_terrain_layer(session, args),
         "paint_terrain" => features::paint_terrain(session, args),
+        "water_terrain" => features::water_terrain(session, args),
         "stamp_terrain" => features::stamp_terrain(session, args),
         "copy_terrain" => features::copy_terrain(session, args),
         "check_effects" => features::check_effects(session, args),

@@ -10,7 +10,7 @@ use crate::material::Material;
 use crate::nav::{NavGrid, NavStep, Spline};
 use crate::nav_chunks::ChunkedNav;
 use crate::occluder::ModelOccluder;
-use crate::pool::Pool;
+use crate::pool::{Pool, PoolLook, WaterSheet, look_around};
 use crate::probes::{LightTrack, ProbeGrid};
 use crate::sky::{Fog, FogVolume, Sky};
 use crate::stencil::RayStencil;
@@ -396,6 +396,33 @@ impl Map {
         self.places.iter().find(|place| place.name == name)
     }
 
+    /// The body of liquid of any shape `point` is in, if it's in one.
+    #[must_use]
+    pub fn sheet_at(&self, point: Vec3) -> Option<&WaterSheet> {
+        self.water_sheets.iter().find(|sheet| sheet.holds(point))
+    }
+
+    /// What fills `point`, with what the tree holds there as `tree`: open air is whatever body of
+    /// liquid has it.
+    #[must_use]
+    pub fn liquid_or(&self, point: Vec3, tree: Contents) -> Contents {
+        match tree {
+            Contents::Empty | Contents::Sky => {
+                self.sheet_at(point).map_or(tree, |sheet| sheet.contents)
+            }
+            other => other,
+        }
+    }
+
+    /// How what's round `eye` looks, with `contents` there: a sheet it's in, or a pool.
+    #[must_use]
+    pub fn look_at(&self, eye: Vec3, contents: Contents) -> Option<PoolLook> {
+        match self.sheet_at(eye) {
+            Some(sheet) => Some(sheet.look),
+            None => look_around(&self.pools, eye, contents),
+        }
+    }
+
     /// The moving mesh that the model called `shape` shows, if it is one.
     #[must_use]
     pub fn moving_mesh(&self, shape: &str) -> Option<(usize, &MovingMesh)> {
@@ -641,6 +668,8 @@ pub struct Map {
     pub occluders: Vec<ModelOccluder>,
     /// Bodies of liquid.
     pub pools: Vec<Pool>,
+    /// Bodies of liquid of any shape.
+    pub water_sheets: Vec<WaterSheet>,
     /// Surfaces that shape visible rays.
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.

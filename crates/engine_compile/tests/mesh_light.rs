@@ -76,6 +76,7 @@ fn placed(by_probe: bool) -> MeshPlacement {
         scale: [1.0; 3],
         only_seen: true,
         by_probe,
+        water: None,
     }
 }
 

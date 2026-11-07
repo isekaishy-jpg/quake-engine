@@ -45,6 +45,11 @@ pub enum TerrainStroke {
     Hole(bool),
     /// Brings in this layer, by this share at the brush's middle.
     Paint(usize, f32),
+    /// Makes the water over the land this much deeper at the brush's middle, and shallower if
+    /// that's negative.
+    Water(f32),
+    /// Fills what's under the brush with water up to this height, which leaves it flat.
+    Flood(f32),
 }
 
 /// The samples within reach of `brush`, as low and high columns and rows.
@@ -81,6 +86,9 @@ pub fn stroke_land(data: &mut TerrainData, brush: &TerrainBrush, stroke: Terrain
     let [low_x, low_y, high_x, high_y] = reach_of(data, brush);
     let across = data.across() as usize;
     let before = matches!(stroke, TerrainStroke::Smooth(_)).then(|| data.heights.clone());
+    if matches!(stroke, TerrainStroke::Water(_) | TerrainStroke::Flood(_)) {
+        data.water.resize(data.heights.len(), 0.0);
+    }
     for y in low_y..=high_y {
         for x in low_x..=high_x {
             let weight = weight_at(data, brush, x, y);
@@ -109,6 +117,14 @@ pub fn stroke_land(data: &mut TerrainData, brush: &TerrainBrush, stroke: Terrain
                 TerrainStroke::Paint(layer, share) => {
                     if let Some(paint) = data.paint.get_mut(at) {
                         paint_towards(paint, layer, share.clamp(0.0, 1.0) * weight);
+                    }
+                }
+                TerrainStroke::Water(amount) => {
+                    data.water[at] = (data.water[at] + amount * weight).max(0.0);
+                }
+                TerrainStroke::Flood(height) => {
+                    if weight > 0.5 {
+                        data.water[at] = (height - data.heights[at]).max(0.0);
                     }
                 }
             }

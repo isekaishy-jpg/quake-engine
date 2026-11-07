@@ -40,6 +40,29 @@ brush { material = bog_top contents = water water = bog cuboid = 150 -200 -30 40
 
 A `water` with no name goes for liquid brushes that don't say. A name no block has is an error.
 
+## Any shape
+
+A mesh can be the top of a body of water, so that a river can run downhill. Say so where it's placed, and it's no longer drawn as a mesh:
+
+```text
+water stream { color = [0.03 0.25 0.32] absorption = 0.012 depth = 400 cell = 16 }
+mesh { source = river water = stream }
+```
+
+It's seen, swum in and looked out of as a pool is. `depth` is how far down it goes from its surface, and `cell` how finely its shape is followed, in units. `contents` says if it's `slime` or `lava`. What's under it is a grid of heights, so it can't overhang, and where it falls it wants a `waterfall`.
+
+The 8 bodies nearest the eye show, pools and shaped ones alike.
+
+## On land
+
+Land can have water on it. In the editor the `flood` land tool fills what's under the brush up to where you first pressed, which makes a lake. The `water` and `dry` tools paint how deep it is, for what runs with the land, and `water_terrain` does either from a tool. The land says which water it is:
+
+```text
+terrain { source = hills material = ground water = lake }
+```
+
+The land hides what's under it, so the shore is exactly where the two meet, and a pond in a dip is as wide as the dip.
+
 ## A murky look
 
 Quake's water is a flat warped picture you can hardly see through. For that, turn the rest off, and use a liquid with no material, which swims as the original's does:

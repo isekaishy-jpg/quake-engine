@@ -12,6 +12,7 @@ mod sim;
 mod smaa;
 mod terrain;
 mod upload;
+mod water;
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -44,6 +45,7 @@ use self::deform::{Deform, GpuMoving};
 use self::field::{FieldLayout, GpuField};
 use self::sim::{GpuSims, SIM_PUSH, SimLayout};
 use self::terrain::GpuTerrain;
+use self::water::{GpuWater, make_water_layout, make_water_pass, make_water_pipeline};
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
 use crate::instances::InstanceBatch;
@@ -284,6 +286,8 @@ struct GpuMap {
     particle_pictures: ParticlePictures,
     /// The pipelines of the shaders effects have of their own.
     particle_shaders: Vec<ParticlePipelines>,
+    /// The surfaces of shaped water, if it has any.
+    water: Option<GpuWater>,
     /// What those were made from.
     particle_codes: Vec<Arc<ShaderCode>>,
     /// Particles compute runs, if its effects have any.
@@ -637,6 +641,12 @@ pub(crate) struct Backend {
     sim_blank: Option<GpuImage>,
     /// Whether this frame has fog to go through a step at a time.
     fog_marched: bool,
+    /// The pass the surfaces of shaped water are drawn in.
+    water_pass: RenderPass,
+    /// What their draws are laid out by.
+    water_layout: PipelineLayout,
+    /// How they're drawn.
+    water_pipeline: GraphicsPipeline,
     /// What fields' steps are bound by.
     field_layout: FieldLayout,
     /// The time this frame's field steps are told.
@@ -823,6 +833,7 @@ impl Backend {
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
                 image_binding(9, DescriptorType::SAMPLED_IMAGE),
                 image_binding(10, DescriptorType::SAMPLED_IMAGE),
+                image_binding(11, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -876,6 +887,9 @@ impl Backend {
             ],
         )?;
         let sim_layout = SimLayout::new(&device, &particle_depth_layout)?;
+        let water_pass = make_water_pass(&device)?;
+        let water_layout = make_water_layout(&device, &frame_layout)?;
+        let water_pipeline = make_water_pipeline(&device, &water_layout, &water_pass)?;
         let terrain_set_layout = DescriptorSetLayout::new(
             &device,
             &[
@@ -1088,6 +1102,9 @@ impl Backend {
             sim_layout,
             sim_blank: None,
             fog_marched: false,
+            water_pass,
+            water_layout,
+            water_pipeline,
             field_layout,
             field_time: 0.0,
             moving_overflow: false,
@@ -1441,6 +1458,7 @@ impl Backend {
             self.record_particle_pass(rec, &recorder, scene, target, (size, rest));
         }
         target.drawn.set(true);
+        self.record_water(rec, target);
         self.clock.end(rec, self.slot, Span::Scene);
         // The final pass reads what this wrote.
         rec.memory_barrier(

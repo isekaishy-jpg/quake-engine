@@ -53,6 +53,8 @@ pub enum Module<'a> {
         /// Whether the scene has samples.
         samples: bool,
     },
+    /// Where shaped water's surfaces are.
+    Water,
     /// Moving lights' shadows.
     Shadow,
     /// Edge smoothing.
@@ -96,6 +98,7 @@ impl Module<'_> {
                     code_id(code)
                 )
             }
+            Self::Water => "water".to_owned(),
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
             Self::Deform => "deform".to_owned(),
@@ -193,6 +196,7 @@ pub fn all_modules<'a>(
         Module::Shadow,
         Module::Smaa,
         Module::Deform,
+        Module::Water,
         Module::PlainSurface,
         Module::Surface(""),
         Module::Surface(BROKEN),

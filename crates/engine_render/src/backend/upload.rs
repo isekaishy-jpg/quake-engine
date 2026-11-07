@@ -6,7 +6,7 @@ use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasModel, BOUNCE_STYLE, Fog, FogVolume, Look, Map, Material, MipLevel, PixelForm, Pool,
-    ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
+    ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind, WaterSheet,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -293,6 +293,8 @@ pub(super) struct FrameExtras<'a> {
     light_shift: [f32; 3],
     /// Bodies of liquid.
     pools: &'a [Pool],
+    /// Bodies of liquid with a shape.
+    sheets: &'a [WaterSheet],
     /// Fog in places.
     fog_volumes: &'a [FogVolume],
     /// The lights that move, for those in fog.
@@ -389,11 +391,8 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     let capsule_count = shown as f32;
     out[base + 128] = capsule_count;
     let base = base + 132;
-    let mut pools: Vec<&Pool> = extra.pools.iter().collect();
-    let distance = |pool: &Pool| (((pool.low + pool.high) * 0.5) - extra.eye).length();
-    pools.sort_by(|a, b| distance(a).total_cmp(&distance(b)));
-    pools.truncate(MAX_POOLS);
-    for (index, pool) in pools.iter().enumerate() {
+    let bodies = nearest_bodies(extra.pools, extra.sheets, extra.eye);
+    for (index, (pool, _)) in bodies.iter().enumerate() {
         let at = base + index * 4;
         out[at..at + 4].copy_from_slice(&[
             pool.low.x,
@@ -415,13 +414,20 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         out[at] = pool.look.waves;
         out[at + 1] = pool.look.refraction;
         out[at + 2] = pool.look.deep;
+        out[at + 3] = f32::from(u8::from(bodies[index].1.is_some()));
     }
     let base = base + MAX_POOLS * 16;
     #[expect(clippy::cast_precision_loss, reason = "eight at most")]
-    let pool_count = pools.len() as f32;
+    let pool_count = bodies.len() as f32;
     out[base] = pool_count;
     out[base + 1] = post.detail_distance;
     out[base + 2] = f32::from(u8::from(extra.under_sky));
+    let holding = bodies
+        .iter()
+        .position(|(_, sheet)| sheet.is_some_and(|sheet| extra.sheets[sheet].holds(extra.eye)));
+    #[expect(clippy::cast_precision_loss, reason = "eight at most")]
+    let holding = holding.map_or(0.0, |at| at as f32 + 1.0);
+    out[base + 3] = holding;
     if let Some(probes) = extra.probes {
         out[base + 4..base + 8].copy_from_slice(&[
             probes.origin.x,
@@ -440,6 +446,32 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 16..base + 19].copy_from_slice(&[1.0 + red, 1.0 + green, 1.0 + blue]);
     fog_values(&mut out[base + 20..], extra);
     out
+}
+
+/// The bodies of liquid nearest `eye`, as pools, with which sheet each is, if it's one.
+pub(super) fn nearest_bodies(
+    pools: &[Pool],
+    sheets: &[WaterSheet],
+    eye: Vec3,
+) -> Vec<(Pool, Option<usize>)> {
+    let boxed = pools.iter().map(|pool| (*pool, None));
+    let shaped = sheets.iter().enumerate().map(|(number, sheet)| {
+        let (low, high) = sheet.bounds();
+        let look = sheet.look;
+        (Pool { low, high, look }, Some(number))
+    });
+    let mut bodies: Vec<(Pool, Option<usize>)> = boxed.chain(shaped).collect();
+    let distance = |pool: &Pool| {
+        let nearest = Vec3::new(
+            eye.x.clamp(pool.low.x, pool.high.x),
+            eye.y.clamp(pool.low.y, pool.high.y),
+            eye.z.clamp(pool.low.z, pool.high.z),
+        );
+        (nearest - eye).length()
+    };
+    bodies.sort_by(|a, b| distance(&a.0).total_cmp(&distance(&b.0)));
+    bodies.truncate(MAX_POOLS);
+    bodies
 }
 
 /// Fog's part of the frame uniforms.
@@ -761,6 +793,7 @@ impl Backend {
         let terrain = self.upload_terrain(map, mesh.chunk_lights.clone())?;
         let fields = self.upload_fields(map)?;
         let sims = self.upload_sims(map, &fields)?;
+        let water = self.upload_water(map)?;
         let particle_pictures = self.upload_particle_pictures(map)?;
         let particle_shaders = self.upload_particle_shaders(&map.effect_shaders)?;
         let shadow_instances = map
@@ -1017,6 +1050,7 @@ impl Backend {
             particle_pictures,
             particle_shaders,
             particle_codes: map.effect_shaders.clone(),
+            water,
             fields,
             terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
@@ -1332,6 +1366,7 @@ impl Backend {
             masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
+            sheets: scene.map_or(&[][..], |scene| scene.map.water_sheets.as_slice()),
             fog_volumes: scene.map_or(&[][..], |scene| scene.map.fog_volumes.as_slice()),
             fog_lights: scene.map_or(&[][..], |scene| scene.drawables.live_lights),
             eye: view.origin,
@@ -1342,6 +1377,7 @@ impl Backend {
             light_shift: view.light_shift,
         };
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);
+        self.plan_water(extra.pools, extra.sheets, view.origin);
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         let slot = self.slot;
         let values = &mut self.frame_values[slot];

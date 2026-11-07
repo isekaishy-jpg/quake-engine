@@ -12,6 +12,8 @@
 @group(0) @binding(8) var probe_slices: texture_2d<f32>;
 @group(0) @binding(9) var smaa_weights: texture_2d<f32>;
 @group(0) @binding(10) var ray_light: texture_2d<f32>;
+// Where shaped water's surfaces are: how far, which body, plus one, and how it slopes.
+@group(0) @binding(11) var water_surface: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -474,14 +476,35 @@ fn box_span(ray: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> vec2<f32> {
     );
 }
 
-// How much of a ray is in the air: fog stops where it enters a pool.
-fn share_in_air(ray: vec3<f32>) -> f32 {
+// What's on the surface of shaped water at `uv`.
+fn surface_at(uv: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(water_surface));
+    let at = clamp(vec2<i32>(uv * size), vec2<i32>(0), vec2<i32>(size) - vec2<i32>(1));
+    return textureLoad(water_surface, at, 0);
+}
+
+// How much of a ray at `uv` is in the air: fog stops where it enters a pool.
+fn share_in_air(ray: vec3<f32>, uv: vec2<f32>) -> f32 {
     var share = 1.0;
     let count = i32(frame.pool_params.x);
+    var shaped = false;
     for (var index = 0; index < count; index = index + 1) {
+        if frame.pool_surface[index].w > 0.5 {
+            shaped = true;
+            continue;
+        }
         let span = box_span(ray, frame.pool_low[index].xyz, frame.pool_high[index].xyz);
         if span.y > span.x {
             share = min(share, span.x);
+        }
+    }
+    if frame.pool_params.w > 0.5 {
+        return 0.0;
+    }
+    if shaped {
+        let surface = surface_at(uv);
+        if surface.y > 0.5 {
+            share = min(share, surface.x / max(length(ray), 0.001));
         }
     }
     return share;
@@ -496,7 +519,7 @@ fn fogged(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32>
     }
     let far = world_at(uv, min(depth, 0.99999));
     let whole = far - frame.eye.xyz;
-    let ray = whole * share_in_air(whole);
+    let ray = whole * share_in_air(whole, uv);
     var color = start;
     if density > 0.0 {
         color = level_fogged(color, ray, jitter);
@@ -593,16 +616,38 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
     let far = world_at(uv, min(depth, 0.9999));
     let ray = far - eye;
     let count = i32(frame.pool_params.x);
+    let reach = max(length(ray), 0.001);
+    let surface = surface_at(uv);
     for (var index = 0; index < count; index = index + 1) {
         let low = frame.pool_low[index];
         let high = frame.pool_high[index];
-        let span = box_span(ray, low.xyz, high.xyz);
-        let enter = span.x;
-        let leave = span.y;
+        let surface_look = frame.pool_surface[index];
+        let shaped = surface_look.w > 0.5;
+        let on_it = shaped && abs(surface.y - f32(index + 1)) < 0.5;
+        let eye_in = abs(frame.pool_params.w - f32(index + 1)) < 0.5;
+        var enter = 0.0;
+        var leave = 0.0;
+        var top = high.z;
+        if !shaped {
+            let span = box_span(ray, low.xyz, high.xyz);
+            enter = span.x;
+            leave = span.y;
+        } else if eye_in {
+            // Out through the surface, if that comes first, and the far side of it isn't water.
+            leave = 1.0;
+            if on_it {
+                leave = min(surface.x / reach, 1.0);
+                top = (eye + ray * leave).z;
+            }
+        } else if on_it {
+            enter = min(surface.x / reach, 1.0);
+            leave = 1.0;
+            top = (eye + ray * enter).z;
+        }
         if leave <= enter {
             continue;
         }
-        let path = (leave - enter) * length(ray);
+        let path = (leave - enter) * reach;
         // A ray that stops on an opaque liquid's surface only touches its box,
         // and rounding says which side of it each pixel lands. Going by that
         // would flicker as the view moves, so a touch doesn't count.
@@ -612,23 +657,26 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
         // A view from above meets the surface first, which bends what's seen
         // through it, and mirrors what's over it.
         let entry = eye + ray * enter;
-        let from_above = eye.z > high.z && abs(entry.z - high.z) < 1.0;
-        let surface_look = frame.pool_surface[index];
+        let from_above = (eye.z > high.z && abs(entry.z - high.z) < 1.0) || (on_it && !eye_in);
         var normal = vec3<f32>(0.0, 0.0, 1.0);
         if from_above {
             normal = water_normal(entry.xy, surface_look.x);
-            color = bent_through(color, uv, normal, surface_look.y, high.z);
+            if on_it {
+                normal = normalize(normal - vec3<f32>(surface.zw, 0.0));
+            }
+            color = bent_through(color, uv, normal, surface_look.y, top);
         }
-        let inside = all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0));
+        let inside = (all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0)))
+            || on_it;
         if inside && depth < 1.0 && high.w > 0.0 {
-            let below = high.z - far.z;
-            let pattern = caustic(surface_above(far, high.z));
+            let below = top - far.z;
+            let pattern = caustic(surface_above(far, top));
             let reach = exp(-below / 320.0);
             color = color * (1.0 + pattern * high.w * 3.0 * reach);
         }
         // Depth changes evenly along a ray, so its middle gives the whole of it exactly.
         let leaving = eye + ray * leave;
-        let depth_in = max(high.z - (entry.z + leaving.z) * 0.5, 0.0);
+        let depth_in = max(top - (entry.z + leaving.z) * 0.5, 0.0);
         let thick = low.w * (1.0 + surface_look.z * depth_in);
         color = mix(color, frame.pool_color[index].rgb, 1.0 - exp(-path * thick));
         if high.w > 0.0 {
@@ -636,8 +684,8 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
             for (var step = 0; step < 8; step = step + 1) {
                 let share = mix(enter, leave, (f32(step) + 0.5) / 8.0);
                 let point = eye + ray * share;
-                let below = high.z - point.z;
-                shafts = shafts + caustic(surface_above(point, high.z)) * exp(-below / 200.0);
+                let below = top - point.z;
+                shafts = shafts + caustic(surface_above(point, top)) * exp(-below / 200.0);
             }
             let amount = shafts / 8.0 * min(path / 256.0, 1.0) * high.w;
             color = color + frame.pool_color[index].rgb * amount * 2.5;
@@ -827,7 +875,7 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
         color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
     }
     let whole = stop - frame.eye.xyz;
-    let ray = whole * share_in_air(whole);
+    let ray = whole * share_in_air(whole, in.uv);
     let fog = volumes_marched(ray, noise);
     // Rays show up in what's in the air.
     var through = fog.w;
