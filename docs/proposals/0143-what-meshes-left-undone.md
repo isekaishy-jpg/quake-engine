@@ -1,0 +1,52 @@
+# Proposal 0143: what meshes left undone
+
+Status: proposed, 2026-11-07, from [what meshes left undone](../research/mesh-limits.md). The human's rule for this: a limit is a research target, and for what we don't have, research decides if it's needed, and what's likely to be wanted later gets done now.
+
+This has a design for each target, and each is reviewed below as it lands.
+
+## Design
+
+### The depth pass
+
+Solid parts of copies and moving meshes go through the depth pass, by the rule faces have, and their main draw then doesn't write depth. Masked parts, parts whose shader moves the surface, and details that fade stay out. `vs_mesh` runs the same maths in both, and `clip` is invariant, so the two agree.
+
+The fixture's models stay out. Their pixels are one texture read, and what a depth pass saves goes by what a pixel costs.
+
+### Fixes with no open question
+
+- **Static copies with rest weights:** applied at compile time to what a copy draws.
+- **Parents before children:** `follow_attachments` goes in order, with a loop broken rather than followed.
+- **The turn in places and effects:** `point_on`, and an effect on a model.
+- **Eight morphs:** only what's set is sent.
+
+### Measure, then decide
+
+A copy's triangles on the CPU, and what posing costs the CPU.
+
+### Building
+
+- **A coarse level moves fewer corners:** corners sorted coarsest level first, so that a level is the first so many, and the compute pass stops there.
+- **Hit volumes on joints:** capsules named on joints, tested by `traceline` after the box says it's near. Movement keeps its box.
+- **UV targets:** the UV stream moved for the meshes that have them.
+- **Sorting what's see-through:** with the world's, in its far to near list, which is there already.
+
+### Research still to do
+
+Tangents, vertex colours, colour targets, and rewinding for shots. Each gets a decision from research.
+
+### Trying
+
+Clips with `net_fake_loss` at 2%, and a client joining part-way through a clip.
+
+## Review
+
+### The depth pass
+
+Built as designed. 24 of the test arm overlapping in the proving ground, against the build before, five runs each in turn, taking the lowest as a GPU's clocks move the rest about:
+
+| | Before | After |
+|---|---|---|
+| Moving meshes drawn | 0.370 ms | 0.141 ms |
+| The whole scene | 1.293 ms | 0.736 ms |
+
+So it nearly halves the scene, depth pass included. Pictures of the arms are as they were. `a_moving_mesh_hides_what_is_drawn_after_it` fails if a mesh is left out of the depth pass but still doesn't write depth, with the model behind showing through.

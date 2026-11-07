@@ -184,6 +184,7 @@
     - [0140: meshes at run time](proposals/0140-meshes-at-run-time.md)
     - [0141: Vulkan 1.3](proposals/0141-vulkan-1-3.md)
     - [0142: the fixture's models on the mesh path](proposals/0142-the-fixtures-models-on-the-mesh-path.md)
+    - [0143: what meshes left undone](proposals/0143-what-meshes-left-undone.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

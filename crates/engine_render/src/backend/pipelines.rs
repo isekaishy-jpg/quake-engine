@@ -258,6 +258,7 @@ impl Backend {
                 .alpha_blending(true)
                 .build(device)?,
             mesh_opaque: mesh("fs_material").depth_test(true, true).build(device)?,
+            mesh_after_depth: mesh("fs_material").depth_test(true, false).build(device)?,
             mesh_masked: mesh("fs_masked").depth_test(true, true).build(device)?,
             mesh_blended: mesh("fs_material")
                 .depth_test(true, false)
@@ -308,8 +309,19 @@ impl Backend {
             .depth_test(true, true)
             .samples(samples)
             .build(device)?;
+        let mesh_depth = GraphicsPipelineBuilder::new(&layouts.material, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_mesh")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_depth")
+            .vertex_input(&mesh_bindings, &mesh_attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .color_writes(false)
+            .samples(samples)
+            .build(device)?;
         Ok(Pipelines {
             mesh_hull,
+            mesh_depth,
             depth_only,
             plain_after_depth,
             sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)

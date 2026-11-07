@@ -92,12 +92,12 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 
 - **Now:** UV targets aren't read. Meshes have no vertex colours at all, so colour targets have nothing to change.
 - **What's known:** glTF asks a client for position, normal and tangent, so UVs and colours are extra. [There's a test model for `COLOR_0`](https://www.github.com/cx20/gltf-test/blob/master/tutorialModels/VertexColorTest). What a colour target means [isn't agreed between tools](https://forum.nomadsculpt.com/t/morph-target-colors-arent-additive-but-replacing/6430), and [loaders have failed on them](https://forum.babylonjs.com/t/c4d-animation-gltf-load-error/11384).
-- **For us:** now UVs have their own stream, a UV target can be done by moving that stream for the meshes that have them. Vertex colours are a real feature with a real use, such as tinting and blending: they want their own stream and a look in the material shader. **Colour targets are worth leaving out** until tools agree on what they mean, and then it's a sentence in the standard and not a limit.
+- **For us:** now UVs have their own stream, a UV target can be done by moving that stream for the meshes that have them. Vertex colours are a real feature with a real use, such as tinting and blending: they want their own stream and a look in the material shader. Colour targets are for research to decide, with vertex colours.
 
 ## Tangents
 
 - **Now:** glTF asks a client for tangent targets, and they aren't read.
-- **For us:** this isn't a gap. The engine has no tangents. It works them out from screen derivatives, from position and UV, so they follow any morph with no help. There's nothing to read them into, and they'd do nothing. The limit should go from the list.
+- **For us:** the engine has no tangents. It works them out from screen derivatives, from position and UV, so they follow any morph with no help. Whether it should have real ones is a separate question, for research to decide.
 
 ## See-through copies
 
@@ -134,6 +134,5 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 - **Measure, then decide:** a copy's triangles on the CPU, and what posing costs the CPU.
 - **Building:** a coarse level moving fewer corners, hit volumes on joints, UV targets, vertex colours, sorting what's see-through.
 - **Trying:** clips on a bad network.
-- **Not limits after all:** tangents, as the engine has none to change. Colour targets, until tools agree.
-- **Bigger than meshes:** rewinding for shots online covers every entity, so it goes to the network's own list if it's wanted.
+- **What we don't have:** tangents, vertex colours, colour targets, and rewinding for shots. The human's rule is that research decides if they're needed, and what's likely to be wanted later gets done now. None of them goes to another list.
 - **Item 12:** with this done the human moved the fixture's models over, in [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). So the comparison above, of two paths, is history now.

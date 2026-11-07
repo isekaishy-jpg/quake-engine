@@ -2,13 +2,13 @@
 
 use engine_core::math::Vec3;
 use engine_map::{Map, Shading};
-use vulkane::safe::ShaderStageFlags;
+use vulkane::safe::{GraphicsPipeline, ShaderStageFlags};
 
 use super::clock::{GpuClock, Span};
 use super::deform::{bind_figure, bind_moving};
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuSprite, INDEX_TYPE_U32,
-    Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene,
+    Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene, SurfacePipelines,
 };
 use crate::instances::InstanceBatch;
 use crate::renderer::View;
@@ -175,16 +175,72 @@ impl Recorder<'_> {
     /// that fades can discard pixels, so its depth can't be known ahead of it, and
     /// nor can that of a shader that moves its surface.
     fn depth_first(&self, map: &Map, batch: &Batch) -> bool {
+        batch.kind == BatchKind::Material && self.texture_depth_first(map, batch.texture)
+    }
+
+    /// Whether a mesh's part goes through the depth pass, by the same rule as a face.
+    fn part_depth_first(&self, map: &Map, texture: u32) -> bool {
+        let kind = map.textures.get(texture as usize).and_then(batch_kind);
+        kind == Some(BatchKind::Material) && self.texture_depth_first(map, texture)
+    }
+
+    /// Whether what's solid with `texture` can have its depth drawn ahead of it.
+    fn texture_depth_first(&self, map: &Map, texture: u32) -> bool {
         let fades = map
             .textures
-            .get(batch.texture as usize)
+            .get(texture as usize)
             .and_then(|texture| texture.material.as_ref())
             .is_some_and(|material| material.detail_fade);
-        let shader = self.map.texture_shaders.get(batch.texture as usize);
+        let shader = self.map.texture_shaders.get(texture as usize);
         let surface = shader.and_then(|shader| self.pipelines.surfaces.get(*shader));
-        batch.kind == BatchKind::Material
-            && !fades
-            && surface.is_some_and(|surface| surface.after_depth_safe)
+        !fades && surface.is_some_and(|surface| surface.after_depth_safe)
+    }
+
+    /// Records the depth of meshes. Their pixels cost as much as a face's, and they overlap more.
+    fn record_mesh_depth(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+    ) {
+        let map = self.map;
+        rec.bind_graphics_pipeline(&self.pipelines.mesh_depth);
+        rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set]);
+        for batch in self.instance_batches {
+            let Some(mesh) = map.shared_meshes.get(batch.mesh as usize) else {
+                continue;
+            };
+            let Some(parts) = mesh.levels.get(batch.level as usize) else {
+                continue;
+            };
+            rec.bind_vertex_buffers(
+                0,
+                &[
+                    (&mesh.places.buffer, 0),
+                    (&mesh.uvs.buffer, 0),
+                    (&self.instances.buffer, 0),
+                ],
+            );
+            rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
+            for part in parts {
+                if self.part_depth_first(scene.map, part.texture) {
+                    rec.draw_indexed(part.count, batch.count, part.first, 0, batch.first);
+                }
+            }
+        }
+        let moving = &map.moving;
+        for job in moving.jobs(self.slot).iter().filter(|job| job.in_view) {
+            let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
+                continue;
+            };
+            if bind_moving(rec, moving, job, self.slot, true).is_none() {
+                continue;
+            }
+            for part in &mesh.parts {
+                if self.part_depth_first(scene.map, part.texture) {
+                    rec.draw_indexed(part.count, 1, part.first, 0, job.instance);
+                }
+            }
+        }
     }
 
     /// Records everything in `scene`.
@@ -278,6 +334,7 @@ impl Recorder<'_> {
                 rec.draw_indexed(range.count, 1, first, 0, 0);
             }
         }
+        self.record_mesh_depth(rec, scene);
     }
 
     /// Records the world and brush models: what's see-through, or the rest.
@@ -477,7 +534,7 @@ impl Recorder<'_> {
                 let Some(surface) = self.pipelines.surfaces.get(shader) else {
                     continue;
                 };
-                rec.bind_graphics_pipeline(surface.mesh(kind));
+                rec.bind_graphics_pipeline(self.mesh_pipeline(scene, surface, kind, part.texture));
                 rec.bind_graphics_descriptor_sets(
                     &self.layouts.material,
                     0,
@@ -492,6 +549,21 @@ impl Recorder<'_> {
         self.record_moving(rec, scene, step, see_through);
         if !see_through {
             self.clock.end(rec, self.slot, Span::Moving);
+        }
+    }
+
+    /// The pipeline for a mesh's part, which needn't write depth if that's been drawn.
+    fn mesh_pipeline<'p>(
+        &self,
+        scene: &Scene<'_>,
+        surface: &'p SurfacePipelines,
+        kind: BatchKind,
+        texture: u32,
+    ) -> &'p GraphicsPipeline {
+        if self.part_depth_first(scene.map, texture) {
+            &surface.mesh_after_depth
+        } else {
+            surface.mesh(kind)
         }
     }
 
@@ -535,7 +607,7 @@ impl Recorder<'_> {
                 let Some(surface) = self.pipelines.surfaces.get(shader.unwrap_or(0)) else {
                     continue;
                 };
-                rec.bind_graphics_pipeline(surface.mesh(kind));
+                rec.bind_graphics_pipeline(self.mesh_pipeline(scene, surface, kind, part.texture));
                 rec.bind_graphics_descriptor_sets(
                     &self.layouts.material,
                     0,

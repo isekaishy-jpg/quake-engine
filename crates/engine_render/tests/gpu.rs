@@ -2806,6 +2806,53 @@ fn a_figure_out_of_view_still_casts_a_shadow() {
     assert!(blocked + 5000 < open, "{open} {blocked}");
 }
 
+/// A mesh's depth goes in ahead of it, and it doesn't write any of its own, so whatever comes
+/// after has to find it there.
+#[test]
+fn a_moving_mesh_hides_what_is_drawn_after_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(false)))
+        .expect("load");
+    let number = renderer.add_model(Arc::new(triangle())).expect("add");
+    let below = EntityDraw {
+        origin: Vec3::new(14.0, 14.0, 16.0),
+        ..draw_of(number)
+    };
+    let entities = [below];
+    let alone = renderer
+        .capture(&view_from_above(), with_entity(&entities), 64, 64)
+        .expect("capture");
+    let draws = [MovingDraw {
+        joint_count: 2,
+        rows: NO_MOVE,
+        center: Vec3::new(64.0, 64.0, 32.0),
+        radius: 200.0,
+        ..MovingDraw::default()
+    }];
+    let drawables = Drawables {
+        entities: &entities,
+        moving: &draws,
+        palette: &[NO_MOVE, NO_MOVE],
+        ..Drawables::default()
+    };
+    let both = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    assert!(
+        centre(&alone)[0] > 100,
+        "the model shows: {:?}",
+        centre(&alone)
+    );
+    assert!(
+        centre(&both)[0] < 10,
+        "the mesh is over it: {:?}",
+        centre(&both)
+    );
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

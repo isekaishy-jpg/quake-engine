@@ -381,6 +381,8 @@ struct SurfacePipelines {
     blended: GraphicsPipeline,
     /// Copies of a shared mesh that are opaque.
     mesh_opaque: GraphicsPipeline,
+    /// Copies of a shared mesh that are opaque, with their depth already drawn.
+    mesh_after_depth: GraphicsPipeline,
     /// Copies of a shared mesh with holes.
     mesh_masked: GraphicsPipeline,
     /// Copies of a shared mesh that are see-through.
@@ -421,6 +423,8 @@ struct Pipelines {
     surfaces: Vec<SurfacePipelines>,
     /// The outline of what moves.
     mesh_hull: GraphicsPipeline,
+    /// The depth of meshes.
+    mesh_depth: GraphicsPipeline,
     /// The fixture's models.
     alias: GraphicsPipeline,
     /// Sprites.
