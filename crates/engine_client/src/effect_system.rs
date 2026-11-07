@@ -112,12 +112,33 @@ struct Going {
     owed: Vec<f32>,
     /// Whether each emitter's burst has gone.
     burst: Vec<bool>,
-    /// What it's following, if it's anything: an entity by number.
+    /// What it's following, if it's anything: an entity by number, or a model by
+    /// [`follow_model`].
     follows: Option<u64>,
+    /// Where it is on a model that hasn't moved, if it's following one.
+    rest: Option<Vec3>,
     /// A number that makes this one differ from the next.
     seed: u32,
     /// Whether it goes on until it's told to stop.
     lasting: bool,
+}
+
+/// What an effect follows to go with `model`. A model isn't an entity, so it has numbers of its
+/// own, which `place` gives how far it's moved for.
+#[must_use]
+pub const fn follow_model(model: u32) -> u64 {
+    (1 << 63) | model as u64
+}
+
+/// The model that `follows` means, if it means one.
+#[must_use]
+pub const fn followed_model(follows: u64) -> Option<u32> {
+    if follows >> 63 == 1 {
+        #[expect(clippy::cast_possible_truncation, reason = "it was a u32 going in")]
+        Some(follows as u32)
+    } else {
+        None
+    }
 }
 
 /// Every effect going.
@@ -191,6 +212,16 @@ impl EffectSystem {
         range[0] + (range[1] - range[0]) * self.random()
     }
 
+    /// Starts the effect with the hash `id`, going until the level does, on `model`, at
+    /// `origin` when that hasn't moved.
+    pub fn start_on_model(&mut self, id: u32, origin: Vec3, model: u32) {
+        let before = self.going.len();
+        self.start(id, origin, Some(follow_model(model)), true);
+        if let Some(effect) = self.going.get_mut(before) {
+            effect.rest = Some(origin);
+        }
+    }
+
     /// Starts the effect with the hash `id` at `origin`. It ends when it runs out,
     /// or goes on until the level does if `lasting`. With `follows`, it goes where
     /// that entity does.
@@ -210,6 +241,7 @@ impl EffectSystem {
             owed: vec![0.0; count],
             burst: vec![false; count],
             follows,
+            rest: None,
             seed: self.seed,
             lasting,
         });
@@ -290,7 +322,7 @@ impl EffectSystem {
         let mut going = std::mem::take(&mut self.going);
         for effect in &mut going {
             if let Some(origin) = effect.follows.and_then(place) {
-                effect.origin = origin;
+                effect.origin = effect.rest.map_or(origin, |rest| rest + origin);
             }
             effect.age += seconds;
             let def = Arc::clone(&effect.def);

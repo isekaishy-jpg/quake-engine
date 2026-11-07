@@ -167,6 +167,17 @@ pub struct MeshGroup {
     pub placement: Option<u32>,
 }
 
+/// A named place that things can be put at or follow (proposal 0140).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct AttachPoint {
+    /// What it's called.
+    pub name: String,
+    /// Where it is.
+    pub origin: Vec3,
+    /// Its pitch, yaw and roll in degrees.
+    pub angles: Vec3,
+}
+
 /// A corner of a [`SharedMesh`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MeshCorner {
@@ -218,6 +229,22 @@ pub struct MeshInstance {
     pub first_face: u32,
     /// How many faces it has.
     pub face_count: u32,
+}
+
+impl Map {
+    /// The named place `name` in the level.
+    #[must_use]
+    pub fn place(&self, name: &str) -> Option<&AttachPoint> {
+        self.places.iter().find(|place| place.name == name)
+    }
+
+    /// Which of [`Map::model_points`] is `name` on `model`.
+    #[must_use]
+    pub fn model_point(&self, model: u32, name: &str) -> Option<usize> {
+        self.model_points
+            .iter()
+            .position(|(on, point)| *on == model && point.name == name)
+    }
 }
 
 impl MeshInstance {
@@ -365,6 +392,11 @@ pub struct Map {
     pub faces: Vec<Face>,
     /// Each placed mesh's faces.
     pub mesh_groups: Vec<MeshGroup>,
+    /// Named places in the level, from `point` blocks and what placed meshes have.
+    pub places: Vec<AttachPoint>,
+    /// Named places on models that can move, with which model each is on, where each is when
+    /// the model hasn't moved.
+    pub model_points: Vec<(u32, AttachPoint)>,
     /// Meshes kept once, for placements to share.
     pub shared_meshes: Vec<SharedMesh>,
     /// What's drawn from them.

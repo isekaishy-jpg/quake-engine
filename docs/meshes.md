@@ -40,6 +40,34 @@ target/release/engine-tool content - make_levels "{\"name\":\"well\"}"
 
 A copy goes to a coarser level when it fills less of the view's height: a quarter, a tenth and 3%, or what a `levels { sizes = [...] }` block in the file says. That's the same at any resolution. Only copies have levels, so a mesh with its own light map draws its finest.
 
+## Attach points
+
+A place on a model that things can be put at or held to: where a flame sits on a brazier, or a muzzle on a gun. In Blender, add an empty called `attach_<name>`. It's a place facing along its +X, as a model does once it's in.
+
+Name a placement, and its places can be found by `<placement>.<name>`:
+
+```text
+mesh { source = brazier name = left origin = 0 0 0 }
+entity { type = effect effect = campfire attach = left.bowl }
+```
+
+A map or a prefab can have a place with no model:
+
+```text
+point { name = gate origin = 100 0 32 angles = 0 90 0 }
+```
+
+An entity with `attach = <place>` starts there. A place that isn't there stops the level compiling, as it's a mistake. In a prefab, a copy finds its own places first, so two braziers don't share a flame.
+
+To follow something that moves, add `attach_to`, with the name of an entity whose model has that place. Things and effects both go with it:
+
+```text
+entity { type = func_door name = lift mesh = cage }
+entity { type = effect effect = campfire attach = lamp attach_to = lift }
+```
+
+Scripts have `engine.place(name)`, `engine.attach_point(entity, name)`, which both give an origin and angles, or nothing, and `engine.attach(entity, parent, name)` and `engine.detach(entity)`. What's held moves at the end of a tick, after everything else, so it doesn't lag. If what holds it goes, it stays where it was.
+
 ## What's in a `.emesh`
 
 A document, binary from import, and text if a script writes it. Each `part` has a `material`, `points`, `uvs` and `triangles`, and can have `normals`, one to a corner. With none, they're worked out from the shape: smooth, except where two triangles turn by more than 40 degrees. Each `hull` is a box for collision.

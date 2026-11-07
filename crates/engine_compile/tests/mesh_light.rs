@@ -46,6 +46,7 @@ impl TextureSource for Plain {
 /// A placement in the middle of the room.
 fn placed(by_probe: bool) -> MeshPlacement {
     MeshPlacement {
+        name: None,
         source: "test".to_owned(),
         origin: [0.0, 0.0, 0.0],
         angles: [0.0; 3],

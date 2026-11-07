@@ -53,7 +53,8 @@ No compute pass culls instances for now, as visibility by leaf comes first and a
 - **In a file,** an attach point is a node named `attach_<name>`, under a joint or not. An empty in Blender is one, so an author needs no new tool. `.emesh` keeps its name, joint, place and turn.
 - **The same name** on different models lets one thing fit them all.
 - **In a map or prefab,** a `point { name = ... }` block is a named place, with no model.
-- **Scripts:** `engine.attach_point(entity, name)` says where one is now, and `engine.attach(entity, parent, name)` keeps an entity there. Effects and lights in a prefab can name one.
+- **Scripts:** `engine.attach_point(entity, name)` says where one is now, and `engine.attach(entity, parent, name)` keeps an entity there. `engine.place(name)` finds one in the level. An entity with `attach` starts at one, and with `attach_to` it stays on it, effects included.
+- **Copies of a prefab** carry a number, so each finds its own place first.
 - **When:** after the pose, each frame. Reading it before is the known way to get a weapon that's off at run time.
 
 Attach points come before skeletons in the list, and static ones are built first. Joints join them with item 10.
@@ -114,3 +115,13 @@ So a change is a few pixels at the edge. A third test, finest to next on the sma
 **The first version did nothing on real models,** and its test passed. Working out normals before simplifying split corners wherever smoothing differed, so `vesper_fall`, of 5,558 triangles, got no levels. A clean generated well simplified fine, which is why the test didn't see it. Now it simplifies the mesh as it's joined, and each level works out its own normals from its own shape. `vesper_fall` goes 5,558, 2,690, 1,302, 644. The first test written for this also passed with the bug put back, so it was replaced by one using that real file, which fails with the bug.
 
 A mesh that can't lose much without changing shape keeps most of its triangles: the statue goes 288, 264, 238, 204. A barrel of 120 gets no levels, which is under the budget anyway.
+
+### Item 9: attach points
+
+Built as designed. Static places come first, and joints join with item 10.
+
+Tried in the proving ground with a real `func_door`, a mesh of a ball with a place on top, a box of shells and a campfire, both `attach_to` it. The player walked into the ball and it rose, with the box staying on top. The flame went with it, and its light left the floor. The first try showed nothing, as a teleport doesn't count as touching a door.
+
+- **An effect isn't an entity,** so it can't be held as one. `EffectPoint::model` had been there unused, and it follows the model's offset on the client. That means an effect on a model that also turns won't turn with it, but brush models don't turn in the renderer either.
+- **A place follows by the model's offset,** so a brush model that turns doesn't carry its places round. Models don't turn when drawn yet, so nothing shows this. It changes with skeletons, where a place goes by its joint.
+- **Something held to something held** can lag a tick, by the order they're in.

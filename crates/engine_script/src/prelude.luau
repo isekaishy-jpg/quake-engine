@@ -87,6 +87,7 @@ local MAP_NUMBER_FIELDS = {
 }
 
 local entities = {}
+local waiting_to_attach = {}
 
 local Entity = {}
 
@@ -540,9 +541,37 @@ function spawn_from_map(fields, spawner)
 	fill(entity, fields)
 	if spawner and (spawn_filter == nil or spawn_filter(entity)) then
 		spawner(entity)
+		if rawget(entity, "attach_to") then
+			table.insert(waiting_to_attach, entity)
+		end
 	else
 		remove(entity)
 	end
+end
+
+-- Joins what a level attached to something else, now that everything's there.
+function link_attachments()
+	for _, entity in waiting_to_attach do
+		local name = rawget(entity, "attach_to")
+		local parent = find(nil, "name", name) or find(nil, "targetname", name)
+		if
+			parent == nil
+			or not engine.attach(
+				rawget(entity, "_id"),
+				rawget(parent, "_id"),
+				rawget(entity, "attach") or ""
+			)
+		then
+			engine.print(
+				string.format(
+					"%s can't attach to %s\n",
+					tostring(rawget(entity, "classname")),
+					name
+				)
+			)
+		end
+	end
+	waiting_to_attach = {}
 end
 
 -- The player, from the slot the engine gave it.

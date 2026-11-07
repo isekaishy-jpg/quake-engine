@@ -58,9 +58,31 @@ pub struct EntitySource {
     pub mesh: Option<MeshPlacement>,
     /// That mesh, once placed.
     pub placed: Option<PlacedMesh>,
+    /// Which copy of a prefab it came from, if any.
+    pub copy: Option<u64>,
+}
+
+/// A named place in a map.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct PointSource {
+    /// What it's called.
+    pub name: String,
+    /// Where it is.
+    pub origin: Point,
+    /// Its pitch, yaw and roll, in degrees.
+    pub angles: Point,
+    /// Which copy of a prefab it came from, if any.
+    pub copy: Option<u64>,
 }
 
 impl EntitySource {
+    /// Sets a field to three numbers.
+    pub(crate) fn set_point(&mut self, key: &str, point: Point) {
+        self.fields.retain(|(name, _)| name != key);
+        let numbers = point.iter().copied().map(Value::Number).collect();
+        self.fields.push((key.to_owned(), Value::List(numbers)));
+    }
+
     /// The value of a field.
     #[must_use]
     pub fn field(&self, key: &str) -> Option<&Value> {
@@ -110,6 +132,8 @@ impl EntitySource {
 pub struct MeshPlacement {
     /// Its name, under `meshes/`.
     pub source: String,
+    /// What this placement is called, so that its places can be named.
+    pub name: Option<String>,
     /// Where its origin goes.
     pub origin: Point,
     /// Its pitch, yaw and roll, in degrees.
@@ -149,6 +173,8 @@ pub struct WorkingMap {
     pub meshes: Vec<MeshPlacement>,
     /// Those meshes, once placed.
     pub placed: Vec<PlacedMesh>,
+    /// Named places.
+    pub points: Vec<PointSource>,
     /// The meshes that placements share, by name.
     pub shared: HashMap<String, Arc<Mesh>>,
     /// What's changed about how liquids look.
@@ -353,6 +379,34 @@ fn read_brush(block: &Block) -> Result<Brush, CompileError> {
     Ok(Brush { faces, contents })
 }
 
+/// Which copy of a prefab `block` came from, if any.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a block's id"
+)]
+fn copy_of(block: &Block) -> Option<u64> {
+    block
+        .get("copy")
+        .and_then(Value::number)
+        .map(|copy| copy as u64)
+}
+
+/// Reads a `point` block.
+fn read_point(block: &Block) -> PointSource {
+    let triple = |key: &str| block.get(key).and_then(point_of).unwrap_or([0.0; 3]);
+    PointSource {
+        name: block
+            .get("name")
+            .and_then(Value::text)
+            .unwrap_or_default()
+            .to_owned(),
+        origin: triple("origin"),
+        angles: triple("angles"),
+        copy: copy_of(block),
+    }
+}
+
 /// Reads an `entity` block.
 fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     let kind = block
@@ -370,7 +424,7 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
     let fields = block
         .fields
         .iter()
-        .filter(|(key, _)| !matches!(key.as_str(), "type" | "id" | "prefab" | "mesh"))
+        .filter(|(key, _)| !matches!(key.as_str(), "type" | "id" | "prefab" | "copy" | "mesh"))
         .filter(|(key, _)| !placing(key))
         .cloned()
         .collect();
@@ -379,6 +433,7 @@ fn read_entity(block: &Block) -> Result<EntitySource, CompileError> {
         .map(read_brush)
         .collect::<Result<Vec<_>, _>>()?;
     Ok(EntitySource {
+        copy: copy_of(block),
         name: block.name.clone(),
         kind,
         fields,
@@ -528,6 +583,7 @@ fn read_placement(block: &Block, key: &str) -> Result<MeshPlacement, CompileErro
         .map_or_else(|| triple("scale", [1.0; 3]), |scale| [scale; 3]);
     Ok(MeshPlacement {
         source,
+        name: block.get("name").and_then(Value::text).map(str::to_owned),
         origin: triple("origin", [0.0; 3]),
         angles: triple("angles", [0.0; 3]),
         scale,
@@ -673,6 +729,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .map(|block| read_placement(block, "source"))
             .collect::<Result<Vec<_>, _>>()?,
         placed: Vec::new(),
+        points: document.blocks_of("point").map(read_point).collect(),
         shared: HashMap::new(),
         water: document.blocks_of("water").next().map(read_water),
     })

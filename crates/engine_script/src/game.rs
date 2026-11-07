@@ -816,6 +816,42 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "attach_point",
+            lua.create_function(move |_, (id, name): (f64, String)| {
+                let place = sim.borrow().place_on(id_from(id), &name);
+                Ok(place.map_or((None, None), |(origin, angles)| {
+                    (Some(from_vec3(origin)), Some(from_vec3(angles)))
+                }))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "place",
+            lua.create_function(move |_, name: String| {
+                let simulation = sim.borrow();
+                let place = simulation.map().place(&name);
+                Ok(place.map_or((None, None), |place| {
+                    (Some(from_vec3(place.origin)), Some(from_vec3(place.angles)))
+                }))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "attach",
+            lua.create_function(move |_, (id, parent, name): (f64, f64, String)| {
+                Ok(sim.borrow_mut().attach(id_from(id), id_from(parent), &name))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "detach",
+            lua.create_function(move |_, id: f64| {
+                sim.borrow_mut().detach(id_from(id));
+                Ok(())
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "spline_point",
             lua.create_function(move |_, (name, share): (String, f32)| {
                 let simulation = sim.borrow();
@@ -1153,6 +1189,12 @@ impl Game {
                 Ok(function) => self.report(spawner.call::<()>((fields, function))),
                 Err(error) => self.report(Err(error)),
             }
+        }
+        // What's attached to another entity can only be joined once that's there.
+        let linker: mlua::Result<Function> = self.lua.globals().get("link_attachments");
+        match linker {
+            Ok(linker) => self.report(linker.call::<()>(())),
+            Err(error) => self.report(Err(error)),
         }
     }
 

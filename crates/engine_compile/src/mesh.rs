@@ -6,14 +6,14 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, to_text};
-use engine_map::{Contents, MeshCorner, OccluderSphere, SharedMesh, SharedPart};
+use engine_map::{AttachPoint, Contents, MeshCorner, OccluderSphere, SharedMesh, SharedPart};
 
 use crate::build::packed_normal;
 
 use crate::convex::ConvexPiece;
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, add_scaled, cross, dot, normalized};
-use crate::source::{Brush, BrushFace, MeshPlacement, WorkingMap};
+use crate::source::{Brush, BrushFace, MeshPlacement, PointSource, WorkingMap};
 
 /// A piece of a mesh with one material.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -71,6 +71,19 @@ impl MeshPart {
     }
 }
 
+/// A named place on a mesh, in its own space.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MeshAttach {
+    /// What it's called.
+    pub name: String,
+    /// Where it is.
+    pub origin: Point,
+    /// Which way it faces.
+    pub forward: Point,
+    /// What's to its left.
+    pub left: Point,
+}
+
 /// A mesh as it's stored.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Mesh {
@@ -78,6 +91,8 @@ pub struct Mesh {
     pub parts: Vec<MeshPart>,
     /// The share of the view's height at which each coarser level takes over, if it's said.
     pub level_sizes: Vec<f32>,
+    /// Its named places.
+    pub attach: Vec<MeshAttach>,
     /// Boxes for collision, as low and high corners, if an author chose them.
     pub hulls: Vec<[f64; 6]>,
     /// Convex pieces that fit it, for collision where no boxes were chosen. With
@@ -113,6 +128,8 @@ pub struct PlacedMesh {
     pub by_probe: bool,
     /// Which of the level's placements this is, if it's drawn as an instance.
     pub placement: Option<u32>,
+    /// Its named places, where they've ended up.
+    pub attach: Vec<AttachPoint>,
 }
 
 /// The numbers of a field, in groups of `N`.
@@ -193,6 +210,16 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
             normals,
             triangles,
             levels,
+        });
+    }
+    for block in document.blocks_of("attach") {
+        let triple =
+            |key: &str, default: Point| groups::<3>(block, key).first().copied().unwrap_or(default);
+        mesh.attach.push(MeshAttach {
+            name: block.name.clone().unwrap_or_default(),
+            origin: triple("origin", [0.0; 3]),
+            forward: triple("forward", [1.0, 0.0, 0.0]),
+            left: triple("left", [0.0, 1.0, 0.0]),
         });
     }
     #[expect(clippy::cast_possible_truncation, reason = "shares of a screen")]
@@ -277,6 +304,27 @@ impl Transform {
             out = add_scaled(out, *axis, part / scale);
         }
         normalized(out).unwrap_or(normal)
+    }
+
+    /// Which way `direction` points once turned. Stretching doesn't change how a place faces.
+    fn aim(&self, direction: Point) -> Point {
+        let mut out = [0.0; 3];
+        for (axis, part) in self.axes.iter().zip(direction) {
+            out = add_scaled(out, *axis, part);
+        }
+        out
+    }
+
+    /// `attach` where this puts it.
+    fn place_point(&self, attach: &MeshAttach) -> AttachPoint {
+        let [x, y, z] = self.apply(attach.origin);
+        let angles = angles_of(self.aim(attach.forward), self.aim(attach.left));
+        #[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
+        AttachPoint {
+            name: attach.name.clone(),
+            origin: Vec3::new(x as f32, y as f32, z as f32),
+            angles: Vec3::new(angles[0] as f32, angles[1] as f32, angles[2] as f32),
+        }
     }
 
     /// Whether this turns surfaces inside out.
@@ -400,6 +448,22 @@ fn smooth_normals(part: &MeshPart, triangles: &[[u32; 3]]) -> Vec<[Point; 3]> {
             })
         })
         .collect()
+}
+
+/// The pitch, yaw and roll in degrees that face along `forward`, with `left` to the left. It's
+/// what [`Transform::of`] undone.
+#[must_use]
+pub fn angles_of(forward: Point, left: Point) -> Point {
+    let up = cross(forward, left);
+    let pitch = (-forward[2]).clamp(-1.0, 1.0).asin();
+    // Straight up or down, yaw and roll are the same turn, so it's all yaw.
+    let level = forward[0].hypot(forward[1]) > 1e-6;
+    let (yaw, roll) = if level {
+        (forward[1].atan2(forward[0]), left[2].atan2(up[2]))
+    } else {
+        ((-left[0]).atan2(left[1]), 0.0)
+    };
+    [pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees()]
 }
 
 /// The three rows of what `placement` does to a point.
@@ -529,6 +593,11 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
     let mut placed = PlacedMesh {
         only_seen: placement.only_seen,
         by_probe: placement.by_probe,
+        attach: mesh
+            .attach
+            .iter()
+            .map(|point| transform.place_point(point))
+            .collect(),
         ..PlacedMesh::default()
     };
     for part in &mesh.parts {
@@ -706,6 +775,54 @@ pub fn resolve_meshes(
                 .collect();
             entity.placed = Some(mesh);
         }
+    }
+    put_attached(working)
+}
+
+/// The places of `working` that `copy` of a prefab can see: its own first, so that two copies
+/// of a prefab each find their own, and then the rest.
+fn find_place<'a>(working: &'a WorkingMap, name: &str, copy: Option<u64>) -> Option<Point> {
+    let by_name = |point: &&'a PointSource| point.name == name;
+    let same = working
+        .points
+        .iter()
+        .filter(by_name)
+        .find(|point| point.copy == copy);
+    if let Some(point) = same.or_else(|| working.points.iter().find(by_name)) {
+        return Some(point.origin);
+    }
+    let wanted = |point: &&AttachPoint, of: Option<&str>| {
+        point.name == name || of.is_some_and(|of| name == format!("{of}.{}", point.name))
+    };
+    let placed = working.meshes.iter().zip(&working.placed);
+    let on_placed = placed.flat_map(|(placement, placed)| {
+        let of = placement.name.as_deref();
+        placed.attach.iter().filter(move |point| wanted(point, of))
+    });
+    let on_entities = working.entities.iter().flat_map(|entity| {
+        let attach = entity.placed.iter().flat_map(|placed| &placed.attach);
+        attach.filter(|point| wanted(point, None))
+    });
+    let found = on_placed.chain(on_entities).next()?;
+    Some([found.origin.x, found.origin.y, found.origin.z].map(f64::from))
+}
+
+/// Puts every entity with an `attach` where that place is.
+fn put_attached(working: &mut WorkingMap) -> Result<(), CompileError> {
+    let mut places = Vec::new();
+    for (number, entity) in working.entities.iter().enumerate() {
+        if let Some(name) = entity.text("attach") {
+            let place = find_place(working, name, entity.copy).ok_or_else(|| {
+                CompileError::Bad(format!(
+                    "{} is attached to {name}, which isn't there",
+                    entity.kind
+                ))
+            })?;
+            places.push((number, place));
+        }
+    }
+    for (number, place) in places {
+        working.entities[number].set_point("origin", place);
     }
     Ok(())
 }

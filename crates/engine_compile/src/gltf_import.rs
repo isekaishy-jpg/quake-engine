@@ -12,7 +12,7 @@ use crate::convex::fit_convex;
 use crate::derive::encode_png;
 use crate::error::CompileError;
 use crate::geometry::{Point, dot, normalized};
-use crate::mesh::{Mesh, MeshPart};
+use crate::mesh::{Mesh, MeshAttach, MeshPart};
 
 /// What a model comes to, in the engine's own files.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -325,6 +325,26 @@ impl Importer<'_> {
             .matrix()
             .map(|column| column.map(f64::from));
         let matrix = multiply(parent, &local);
+        // An empty named for it is a place on the model, facing along its own +X, as a model
+        // does once it's in, with +Y up.
+        if let Some(name) = node
+            .name()
+            .map(slug)
+            .and_then(|name| name.strip_prefix("attach_").map(str::to_owned))
+        {
+            self.model.mesh.attach.push(MeshAttach {
+                name,
+                origin: to_engine(moved(&matrix, [0.0; 3])),
+                forward: normal_or(
+                    to_engine(turned_plain(&matrix, [1.0, 0.0, 0.0])),
+                    [1.0, 0.0, 0.0],
+                ),
+                left: normal_or(
+                    to_engine(turned_plain(&matrix, [0.0, 0.0, -1.0])),
+                    [0.0, 1.0, 0.0],
+                ),
+            });
+        }
         if let Some(mesh) = node.mesh() {
             let name = node.name().or(mesh.name()).map_or_else(String::new, slug);
             for primitive in mesh.primitives() {
@@ -336,6 +356,18 @@ impl Importer<'_> {
         }
         Ok(())
     }
+}
+
+/// `direction` under `matrix`, ignoring where it's moved to.
+fn turned_plain(matrix: &Matrix, direction: Point) -> Point {
+    let origin = moved(matrix, [0.0; 3]);
+    let end = moved(matrix, direction);
+    [end[0] - origin[0], end[1] - origin[1], end[2] - origin[2]]
+}
+
+/// `direction` at a length of one, or `fallback` if it has no length.
+fn normal_or(direction: Point, fallback: Point) -> Point {
+    normalized(direction).unwrap_or(fallback)
 }
 
 /// What a part named as a level of detail is a level of, and which level, from `<name>_lod<n>`.
@@ -446,6 +478,14 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
             let corners = triangles.iter().flatten().map(|c| f64::from(*c));
             block.set(&format!("level_{level}"), flat(&mut corners.into_iter()));
         }
+        document.blocks.push(block);
+    }
+    for point in &mesh.attach {
+        let mut block = Block::new("attach");
+        block.name = Some(point.name.clone());
+        block.set("origin", flat(&mut point.origin.iter().copied()));
+        block.set("forward", flat(&mut point.forward.iter().copied()));
+        block.set("left", flat(&mut point.left.iter().copied()));
         document.blocks.push(block);
     }
     if !mesh.level_sizes.is_empty() {

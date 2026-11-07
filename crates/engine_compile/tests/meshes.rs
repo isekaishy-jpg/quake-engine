@@ -4,9 +4,9 @@ use std::fs;
 use std::path::PathBuf;
 
 use engine_compile::{
-    ConvexPiece, LoadedMesh, Mesh, MeshPart, MeshPlacement, TextureSource, add_levels, compile,
-    compile_known, document_of, fit_convex, import_gltf, place_mesh, read_geometry, read_map_text,
-    read_mesh, resolve_meshes, write_geometry, write_mesh,
+    ConvexPiece, LoadedMesh, Mesh, MeshAttach, MeshPart, MeshPlacement, TextureSource, add_levels,
+    compile, compile_known, document_of, fit_convex, import_gltf, place_mesh, read_geometry,
+    read_map_text, read_mesh, resolve_meshes, write_geometry, write_mesh,
 };
 use engine_format::from_text;
 use engine_map::{Map, Texture};
@@ -18,6 +18,7 @@ const FLOOR: &str = "format 1 map\nentity world { type = worldspawn }\nbrush { m
 /// A placement that leaves a mesh as it is.
 fn in_place() -> MeshPlacement {
     MeshPlacement {
+        name: None,
         source: "test".to_owned(),
         origin: [0.0; 3],
         angles: [0.0; 3],
@@ -567,4 +568,170 @@ fn a_shared_mesh_keeps_its_levels() {
         counts.windows(2).all(|pair| pair[1] < pair[0]),
         "{counts:?}"
     );
+}
+
+/// A mesh with a place on it, a unit up and two along, facing along its own +X.
+fn with_a_place() -> Mesh {
+    let mut mesh = folded(10.0);
+    mesh.attach.push(MeshAttach {
+        name: "spout".to_owned(),
+        origin: [2.0, 0.0, 1.0],
+        forward: [1.0, 0.0, 0.0],
+        left: [0.0, 1.0, 0.0],
+    });
+    mesh
+}
+
+/// Turning and undoing it comes back to the same angles, whichever way it's turned.
+#[test]
+fn a_place_turns_with_its_mesh() {
+    for angles in [
+        [0.0, 0.0, 0.0],
+        [0.0, 90.0, 0.0],
+        [30.0, 45.0, 0.0],
+        [0.0, 0.0, 40.0],
+        [-20.0, 130.0, 25.0],
+    ] {
+        let placement = MeshPlacement {
+            angles,
+            ..in_place()
+        };
+        let point = &place_mesh(&with_a_place(), &placement).attach[0];
+        let turned = [point.angles.x, point.angles.y, point.angles.z].map(f64::from);
+        for (got, wanted) in turned.iter().zip(angles) {
+            assert!((got - wanted).abs() < 0.01, "{turned:?} against {angles:?}");
+        }
+    }
+}
+
+/// A place goes where its mesh goes, is stretched with it, and isn't turned by the stretch.
+#[test]
+fn a_place_is_where_its_mesh_puts_it() {
+    let placement = MeshPlacement {
+        origin: [100.0, 0.0, 0.0],
+        angles: [0.0, 90.0, 0.0],
+        scale: [3.0; 3],
+        ..in_place()
+    };
+    let point = &place_mesh(&with_a_place(), &placement).attach[0];
+    // Two along, stretched to six, and turned to point along +Y.
+    assert!((point.origin.x - 100.0).abs() < 0.001, "{point:?}");
+    assert!((point.origin.y - 6.0).abs() < 0.001, "{point:?}");
+    assert!((point.origin.z - 3.0).abs() < 0.001, "{point:?}");
+    assert!((point.angles.y - 90.0).abs() < 0.01, "{point:?}");
+}
+
+#[test]
+fn places_survive_a_file() {
+    let mesh = with_a_place();
+    let back = read_mesh(&document_of(&write_mesh(&mesh)).expect("reads")).expect("is a mesh");
+    assert_eq!(back.attach, mesh.attach);
+}
+
+/// An empty named for it is a place, with our axes, and draws nothing.
+#[test]
+fn an_empty_in_a_model_is_a_place() {
+    let nodes = r#"[{"mesh":0,"name":"Thing"},
+        {"name":"attach_Muzzle","translation":[0,1,2]}]"#;
+    let path = file("attach.glb", &glb_of(nodes, "[0,1]"));
+    let model = import_gltf(&path, "thing", 10.0).expect("imports");
+    fs::remove_file(&path).expect("clean up");
+    assert_eq!(model.mesh.parts.len(), 1);
+    let point = &model.mesh.attach[0];
+    assert_eq!(point.name, "muzzle");
+    // Y up becomes Z up, and two towards the eye goes to -Y, at ten units a metre.
+    assert_eq!(point.origin, [0.0, -20.0, 10.0]);
+    assert_eq!(point.forward, [1.0, 0.0, 0.0]);
+    assert_eq!(point.left, [0.0, 1.0, 0.0]);
+}
+
+/// A level with `blocks`, its meshes all `with_a_place`.
+fn level_of_blocks(blocks: &str) -> Result<Map, engine_compile::CompileError> {
+    let text = format!("{FLOOR}{blocks}\n");
+    let mut working = read_map_text(&text).expect("reads");
+    let mesh = Arc::new(with_a_place());
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&mesh),
+            occluders: Vec::new(),
+        })
+    })?;
+    compile(&working, &mut Plain)
+}
+
+/// The value of `key` on the first entity of `kind` in `map`.
+fn field_of(map: &Map, kind: &str, key: &str) -> Option<String> {
+    let found = map
+        .entities
+        .iter()
+        .find(|entity| entity.get("classname") == Some(kind))?;
+    found.get(key).map(str::to_owned)
+}
+
+#[test]
+fn a_named_place_is_kept_and_found() {
+    let map = level_of_blocks("point { name = door origin = [1 2 3] angles = [0 90 0] }")
+        .expect("compiles");
+    let place = map.place("door").expect("there");
+    assert_eq!(place.origin, engine_core::math::Vec3::new(1.0, 2.0, 3.0));
+    assert!((place.angles.y - 90.0).abs() < 0.001);
+    assert!(map.place("window").is_none());
+}
+
+/// A named placement's places are named after it, so two of the same mesh can be told apart.
+#[test]
+fn a_named_placement_names_its_places() {
+    let map = level_of_blocks(
+        "mesh { source = test name = left origin = [0 0 0] }
+         mesh { source = test name = right origin = [100 0 0] }",
+    )
+    .expect("compiles");
+    let left = map.place("left.spout").expect("there");
+    let right = map.place("right.spout").expect("there");
+    assert!((right.origin.x - left.origin.x - 100.0).abs() < 0.001);
+}
+
+/// A mesh entity's places go with its model, for what follows it.
+#[test]
+fn a_mesh_entity_has_places_on_its_model() {
+    let map = level_of_blocks("entity lift { type = func_door name = lift mesh = test }")
+        .expect("compiles");
+    assert_eq!(map.model_points.len(), 1);
+    let model = field_of(&map, "func_door", "model").expect("has one");
+    let number: u32 = model.trim_start_matches('*').parse().expect("a number");
+    assert!(map.model_point(number, "spout").is_some());
+    assert!(map.model_point(number, "nothing").is_none());
+    assert!(map.model_point(number + 1, "spout").is_none());
+}
+
+/// An entity with `attach` starts there.
+#[test]
+fn an_attached_entity_starts_at_its_place() {
+    let map = level_of_blocks(
+        "point { name = spot origin = [7 8 9] }
+         entity thing { type = light attach = spot }",
+    )
+    .expect("compiles");
+    let origin = field_of(&map, "light", "origin").expect("has one");
+    assert_eq!(origin, "7 8 9");
+}
+
+/// Two copies of a prefab each find their own place, with the same name in both.
+#[test]
+fn copies_of_a_prefab_find_their_own_places() {
+    let map = level_of_blocks(
+        "point { name = spout origin = [1 0 0] copy = 10 }
+         point { name = spout origin = [2 0 0] copy = 20 }
+         entity thing { type = light attach = spout copy = 20 }",
+    )
+    .expect("compiles");
+    assert_eq!(field_of(&map, "light", "origin").expect("has one"), "2 0 0");
+}
+
+/// A place that isn't there is a mistake, and it says so, or a thing would quietly sit at zero.
+#[test]
+fn attaching_to_nothing_is_refused() {
+    let error = level_of_blocks("entity thing { type = light attach = nowhere }");
+    let error = error.expect_err("refused").to_string();
+    assert!(error.contains("nowhere"), "{error}");
 }

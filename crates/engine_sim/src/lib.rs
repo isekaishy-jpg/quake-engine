@@ -13,7 +13,8 @@ mod walk;
 
 pub use flight::{FLAG_MONSTER, FLAG_ON_GROUND, MoveKind, MoveTrace};
 pub use simulation::{
-    Callback, Entity, FLAG_ALWAYS_AWAKE, FLAG_ITEM, MoveType, SavedSimulation, Simulation, Solid,
+    Attachment, Callback, Entity, FLAG_ALWAYS_AWAKE, FLAG_ITEM, MoveType, SavedSimulation,
+    Simulation, Solid,
 };
 pub use table::{EntityId, SlotTable};
 pub use walk::{FLAG_FLY, FLAG_PARTIAL_GROUND, FLAG_SWIM, Target};

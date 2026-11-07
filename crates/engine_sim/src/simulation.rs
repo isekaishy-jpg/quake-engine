@@ -76,6 +76,15 @@ pub enum MoveType {
     Bounce,
 }
 
+/// Where an entity is held: on a place on another's model.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Attachment {
+    /// What it's on.
+    pub parent: EntityId,
+    /// Which of the map's model points.
+    pub point: u32,
+}
+
 /// What the engine knows about an entity. Game fields live in the script.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Entity {
@@ -131,6 +140,9 @@ pub struct Entity {
     pub local_time: f64,
     /// When it next thinks, or 0 for never.
     pub next_think: f64,
+    /// What it's held to, if anything.
+    #[serde(default)]
+    pub attached: Option<Attachment>,
 }
 
 /// Something a script has to handle.
@@ -773,6 +785,62 @@ impl Simulation {
         self.entities.get(id).map(|entity| entity.origin)
     }
 
+    /// Where the place called `name` on `id` is now, and how it's turned.
+    pub fn place_on(&self, id: EntityId, name: &str) -> Option<(Vec3, Vec3)> {
+        let parent = self.entities.get(id)?;
+        let at = self.map.model_point(parent.model?, name)?;
+        self.point_on(parent, at)
+    }
+
+    /// Where model point `at` is, on `parent` as it stands.
+    fn point_on(&self, parent: &Entity, at: usize) -> Option<(Vec3, Vec3)> {
+        let (_, point) = self.map.model_points.get(at)?;
+        Some((parent.origin + point.origin, parent.angles + point.angles))
+    }
+
+    /// Holds `id` to the place called `name` on `parent`. Says if there's such a place.
+    pub fn attach(&mut self, id: EntityId, parent: EntityId, name: &str) -> bool {
+        let model = self.entities.get(parent).and_then(|parent| parent.model);
+        let at = model.and_then(|model| self.map.model_point(model, name));
+        let (Some(at), Some(entity)) = (at, self.entities.get_mut(id)) else {
+            return false;
+        };
+        entity.attached = Some(Attachment {
+            parent,
+            point: u32::try_from(at).unwrap_or(u32::MAX),
+        });
+        true
+    }
+
+    /// Lets go of `id`, which stays where it is.
+    pub fn detach(&mut self, id: EntityId) {
+        if let Some(entity) = self.entities.get_mut(id) {
+            entity.attached = None;
+        }
+    }
+
+    /// Puts what's attached where it's held. This is at the end of a tick, once everything's
+    /// moved, or it would lag behind what it's on. What's lost its parent lets go.
+    fn follow_attachments(&mut self) {
+        let held: Vec<(EntityId, Attachment)> = self
+            .entities
+            .iter()
+            .filter_map(|(id, entity)| Some((id, entity.attached?)))
+            .collect();
+        for (id, attachment) in held {
+            let parent = self.entities.get(attachment.parent);
+            let place = parent.and_then(|parent| self.point_on(parent, attachment.point as usize));
+            let Some((origin, angles)) = place else {
+                self.detach(id);
+                continue;
+            };
+            self.set_origin(id, origin);
+            if let Some(entity) = self.entities.get_mut(id) {
+                entity.angles = angles;
+            }
+        }
+    }
+
     /// Moves an entity. Moving a player takes them off the ground.
     pub fn set_origin(&mut self, id: EntityId, origin: Vec3) {
         if let Some(player) = self.slot_mut(id) {
@@ -1257,6 +1325,7 @@ impl Simulation {
 
     /// Moves the clock on by `seconds`, and notes where players are.
     pub fn end_tick(&mut self, seconds: f64) {
+        self.follow_attachments();
         self.time += seconds;
         self.rewound.clear();
         let oldest = self.time - MAX_REWIND - 2.0 * seconds;

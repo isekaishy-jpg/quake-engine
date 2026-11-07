@@ -809,6 +809,15 @@ fn place_prefab(session: &mut Session, args: &Json) -> Result<Json, String> {
             add(session, block)
         })
         .collect();
+    // So that two copies of a prefab can each find their own named places.
+    if let Some(&copy) = ids.first() {
+        for id in &ids {
+            if let Some(block) = session.find_mut(*id) {
+                #[expect(clippy::cast_precision_loss, reason = "an ID")]
+                block.set("copy", Value::Number(copy as f64));
+            }
+        }
+    }
     Ok(json!({ "ids": ids }))
 }
 

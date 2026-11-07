@@ -5,7 +5,7 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_core::math::Vec3;
 use engine_format::Document;
-use engine_map::{EffectDef, EffectPoint, Map, Texture};
+use engine_map::{EffectDef, EffectPoint, Entity, Map, Texture};
 
 use crate::bake::map_hash;
 use crate::build::{TextureSource, compile, compile_known};
@@ -75,6 +75,15 @@ pub struct PlayMap {
     pub pictures: Vec<String>,
 }
 
+/// The number of the model of the entity called `name`.
+fn model_named(map: &Map, name: &str) -> Option<u32> {
+    let named = |entity: &&Entity| {
+        entity.get("name") == Some(name) || entity.get("targetname") == Some(name)
+    };
+    let model = map.entities.iter().find(named)?.get("model")?;
+    model.strip_prefix('*')?.parse().ok()
+}
+
 /// Reads the map called `name` from `document` as a game does: with compiled
 /// pictures, and the geometry an earlier compile kept, where they're current.
 ///
@@ -113,10 +122,13 @@ pub fn play_map(
         let [x, y, z] = entity.point("origin").unwrap_or([0.0; 3]);
         #[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
         let origin = Vec3::new(x as f32, y as f32, z as f32);
+        let model = entity
+            .text("attach_to")
+            .and_then(|name| model_named(&map, name));
         map.effect_points.push(EffectPoint {
             effect: name.to_owned(),
             origin,
-            model: None,
+            model,
         });
     }
     Ok(PlayMap {

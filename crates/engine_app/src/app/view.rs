@@ -4,7 +4,7 @@ use std::collections::HashMap;
 
 use crate::game_screen::Intermission;
 use engine_audio::Listener;
-use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject};
+use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject, followed_model};
 use engine_client::{
     DrawnEntity, EffectDraw, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob, view_roll,
 };
@@ -166,7 +166,14 @@ impl World {
         self.effects_time = time;
         self.effects.update(time);
         let client = self.client.as_ref();
-        let place = |entity: u64| client.and_then(|client| client.entity_origin(entity));
+        let moved = client.map_or_else(Vec::new, |client| client.draw_instances(1.0));
+        let place = |follows: u64| match followed_model(follows) {
+            Some(model) => moved
+                .iter()
+                .find(|instance| instance.model == model)
+                .map(|instance| instance.origin),
+            None => client.and_then(|client| client.entity_origin(follows)),
+        };
         self.effects.authored_mut().update(seconds, &place);
         let mut sources: Vec<EffectSource> = drawn
             .iter()

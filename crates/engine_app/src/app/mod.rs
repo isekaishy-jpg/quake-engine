@@ -390,7 +390,11 @@ impl World {
         let authored = self.effects.authored_mut();
         authored.set_effects(&map.effects);
         for point in &map.effect_points {
-            authored.start(effect_id(&point.effect), point.origin, None, true);
+            let id = effect_id(&point.effect);
+            match point.model {
+                Some(model) => authored.start_on_model(id, point.origin, model),
+                None => authored.start(id, point.origin, None, true),
+            }
         }
         if let Some(renderer) = &mut self.renderer {
             self.tile_streamer = TileStreamer::new(&map);

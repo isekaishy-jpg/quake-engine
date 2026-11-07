@@ -7,9 +7,9 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup, MeshInstance, Model,
-    ModelOccluder, Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture,
-    TextureKind, Tree, Zone, ZonePlane,
+    AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup,
+    MeshInstance, Model, ModelOccluder, Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook,
+    TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -945,6 +945,30 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
     pools
 }
 
+/// The named places of a level: its `point` blocks, and those of placements with names.
+fn level_places(working: &WorkingMap) -> Vec<AttachPoint> {
+    #[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
+    let of = |point: Point| Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+    let mut places: Vec<AttachPoint> = working
+        .points
+        .iter()
+        .map(|point| AttachPoint {
+            name: point.name.clone(),
+            origin: of(point.origin),
+            angles: of(point.angles),
+        })
+        .collect();
+    for (placement, placed) in working.meshes.iter().zip(&working.placed) {
+        if let Some(name) = &placement.name {
+            places.extend(placed.attach.iter().map(|point| AttachPoint {
+                name: format!("{name}.{}", point.name),
+                ..point.clone()
+            }));
+        }
+    }
+    places
+}
+
 /// Compiles a working map.
 ///
 /// # Errors
@@ -1016,6 +1040,7 @@ fn compile_with(
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
     builder.share_meshes(working);
+    builder.map.places = level_places(working);
     builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);
     let is_world = |kind: &str| kind == "worldspawn";
@@ -1056,6 +1081,11 @@ fn compile_with(
         if !entity.brushes.is_empty() || !meshes.is_empty() {
             let number = builder.add_model(&entity.brushes, &meshes, &[])?;
             fields.push(("model".to_owned(), format!("*{number}")));
+            let points = meshes.iter().flat_map(|mesh| mesh.attach.iter().cloned());
+            builder
+                .map
+                .model_points
+                .extend(points.map(|point| (number, point)));
             let spheres: Vec<OccluderSphere> = meshes
                 .iter()
                 .flat_map(|mesh| mesh.occluders.clone())

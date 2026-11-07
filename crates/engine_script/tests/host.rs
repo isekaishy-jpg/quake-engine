@@ -8,7 +8,7 @@ use std::sync::Arc;
 
 use common::game;
 use engine_core::math::Vec3;
-use engine_map::Entity;
+use engine_map::{AttachPoint, Entity, Map, Model};
 use engine_script::Game;
 use engine_sim::{Callback, EntityId, Simulation};
 
@@ -216,7 +216,7 @@ fn libraries_are_read_only() {
 
 #[test]
 fn a_script_that_will_not_compile_is_refused() {
-    let map = Arc::new(engine_map::Map::default());
+    let map = Arc::new(Map::default());
     let simulation = Rc::new(RefCell::new(Simulation::new(map, Vec3::ZERO)));
     assert!(Game::new(&simulation, &[("bad", "function (")]).is_err());
 }
@@ -313,7 +313,7 @@ fn player_fields_are_nil_on_anything_else() {
 
 #[test]
 fn a_script_sees_what_another_script_writes_to_a_global() {
-    let map = Arc::new(engine_map::Map::default());
+    let map = Arc::new(Map::default());
     let simulation = Rc::new(RefCell::new(Simulation::new(map, Vec3::ZERO)));
     let sources = [
         ("reader", "shared = 1 function read() return nil end"),
@@ -340,4 +340,99 @@ fn a_trace_result_reaches_the_script_that_asked() {
     );
     game.exec("report()").expect("runs");
     assert_eq!(prints(&game), ["10, 0, 0"]);
+}
+
+/// A game on a map with a named place, and a model with a place on it.
+fn attaching_game(script: &str) -> (Game, Rc<RefCell<Simulation>>) {
+    let mut map = Map {
+        models: vec![Model::default(), Model::default()],
+        ..Map::default()
+    };
+    let at = |x: f32| Vec3::new(x, 0.0, 0.0);
+    map.places.push(AttachPoint {
+        name: "door".to_owned(),
+        origin: at(5.0),
+        angles: Vec3::new(0.0, 90.0, 0.0),
+    });
+    let spout = AttachPoint {
+        name: "spout".to_owned(),
+        origin: at(7.0),
+        ..AttachPoint::default()
+    };
+    map.model_points.push((1, spout));
+    let simulation = Rc::new(RefCell::new(Simulation::new(Arc::new(map), Vec3::ZERO)));
+    let game = Game::new(&simulation, &[("test", script)]).expect("runs");
+    (game, simulation)
+}
+
+/// What every attaching test spawns from.
+const CLASSES: &str = r#"
+    function lift(self)
+        engine.set_model(rawget(self, "_id"), "*1")
+    end
+    function thing(self) end
+"#;
+
+#[test]
+fn a_script_finds_a_named_place() {
+    let (game, _) = attaching_game("");
+    game.exec(
+        r#"
+        local origin, angles = engine.place("door")
+        engine.print(origin.x .. " " .. angles.y)
+        engine.print(tostring(engine.place("window")))
+        "#,
+    )
+    .expect("runs");
+    assert_eq!(prints(&game), ["5 90", "nil"]);
+}
+
+#[test]
+fn a_script_finds_a_place_on_a_model_and_holds_things_to_it() {
+    let (game, simulation) = attaching_game(CLASSES);
+    game.spawn_map(&[entity(&[("classname", "lift"), ("name", "up")])]);
+    let lift = last(&simulation);
+    let id = lift.to_bits();
+    game.exec(&format!(
+        r#"
+        engine.print(engine.attach_point({id}, "spout").x)
+        engine.print(tostring(engine.attach_point({id}, "nothing")))
+        "#
+    ))
+    .expect("runs");
+    assert_eq!(prints(&game), ["7", "nil"]);
+}
+
+/// A level's own `attach_to` joins up once everything's spawned, whichever came first.
+#[test]
+fn a_level_holds_one_thing_to_another_whatever_order_they_spawn_in() {
+    let (game, simulation) = attaching_game(CLASSES);
+    game.spawn_map(&[
+        entity(&[
+            ("classname", "thing"),
+            ("attach_to", "up"),
+            ("attach", "spout"),
+        ]),
+        entity(&[("classname", "lift"), ("name", "up")]),
+    ]);
+    let ids = simulation.borrow().ids();
+    // The world comes first.
+    let (thing, lift) = (ids[ids.len() - 2], ids[ids.len() - 1]);
+    simulation
+        .borrow_mut()
+        .entity_mut(lift)
+        .expect("there")
+        .origin = Vec3::new(0.0, 0.0, 30.0);
+    simulation.borrow_mut().end_tick(0.01);
+    let held = simulation.borrow().entity(thing).expect("there").origin;
+    assert_eq!(held, Vec3::new(7.0, 0.0, 30.0));
+}
+
+/// A mistake in a level says so on the console, and the rest still spawns.
+#[test]
+fn attaching_to_what_is_not_there_says_so() {
+    let (game, _) = attaching_game(CLASSES);
+    game.spawn_map(&[entity(&[("classname", "thing"), ("attach_to", "nobody")])]);
+    let said = prints(&game);
+    assert!(said.iter().any(|line| line.contains("nobody")), "{said:?}");
 }
