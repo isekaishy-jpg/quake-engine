@@ -1,6 +1,6 @@
 # Proposal 0143: what meshes left undone
 
-Status: proposed, 2026-11-07, from [what meshes left undone](../research/mesh-limits.md). The human's rule for this: a limit is a research target, and for what we don't have, research decides if it's needed, and what's likely to be wanted later gets done now.
+Status: accepted and implemented, 2026-11-07, from [what meshes left undone](../research/mesh-limits.md). The human's rule for this: a limit is a research target, and for what we don't have, research decides if it's needed, and what's likely to be wanted later gets done now.
 
 This has a design for each target, and each is reviewed below as it lands.
 
@@ -131,4 +131,34 @@ They're in the world's far to near list now, one thing to a place in it: faces, 
 - **Tried in the game** with two panes of the Blender plane, one in front of the other, with barrels showing through both.
 - **That trial found another bug.** The panes cast a solid shadow in the bake. Light passed see-through brushes, but a mesh's triangles all blocked it, whatever they were made of. They go by the same test now, and `a_mesh_of_glass_casts_no_shadow` fails on the old bake.
 - **Glass in a mesh doesn't tint what it lets through** as a brush's stained glass does. Light just passes.
+
+### Clips on a bad network
+
+`crates/engine_app/tests/clips_online.rs` plays clips through 100 ms of round trip and 20 ms of jitter, with 2% lost each way and losses coming in runs, which is what the human asked networks to be tested at. Nothing needed changing.
+
+- **600 changes of clip** took 0.083 s to reach a client in the middle, 0.111 s at 99%, and 0.153 s at worst, which is about the delay. Losing one costs a few ticks, as the next snapshot says it again.
+- **Both ends agree to the bit** on when a clip began, so it's at the same place in it on each.
+- **Someone joining part-way through** is told what's playing and when it began, and picks it up seconds in. That's free, as state sent in full carries it.
+
+With clips left out of what counts as a change, those tests fail.
+
+## Where each limit went
+
+| Limit in proposal 0140 | What came of it |
+|---|---|
+| Copies skip the depth pass | Done, and it nearly halved a scene |
+| A moving mesh draws its finest level | Done, with less posing far off |
+| A moving mesh has no collision of its own | Hit volumes on joints, by rewound time. Movement keeps its box, as it should |
+| The map on the CPU keeps a copy's triangles | Done: one face each after the bake |
+| See-through copies aren't sorted | They'd never drawn. Done, and glass no longer shadows in the bake |
+| Static copies don't morph | Done, with rest weights |
+| Four morphs | Eight |
+| Something held to something held lags | Done |
+| A place follows by offset alone | Done |
+| An effect on a model doesn't turn | Waits for brush models to turn, in item 151 |
+| UV and colour targets aren't read | Decided against: nothing here can make them |
+| Meshes have no vertex colours | Done |
+| Tangents aren't morphed | Decided against stored tangents, on measuring, and fixed a bug that was the real error |
+| Clips haven't been tried on a bad network | Tried, and they hold |
+| Alias models stay apart | Moved, in [proposal 0142](0142-the-fixtures-models-on-the-mesh-path.md) |
 

@@ -91,7 +91,7 @@ Tried in the proving ground beside a baked barrel: copies turned, stretched and 
 
 Found in review: a placement scaled to nothing would have made a NaN of a normal. The kept geometry had no format, so a file from before this would have been misread and not refused. It has one now.
 
-Limits, as they stand:
+Limits, as they stood then, and all of these were taken up in [proposal 0143](0143-what-meshes-left-undone.md):
 
 - **The GPU keeps a mesh once, but the map on the CPU doesn't.** Each copy's triangles stay in `Map::faces`, for the bake and for leaves. That's the cost of finding copies by leaf, about 150 bytes a triangle. It matters at many copies of a heavy mesh, and it hasn't been measured on a level like that yet.
 - **See-through copies aren't sorted** against each other or the world's see-through faces. An opaque prop is what this is for, but a glass one in a row could draw wrongly.
@@ -153,7 +153,7 @@ Found in review and in trying it:
 - **It flared white beside a fire.** Moving light was added on the CPU, and the shader adds it too.
 - **A place on a skeleton failed the check that a place exists,** as it's only known once it's posed. Those are checked when the level runs, and say so on the console.
 
-Limits, as they stand:
+Limits, as they stood then, and all of these were taken up in [proposal 0143](0143-what-meshes-left-undone.md):
 
 - **A moving mesh draws its finest level.** Its corners are all moved anyway, so a coarser level would only save drawing.
 - **A moving mesh has no collision of its own.** It has the box its entity has, as alias models do.
@@ -170,7 +170,7 @@ Tried in the game with the Blender arm's shape key, driven by a script: it swell
 - **The test for order had passed with nothing on the screen.** Its mesh had no place, so it was squashed to a point. With that fixed, it fails if morphs come after joints, and passes as they are.
 - **A mesh with morphs and no joints** has a joint that moves nothing, or corners would read past what's there.
 
-Limits, as they stand:
+Limits, as they stood then, and all of these were taken up in [proposal 0143](0143-what-meshes-left-undone.md):
 
 - **Only position and normal are morphed.** glTF asks a client for tangents too, and the engine works those out from screen derivatives, so it has none to change. UV and colour targets aren't read.
 - **Static copies don't morph.** They show the mesh as it was made.
