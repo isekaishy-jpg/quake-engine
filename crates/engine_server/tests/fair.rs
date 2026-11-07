@@ -1,6 +1,6 @@
 //! The fair play zone, against the tables in the networking record.
 
-use engine_server::{FairSettings, Zone};
+use engine_server::{FairSettings, ViewSlack, Zone};
 
 /// The zone for `pings`.
 fn zone(pings: &[f64]) -> Zone {
@@ -92,4 +92,41 @@ fn settings_come_from_the_level() {
     assert_eq!(rules.floor, 0.0);
     assert!(!rules.unlag);
     assert_eq!(rules.ceiling, 90.0);
+}
+
+/// A tick, as the tests here count it.
+const TICK: f64 = 1.0 / 72.0;
+
+/// The slack after they've said they had a snapshot every `gap` seconds, ten times.
+fn slack_after_gaps(gap: f64) -> ViewSlack {
+    let mut slack = ViewSlack::default();
+    for step in 0..10 {
+        slack.heard(f64::from(step) * gap, TICK);
+    }
+    slack
+}
+
+/// What a client says about its view isn't what sets how far a shot can reach.
+#[test]
+fn a_clean_connection_only_reaches_a_little_past_its_ping() {
+    let steady = slack_after_gaps(TICK).seconds();
+    assert!(steady < 0.05, "{steady}");
+}
+
+#[test]
+fn a_connection_that_really_stalls_reaches_further_for_a_while() {
+    let steady = slack_after_gaps(TICK).seconds();
+    let mut slack = slack_after_gaps(TICK);
+    slack.heard(10.0 * TICK + 0.05, TICK);
+    let stalled = slack.seconds();
+    assert!(stalled > steady + 0.03, "{stalled} from {steady}");
+    slack.pass(60.0);
+    assert!(slack.seconds() < steady + 0.001, "{}", slack.seconds());
+}
+
+#[test]
+fn no_stall_reaches_past_the_furthest_a_view_can_be() {
+    let mut slack = slack_after_gaps(TICK);
+    slack.heard(100.0, TICK);
+    assert!(slack.seconds() < 0.12, "{}", slack.seconds());
 }

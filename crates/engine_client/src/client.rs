@@ -81,9 +81,8 @@ const MAX_PENDING: usize = 512;
 /// nothing, as `CL_SendMove` does in QuakeWorld.
 const COMMANDS_PER_MOVE: usize = 3;
 
-/// The share of the gap to the present that own shots are eased by. All of it, so that a
-/// hit looks right, as far as they can ease without looking slow (proposal 0126).
-const DEFAULT_CORRECTION: f64 = 1.0;
+/// The share of the gap your own shots close: half, as closing all of it asks too much.
+pub const DEFAULT_SHOT_CORRECTION: f64 = 0.5;
 
 /// How long past a round trip a guess waits for the server, in seconds.
 const GUESS_PATIENCE: f64 = 0.15;
@@ -222,7 +221,7 @@ impl Client {
             model_numbers: HashMap::new(),
             knocks: Vec::new(),
             blast: None,
-            shot_correction: DEFAULT_CORRECTION,
+            shot_correction: DEFAULT_SHOT_CORRECTION,
             expected_sounds: Vec::new(),
             shown: ShownShot::default(),
             touched: Vec::new(),

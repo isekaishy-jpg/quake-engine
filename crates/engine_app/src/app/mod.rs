@@ -20,8 +20,8 @@ use std::time::Duration;
 use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Bot, Buttons, Client, Effects, Look, LookScale, ShotClock,
-    StepSmoother, ViewKick, ZoneTracker,
+    AmbientSounds, Bindings, Bot, Buttons, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
+    LookScale, ShotClock, StepSmoother, ViewKick, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
@@ -591,7 +591,11 @@ impl Engine {
         console.register_cvar("ui_scale", "0", saved);
         console.register_cvar("crosshair", "0", saved);
         console.register_cvar("cl_alwaysrun", "1", saved);
-        console.register_cvar("cl_shot_correction", "1", saved);
+        console.register_cvar(
+            "cl_shot_correction",
+            &DEFAULT_SHOT_CORRECTION.to_string(),
+            saved,
+        );
         console.register_cvar("viewsize", "100", CvarFlags::default());
         console.register_cvar("name", "player", saved);
         console.register_cvar("topcolor", "0", saved);

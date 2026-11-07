@@ -21,7 +21,7 @@ mod zones;
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
 pub use bot::{Bot, BotSkill};
-pub use client::{Client, DrawnEntity, ScreenEvent};
+pub use client::{Client, DEFAULT_SHOT_CORRECTION, DrawnEntity, ScreenEvent};
 pub use effect_system::{EffectDraw, EffectLight, EffectSystem, GpuEmitter, MAX_EFFECT_PARTICLES};
 pub use effects::{BeamPiece, DynamicLight, EffectSource, Effects, MAX_LIGHTS};
 pub use input::Buttons;

@@ -1,6 +1,6 @@
 //! How your own shot is drawn: at once, then easing towards what's on your screen.
 
-use engine_client::own_shot_time;
+use engine_client::{DEFAULT_SHOT_CORRECTION, own_shot_time};
 
 /// The gap, in seconds, between your commands and what's on your screen, for a ping in
 /// milliseconds with the usual 50 ms of interpolation.
@@ -57,4 +57,13 @@ fn a_correction_of_nothing_leaves_a_shot_on_your_commands() {
 #[test]
 fn a_shot_is_never_ahead_of_your_commands() {
     assert!(own_shot_time(100.0, 0.0, 1.0, 1.0) <= 100.0);
+}
+
+/// The aim is half of the gap: closing all of it is too much to ask of a shot.
+#[test]
+fn by_default_a_shot_closes_half_of_the_gap() {
+    assert!((DEFAULT_SHOT_CORRECTION - 0.5).abs() < 1e-9);
+    let gap = gap_at(30.0);
+    let settled = 100.0 - own_shot_time(100.0, gap, 1.0, DEFAULT_SHOT_CORRECTION);
+    assert!((settled - gap * 0.5).abs() < 1e-9, "{settled} of {gap}");
 }

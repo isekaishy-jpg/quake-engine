@@ -1,5 +1,50 @@
 //! The fair play zone: who gets how much help with their ping (proposal 0051).
 
+use engine_core::time::{MOST_VIEW_DELAY, TICK_SECONDS};
+
+/// How much later than a shooter's ping a view is on a clean connection, in seconds: the
+/// interpolation buffer, with a tick to spare.
+const STEADY_VIEW_SLACK: f64 = 3.0 * TICK_SECONDS;
+
+/// How long a wait takes to count for half as much, which is how long a client's view
+/// clock holds on to one.
+const WAIT_HALF_LIFE: f64 = 6.0;
+
+/// How far back past a shooter's ping a shot can reach, from what the server has seen.
+///
+/// A client on a bad connection draws further back, so its shots have to reach further.
+/// Saying so isn't enough, as reaching further lets a cheat hit someone who's already behind
+/// cover. So it goes by how long the client really took to say it had each snapshot.
+/// Holding that back to gain reach puts its own ping up, towards the ceiling.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ViewSlack {
+    /// The longest they've taken lately, past a tick, in seconds.
+    longest_wait: f64,
+    /// When they last said they had a new snapshot, on the seat's clock.
+    last_heard: Option<f64>,
+}
+
+impl ViewSlack {
+    /// Notes that they said they had a new snapshot, at `clock`.
+    pub fn heard(&mut self, clock: f64, tick_seconds: f64) {
+        if let Some(last) = self.last_heard {
+            self.longest_wait = self.longest_wait.max(clock - last - tick_seconds);
+        }
+        self.last_heard = Some(clock);
+    }
+
+    /// Lets `seconds` go by.
+    pub fn pass(&mut self, seconds: f64) {
+        self.longest_wait *= 0.5_f64.powf(seconds / WAIT_HALF_LIFE);
+    }
+
+    /// How far past their ping a shot can reach now, in seconds.
+    #[must_use]
+    pub fn seconds(&self) -> f64 {
+        (STEADY_VIEW_SLACK + self.longest_wait).min(MOST_VIEW_DELAY + TICK_SECONDS)
+    }
+}
+
 /// The server's rules, in milliseconds and seconds as named.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct FairSettings {

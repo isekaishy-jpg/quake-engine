@@ -30,7 +30,7 @@ use engine_script::{Game, GameRules, SavedScripts, ScriptError};
 use engine_sim::{Callback, EntityId, FLAG_ALWAYS_AWAKE, SavedSimulation, Simulation};
 use serde::{Deserialize, Serialize};
 
-pub use fair::{FairSettings, Zone};
+pub use fair::{FairSettings, ViewSlack, Zone};
 use seat::plain_text;
 pub use seat::{Seat, SeatInfo};
 pub use sight::Sight;

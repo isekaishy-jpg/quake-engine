@@ -4,7 +4,6 @@ use std::collections::VecDeque;
 use std::time::Duration;
 
 use engine_core::player::UserCommand;
-use engine_core::time::{MOST_VIEW_DELAY, TICK_SECONDS};
 use engine_net::{
     ClientMessage, FireCommand, MAX_NAME_BYTES, PublicKey, ServerMessage, Snapshot, Transport,
     delta_from,
@@ -12,16 +11,11 @@ use engine_net::{
 use engine_sim::EntityId;
 use serde::{Deserialize, Serialize};
 
-use crate::fair::{FairSettings, Zone};
+use crate::fair::{FairSettings, ViewSlack, Zone};
 
 /// The most seconds of movement a client can have in hand, so a client can't
 /// save up time, or move faster than the clock, by sending commands in bursts.
 const MAX_ALLOWANCE: f32 = 0.25;
-
-/// How much later than a shooter's ping a view can be, in seconds: as far back as a client
-/// draws on a bad connection, with a tick to spare. A client asking for more than it's
-/// really drawing only gets to shoot at the past, so this gives nothing away.
-const VIEW_SLACK: f64 = MOST_VIEW_DELAY + TICK_SECONDS;
 
 /// The most a single command can cost.
 const MAX_COMMAND_COST: f32 = 0.1;
@@ -121,6 +115,8 @@ pub struct Seat {
     seen: u32,
     /// Game time now, as this seat's clock has it.
     clock: f64,
+    /// How far past their ping their shots can reach.
+    view_slack: ViewSlack,
     /// When each recent snapshot went, by tick.
     sent: VecDeque<(u32, f64)>,
     /// Their ping as measured here, in milliseconds, smoothed.
@@ -164,6 +160,7 @@ impl Seat {
             history: VecDeque::with_capacity(SNAPSHOT_HISTORY),
             seen: 0,
             clock: 0.0,
+            view_slack: ViewSlack::default(),
             sent: VecDeque::with_capacity(SNAPSHOT_HISTORY),
             ping: None,
             warm_up: (0, f64::INFINITY),
@@ -298,6 +295,7 @@ impl Seat {
         self.held_fires.clear();
         self.backlog.clear();
         self.seen = 0;
+        self.view_slack = ViewSlack::default();
         self.player = None;
         self.shapes_told = 0;
         self.warm_up = (0, f64::INFINITY);
@@ -309,6 +307,7 @@ impl Seat {
             return;
         }
         self.seen = tick;
+        self.view_slack.heard(self.clock, tick_seconds);
         if let Some((_tick, sent)) = self.sent.iter().find(|(sent, _)| *sent == tick) {
             let added = self.added;
             let sample = ((self.clock - sent - tick_seconds) * 1000.0 - added).max(0.0);
@@ -348,6 +347,7 @@ impl Seat {
         }
         self.quiet += seconds;
         self.clock += seconds;
+        self.view_slack.pass(seconds);
         self.transport.update(Duration::from_secs_f64(seconds));
         self.release_snapshots();
     }
@@ -390,7 +390,7 @@ impl Seat {
         if !rules.unlag || over {
             0.0
         } else if rules.enable {
-            self.compensated / 1000.0 + VIEW_SLACK
+            self.compensated / 1000.0 + self.view_slack.seconds()
         } else {
             1.0
         }
