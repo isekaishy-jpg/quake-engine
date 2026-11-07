@@ -107,6 +107,23 @@ pub fn read_effects(
     effect_extras(&mut library, effects_in(filesystem)?, fields)
 }
 
+/// The same with `edited` in place of the one of its name, for an effect that's being changed.
+///
+/// # Errors
+///
+/// Returns an error if one is wrong, or something it shows is.
+pub fn read_effects_with(
+    filesystem: &FileSystem,
+    fields: &[String],
+    edited: EffectDef,
+) -> Result<EffectExtras, CompileError> {
+    let mut library = MaterialLibrary::for_play(filesystem);
+    let mut effects = effects_in(filesystem)?;
+    effects.retain(|effect| effect.name != edited.name);
+    effects.push(Arc::new(edited));
+    effect_extras(&mut library, effects, fields)
+}
+
 /// Every file effects come from and when it changed, which says when to read them again. There's
 /// nothing to say of a file what holds it can't date, so what ships has an empty list.
 #[must_use]

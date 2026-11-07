@@ -367,3 +367,25 @@ fn what_ships_has_nothing_to_watch() {
     let filesystem = engine_assets::FileSystem::new();
     assert!(engine_compile::effect_files(&filesystem).is_empty());
 }
+
+/// One that's being changed takes the place of the one in the files, or stands beside them.
+#[test]
+fn an_effect_being_changed_goes_with_the_rest() {
+    let root = std::env::temp_dir().join(format!("engine-changing-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("effects")).expect("folder");
+    let old = "format 1 effect\nemitter a { rate = 1 }\n";
+    std::fs::write(root.join("effects/one.eeffect"), old).expect("write");
+    std::fs::write(root.join("effects/two.eeffect"), old).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let new = "format 1 effect\nemitter a { rate = 9 }\n";
+    let edited = |name: &str| read_effect(name, &from_text(new).expect("parses")).expect("reads");
+    let read = engine_compile::read_effects_with(&filesystem, &[], edited("one")).expect("reads");
+    assert_eq!(read.effects.len(), 2);
+    let one = read.effects.iter().find(|effect| effect.name == "one");
+    assert_eq!(one.expect("there").emitters[0].rate, 9.0);
+    let read = engine_compile::read_effects_with(&filesystem, &[], edited("new")).expect("reads");
+    assert_eq!(read.effects.len(), 3);
+    let _gone = std::fs::remove_dir_all(&root);
+}

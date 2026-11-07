@@ -25,12 +25,10 @@ pub use bindings::{Bindings, canonical_key};
 pub use bot::{Bot, BotSkill};
 pub use camera::{CameraKind, CameraOrder, CameraShot, CameraSubject, Cameras};
 pub use client::{Client, DEFAULT_SHOT_CORRECTION, DrawnEntity, ScreenEvent};
-pub use effect_system::{
-    EffectDraw, EffectLight, EffectSettings, EffectSystem, EffectWorld, GpuEmitter,
-    MAX_EFFECT_PARTICLES, SimEmitter,
-};
+pub use effect_system::{EffectLight, EffectSystem, EffectWorld, MAX_EFFECT_PARTICLES};
 pub use effect_system::{follow_model, followed_model};
 pub use effects::{BeamPiece, DynamicLight, EffectSource, Effects, MAX_LIGHTS};
+pub use engine_map::{EffectDraw, EffectSettings, GpuEmitter, SimEmitter};
 pub use input::Buttons;
 pub use lightstyle::{LIGHT_STYLE_COUNT, LightStyles};
 pub use look::{Look, LookScale};

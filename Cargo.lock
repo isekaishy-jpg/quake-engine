@@ -980,6 +980,7 @@ version = "0.0.0-alpha"
 dependencies = [
  "egui",
  "engine_assets",
+ "engine_client",
  "engine_compile",
  "engine_core",
  "engine_format",

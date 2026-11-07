@@ -8,15 +8,19 @@ use std::time::Duration;
 
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
+use engine_client::{EffectSystem, EffectWorld};
 use engine_compile::{
     GRAPH_KINDS, GraphInput, MaterialLibrary, ShaderGraph, apply_bake, attach_side_files, compile,
-    graph_code, graph_kind, map_hash, read_graph, read_map, write_graph, write_terrain,
+    graph_code, graph_kind, map_hash, read_effect, read_effects_with, read_graph, read_map,
+    write_graph, write_terrain,
 };
-use engine_core::math::Vec3;
+use engine_core::entity::effect_id;
+use engine_core::math::{Vec3, view_axes};
 use engine_editor::camera::{Camera, FOV, Keys};
+use engine_editor::effect_edit::{self, EMITTER_SETTINGS, FORCE_SETTINGS};
 use engine_editor::graph_edit::{add_node, apply, join, remove_node, view_of};
-use engine_editor::graph_view::{GraphView, ViewEvent};
-use engine_format::from_text;
+use engine_editor::graph_view::{GraphView, ViewEvent, ViewWire};
+use engine_format::{Block, Document, from_text, to_text};
 use engine_map::{
     Map, SideFiles, Spline, TerrainBrush, TerrainData, TerrainLayer, TerrainSheet, TerrainStroke,
     Texture, stroke_land,
@@ -25,7 +29,8 @@ use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
 use engine_render::{
-    Drawables, LiveLight, MAX_LIVE_LIGHTS, Renderer, Target, TextureFilter, TileStreamer, View,
+    Drawables, GpuParticles, LiveLight, MAX_LIVE_LIGHTS, ParticleDraw, ParticleSim, Renderer,
+    Target, TextureFilter, TileStreamer, View,
 };
 use engine_tools::{CELL, Plan, Session, Square, is_plan_map, prefab_names, run};
 use serde_json::{Value, json};
@@ -213,6 +218,64 @@ enum Tab {
     Script,
     /// A shader graph.
     Graph,
+    /// An effect.
+    Effects,
+}
+
+/// How far in front of the camera an effect's preview goes.
+const PREVIEW_AWAY: f32 = 300.0;
+
+/// How far below its preview the floor it can hit is.
+const PREVIEW_FLOOR: f32 = 64.0;
+
+/// How long after a change a preview takes it up, so that typing doesn't read files each time.
+const PREVIEW_WAIT: f32 = 0.2;
+
+/// An effect being worked on, and what's showing of it.
+struct EffectEditing {
+    /// What it's called, which says where it's kept.
+    name: String,
+    /// What it says.
+    document: Document,
+    /// What it's said, to go back to.
+    undo: Vec<Document>,
+    /// The box that's chosen.
+    chosen: Option<usize>,
+    /// What's been typed for a setting and not yet left.
+    typing: Option<(String, String)>,
+    /// The canvas.
+    view: GraphView,
+    /// Where it was last drawn.
+    rect: Option<egui::Rect>,
+    /// What's running.
+    system: EffectSystem,
+    /// Where the preview is, while there's one.
+    place: Option<Vec3>,
+    /// Whether what's running is behind what it says.
+    behind: bool,
+    /// How long since the last change.
+    waited: f32,
+    /// What's wrong with what it says.
+    problem: Option<String>,
+}
+
+impl Default for EffectEditing {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            document: effect_edit::blank(),
+            undo: Vec::new(),
+            chosen: None,
+            typing: None,
+            view: GraphView::default(),
+            rect: None,
+            system: EffectSystem::default(),
+            place: None,
+            behind: false,
+            waited: 0.0,
+            problem: None,
+        }
+    }
 }
 
 /// A shader graph being worked on.
@@ -282,6 +345,8 @@ pub(crate) struct Editor {
     land_brush: (f32, f32),
     /// The graph that's open.
     graph: GraphEditing,
+    /// The effect that's open.
+    effect: EffectEditing,
     /// The name and shader of the next field.
     next_field: (String, String),
     /// The sheet whose layers are shown, which is the one last touched.
@@ -503,6 +568,7 @@ impl Editor {
             land: Vec::new(),
             land_brush: (0.6, 1.0),
             graph: GraphEditing::default(),
+            effect: EffectEditing::default(),
             next_field: (String::new(), String::new()),
             land_chosen: 0,
             land_layer: 0,
@@ -658,6 +724,8 @@ impl Editor {
             self.log.push(format!("render: {error}"));
         }
         self.map = Some(map);
+        // A new load has none of what the preview shows.
+        self.effect.behind = self.effect.place.is_some();
     }
 
     /// Takes in a JSON line from standard input.
@@ -737,6 +805,7 @@ impl Editor {
             "tab" => {
                 self.tab = match args.get("name").and_then(Value::as_str) {
                     Some("graph") => Tab::Graph,
+                    Some("effects") => Tab::Effects,
                     Some("surfaces") => Tab::Surfaces,
                     _ => Tab::Build,
                 };
@@ -755,6 +824,66 @@ impl Editor {
                     });
                 }
                 emit(&json!({ "ok": true }));
+            }
+            "effect_open" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                self.effect.name = name.to_owned();
+                self.open_effect();
+                emit(
+                    &json!({ "emitters": effect_edit::emitter_blocks(&self.effect.document).len() }),
+                );
+            }
+            "effect_name" => {
+                let name = args.get("name").and_then(Value::as_str).unwrap_or("");
+                self.effect.name = name.to_owned();
+                emit(&json!({ "ok": true }));
+            }
+            "effect_add" => {
+                self.add_emitter();
+                emit(
+                    &json!({ "emitters": effect_edit::emitter_blocks(&self.effect.document).len() }),
+                );
+            }
+            "effect_set" => {
+                let text = |key: &str| args.get(key).and_then(Value::as_str).unwrap_or("");
+                let number = args.get("emitter").and_then(Value::as_u64).unwrap_or(1);
+                let number = usize::try_from(number).unwrap_or(1);
+                let told = self.effect_setting(number, text("key"), text("value"));
+                emit(&json!({ "problem": told.err() }));
+            }
+            "effect_join" => {
+                let number = |key: &str| {
+                    let found = args.get(key).and_then(Value::as_u64).unwrap_or(0);
+                    usize::try_from(found).unwrap_or(0)
+                };
+                let wire = ViewWire {
+                    from: number("from"),
+                    to: number("to"),
+                    input: number("input"),
+                };
+                let done = self.effect_changes(ViewEvent::Joined(wire));
+                emit(&json!({ "joined": done }));
+            }
+            "effect_play" => {
+                self.play_effect();
+                emit(&json!({ "ok": true }));
+            }
+            "effect_stop" => {
+                self.stop_effect();
+                emit(&json!({ "ok": true }));
+            }
+            "effect_save" => {
+                self.save_effect();
+                emit(&json!({ "problem": self.effect.problem }));
+            }
+            "effect_state" => {
+                let effect = &self.effect;
+                emit(&json!({
+                    "going": effect.system.going(),
+                    "particles": effect.system.count(),
+                    "computed": effect.system.sims().len(),
+                    "problem": effect.problem,
+                }));
             }
             "graph_open" => {
                 let name = args.get("name").and_then(Value::as_str).unwrap_or("");
@@ -1009,6 +1138,407 @@ impl Editor {
                 }
             }
         }
+    }
+
+    /// What can be done with an effect, and what its chosen box says.
+    fn effects_tab(&mut self, ui: &mut egui::Ui) {
+        ui.label(RichText::new("EFFECT").color(ACCENT));
+        ui.text_edit_singleline(&mut self.effect.name);
+        ui.horizontal(|ui| {
+            if ui.button("New").clicked() {
+                self.new_effect();
+            }
+            if ui.button("Open").clicked() {
+                self.open_effect();
+            }
+            if ui.button("Save").clicked() {
+                self.save_effect();
+            }
+            if ui.button("Undo").clicked()
+                && let Some(last) = self.effect.undo.pop()
+            {
+                self.effect.document = last;
+                self.effect_is_behind();
+            }
+        });
+        ui.horizontal(|ui| {
+            let playing = self.effect.place.is_some();
+            if ui
+                .button(if playing { "Move here" } else { "Play" })
+                .clicked()
+            {
+                self.play_effect();
+            }
+            if ui.add_enabled(playing, egui::Button::new("Stop")).clicked() {
+                self.stop_effect();
+            }
+            if ui.button("Add emitter").clicked() {
+                self.add_emitter();
+            }
+        });
+        if let Some(problem) = &self.effect.problem {
+            ui.colored_label(ACCENT, problem);
+        }
+        self.effect_timeline(ui);
+        egui::ScrollArea::vertical()
+            .id_salt("emitter")
+            .max_height(420.0)
+            .show(ui, |ui| self.chosen_emitter(ui));
+    }
+
+    /// When the timeline starts what it starts.
+    fn effect_timeline(&mut self, ui: &mut egui::Ui) {
+        let times = effect_edit::timeline_of(&self.effect.document);
+        if times.is_empty() {
+            return;
+        }
+        ui.label(RichText::new("TIMELINE").color(ACCENT));
+        for (at, mut time, start) in times {
+            ui.horizontal(|ui| {
+                let drag = egui::DragValue::new(&mut time)
+                    .speed(0.01)
+                    .range(0.0..=60.0);
+                if ui.add(drag).changed() {
+                    effect_edit::set_timeline(&mut self.effect.document, at, time);
+                    self.effect_is_behind();
+                }
+                ui.label(start);
+            });
+        }
+    }
+
+    /// The settings of the emitter that's chosen.
+    fn chosen_emitter(&mut self, ui: &mut egui::Ui) {
+        let Some(number) = self.effect.chosen.filter(|number| *number > 0) else {
+            ui.label("Choose an emitter below");
+            return;
+        };
+        let Some(block) = effect_edit::emitter_of(&self.effect.document, number) else {
+            return;
+        };
+        let forces = block.children_of("force").count();
+        let mut name = block.name.clone().unwrap_or_default();
+        ui.label(RichText::new("EMITTER").color(ACCENT));
+        if ui.text_edit_singleline(&mut name).lost_focus() {
+            let before = self.effect.document.clone();
+            match effect_edit::rename(&mut self.effect.document, number, &name) {
+                Ok(()) => {
+                    self.effect.undo.push(before);
+                    self.effect_is_behind();
+                }
+                Err(problem) => self.effect.problem = Some(problem),
+            }
+        }
+        for (key, hint) in EMITTER_SETTINGS {
+            self.effect_row(ui, number, None, key, hint);
+        }
+        for force in 0..forces {
+            ui.label(RichText::new("FORCE").color(ACCENT));
+            for (key, hint) in FORCE_SETTINGS {
+                self.effect_row(ui, number, Some(force), key, hint);
+            }
+            if ui.button("Remove force").clicked()
+                && let Some(block) = effect_edit::emitter_mut(&mut self.effect.document, number)
+            {
+                let mut seen = 0;
+                block.children.retain(|child| {
+                    let this = child.kind == "force" && {
+                        seen += 1;
+                        seen - 1 == force
+                    };
+                    !this
+                });
+                self.effect_is_behind();
+            }
+        }
+        ui.horizontal(|ui| {
+            if ui.button("Add force").clicked()
+                && let Some(block) = effect_edit::emitter_mut(&mut self.effect.document, number)
+            {
+                let mut force = Block::new("force");
+                force.set("kind", engine_format::Value::Text("wind".to_owned()));
+                block.children.push(force);
+                self.effect_is_behind();
+            }
+            if ui.button("Remove").clicked() {
+                self.effect.undo.push(self.effect.document.clone());
+                effect_edit::remove_emitter(&mut self.effect.document, number);
+                self.effect.chosen = None;
+                self.effect_is_behind();
+            }
+        });
+    }
+
+    /// A row for `key`, of the emitter of box `number`, or one of its forces.
+    fn effect_row(
+        &mut self,
+        ui: &mut egui::Ui,
+        number: usize,
+        force: Option<usize>,
+        key: &str,
+        hint: &str,
+    ) {
+        let id = format!("{number}/{force:?}/{key}");
+        let block = effect_edit::emitter_of(&self.effect.document, number);
+        let block = block.and_then(|block| match force {
+            Some(force) => block.children_of("force").nth(force),
+            None => Some(block),
+        });
+        let said = block.map_or_else(String::new, |block| effect_edit::setting(block, key));
+        let mut text = match &self.effect.typing {
+            Some((typing, text)) if *typing == id => text.clone(),
+            _ => said,
+        };
+        let changed = ui
+            .horizontal(|ui| {
+                ui.add_sized([74.0, 18.0], egui::Label::new(key).truncate())
+                    .on_hover_text(hint);
+                let field = egui::TextEdit::singleline(&mut text).hint_text(hint);
+                ui.add(field)
+            })
+            .inner;
+        if changed.gained_focus() {
+            self.effect.undo.push(self.effect.document.clone());
+        }
+        if changed.changed() {
+            self.effect.typing = Some((id, text.clone()));
+            let found = effect_edit::emitter_mut(&mut self.effect.document, number);
+            let found = found.and_then(|block| match force {
+                Some(force) => block
+                    .children
+                    .iter_mut()
+                    .filter(|b| b.kind == "force")
+                    .nth(force),
+                None => Some(block),
+            });
+            if let Some(block) = found {
+                match effect_edit::set_setting(block, key, &text) {
+                    Ok(()) => self.effect_is_behind(),
+                    Err(problem) => self.effect.problem = Some(problem),
+                }
+            }
+        }
+        if changed.lost_focus() {
+            self.effect.typing = None;
+        }
+    }
+
+    /// Says what's typed for `key`, as a setting of the emitter of box `number`.
+    fn effect_setting(&mut self, number: usize, key: &str, text: &str) -> Result<(), String> {
+        let before = self.effect.document.clone();
+        let Some(block) = effect_edit::emitter_mut(&mut self.effect.document, number) else {
+            return Err(format!("there's no emitter {number}"));
+        };
+        effect_edit::set_setting(block, key, text)?;
+        self.effect.undo.push(before);
+        self.effect_is_behind();
+        Ok(())
+    }
+
+    /// The effect's boxes.
+    fn effect_canvas(&mut self, ui: &mut egui::Ui) {
+        let rect = ui.max_rect();
+        self.effect.rect = Some(rect);
+        let (nodes, wires) = effect_edit::view_of(&self.effect.document);
+        let chosen = self.effect.chosen;
+        let events = self
+            .effect
+            .view
+            .show(ui, rect, (&nodes, &wires), chosen, ACCENT);
+        for event in events {
+            let _changed = self.effect_changes(event);
+        }
+    }
+
+    /// Does what was done in the node view of an effect, and says if that changed it.
+    fn effect_changes(&mut self, event: ViewEvent) -> bool {
+        if let ViewEvent::Chosen(number) = event {
+            self.effect.chosen = Some(number);
+            self.effect.typing = None;
+            return false;
+        }
+        let before = self.effect.document.clone();
+        let changed = effect_edit::apply(&mut self.effect.document, event);
+        if changed {
+            self.effect.undo.push(before);
+            self.effect_is_behind();
+        }
+        changed
+    }
+
+    /// Adds an emitter, in the middle of what's showing.
+    fn add_emitter(&mut self) {
+        let before = self.effect.document.clone();
+        let middle = self
+            .effect
+            .rect
+            .map_or([240.0, 100.0], |rect| self.effect.view.middle(rect));
+        let count = effect_edit::emitter_blocks(&before).len();
+        // In rows, as a box is wider than the steps of a graph's.
+        #[expect(clippy::cast_precision_loss, reason = "an effect has few emitters")]
+        let (across, down) = ((count % 3) as f32 * 190.0, (count / 3 % 3) as f32 * 110.0);
+        let at = [middle[0] - 190.0 + across, middle[1] - 110.0 + down];
+        let _name = effect_edit::add_emitter(&mut self.effect.document, at);
+        self.effect.undo.push(before);
+        self.effect.chosen = Some(count + 1);
+        self.effect_is_behind();
+    }
+
+    /// Says what's running needs to catch up.
+    fn effect_is_behind(&mut self) {
+        self.effect.behind = true;
+        self.effect.waited = 0.0;
+        self.effect.problem = None;
+    }
+
+    /// Where the file of the effect that's open is.
+    fn effect_file(&self) -> PathBuf {
+        let name = format!("{}.eeffect", self.effect.name.trim());
+        self.content.join("effects").join(name)
+    }
+
+    /// Starts on a new effect.
+    fn new_effect(&mut self) {
+        self.effect.undo.push(self.effect.document.clone());
+        self.effect.document = effect_edit::blank();
+        self.effect.chosen = Some(1);
+        self.effect_is_behind();
+    }
+
+    /// Reads the effect of the name that's given.
+    fn open_effect(&mut self) {
+        let file = self.effect_file();
+        let read = std::fs::read_to_string(&file)
+            .map_err(|error| error.to_string())
+            .and_then(|text| from_text(&text).map_err(|error| error.to_string()));
+        match read {
+            Ok(document) => {
+                self.effect.document = document;
+                self.effect.undo.clear();
+                self.effect.chosen = None;
+                self.effect_is_behind();
+            }
+            Err(problem) => self.note(format!("{}: {problem}", file.display())),
+        }
+    }
+
+    /// Keeps the effect, if it reads. What's wrong stays with it, and isn't written.
+    fn save_effect(&mut self) {
+        if self.effect.name.trim().is_empty() {
+            self.effect.problem = Some("an effect needs a name".to_owned());
+            return;
+        }
+        if let Err(problem) = read_effect(self.effect.name.trim(), &self.effect.document) {
+            self.effect.problem = Some(problem.to_string());
+            return;
+        }
+        let file = self.effect_file();
+        if let Some(folder) = file.parent() {
+            let _made = std::fs::create_dir_all(folder);
+        }
+        match std::fs::write(&file, to_text(&self.effect.document)) {
+            Ok(()) => self.note(format!("wrote {}", file.display())),
+            Err(error) => self.note(format!("{}: {error}", file.display())),
+        }
+    }
+
+    /// Shows the effect, in front of the camera.
+    fn play_effect(&mut self) {
+        let [forward, _, _] = view_axes(self.camera.yaw, self.camera.pitch);
+        self.effect.place = Some(self.camera.origin + forward * PREVIEW_AWAY);
+        self.effect.system = EffectSystem::default();
+        self.effect.behind = true;
+        self.effect.waited = PREVIEW_WAIT;
+    }
+
+    /// Stops showing it.
+    fn stop_effect(&mut self) {
+        self.effect.place = None;
+        self.effect.system = EffectSystem::default();
+        self.effect.behind = false;
+    }
+
+    /// The name what's showing goes by.
+    fn preview_name(&self) -> String {
+        let name = self.effect.name.trim();
+        if name.is_empty() {
+            "preview".to_owned()
+        } else {
+            name.to_owned()
+        }
+    }
+
+    /// Gives what's showing what the effect now says. What's wrong leaves it as it was.
+    fn read_preview(&mut self) {
+        self.effect.behind = false;
+        let name = self.preview_name();
+        let edited = match read_effect(&name, &self.effect.document) {
+            Ok(edited) => edited,
+            Err(problem) => {
+                self.effect.problem = Some(problem.to_string());
+                return;
+            }
+        };
+        let mut filesystem = FileSystem::new();
+        filesystem.mount(Box::new(DirectoryArchive::new(&self.content)));
+        let fields: Vec<engine_map::FieldDef> = self
+            .map
+            .as_ref()
+            .map_or_else(Vec::new, |map| map.fields.clone());
+        let names: Vec<String> = fields.iter().map(|field| field.name.clone()).collect();
+        let read = match read_effects_with(&filesystem, &names, edited) {
+            Ok(read) => read,
+            Err(problem) => {
+                self.effect.problem = Some(problem.to_string());
+                return;
+            }
+        };
+        self.effect.system.change_effects(&read.effects);
+        if let Some(renderer) = &mut self.renderer {
+            let held = Map {
+                effects: read.effects,
+                effect_pictures: read.pictures,
+                effect_shaders: read.shaders,
+                effect_motions: read.motions,
+                fields,
+                ..Map::default()
+            };
+            if let Err(problem) = renderer.reload_effects(&held) {
+                self.effect.problem = Some(problem.to_string());
+            }
+            let told = renderer.take_shader_problems();
+            if !told.is_empty() {
+                self.effect.problem = Some(told.join("\n"));
+            }
+        }
+    }
+
+    /// Moves what's showing on by `seconds`. When it's over, it goes again.
+    fn run_preview(&mut self, seconds: f32) {
+        let Some(place) = self.effect.place else {
+            return;
+        };
+        self.effect.waited += seconds;
+        if self.effect.behind && self.effect.waited >= PREVIEW_WAIT {
+            self.read_preview();
+        }
+        let id = effect_id(&self.preview_name());
+        if self.effect.system.going() == 0 {
+            self.effect.system.start(id, place, None, false);
+        }
+        let floor = place.z - PREVIEW_FLOOR;
+        let hit = |from: Vec3, to: Vec3| {
+            (from.z >= floor && to.z < floor).then(|| {
+                let share = (from.z - floor) / (from.z - to.z);
+                (from + (to - from) * share, Vec3::new(0.0, 0.0, 1.0))
+            })
+        };
+        let world = EffectWorld {
+            place: &|_| None,
+            hit: &hit,
+        };
+        self.effect.system.set_eye(self.camera.origin);
+        self.effect.system.update(seconds, &world);
     }
 
     /// The values of the node that's chosen.
@@ -1712,6 +2242,7 @@ impl Editor {
                 (Tab::Materials, "Materials"),
                 (Tab::Script, "Script"),
                 (Tab::Graph, "Graph"),
+                (Tab::Effects, "Effects"),
             ] {
                 if ui.selectable_label(self.tab == tab, name).clicked() {
                     self.tab = tab;
@@ -1732,6 +2263,7 @@ impl Editor {
             Tab::Materials => self.materials_tab(ui),
             Tab::Script => self.script_tab(ui),
             Tab::Graph => self.graph_tab(ui),
+            Tab::Effects => self.effects_tab(ui),
         }
         ui.separator();
         ui.label(RichText::new("MAP").color(ACCENT));
@@ -2041,6 +2573,11 @@ impl Editor {
                 .default_size(360.0)
                 .show(root, |ui| self.graph_canvas(ui));
         }
+        if self.tab == Tab::Effects {
+            egui::Panel::bottom("effect")
+                .default_size(300.0)
+                .show(root, |ui| self.effect_canvas(ui));
+        }
         let central = egui::CentralPanel::default()
             .frame(egui::Frame::NONE)
             .show(root, |ui| {
@@ -2202,6 +2739,7 @@ impl PlatformApp for Editor {
         if self.stale {
             self.rebuild();
         }
+        self.run_preview(seconds);
         let Some(renderer) = &mut self.renderer else {
             return FrameOutcome::Continue;
         };
@@ -2221,7 +2759,7 @@ impl PlatformApp for Editor {
             gamma: 1.0,
             light_shift: [0.0; 3],
         };
-        let moving: Vec<LiveLight> = self.map.as_ref().map_or_else(Vec::new, |map| {
+        let mut moving: Vec<LiveLight> = self.map.as_ref().map_or_else(Vec::new, |map| {
             (0_u32..)
                 .zip(&map.live_lights)
                 .map(|(id, light)| LiveLight {
@@ -2236,8 +2774,35 @@ impl PlatformApp for Editor {
                 .take(MAX_LIVE_LIGHTS)
                 .collect()
         });
+        let system = &self.effect.system;
+        let (draws, lights) = system.draws(&|_| [1.0; 3]);
+        let mut particles: Vec<ParticleDraw> = draws.iter().map(ParticleDraw::from).collect();
+        let eye = self.camera.origin;
+        let away = |particle: &ParticleDraw| (particle.origin - eye).length();
+        particles.sort_by(|a, b| away(b).total_cmp(&away(a)));
+        let worked_out = system.gpu_emitters();
+        let gpu_particles: Vec<GpuParticles> = worked_out.iter().map(GpuParticles::from).collect();
+        let computed = system.sims();
+        let computed = computed.iter();
+        let particle_sims: Vec<ParticleSim> = computed
+            .map(|(sim, emitter)| ParticleSim::of(sim, emitter, [1.0; 3]))
+            .collect();
+        for (id, light) in (1_000_000_u32..).zip(&lights) {
+            if moving.len() < MAX_LIVE_LIGHTS {
+                moving.push(LiveLight {
+                    id,
+                    origin: light.origin,
+                    radius: light.reach,
+                    color: light.color,
+                    ..LiveLight::default()
+                });
+            }
+        }
         let drawables = Drawables {
             live_lights: &moving,
+            particles: &particles,
+            gpu_particles: &gpu_particles,
+            particle_sims: &particle_sims,
             ..Drawables::default()
         };
         #[expect(
@@ -2266,7 +2831,7 @@ impl PlatformApp for Editor {
         if let Some(path) = self.capture.take()
             && let Some(renderer) = &mut self.renderer
         {
-            let shot = renderer.capture(&view, Drawables::default(), self.size.0, self.size.1);
+            let shot = renderer.capture(&view, drawables, self.size.0, self.size.1);
             match shot
                 .map_err(|error| error.to_string())
                 .and_then(|shot| write_png(&path, &shot))

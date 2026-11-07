@@ -6,18 +6,16 @@ use crate::game_screen::Intermission;
 use engine_audio::Listener;
 use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject, followed_model};
 use engine_client::{
-    DrawnEntity, EffectDraw, EffectSource, EffectWorld, ScreenEvent, SimEmitter, VIEW_HEIGHT,
-    dead_roll, view_bob, view_roll,
+    DrawnEntity, EffectSource, EffectWorld, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob,
+    view_roll,
 };
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
 use engine_map::{Contents, Rows, look_around};
-use engine_map::{EmitterShape, ParticleCollide, ParticleEmitter, ParticleForce, ParticleKind};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
-    ParticleColor, ParticleDraw, ParticleShape, ParticleSim, SimForce, SpriteDraw, View,
-    height_scale,
+    ParticleColor, ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
 };
 
 use super::World;
@@ -245,7 +243,7 @@ impl World {
             }));
         }
         let (authored, _) = self.effects.authored().draws(&|at| self.light_at(at));
-        out.extend(authored.iter().map(authored_draw));
+        out.extend(authored.iter().map(ParticleDraw::from));
         let away = |particle: &ParticleDraw| (particle.origin - eye).length();
         out.sort_by(|a, b| away(b).total_cmp(&away(a)));
         out
@@ -279,27 +277,7 @@ impl World {
     /// The batches of particles the GPU works out.
     pub(super) fn gpu_particles(&self) -> Vec<GpuParticles> {
         let emitters = self.effects.authored().gpu_emitters();
-        emitters
-            .iter()
-            .map(|emitter| GpuParticles {
-                origin: emitter.origin,
-                life: emitter.life,
-                direction: emitter.direction,
-                spread: emitter.spread,
-                color: emitter.color,
-                end_color: emitter.end_color,
-                age: emitter.age,
-                speed: emitter.speed,
-                gravity: emitter.gravity,
-                turbulence: emitter.turbulence,
-                size: emitter.size,
-                radius: emitter.radius,
-                count: emitter.count,
-                adds: emitter.adds,
-                picture: emitter.picture,
-                soft: emitter.soft,
-            })
-            .collect()
+        emitters.iter().map(GpuParticles::from).collect()
     }
 
     /// What compute runs of effects this frame.
@@ -315,7 +293,7 @@ impl World {
                 } else {
                     [1.0; 3]
                 };
-                particle_sim(sim, emitter, light)
+                ParticleSim::of(sim, emitter, light)
             })
             .collect()
     }
@@ -547,162 +525,5 @@ impl World {
             capsules,
             live_lights: moving,
         }
-    }
-}
-
-/// How bright a colour in light is, past what a byte can hold.
-fn glow_of(color: [f32; 4]) -> f32 {
-    color[0].max(color[1]).max(color[2]).max(1.0)
-}
-
-/// A byte from a colour between 0 and 1, as the shader's curve expects.
-#[expect(
-    clippy::cast_possible_truncation,
-    clippy::cast_sign_loss,
-    reason = "held to a byte"
-)]
-fn colour_byte(value: f32) -> u8 {
-    (value.clamp(0.0, 1.0).powf(1.0 / 2.2) * 255.0).round() as u8
-}
-
-/// What's drawn of a particle of an effect.
-/// What the renderer needs of what compute runs.
-fn particle_sim(sim: &SimEmitter, emitter: &ParticleEmitter, light: [f32; 3]) -> ParticleSim {
-    let mut forces = [SimForce::default(); 4];
-    for (slot, force) in forces.iter_mut().zip(&emitter.forces) {
-        *slot = match *force {
-            ParticleForce::Attract {
-                at,
-                strength,
-                reach,
-            } => SimForce {
-                kind: 1.0,
-                strength,
-                extra: reach,
-                at,
-                axis: Vec3::ZERO,
-            },
-            ParticleForce::Vortex {
-                at,
-                axis,
-                strength,
-                inward,
-            } => SimForce {
-                kind: 2.0,
-                strength,
-                extra: inward,
-                at,
-                axis,
-            },
-            ParticleForce::Wind { blowing, gusts } => SimForce {
-                kind: 3.0,
-                strength: 0.0,
-                extra: gusts,
-                at: blowing,
-                axis: Vec3::ZERO,
-            },
-        };
-    }
-    let (shape, radius, extent) = match emitter.shape {
-        EmitterShape::Ring(radius) => (1, radius, Vec3::ZERO),
-        EmitterShape::Disc(radius) => (2, radius, Vec3::ZERO),
-        EmitterShape::Cone(radius, height) => (3, radius, Vec3::new(0.0, 0.0, height)),
-        EmitterShape::Line(half) => (4, 0.0, half),
-        EmitterShape::Box(half) => (5, 0.0, half),
-        EmitterShape::Ball(radius) => (0, radius, Vec3::ZERO),
-        EmitterShape::Point => (0, 0.0, Vec3::ZERO),
-    };
-    let own = sim.settings;
-    let step = |number: usize| {
-        #[expect(clippy::cast_precision_loss, reason = "eight of them")]
-        let at = number as f32 / 7.0;
-        at
-    };
-    let ramp = std::array::from_fn(|number| {
-        let [red, green, blue, alpha] = emitter.color.at(step(number));
-        [
-            red * own.color[0] * light[0],
-            green * own.color[1] * light[1],
-            blue * own.color[2] * light[2],
-            alpha * sim.fade,
-        ]
-    });
-    let sizes = std::array::from_fn(|number| emitter.size.at(step(number)) * own.size);
-    ParticleSim {
-        id: sim.id,
-        origin: sim.origin,
-        seconds: sim.seconds,
-        direction: emitter.direction.normalized(),
-        spread: emitter.spread.to_radians().cos(),
-        speed: emitter.speed,
-        life: emitter.life,
-        radius,
-        gravity: sim.gravity,
-        drag: emitter.drag,
-        turbulence: emitter.turbulence,
-        count: sim.count,
-        spawn: sim.spawn,
-        ramp,
-        sizes,
-        picture: emitter.picture,
-        sheet: emitter.flipbook,
-        flip_rate: emitter.flip_rate,
-        stretch: emitter.stretch,
-        rotation: emitter.rotation.map(f32::to_radians),
-        spin: emitter.spin.map(f32::to_radians),
-        adds: emitter.blend == engine_map::ParticleBlend::Add,
-        soft: emitter.soft,
-        time: sim.time,
-        seed: sim.seed,
-        bounce: emitter.bounce,
-        collide: match emitter.collide {
-            ParticleCollide::Bounce => 1,
-            ParticleCollide::Die => 2,
-            ParticleCollide::Stick => 3,
-            ParticleCollide::None => 0,
-        },
-        shape,
-        extent,
-        outward: emitter.outward,
-        forces,
-        shader: emitter.shader_number,
-        motion: emitter.motion_number,
-        field: emitter.field_number,
-    }
-}
-
-fn authored_draw(draw: &EffectDraw) -> ParticleDraw {
-    let glow = glow_of(draw.color);
-    let [red, green, blue, alpha] = draw.color;
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "held to a byte"
-    )]
-    let alpha = (alpha.clamp(0.0, 1.0) * 255.0).round() as u8;
-    ParticleDraw {
-        origin: draw.origin,
-        color: ParticleColor {
-            red: colour_byte(red / glow),
-            green: colour_byte(green / glow),
-            blue: colour_byte(blue / glow),
-        },
-        alpha,
-        size: draw.size,
-        end: draw.end,
-        shape: match draw.kind {
-            ParticleKind::Ribbon | ParticleKind::Beam => ParticleShape::Line,
-            ParticleKind::Decal => ParticleShape::Flat,
-            ParticleKind::Sprite | ParticleKind::Light => ParticleShape::Soft,
-        },
-        glow,
-        adds: draw.adds,
-        rotation: draw.rotation,
-        soft: draw.soft,
-        picture: draw.picture,
-        frame: draw.frame,
-        sheet: draw.sheet,
-        life: draw.life,
-        shader: draw.shader,
     }
 }

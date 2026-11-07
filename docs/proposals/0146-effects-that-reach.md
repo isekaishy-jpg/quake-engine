@@ -99,3 +99,10 @@ Filled in as each part lands.
 - **A thread looks at dates,** twice a second, so that a slow disc can't hold up a frame. Reading the files is on the main thread, as it's rare and it's only for those making things.
 - **What's going starts again,** with what's timed from the start, so a change to a timeline or a burst shows. Particles already made keep the emitter they had.
 - **Only the map's effects change.** The level isn't touched, and nothing that holds it has to find out.
+
+### The Effects tab (95)
+
+- **What's edited is the file as it reads,** so a setting nobody has a box for stays. Numbers and curves are typed as the file has them, which is one thing to learn. Comments go, as nothing that writes these files keeps them.
+- **Where a box is** goes in the file, on the emitter. `read_effect` doesn't look at it.
+- **A preview runs the system the game runs,** in the editor, so it can't look different. What the game draws of effects moved to the renderer and the map's crate so that both have it.
+- **A floor stands in for the level** in a preview. Tracing the level would want the collision world the editor doesn't keep.

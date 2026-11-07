@@ -11,7 +11,9 @@ use engine_core::math::{Vec3, view_axes};
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use engine_core::sound::SoundStart;
 
-use crate::effect_system::{EffectSettings, EffectSystem};
+use engine_map::EffectSettings;
+
+use crate::effect_system::EffectSystem;
 use crate::particles::{Particles, Trail};
 
 /// The most dynamic lights at once.

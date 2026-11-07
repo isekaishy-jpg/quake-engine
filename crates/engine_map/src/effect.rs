@@ -357,3 +357,119 @@ pub struct EffectPoint {
     /// The model it follows, if it moves with something.
     pub model: Option<u32>,
 }
+
+/// One instance's own settings, which multiply what its effect says.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectSettings {
+    /// Its colour.
+    pub color: [f32; 3],
+    /// Its size.
+    pub size: f32,
+    /// How many it makes.
+    pub strength: f32,
+}
+
+impl Default for EffectSettings {
+    fn default() -> Self {
+        Self {
+            color: [1.0; 3],
+            size: 1.0,
+            strength: 1.0,
+        }
+    }
+}
+
+/// What's drawn of a particle.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectDraw {
+    /// Where it is.
+    pub origin: Vec3,
+    /// The far end of what's a line, or which way a flat mark faces.
+    pub end: Vec3,
+    /// Its colour and alpha.
+    pub color: [f32; 4],
+    /// Its size.
+    pub size: f32,
+    /// What it is.
+    pub kind: ParticleKind,
+    /// Whether it adds to what's behind it.
+    pub adds: bool,
+    /// How it's turned, in radians.
+    pub rotation: f32,
+    /// How far it fades into what's behind it.
+    pub soft: f32,
+    /// Its picture, plus one, or 0 for a soft dot.
+    pub picture: u32,
+    /// Which frame of a sheet it's on, and how far to the next.
+    pub frame: f32,
+    /// The columns and rows of that sheet.
+    pub sheet: [u32; 2],
+    /// How far through its life it is.
+    pub life: f32,
+    /// The shader it has of its own, plus one, or 0 for none.
+    pub shader: u32,
+}
+
+/// An emitter the GPU works out, for one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct GpuEmitter {
+    /// Where it is.
+    pub origin: Vec3,
+    /// Which way they head.
+    pub direction: Vec3,
+    /// How far from that they can go, as a cosine.
+    pub spread: f32,
+    /// How long since it began.
+    pub age: f32,
+    /// How many there are.
+    pub count: u32,
+    /// How long each lives.
+    pub life: f32,
+    /// How fast they start.
+    pub speed: f32,
+    /// How hard gravity pulls.
+    pub gravity: f32,
+    /// How hard they're pushed about.
+    pub turbulence: f32,
+    /// Their size at the start and end.
+    pub size: [f32; 2],
+    /// Their colour at the start.
+    pub color: [f32; 4],
+    /// Their colour at the end.
+    pub end_color: [f32; 4],
+    /// Whether they add to what's behind them.
+    pub adds: bool,
+    /// How far they start from it.
+    pub radius: f32,
+    /// Their picture, plus one, or 0 for a soft dot.
+    pub picture: u32,
+    /// How far they fade into what's behind them.
+    pub soft: f32,
+}
+
+/// An emitter compute runs, for one frame.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SimEmitter {
+    /// Which it is, which goes on being it from frame to frame.
+    pub id: u64,
+    /// Where it is.
+    pub origin: Vec3,
+    /// How many slots it wants.
+    pub count: u32,
+    /// How many start this step.
+    pub spawn: u32,
+    /// How long this step is.
+    pub seconds: f32,
+    /// The time.
+    pub time: f32,
+    /// How hard gravity pulls.
+    pub gravity: f32,
+    /// A number that makes this step differ from the last, and this emitter from others.
+    pub seed: u32,
+    /// What its instance says of itself.
+    pub settings: EffectSettings,
+    /// How much of it's left as it fades away, from 1 to 0.
+    pub fade: f32,
+    /// Which effect it's of, by its place in the list of those going.
+    pub emitter: usize,
+}

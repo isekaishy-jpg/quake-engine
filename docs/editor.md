@@ -75,3 +75,13 @@ The plan is ordinary operations, so anything here can be done without the window
 | `wear` | Optional `amount` from 0 to 1, and `seed`. Makes a level look used, from its real shape, and replaces what it made before |
 
 `playtest` is different from `play`. It runs the game for some seconds and reports whether it stayed up, so it's for checking and not for playing.
+
+## Effects
+
+The **Effects** tab works on an effect file. Give a name and press Open, or New for a fresh one.
+
+The boxes at the bottom are its emitters. Each has three rows on its left, which say what starts it: when one of another ends, when one of another hits something, or at a time on the timeline. Draw a curve from a box's right to a row. The timeline box only goes to the timeline row, and an emitter's box to the other two. Nothing can start what ends up starting it. Drag from a row to cut it.
+
+Choose a box and its settings are beside it. Each one says what it takes as a hint. **Add force** gives it a force, and the time of what's on the timeline is above them.
+
+**Play** shows the effect 300 units in front of the camera, and it changes as you type. When it's over it goes again. **Move here** brings it to where you're looking. What's hit in a preview is a floor 64 units below it, not the level. A file saves only if it reads, and comments in it aren't kept.

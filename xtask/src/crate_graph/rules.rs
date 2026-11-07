@@ -78,6 +78,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
         name: "engine_editor",
         may_depend_on: &[
             "engine_assets",
+            "engine_client",
             "engine_compile",
             "engine_core",
             "engine_format",
