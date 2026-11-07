@@ -82,7 +82,7 @@ Status: accepted and implemented, 2026-11-07, the [work list](../research/work-l
 ### Compute (90)
 
 - **Tried in the game:** 100,000 drops falling from the ceiling of a room and coming off the floor, in a box of their own, drawn out along how they move. It looks like rain. A swirl round a ring, by a vortex and wind, stays the shape the same forces give it on the CPU.
-- **What it costs,** at 1920 by 1200 on the card here: 100,000 take 0.19 ms a frame to step, and no more of the scene than the clock's own wander. A million take 1.5 ms to step and about 2.5 ms to draw.
+- **What it costs,** at 1280 by 720 on the card here: 100,000 take 0.19 ms a frame to step, and what they add to the scene doesn't show above the clock's own wander of about 1 ms. A million take 1.5 ms to step, and the scene went from about 2.5 ms to 4.8 ms.
 - **Everything an emitter says works.** The first version had two colours, a ball for most shapes, and no sheets, turning or stretching. Rain needs a box, so that wasn't enough. Colour and size are now eight steps along a life, turning comes from the slot's number, and `lit` takes one light for the whole effect.
 - **Stick** is its own thing: it stops at the surface, and stays, gravity and all.
 - **What ends isn't heard of.** `on_death` and `on_hit` would want a list back from the GPU a frame late, for what the usual kind already does. So they're an error, and so is another `kind`.

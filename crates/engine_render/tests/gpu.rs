@@ -10,12 +10,12 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, EffectDef, FieldDef, Fog,
-    LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough,
-    MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter, ParticleForce, PixelForm, Pool,
-    PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading, SharedMesh, SharedMorph,
-    SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
-    SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight,
-    mip_chain,
+    FogVolume, LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance,
+    MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter, ParticleForce,
+    PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading,
+    SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
+    SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture,
+    TextureKind, TileLight, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -5293,6 +5293,182 @@ fn effects_change_while_a_level_is_loaded() {
     );
     let blue = look(&mut renderer);
     assert!(blue[2] > 200 && blue[1] < 40, "{blue:?}");
+}
+
+/// A box of green fog, between the eye and the floor it looks at.
+fn fog_box() -> FogVolume {
+    FogVolume {
+        low: Vec3::new(0.0, 0.0, 10.0),
+        high: Vec3::new(128.0, 128.0, 50.0),
+        color: [0.0, 1.0, 0.0],
+        density: 0.2,
+        drift: Vec3::ZERO,
+        wisp_size: 16.0,
+        ..FogVolume::default()
+    }
+}
+
+/// The middle of the view of `volumes`, at `time`.
+fn through_fog(
+    renderer: &mut Renderer,
+    volumes: &[FogVolume],
+    time: f32,
+    live: &[LiveLight],
+) -> [u8; 4] {
+    let mut built = map(1);
+    built.fog_volumes = volumes.to_vec();
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        time,
+        ..view_from_above()
+    };
+    let drawables = Drawables {
+        live_lights: live,
+        ..Drawables::default()
+    };
+    centre(&renderer.capture(&view, drawables, 64, 64).expect("capture"))
+}
+
+/// Fog's in its box, and not out of it.
+#[test]
+fn fog_is_where_it_says() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let clear = through_fog(&mut renderer, &[], 0.0, &[]);
+    let fogged = through_fog(&mut renderer, &[fog_box()], 0.0, &[]);
+    assert!(
+        fogged[1] > 200 && fogged[0] < clear[0].max(40),
+        "{fogged:?} from {clear:?}"
+    );
+    let aside = FogVolume {
+        low: Vec3::new(500.0, 0.0, 10.0),
+        high: Vec3::new(628.0, 128.0, 50.0),
+        ..fog_box()
+    };
+    assert_eq!(
+        through_fog(&mut renderer, &[aside], 0.0, &[]),
+        clear,
+        "it's over there"
+    );
+    let above = FogVolume {
+        low: Vec3::new(0.0, 0.0, 100.0),
+        high: Vec3::new(128.0, 128.0, 150.0),
+        ..fog_box()
+    };
+    assert_eq!(
+        through_fog(&mut renderer, &[above], 0.0, &[]),
+        clear,
+        "and that's behind the eye"
+    );
+}
+
+/// Fog thick enough to hide everything shows the colour it says, as a colour on the screen.
+#[test]
+fn thick_fog_is_the_colour_it_says() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let grey = FogVolume {
+        color: [0.5, 0.5, 0.5],
+        density: 2.0,
+        ..fog_box()
+    };
+    let shade = through_fog(&mut renderer, &[grey], 0.0, &[]);
+    assert!(shade[1].abs_diff(128) < 10, "{shade:?}");
+}
+
+/// Soft sides take a volume in slowly.
+#[test]
+fn fog_thins_towards_its_sides() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let thin = FogVolume {
+        density: 0.02,
+        ..fog_box()
+    };
+    let hard = through_fog(&mut renderer, &[thin], 0.0, &[]);
+    let soft = FogVolume { edge: 40.0, ..thin };
+    let soft = through_fog(&mut renderer, &[soft], 0.0, &[]);
+    assert!(soft[1] + 20 < hard[1], "{soft:?} and {hard:?}");
+}
+
+/// Wisps leave gaps, and go by with what drifts them.
+#[test]
+fn wisps_drift() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let wisps = FogVolume {
+        density: 0.03,
+        edge: 1.0,
+        wisps: 1.0,
+        drift: Vec3::new(40.0, 0.0, 0.0),
+        ..fog_box()
+    };
+    let shots: Vec<[u8; 4]> = (0..8)
+        .map(|step| through_fog(&mut renderer, &[wisps], step as f32 * 0.7, &[]))
+        .collect();
+    let least = shots.iter().map(|shot| shot[1]).min().unwrap_or(0);
+    let most = shots.iter().map(|shot| shot[1]).max().unwrap_or(0);
+    assert!(most > least + 25, "{shots:?}");
+    let still = FogVolume {
+        drift: Vec3::ZERO,
+        ..wisps
+    };
+    let one = through_fog(&mut renderer, &[still], 0.0, &[]);
+    let two = through_fog(&mut renderer, &[still], 5.0, &[]);
+    assert_eq!(one, two, "what doesn't drift stays");
+}
+
+/// Lit fog is dark until something lights it.
+#[test]
+fn lit_fog_shows_what_goes_through_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let lit = FogVolume {
+        lit: true,
+        ..fog_box()
+    };
+    let dark = through_fog(&mut renderer, &[lit], 0.0, &[]);
+    assert!(dark[1] < 40, "{dark:?}");
+    let light = LiveLight {
+        id: 1,
+        origin: Vec3::new(64.0, 64.0, 30.0),
+        radius: 200.0,
+        color: [2.0, 2.0, 2.0],
+        ..LiveLight::default()
+    };
+    let bright = through_fog(&mut renderer, &[lit], 0.0, &[light]);
+    assert!(bright[1] > dark[1] + 80, "{bright:?} from {dark:?}");
+    let far = LiveLight {
+        origin: Vec3::new(4000.0, 64.0, 30.0),
+        ..light
+    };
+    assert_eq!(
+        through_fog(&mut renderer, &[lit], 0.0, &[far]),
+        dark,
+        "too far off"
+    );
+}
+
+/// With more volumes than can be looked at, the nearest are.
+#[test]
+fn the_nearest_fog_is_what_shows() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let far = FogVolume {
+        low: Vec3::new(5000.0, 0.0, 10.0),
+        high: Vec3::new(5100.0, 128.0, 50.0),
+        ..fog_box()
+    };
+    let mut volumes = vec![far; 12];
+    volumes.push(fog_box());
+    let shade = through_fog(&mut renderer, &volumes, 0.0, &[]);
+    assert!(shade[1] > 200, "{shade:?}");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

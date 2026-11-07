@@ -67,6 +67,19 @@ struct Frame {
     color_params: vec4<f32>,
     // How much of each colour of light a zone lets through to the eye.
     zone_light: vec4<f32>,
+    // Per fog volume, nearest first: its low corner with w how soft its sides are, its high corner
+    // with w how thick it is, its colour with w how much is wisps, and how it drifts with w how big
+    // wisps are.
+    fog_low: array<vec4<f32>, 8>,
+    fog_high: array<vec4<f32>, 8>,
+    fog_look: array<vec4<f32>, 8>,
+    fog_drift: array<vec4<f32>, 8>,
+    // x how many volumes, y how many lights in fog, z which of the volumes are lit, as bits, and w
+    // 1 if any has to be marched.
+    fog_counts: vec4<f32>,
+    // The moving lights nearest the eye, for fog: where with w how far it reaches, and its colour.
+    fog_light_place: array<vec4<f32>, 4>,
+    fog_light_color: array<vec4<f32>, 4>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

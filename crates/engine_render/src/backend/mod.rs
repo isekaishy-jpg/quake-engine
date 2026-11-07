@@ -88,10 +88,28 @@ const FRAME_SIZE: usize =
 const EXTRA_BYTES: usize = EXTRA_FLOATS * 4;
 
 /// Floats of stencil and capsule values in the frame uniforms.
-const EXTRA_FLOATS: usize = 4 * 16 + 4 + 256 * 4 + 16 * 4 * 2 + 4 + MAX_POOLS * 16 + 4 + 8 + 4 + 4;
+const EXTRA_FLOATS: usize = 4 * 16
+    + 4
+    + 256 * 4
+    + 16 * 4 * 2
+    + 4
+    + MAX_POOLS * 16
+    + 4
+    + 8
+    + 4
+    + 4
+    + MAX_FOG_VOLUMES * 16
+    + 4
+    + FOG_LIGHTS * 8;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
+
+/// How many fog volumes a frame looks at, the nearest of them.
+const MAX_FOG_VOLUMES: usize = 8;
+
+/// How many moving lights fog takes.
+const FOG_LIGHTS: usize = 4;
 
 /// Bytes of final pass values in the frame uniforms.
 const POST_BYTES: usize = 128;
@@ -617,6 +635,8 @@ pub(crate) struct Backend {
     sim_layout: SimLayout,
     /// What a step with no field reads.
     sim_blank: Option<GpuImage>,
+    /// Whether this frame has fog to go through a step at a time.
+    fog_marched: bool,
     /// What fields' steps are bound by.
     field_layout: FieldLayout,
     /// The time this frame's field steps are told.
@@ -1067,6 +1087,7 @@ impl Backend {
             particle_sampler,
             sim_layout,
             sim_blank: None,
+            fog_marched: false,
             field_layout,
             field_time: 0.0,
             moving_overflow: false,
@@ -1430,7 +1451,7 @@ impl Backend {
         );
         let wanted = self.post.edge_smoothing >= SMAA_SETTING;
         self.smaa.record(rec, &target.smaa, target.size, wanted);
-        if self.post.rays != 0 && !self.stencil_images.is_empty() {
+        if self.fog_marched || (self.post.rays != 0 && !self.stencil_images.is_empty()) {
             self.record_rays(rec, target);
         }
     }
@@ -1502,7 +1523,9 @@ impl Backend {
         rec.set_scissor(0, 0, size.0, size.1);
         rec.bind_graphics_pipeline(&self.ray_pipeline);
         rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+        self.clock.start(rec, self.slot, Span::Air);
         rec.draw(3, 1, 0, 0);
+        self.clock.end(rec, self.slot, Span::Air);
         rec.end_render_pass();
         rec.memory_barrier(
             PipelineStage::ALL_GRAPHICS,
@@ -1539,7 +1562,9 @@ impl Backend {
         );
         rec.bind_graphics_pipeline(&self.post_pipeline);
         rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+        self.clock.start(rec, self.slot, Span::Post);
         rec.draw(3, 1, 0, 0);
+        self.clock.end(rec, self.slot, Span::Post);
     }
 
     /// Notes the window's new size.

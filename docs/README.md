@@ -27,6 +27,7 @@
   - [Cameras](cameras.md): which camera, and setting them up
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one
+  - [Fog](fog.md): how a level sets it
   - [Water](water.md): how a level sets it
   - [Making a level](editor.md): the floor plan, and how to use it without a mouse
   - [Doors and lifts](doors.md): what they do, and how to open one from somewhere else

@@ -20,10 +20,14 @@ pub(super) enum Span {
     Models,
     /// All of the scene's pass.
     Scene,
+    /// The final pass: water, fog and all that's done to a finished scene.
+    Post,
+    /// Light and fog in the air, which the final pass adds.
+    Air,
 }
 
 /// How many spans there are.
-const SPANS: usize = 5;
+const SPANS: usize = 7;
 
 /// How long a frame's parts took on the GPU, in milliseconds, on average since this was last
 /// asked. A part that wasn't drawn counts as nothing.
@@ -41,6 +45,10 @@ pub struct GpuTimes {
     pub models: f64,
     /// All of the scene's pass.
     pub scene: f64,
+    /// The final pass: water, fog and all that's done to a finished scene.
+    pub post: f64,
+    /// Light and fog in the air, which the final pass adds.
+    pub air: f64,
 }
 
 /// The GPU's clock. It's off until it's wanted, and costs nothing then.
@@ -141,7 +149,7 @@ impl GpuClock {
     /// What's been timed since this was last asked.
     pub(super) fn take(&mut self) -> GpuTimes {
         let frames = std::mem::take(&mut self.frames);
-        let [deform, shadows, moving, models, scene] =
+        let [deform, shadows, moving, models, scene, post, air] =
             std::mem::take(&mut self.totals).map(|total| total / f64::from(frames.max(1)));
         GpuTimes {
             frames,
@@ -150,6 +158,8 @@ impl GpuClock {
             moving,
             models,
             scene,
+            post,
+            air,
         }
     }
 }

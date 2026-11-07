@@ -202,6 +202,129 @@ fn probe_light(point: vec3<f32>) -> vec3<f32> {
     return pow(mix(below, above, local.z - low), vec3<f32>(frame.color_params.x));
 }
 
+// What moving lights add to fog at `point`.
+fn lights_in_fog(point: vec3<f32>) -> vec3<f32> {
+    var light = vec3<f32>(0.0);
+    let count = i32(frame.fog_counts.y);
+    for (var index = 0; index < count; index = index + 1) {
+        let place = frame.fog_light_place[index];
+        let share = 1.0 - length(place.xyz - point) / max(place.w, 1.0);
+        light = light + frame.fog_light_color[index].rgb * max(share, 0.0) * max(share, 0.0);
+    }
+    return light;
+}
+
+// A number from 0 to 1 from a whole place in space.
+fn fog_hash(at: vec3<i32>) -> f32 {
+    var value = u32(at.x) * 0x9e3779b1u + u32(at.y) * 0x85ebca77u + u32(at.z) * 0xc2b2ae3du;
+    value = (value ^ (value >> 15u)) * 0x2c1b3c6du;
+    value = value ^ (value >> 12u);
+    return f32(value & 0xffffu) / 65535.0;
+}
+
+// Smooth noise from 0 to 1.
+fn fog_noise(place: vec3<f32>) -> f32 {
+    let low = vec3<i32>(floor(place));
+    let part = fract(place);
+    let even = part * part * (vec3<f32>(3.0) - 2.0 * part);
+    let near = mix(
+        mix(fog_hash(low), fog_hash(low + vec3<i32>(1, 0, 0)), even.x),
+        mix(fog_hash(low + vec3<i32>(0, 1, 0)), fog_hash(low + vec3<i32>(1, 1, 0)), even.x),
+        even.y,
+    );
+    let far = mix(
+        mix(fog_hash(low + vec3<i32>(0, 0, 1)), fog_hash(low + vec3<i32>(1, 0, 1)), even.x),
+        mix(fog_hash(low + vec3<i32>(0, 1, 1)), fog_hash(low + vec3<i32>(1, 1, 1)), even.x),
+        even.y,
+    );
+    return mix(near, far, even.z);
+}
+
+// How thick volume `index` is at `point`, out of all it can be.
+fn fog_share(index: i32, point: vec3<f32>) -> f32 {
+    let low = frame.fog_low[index];
+    let high = frame.fog_high[index];
+    let inside = min(point - low.xyz, high.xyz - point);
+    var share = 1.0;
+    if low.w > 0.0 {
+        share = smoothstep(0.0, 1.0, clamp(min(inside.x, min(inside.y, inside.z)) / low.w, 0.0, 1.0));
+    }
+    let wisps = frame.fog_look[index].w;
+    if wisps > 0.0 {
+        let drift = frame.fog_drift[index];
+        let at = (point - drift.xyz * frame.params.x) / drift.w;
+        let body = fog_noise(at) * 0.65 + fog_noise(at * 2.3 + vec3<f32>(7.1)) * 0.35;
+        share = share * mix(1.0, smoothstep(0.35, 0.75, body) * 1.6, wisps);
+    }
+    return share;
+}
+
+// Whether volume `index` has to be marched, as it changes along a ray.
+fn fog_is_marched(index: i32) -> bool {
+    let lit = (u32(frame.fog_counts.z) >> u32(index)) & 1u;
+    return frame.fog_look[index].w > 0.0 || lit == 1u || frame.fog_low[index].w > 0.0;
+}
+
+// Even fog in places, along `ray` from the eye, furthest first, so that what's near goes over it.
+fn volumes_fogged(start: vec3<f32>, ray: vec3<f32>) -> vec3<f32> {
+    var color = start;
+    let whole = length(ray);
+    for (var index = i32(frame.fog_counts.x) - 1; index >= 0; index = index - 1) {
+        if fog_is_marched(index) {
+            continue;
+        }
+        let span = box_span(ray, frame.fog_low[index].xyz, frame.fog_high[index].xyz);
+        if span.y > span.x {
+            let through = exp(-frame.fog_high[index].w * (span.y - span.x) * whole);
+            color = mix(frame.fog_look[index].rgb, color, through);
+        }
+    }
+    return color;
+}
+
+// Fog in places that changes along `ray`: what it adds, and in w how much gets through. It's soft,
+// so it's worked out with light in the air, for a quarter of the pixels.
+fn volumes_marched(ray: vec3<f32>, jitter: f32) -> vec4<f32> {
+    var left = 1.0;
+    var gathered = vec3<f32>(0.0);
+    let lit_bits = u32(frame.fog_counts.z);
+    let whole = length(ray);
+    for (var index = i32(frame.fog_counts.x) - 1; index >= 0; index = index - 1) {
+        if !fog_is_marched(index) {
+            continue;
+        }
+        let span = box_span(ray, frame.fog_low[index].xyz, frame.fog_high[index].xyz);
+        if span.y <= span.x {
+            continue;
+        }
+        let density = frame.fog_high[index].w;
+        let tint = frame.fog_look[index].rgb;
+        let lit = (lit_bits >> u32(index)) & 1u;
+        let steps = 10;
+        let step_length = (span.y - span.x) * whole / f32(steps);
+        var own_left = 1.0;
+        var own = vec3<f32>(0.0);
+        for (var step = 0; step < steps; step = step + 1) {
+            let share = mix(span.x, span.y, (f32(step) + jitter) / f32(steps));
+            let point = frame.eye.xyz + ray * share;
+            let through = exp(-density * fog_share(index, point) * step_length);
+            var light = vec3<f32>(1.0);
+            if lit == 1u {
+                light = lights_in_fog(point);
+                if frame.probe_size.w > 0.5 {
+                    light = light + probe_light(point) * 2.0;
+                }
+            }
+            own = own + own_left * (1.0 - through) * light * tint;
+            own_left = own_left * through;
+        }
+        // Nearer goes over what's already been gathered from further off.
+        gathered = gathered * own_left + own;
+        left = left * own_left;
+    }
+    return vec4<f32>(gathered, left);
+}
+
 // Fog lit by the bake, marched along the view. It's brightest by lights.
 fn grid_fogged(color: vec3<f32>, ray: vec3<f32>, jitter: f32) -> vec3<f32> {
     let density = frame.fog_color.w;
@@ -215,7 +338,8 @@ fn grid_fogged(color: vec3<f32>, ray: vec3<f32>, jitter: f32) -> vec3<f32> {
         let point = frame.eye.xyz + ray * ((f32(step) + jitter) / f32(steps));
         let thickness = density * exp(-(point.z - frame.fog_params.x) * falloff);
         let through = exp(-thickness * step_length);
-        gathered = gathered + left * (1.0 - through) * probe_light(point) * 2.0 * frame.fog_color.rgb;
+        let light = probe_light(point) * 2.0 + lights_in_fog(point);
+        gathered = gathered + left * (1.0 - through) * light * frame.fog_color.rgb;
         left = left * through;
     }
     return color * left + gathered;
@@ -363,18 +487,28 @@ fn share_in_air(ray: vec3<f32>) -> f32 {
     return share;
 }
 
-// Fog that thickens with distance and lies low.
-fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32> {
+// Fog that thickens with distance and lies low, and then fog in places.
+fn fogged(start: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32> {
     let density = frame.fog_color.w;
-    if density <= 0.0 {
-        return color;
+    let volumes = frame.fog_counts.x > 0.5;
+    if density <= 0.0 && !volumes {
+        return start;
     }
     let far = world_at(uv, min(depth, 0.99999));
     let whole = far - frame.eye.xyz;
     let ray = whole * share_in_air(whole);
-    if frame.probe_size.w > 0.5 {
-        return grid_fogged(color, ray, jitter);
+    var color = start;
+    if density > 0.0 {
+        color = level_fogged(color, ray, jitter);
     }
+    if volumes {
+        color = volumes_fogged(color, ray);
+    }
+    return color;
+}
+
+// How much of what's along `ray` gets through the level's fog, by its height.
+fn level_through(ray: vec3<f32>) -> f32 {
     let distance_to = length(ray);
     let falloff = max(frame.fog_params.y, 0.0001);
     let start = frame.eye.z - frame.fog_params.x;
@@ -384,8 +518,16 @@ fn fogged(color: vec3<f32>, uv: vec2<f32>, depth: f32, jitter: f32) -> vec3<f32>
     if abs(rise) > 0.0001 {
         amount = amount * (1.0 - exp(-rise)) / rise;
     }
-    let total = density * distance_to * amount;
-    return mix(color, frame.fog_color.rgb, 1.0 - exp(-max(total, 0.0)));
+    return exp(-max(frame.fog_color.w * distance_to * amount, 0.0));
+}
+
+// The level's fog, along `ray`.
+fn level_fogged(color: vec3<f32>, ray: vec3<f32>, jitter: f32) -> vec3<f32> {
+    let density = frame.fog_color.w;
+    if frame.probe_size.w > 0.5 {
+        return grid_fogged(color, ray, jitter);
+    }
+    return mix(frame.fog_color.rgb, color, level_through(ray));
 }
 
 // Moving bright lines, as light makes through a rippling surface.
@@ -660,8 +802,9 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     color = mix(color, frame.outline.rgb, edge);
     color = in_pools(color, in.uv, depth);
     color = fogged(color, in.uv, depth, noise);
-    if frame.stencil_params.x > 0.5 {
-        color = color + textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0).rgb;
+    if frame.stencil_params.x > 0.5 || frame.fog_counts.w > 0.5 {
+        let air = textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0);
+        color = color * air.a + air.rgb;
     }
     return vec4<f32>(to_screen(shader_post(color, in.uv), noise), 1.0);
 }
@@ -679,5 +822,13 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
     for (var index = 0; index < count; index = index + 1) {
         color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
     }
-    return vec4<f32>(color, 1.0);
+    let whole = stop - frame.eye.xyz;
+    let ray = whole * share_in_air(whole);
+    let fog = volumes_marched(ray, noise);
+    // Rays show up in what's in the air.
+    var through = fog.w;
+    if frame.fog_color.w > 0.0 {
+        through = through * level_through(ray);
+    }
+    return vec4<f32>(fog.rgb + color * (3.0 - through * 2.0), fog.w);
 }

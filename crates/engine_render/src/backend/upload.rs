@@ -5,8 +5,8 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, BOUNCE_STYLE, Fog, Look, Map, Material, MipLevel, PixelForm, Pool, ProbeGrid,
-    RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
+    AliasModel, BOUNCE_STYLE, Fog, FogVolume, Look, Map, Material, MipLevel, PixelForm, Pool,
+    ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -17,9 +17,9 @@ use vulkane::safe::{
 
 use super::shadow::{ShadowRange, shadow_figures};
 use super::{
-    Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer, GpuImage, GpuMap,
-    GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
-    ShadowInstance, TileWrite,
+    Backend, DEPTH_FORMAT, EXTRA_FLOATS, FOG_LIGHTS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer,
+    GpuImage, GpuMap, GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_FOG_VOLUMES, MAX_POOLS,
+    POST_BYTES, SKY_BYTES, Scene, ShadowInstance, TileWrite,
 };
 use crate::alias::{look_bytes, pose_bytes, rest_bytes, weld_corners};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
@@ -27,7 +27,7 @@ use crate::error::RenderError;
 use crate::instances::{
     INSTANCE_BYTES, LevelView, instance_batches, shared_looks, shared_places, view_planes,
 };
-use crate::live::live_bytes;
+use crate::live::{LiveLight, live_bytes};
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
 };
@@ -293,6 +293,10 @@ pub(super) struct FrameExtras<'a> {
     light_shift: [f32; 3],
     /// Bodies of liquid.
     pools: &'a [Pool],
+    /// Fog in places.
+    fog_volumes: &'a [FogVolume],
+    /// The lights that move, for those in fog.
+    fog_lights: &'a [LiveLight],
     /// How many samples a pixel the scene has.
     samples: u32,
     /// Where the view is, to choose among them.
@@ -433,7 +437,59 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 13] = extra.look.exposure;
     let [red, green, blue] = extra.light_shift;
     out[base + 16..base + 19].copy_from_slice(&[1.0 + red, 1.0 + green, 1.0 + blue]);
+    fog_values(&mut out[base + 20..], extra);
     out
+}
+
+/// Fog's part of the frame uniforms.
+fn fog_values(out: &mut [f32], extra: &FrameExtras<'_>) {
+    let mut volumes: Vec<&FogVolume> = extra.fog_volumes.iter().collect();
+    // How far a volume is from the eye, which is nothing inside it.
+    let away = |volume: &FogVolume| {
+        let nearest = Vec3::new(
+            extra.eye.x.clamp(volume.low.x, volume.high.x),
+            extra.eye.y.clamp(volume.low.y, volume.high.y),
+            extra.eye.z.clamp(volume.low.z, volume.high.z),
+        );
+        (nearest - extra.eye).length()
+    };
+    volumes.sort_by(|a, b| away(a).total_cmp(&away(b)));
+    volumes.truncate(MAX_FOG_VOLUMES);
+    let mut lit = 0_u32;
+    for (index, volume) in (0_u32..).zip(&volumes) {
+        let at = index as usize * 4;
+        let (low, high, drift) = (volume.low, volume.high, volume.drift);
+        out[at..at + 4].copy_from_slice(&[low.x, low.y, low.z, volume.edge]);
+        let at = at + MAX_FOG_VOLUMES * 4;
+        out[at..at + 4].copy_from_slice(&[high.x, high.y, high.z, volume.density]);
+        let at = at + MAX_FOG_VOLUMES * 4;
+        out[at..at + 3].copy_from_slice(&volume.color.map(linear));
+        out[at + 3] = volume.wisps;
+        let at = at + MAX_FOG_VOLUMES * 4;
+        out[at..at + 4].copy_from_slice(&[drift.x, drift.y, drift.z, volume.wisp_size]);
+        lit |= u32::from(volume.lit) << index;
+    }
+    let base = MAX_FOG_VOLUMES * 16;
+    let mut lights: Vec<&LiveLight> = extra.fog_lights.iter().collect();
+    let away = |light: &LiveLight| (light.origin - extra.eye).length() - light.radius;
+    lights.sort_by(|a, b| away(a).total_cmp(&away(b)));
+    lights.truncate(FOG_LIGHTS);
+    #[expect(clippy::cast_precision_loss, reason = "eight at most")]
+    let volume_count = volumes.len() as f32;
+    #[expect(clippy::cast_precision_loss, reason = "four at most")]
+    let light_count = lights.len() as f32;
+    #[expect(clippy::cast_precision_loss, reason = "eight bits")]
+    let lit_bits = lit as f32;
+    let marched = volumes.iter().any(|volume| volume.marched());
+    let marched = f32::from(u8::from(marched));
+    out[base..base + 4].copy_from_slice(&[volume_count, light_count, lit_bits, marched]);
+    for (index, light) in lights.iter().enumerate() {
+        let at = base + 4 + index * 4;
+        let place = light.origin;
+        out[at..at + 4].copy_from_slice(&[place.x, place.y, place.z, light.radius]);
+        let at = base + 4 + FOG_LIGHTS * 4 + index * 4;
+        out[at..at + 3].copy_from_slice(&light.color);
+    }
 }
 
 /// A colour as it's shown, in linear light, as `to_linear` does in the shaders.
@@ -1275,6 +1331,8 @@ impl Backend {
             masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
+            fog_volumes: scene.map_or(&[][..], |scene| scene.map.fog_volumes.as_slice()),
+            fog_lights: scene.map_or(&[][..], |scene| scene.drawables.live_lights),
             eye: view.origin,
             under_sky: scene.is_some_and(|scene| scene.map.open_above(view.origin)),
             samples: self.samples,
@@ -1282,6 +1340,7 @@ impl Backend {
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
             light_shift: view.light_shift,
         };
+        self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         let slot = self.slot;
         let values = &mut self.frame_values[slot];

@@ -34,6 +34,37 @@ pub struct Fog {
     pub falloff: f32,
 }
 
+/// Fog in a place, with clear air beside it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct FogVolume {
+    /// Its lowest corner.
+    pub low: Vec3,
+    /// Its highest corner.
+    pub high: Vec3,
+    /// Its colour.
+    pub color: [f32; 3],
+    /// How thick it is.
+    pub density: f32,
+    /// How far in from its sides it takes to reach that.
+    pub edge: f32,
+    /// How much of it is wisps, from 0 for even fog to 1 for gaps between them.
+    pub wisps: f32,
+    /// How big wisps are.
+    pub wisp_size: f32,
+    /// How fast they go, and which way.
+    pub drift: Vec3,
+    /// Whether it takes the level's light, and that of what goes through it.
+    pub lit: bool,
+}
+
+impl FogVolume {
+    /// Whether it changes along a ray, so that it has to be gone through a step at a time.
+    #[must_use]
+    pub fn marched(&self) -> bool {
+        self.wisps > 0.0 || self.lit || self.edge > 0.0
+    }
+}
+
 /// A sky.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sky {

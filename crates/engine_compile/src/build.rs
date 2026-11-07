@@ -1242,6 +1242,7 @@ fn compile_with(
         builder.map.stencils.push(stencil);
     }
     builder.map.fog = working.fog;
+    builder.map.fog_volumes.clone_from(&working.fog_volumes);
     if let Some(sky) = &working.sky {
         let mut built = sky.sky.clone();
         if let (Some(clouds), Some(image)) = (&mut built.clouds, &sky.cloud_image) {

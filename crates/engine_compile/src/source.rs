@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Fog, Sky, Spline};
+use engine_map::{Clouds, Contents, Fog, FogVolume, Sky, Spline};
 
 use crate::error::CompileError;
 use crate::field::{FieldSource, read_field};
@@ -205,6 +205,8 @@ pub struct WorkingMap {
     pub water: Option<WaterSource>,
     /// Fog, if it has any.
     pub fog: Option<Fog>,
+    /// Fog in places.
+    pub fog_volumes: Vec<FogVolume>,
 }
 
 /// A map's sky, as written.
@@ -691,6 +693,51 @@ fn read_water(block: &Block) -> WaterSource {
     }
 }
 
+/// A number from `block`, or `usual`.
+#[expect(clippy::cast_possible_truncation, reason = "these store f32")]
+fn number_of(block: &Block, key: &str, usual: f32) -> f32 {
+    block
+        .get(key)
+        .and_then(Value::number)
+        .map_or(usual, |number| number as f32)
+}
+
+/// Three numbers from `block`, or `usual`.
+#[expect(clippy::cast_possible_truncation, reason = "these store f32")]
+fn three_of(block: &Block, key: &str, usual: [f32; 3]) -> [f32; 3] {
+    match block.get(key).and_then(Value::numbers).as_deref() {
+        Some([x, y, z, ..]) => [*x as f32, *y as f32, *z as f32],
+        _ => usual,
+    }
+}
+
+/// Fog in a place, from its block.
+fn read_fog_volume(block: &Block) -> Result<FogVolume, CompileError> {
+    let corner = |key: &str| {
+        let wanted = block.get(key).and_then(Value::numbers);
+        wanted.filter(|numbers| numbers.len() >= 3).ok_or_else(|| {
+            CompileError::Bad(format!("fog_volume has to say its {key}, as three numbers"))
+        })
+    };
+    let (one, two) = (corner("low")?, corner("high")?);
+    #[expect(clippy::cast_possible_truncation, reason = "these store f32")]
+    let least = |axis: usize| one[axis].min(two[axis]) as f32;
+    #[expect(clippy::cast_possible_truncation, reason = "these store f32")]
+    let most = |axis: usize| one[axis].max(two[axis]) as f32;
+    let [x, y, z] = three_of(block, "drift", [0.0; 3]);
+    Ok(FogVolume {
+        low: Vec3::new(least(0), least(1), least(2)),
+        high: Vec3::new(most(0), most(1), most(2)),
+        color: three_of(block, "color", [0.6; 3]),
+        density: number_of(block, "density", 0.01).max(0.0),
+        edge: number_of(block, "edge", 32.0).max(0.0),
+        wisps: number_of(block, "wisps", 0.0).clamp(0.0, 1.0),
+        wisp_size: number_of(block, "wisp_size", 96.0).max(1.0),
+        drift: Vec3::new(x, y, z),
+        lit: block.get("lit").and_then(Value::flag) == Some(true),
+    })
+}
+
 /// Fog, from its block.
 fn read_fog(block: &Block) -> Fog {
     #[expect(clippy::cast_possible_truncation, reason = "fog stores f32")]
@@ -728,6 +775,10 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .collect::<Result<_, _>>()?,
         sky: document.blocks_of("sky").next().map(read_sky),
         fog: document.blocks_of("fog").next().map(read_fog),
+        fog_volumes: document
+            .blocks_of("fog_volume")
+            .map(read_fog_volume)
+            .collect::<Result<_, _>>()?,
         splines: document.blocks_of("spline").map(read_spline).collect(),
         tile_size: document
             .blocks_of("tile_grid")

@@ -53,7 +53,7 @@ pub use skeleton::{
     Channel, ChannelPath, Clip, HitCapsule, Interpolation, Joint, JointPose, NO_MOVE, Rows,
     Skeleton, SkeletonPlace, after, angles_of_rows, blend_poses, moved, placed_at, turned,
 };
-pub use sky::{Clouds, Fog, Sky};
+pub use sky::{Clouds, Fog, FogVolume, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
 pub use terrain::{

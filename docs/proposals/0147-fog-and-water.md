@@ -7,7 +7,7 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 ### Fog (70 to 73)
 
 - `fog_volume` blocks: a box, by `low` and `high`, with `color`, `density`, `edge` for how softly it ends, `wisps` from 0 to 1 and `wisp_size`, `drift` as a way and a speed, and `lit`. Up to 8 nearest the eye reach the post pass, as pools do.
-- A plain volume is a sum. One with wisps or light is marched over the span a ray has in it, in 10 steps, starting somewhere different in each pixel.
+- A plain volume is a sum. One with wisps, light or soft sides is marched over the span a ray has in it, in 10 steps, starting somewhere different in each pixel. That's done with light in the air, for a quarter of the pixels.
 - `lit` takes the bake's light at each step, and the 4 nearest moving lights. It's the usual kind, where there's a probe grid. The level's own fog takes moving lights too.
 - What rays there are brighten with the fog they pass through.
 - Fog stops at water as it does now, so air's fog isn't under it.
@@ -59,5 +59,13 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
   - A murky look like the fixture's still works.
 
 ## Review
+
+### Fog (70 to 72)
+
+- **Tried in the game:** a bank of drifting fog in a room, lit by a light going through it, with clear air beside it and a wall coming out of it. Standing in it works, and so does looking along its side.
+- **What it costs,** at 1280 by 720, with the final pass at 0.16 ms without any: marched in the final pass, a bank across most of the view took it to 1.4 ms, and four over everything to 5.2 ms. That's too much for something soft, so it moved to the pass light in the air has, at a quarter of the pixels, and nothing about how it looks changed. There the same bank takes 0.55 ms, and the same four 1.37 ms. One over everything takes 0.42 ms.
+- **`gpu_times` couldn't see any of this.** It had no span for the final pass or for light in the air, so the first numbers read as if fog cost nothing. It has both now, as `post` and `air`.
+- **Plain fog stays in the final pass,** as a sum, so it keeps a hard edge against what's in front of it, and it's free.
+- **Rays** were meant to brighten with all the fog in a pixel, and they do, by what's left of the marched fog and the level's own.
 
 Filled in as each part lands.

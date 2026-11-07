@@ -12,7 +12,7 @@ use crate::nav_chunks::ChunkedNav;
 use crate::occluder::ModelOccluder;
 use crate::pool::Pool;
 use crate::probes::{LightTrack, ProbeGrid};
-use crate::sky::{Fog, Sky};
+use crate::sky::{Fog, FogVolume, Sky};
 use crate::stencil::RayStencil;
 use crate::tile_light::LightTiles;
 
@@ -645,6 +645,8 @@ pub struct Map {
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.
     pub fog: Option<Fog>,
+    /// Fog in places.
+    pub fog_volumes: Vec<FogVolume>,
     /// Code for the final pass, if it has its own.
     pub post_shader: Option<Arc<crate::ShaderCode>>,
     /// How its light comes out.

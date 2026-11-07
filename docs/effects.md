@@ -148,7 +148,7 @@ fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
 
 `place` is where it is, with its age in `w`, and `moving` how it's going, with how long it has in `w`. `field_at` reads the level's field named by `field`, from 0 to 1 across it. A level without that field reads 0. `shader_time` is there too. A motion that won't compile says so, and they move as if it wasn't there.
 
-100,000 at once cost about 0.2 ms a frame to step and a fraction of a millisecond to draw. A million cost about 1.5 ms to step. A level can have 2 million slots and 1,024 emitters going.
+At 1280 by 720, 100,000 at once take about 0.2 ms a frame to step, and a million about 1.5 ms, with about 2.3 ms more to draw. A level can have 2 million slots and 1,024 emitters going.
 
 ## Changing one while the game runs
 
