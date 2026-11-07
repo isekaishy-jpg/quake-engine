@@ -59,3 +59,17 @@ So it nearly halves the scene, depth pass included. Pictures of the arms are as 
 
 **One part of this can't land yet.** An effect on a brush model can't turn with it, as a client doesn't know how it's turned: `ModelInstance` has only an offset, as brush models don't turn when drawn or collided with at all. That's what a door that swings would need. It's written into item 151, on this same list, with the rest of what turning needs, and places are ready for it. It isn't research to skip: nothing can show the fault until then.
 
+### A copy's triangles on the CPU
+
+Measured on 101 copies of the test arm's 784 triangles: 160 bytes a triangle for each copy, 12.7 MB in all, in faces, points and leaf lists. So 500 copies of 2000 triangles would hold 160 MB to do what one face each can do. That's worth fixing.
+
+**The bake needs a copy's triangles, and nothing after it does.** `Map::drop_copy_faces` keeps a copy's first face, which stands in for it in each leaf it touched and says where its light is, and puts right everything that numbers faces. `engine-compile` does it after the bake, so that the files shrink too, and writes geometry after that. A level does it when it loads as well, which does nothing to one that's been through this and covers older files.
+
+The proving ground's faces went from 890 to 295, with five copies. Its barrels are drawn and lit as they were, and two shots of the same build differ by more than before and after do, as the fire moves.
+
+**A test proved nothing at first.** With leaves left as they were, the tests still passed, as a level of one leaf can't tell. `leaves_keep_what_they_held_when_a_copy_loses_its_faces` compares what each leaf holds, by what it is and not by number, on a level with several, and fails with that bug.
+
+### What posing costs the CPU
+
+Measured for a clip with every joint keyed: 2 µs for 20 joints, 6.6 µs for 60, and 11.8 µs for 120, sampling, placing and making a palette. So 100 characters of 60 joints are 0.66 ms a frame. That's fine for most scenes and matters in a crowd, so it's taken up with level of detail below.
+

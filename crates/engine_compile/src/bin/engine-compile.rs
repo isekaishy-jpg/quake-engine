@@ -60,8 +60,6 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
         return Err(error.into());
     }
     let hash = map_hash(&document, &used);
-    let kept = content.join("maps").join(format!("{name}.egeo"));
-    std::fs::write(&kept, write_geometry(&map, hash))?;
     let mut library = MaterialLibrary::new(filesystem);
     let mut images = |path: &str| -> Result<Arc<Vec<MipLevel>>, engine_compile::CompileError> {
         library.image_at(path)
@@ -71,6 +69,10 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
         images: &mut images,
     };
     bake_light(&mut map, &mut input)?;
+    // The bake was all that needed a copy's triangles.
+    map.drop_copy_faces();
+    let kept = content.join("maps").join(format!("{name}.egeo"));
+    std::fs::write(&kept, write_geometry(&map, hash))?;
     let out = content.join("maps").join(format!("{name}.ebake"));
     std::fs::write(&out, write_bake(&map, hash))?;
     let beside = side_files(&map);

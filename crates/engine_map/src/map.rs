@@ -266,6 +266,117 @@ pub struct MeshInstance {
 }
 
 impl Map {
+    /// Lets go of what a copy of a shared mesh needed only to be baked. A copy's triangles are
+    /// on the GPU once, for all its copies, and what's left of its faces is the first, which
+    /// stands in for it in every leaf it touched and says where its light is. That's most of a
+    /// level with many copies: about 160 bytes a triangle, for each copy.
+    ///
+    /// Once is enough, and doing it again changes nothing.
+    pub fn drop_copy_faces(&mut self) {
+        let count = self.faces.len();
+        let mut stand_in: Vec<u32> = (0..u32::try_from(count).unwrap_or(u32::MAX)).collect();
+        let mut gone = vec![false; count];
+        for instance in &self.mesh_instances {
+            let first = instance.first_face as usize;
+            let last = (first + instance.face_count as usize).min(count);
+            for at in first.saturating_add(1)..last {
+                gone[at] = true;
+                stand_in[at] = instance.first_face;
+            }
+        }
+        if !gone.contains(&true) {
+            return;
+        }
+        // Where each face lands, and one more for where a range ends.
+        let mut landing = Vec::with_capacity(count + 1);
+        let mut kept = 0_u32;
+        for flag in &gone {
+            landing.push(kept);
+            kept += u32::from(!*flag);
+        }
+        landing.push(kept);
+        self.keep_points_of(&gone);
+        let place = |face: u32| {
+            let standing = stand_in.get(face as usize).copied().unwrap_or(face);
+            landing.get(standing as usize).copied().unwrap_or(0)
+        };
+        let range = |first: &mut u32, length: &mut u32| {
+            let end = first.saturating_add(*length) as usize;
+            let start = landing.get(*first as usize).copied().unwrap_or(kept);
+            *first = start;
+            *length = landing
+                .get(end)
+                .copied()
+                .unwrap_or(kept)
+                .saturating_sub(start);
+        };
+        for model in &mut self.models {
+            range(&mut model.first_face, &mut model.face_count);
+        }
+        for group in &mut self.mesh_groups {
+            range(&mut group.first_face, &mut group.face_count);
+        }
+        for instance in &mut self.mesh_instances {
+            range(&mut instance.first_face, &mut instance.face_count);
+        }
+        for (first, length) in &mut self.tree.node_faces {
+            range(first, length);
+        }
+        let is_gone = |face: u32| gone.get(face as usize).copied().unwrap_or(false);
+        self.light_lifts.retain(|(face, _)| !is_gone(*face));
+        for (face, _) in &mut self.light_lifts {
+            *face = place(*face);
+        }
+        if let Some(mega) = &mut self.mega {
+            let mut faces = Vec::with_capacity(mega.faces.len());
+            for [face, x, y] in mega.faces.as_chunks::<3>().0 {
+                if !is_gone(face.cast_unsigned()) {
+                    faces.extend([place(face.cast_unsigned()).cast_signed(), *x, *y]);
+                }
+            }
+            mega.faces = faces;
+        }
+        // A copy's faces were in many of a leaf's places, and now they're the one.
+        let mut seen_in = vec![u32::MAX; kept as usize];
+        let mut list = Vec::with_capacity(self.tree.leaf_faces.len());
+        for (number, leaf) in (0_u32..).zip(&mut self.tree.leaves) {
+            let first = leaf.first_face as usize;
+            let own = self
+                .tree
+                .leaf_faces
+                .get(first..first + leaf.face_count as usize);
+            leaf.first_face = u32::try_from(list.len()).unwrap_or(u32::MAX);
+            for face in own.unwrap_or_default().iter().map(|face| place(*face)) {
+                if let Some(seen) = seen_in.get_mut(face as usize)
+                    && *seen != number
+                {
+                    *seen = number;
+                    list.push(face);
+                }
+            }
+            let end = u32::try_from(list.len()).unwrap_or(u32::MAX);
+            leaf.face_count = end - leaf.first_face;
+        }
+        self.tree.leaf_faces = list;
+    }
+
+    /// Keeps only the faces that aren't `gone`, and their points and normals.
+    fn keep_points_of(&mut self, gone: &[bool]) {
+        let old_points = std::mem::take(&mut self.points);
+        let old_normals = std::mem::take(&mut self.normals);
+        let faces = std::mem::take(&mut self.faces);
+        for (mut face, _) in faces.into_iter().zip(gone).filter(|(_, gone)| !**gone) {
+            let first = face.first_point as usize;
+            let last = first + face.point_count as usize;
+            face.first_point = u32::try_from(self.points.len()).unwrap_or(u32::MAX);
+            self.points
+                .extend_from_slice(old_points.get(first..last).unwrap_or_default());
+            let normal = |at: usize| old_normals.get(at).copied().unwrap_or_default();
+            self.normals.extend((first..last).map(normal));
+            self.faces.push(face);
+        }
+    }
+
     /// The named place `name` in the level.
     #[must_use]
     pub fn place(&self, name: &str) -> Option<&AttachPoint> {

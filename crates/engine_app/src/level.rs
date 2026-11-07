@@ -46,6 +46,7 @@ pub(crate) fn load_level(
         let files: SideFiles = Arc::new(move |path| source.read(path).ok());
         attach_side_files(&mut map, name, &files);
     }
+    map.drop_copy_faces();
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;
     let start = spawn_point(&map);

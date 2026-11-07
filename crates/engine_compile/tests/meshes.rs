@@ -1015,3 +1015,123 @@ fn what_is_placed_shows_its_rest_weights() {
     assert!(near(shown), "it's where the shape key puts it");
     assert!(!near(was), "and not where it was");
 }
+
+/// Whether each of `map`'s copies can be found from a leaf, by the face standing in for it.
+fn copies_are_in_leaves(map: &Map) -> bool {
+    map.mesh_instances.iter().all(|instance| {
+        let first = instance.first_face;
+        map.tree
+            .leaf_faces
+            .iter()
+            .any(|face| (first..first + instance.face_count).contains(face))
+    })
+}
+
+/// A level's copies keep one face each, with everything that counts faces put right, and the
+/// world's faces where they were.
+#[test]
+fn a_copy_keeps_one_face_once_it_is_baked() {
+    let places = [
+        "origin = [0 0 0] light = probe",
+        "origin = [40 0 0] light = probe",
+    ];
+    let (_, mut map) = level_with(folded(10.0), &places);
+    let was = map.faces.len();
+    let world_was: Vec<_> = map
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| {
+            !map.mesh_instances.iter().any(|instance| {
+                let first = instance.first_face as usize;
+                (first..first + instance.face_count as usize).contains(at)
+            })
+        })
+        .map(|(_, face)| map.face_points(face).to_vec())
+        .collect();
+    assert!(map.mesh_instances[0].face_count > 1, "it has faces to lose");
+    assert!(copies_are_in_leaves(&map));
+    map.drop_copy_faces();
+    assert_eq!(map.faces.len(), world_was.len() + 2, "from {was}");
+    assert!(map.mesh_instances.iter().all(|copy| copy.face_count == 1));
+    assert!(copies_are_in_leaves(&map));
+    let last = map.tree.leaf_faces.iter().max().copied().unwrap_or(0);
+    assert!((last as usize) < map.faces.len(), "leaves are in range");
+    let total: u32 = map.models.iter().map(|model| model.face_count).sum();
+    assert_eq!(total as usize, map.faces.len());
+    let world_now: Vec<_> = map
+        .faces
+        .iter()
+        .enumerate()
+        .filter(|(at, _)| {
+            !map.mesh_instances
+                .iter()
+                .any(|copy| copy.first_face as usize == *at)
+        })
+        .map(|(_, face)| map.face_points(face).to_vec())
+        .collect();
+    assert_eq!(world_now, world_was, "the world's faces keep their points");
+    let once = map.clone();
+    map.drop_copy_faces();
+    assert_eq!(map, once, "again changes nothing");
+}
+
+/// What each of `map`'s leaves holds, in words that don't depend on faces' numbers: a copy by its
+/// number, and any other face by its points.
+fn what_leaves_hold(map: &Map) -> Vec<Vec<String>> {
+    let copy_of = |face: u32| {
+        map.mesh_instances
+            .iter()
+            .position(|copy| (copy.first_face..copy.first_face + copy.face_count).contains(&face))
+    };
+    map.tree
+        .leaves
+        .iter()
+        .map(|leaf| {
+            let first = leaf.first_face as usize;
+            let faces = &map.tree.leaf_faces[first..first + leaf.face_count as usize];
+            let mut held: Vec<String> = faces
+                .iter()
+                .map(|&face| match copy_of(face) {
+                    Some(copy) => format!("copy {copy}"),
+                    None => format!("{:?}", map.face_points(&map.faces[face as usize])),
+                })
+                .collect();
+            held.sort();
+            held.dedup();
+            held
+        })
+        .collect()
+}
+
+/// Every leaf holds what it held, with the copies that touched it found through what's left.
+#[test]
+fn leaves_keep_what_they_held_when_a_copy_loses_its_faces() {
+    let places = [
+        "origin = [0 0 0] light = probe",
+        "origin = [300 0 0] light = probe",
+    ];
+    let (_, mut map) = level_with(rigged(), &places);
+    assert!(map.tree.leaves.len() > 2, "it wants several leaves");
+    let before = what_leaves_hold(&map);
+    map.drop_copy_faces();
+    assert_eq!(what_leaves_hold(&map), before);
+}
+
+/// What's kept on disk is what's left, and a level comes back from it.
+#[test]
+fn a_level_comes_back_from_what_is_left_of_its_copies() {
+    let places = [
+        "origin = [0 0 0] light = probe",
+        "origin = [40 0 0] light = probe",
+    ];
+    let (working, mut map) = level_with(folded(10.0), &places);
+    map.drop_copy_faces();
+    let bytes = write_geometry(&map, 7);
+    let geometry = read_geometry(&bytes, 7).expect("it reads");
+    let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
+    assert_eq!(again.faces.len(), map.faces.len());
+    assert_eq!(again.mesh_instances, map.mesh_instances);
+    assert_eq!(again.shared_meshes, map.shared_meshes);
+    assert!(copies_are_in_leaves(&again));
+}
