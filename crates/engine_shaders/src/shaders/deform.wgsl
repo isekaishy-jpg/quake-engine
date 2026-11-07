@@ -33,8 +33,8 @@ struct Job {
 
 // Everything to move this frame.
 @group(0) @binding(7) var<storage, read> jobs: array<Job>;
-// Which job each workgroup does, in its low ten bits, and which of that job's groups of corners,
-// in the rest. One dispatch does every mesh, as a mesh alone doesn't fill the GPU.
+// Which job each workgroup does, in its low twelve bits, and which of that job's groups of
+// corners, in the rest. One dispatch does every mesh, as a mesh alone doesn't fill the GPU.
 @group(0) @binding(8) var<storage, read> groups: array<u32>;
 
 @compute @workgroup_size(64)
@@ -43,8 +43,8 @@ fn cs_deform(
     @builtin(local_invocation_index) thread: u32,
 ) {
     let what = groups[group.x];
-    let job = jobs[what & 1023u];
-    let within = (what >> 10u) * 64u + thread;
+    let job = jobs[what & 4095u];
+    let within = (what >> 12u) * 64u + thread;
     if within >= job.count {
         return;
     }
@@ -100,5 +100,58 @@ fn cs_deform(
         bitcast<u32>(dot(row_y, place)),
         bitcast<u32>(dot(row_z, place)),
         pack4x8snorm(vec4<f32>(facing, spare)),
+    );
+}
+
+// A model that animates by poses: two of them, and how far between.
+struct PoseJob {
+    // Where each pose's corners start.
+    first_a: u32,
+    first_b: u32,
+    count: u32,
+    first_out: u32,
+    blend: f32,
+}
+
+// What's the same for all of a model's copies.
+struct PoseModel {
+    scale: vec3<f32>,
+    // Where its workgroups start among the frame's.
+    first_group: u32,
+    offset: vec3<f32>,
+}
+
+@group(0) @binding(9) var<storage, read> pose_jobs: array<PoseJob>;
+// A corner in each pose: a place as three bytes, then a normal as three.
+@group(1) @binding(0) var<storage, read> poses: array<vec2<u32>>;
+
+var<immediate> pose_model: PoseModel;
+
+// A pose's place, from its bytes.
+fn pose_place(word: u32) -> vec3<f32> {
+    return vec3<f32>(f32(word & 255u), f32((word >> 8u) & 255u), f32((word >> 16u) & 255u));
+}
+
+@compute @workgroup_size(64)
+fn cs_poses(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) thread: u32,
+) {
+    let what = groups[pose_model.first_group + group.x];
+    let job = pose_jobs[what & 4095u];
+    let within = (what >> 12u) * 64u + thread;
+    if within >= job.count {
+        return;
+    }
+    let a = poses[job.first_a + within];
+    let b = poses[job.first_b + within];
+    let pose = mix(pose_place(a.x), pose_place(b.x), job.blend);
+    let local = pose * pose_model.scale + pose_model.offset;
+    let normal = mix(unpack4x8snorm(a.y).xyz, unpack4x8snorm(b.y).xyz, job.blend);
+    moved[job.first_out + within] = vec4<u32>(
+        bitcast<u32>(local.x),
+        bitcast<u32>(local.y),
+        bitcast<u32>(local.z),
+        pack4x8snorm(vec4<f32>(normal, 1.0)),
     );
 }

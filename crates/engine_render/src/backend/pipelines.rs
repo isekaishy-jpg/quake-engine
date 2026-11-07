@@ -3,7 +3,7 @@
 use engine_shaders::{BROKEN, Module, safe_after_depth, spirv};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, BufferUsage, CullMode,
-    DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, Format, FrontFace,
+    DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, Format,
     GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, ImageLayout, InputRate,
     PipelineLayout, RenderPass, RenderPassCreateInfo, Sampler, SamplerCreateInfo, SamplerFilter,
     ShaderModule, ShaderStageFlags, VertexInputAttribute, VertexInputBinding,
@@ -14,7 +14,6 @@ use super::{
     Backend, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts, ParticlePipelines, Pipelines,
     SurfacePipelines,
 };
-use crate::alias::POSE_CORNER_BYTES;
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
 use crate::instances::{INSTANCE_BYTES, PLACE_BYTES, UV_BYTES};
@@ -124,53 +123,25 @@ impl Backend {
         })
     }
 
-    /// The pipeline for models. Each pose is a vertex buffer at its own offset,
-    /// bound twice, so the shader can blend two of them.
+    /// The pipeline for the fixture's models: a mesh's corners, with their own look.
     pub(super) fn make_alias_pipeline(
         device: &Device,
         layout: &PipelineLayout,
         pass: &RenderPass,
-        entries: (&str, &str),
-        cull: CullMode,
         samples: u32,
     ) -> Result<GraphicsPipeline, RenderError> {
         let spirv = spirv(&Module::Alias).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
-        let pose_stride = u32::try_from(POSE_CORNER_BYTES).unwrap_or(0);
-        let binding = |binding, stride| VertexInputBinding {
-            binding,
-            stride,
-            input_rate: InputRate::VERTEX,
-        };
-        let attribute = |location, binding, format, offset| VertexInputAttribute {
-            location,
-            binding,
-            format,
-            offset,
-        };
+        let (bindings, attributes) = mesh_vertices();
         GraphicsPipelineBuilder::new(layout, pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, entries.0)
-            .stage(GraphicsShaderStage::Fragment, &shader, entries.1)
-            .vertex_input(
-                &[
-                    binding(0, pose_stride),
-                    binding(1, pose_stride),
-                    binding(2, 8),
-                ],
-                &[
-                    attribute(0, 0, Format::R8G8B8A8_UINT, 0),
-                    attribute(1, 0, Format::R8G8B8A8_SNORM, 4),
-                    attribute(2, 1, Format::R8G8B8A8_UINT, 0),
-                    attribute(3, 1, Format::R8G8B8A8_SNORM, 4),
-                    attribute(4, 2, Format::R32G32_SFLOAT, 0),
-                ],
-            )
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+            .vertex_input(&bindings, &attributes)
             .dynamic_viewport_scissor()
-            // Quake's triangles wind clockwise. A weapon sits close enough for
-            // the near plane to open it up, and this keeps its inside hidden.
-            .cull_mode(cull)
+            // A weapon sits close enough for the near plane to open it up, and this keeps its
+            // inside hidden.
+            .cull_mode(CullMode::BACK)
             .samples(samples)
-            .front_face(FrontFace::CLOCKWISE)
             .depth_test(true, true)
             .build(device)
             .map_err(RenderError::from)
@@ -361,22 +332,7 @@ impl Backend {
             surfaces: vec![Self::make_surface_pipelines(
                 device, layouts, pass, samples, "",
             )?],
-            alias: Self::make_alias_pipeline(
-                device,
-                &layouts.alias,
-                pass,
-                ("vs_main", "fs_main"),
-                CullMode::BACK,
-                samples,
-            )?,
-            alias_hull: Self::make_alias_pipeline(
-                device,
-                &layouts.alias,
-                pass,
-                ("vs_hull", "fs_hull"),
-                CullMode::FRONT,
-                samples,
-            )?,
+            alias: Self::make_alias_pipeline(device, &layouts.alias, pass, samples)?,
             sprite,
             particle,
         })

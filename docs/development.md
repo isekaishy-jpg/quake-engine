@@ -17,6 +17,10 @@ How to build and check the engine. The rules behind these commands are in [DESIG
 
 Run `cargo fmt` without `--all`, which would reach `vendor/`.
 
+## Timing the GPU
+
+`gpu_times` on the console starts a clock on the GPU, and after that says what each part of a frame took, on average, since it was last asked. `gpu_times off` stops it. A clock on the CPU can't tell a frame's parts apart. A GPU's own clocks change speed, so one scene can read half as much again from one run to the next: only compare several runs, taken in turn.
+
 ## Adding a crate
 
 A new crate needs a proposal and a rule in `xtask/src/crate_graph/rules.rs`. The checks refuse a crate with no rule.

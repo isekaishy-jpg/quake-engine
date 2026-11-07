@@ -10,13 +10,13 @@ use super::FRAMES;
 /// A part of a frame the clock times.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) enum Span {
-    /// Moving meshes' corners being worked out.
+    /// Moving meshes' and models' corners being worked out.
     Deform,
     /// Shadow maps.
     Shadows,
     /// Moving meshes being drawn.
     Moving,
-    /// Alias models being drawn.
+    /// The fixture's models being drawn.
     Models,
     /// All of the scene's pass.
     Scene,
@@ -31,13 +31,13 @@ const SPANS: usize = 5;
 pub struct GpuTimes {
     /// How many frames this is the average of.
     pub frames: u32,
-    /// Moving meshes' corners being worked out.
+    /// Moving meshes' and models' corners being worked out.
     pub deform: f64,
     /// Shadow maps.
     pub shadows: f64,
     /// Moving meshes being drawn.
     pub moving: f64,
-    /// Alias models being drawn.
+    /// The fixture's models being drawn.
     pub models: f64,
     /// All of the scene's pass.
     pub scene: f64,

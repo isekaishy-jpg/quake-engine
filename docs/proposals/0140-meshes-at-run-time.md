@@ -175,15 +175,6 @@ Limits, as they stand:
 - **Only position and normal are morphed.** glTF asks a client for tangents too, and the engine works those out from screen derivatives, so it has none to change. UV and colour targets aren't read.
 - **Static copies don't morph.** They show the mesh as it was made.
 
-### Item 12: the fixture's models stay as they are
+### Item 12: the fixture's models
 
-The rule was that alias models move if pictures of the fixture come out the same and it's no slower. Neither holds, so they stay on their own path.
-
-**It's slower.** The numbers first given here were wall-clock times too noisy to mean anything, and the reason given for them was wrong. It said the cost was built in, and most of it was a poor vertex format. [What meshes left undone](../research/mesh-limits.md) has what was measured with a clock on the GPU, and what was done. For 280 copies of 900 corners it's now 0.114 ms against alias's 0.061. Alias blends two poses as it reads them, which is less work than skinning, so it stays ahead, but by a margin that's small next to what pixels cost.
-
-**The pictures wouldn't be the same either.** How the two answer the same light came out closer than expected, within a few percent over most of the range. But alias models are lit once per corner by Quake's rule, from one side, with fullbright pixels in their skins, and a mesh is lit per pixel. Keeping the look means keeping alias's own fragment shader as a special case, and then only the vertex stage is shared, which is the part that's slower.
-
-So there are two ways of drawing models: one for the fixture's, and one for everything new. **This goes against "one way of drawing", so it's for the human to say if that's wrong.** The fixture's models are the only ones on the old path, and nothing new should use it.
-
-The outline hull was left for this item to settle. As alias stays, moving meshes have one of their own.
-
+This first said alias models would stay on their own path, as they were slower and would look different. That was wrong on the first count, and the human decided against it. They've moved, with their look kept: see [proposal 0142](0142-the-fixtures-models-on-the-mesh-path.md), and [what meshes left undone](../research/mesh-limits.md) for what was wrong with the numbers.

@@ -22,7 +22,7 @@ mod surface;
 mod visible;
 mod world;
 
-pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
+pub use alias::{EntityDraw, WeldedCorners, model_matrix, weld_corners};
 pub use atlas::{Atlas, AtlasSpace};
 pub use backend::{GpuTimes, half_bits};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};

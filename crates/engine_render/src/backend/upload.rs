@@ -21,7 +21,7 @@ use super::{
     GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
     ShadowInstance, TileWrite,
 };
-use crate::alias::{pose_bytes, uv_bytes};
+use crate::alias::{pose_bytes, rest_bytes, uv_bytes, weld_corners};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
 use crate::instances::{
@@ -588,8 +588,20 @@ impl Backend {
 
     /// Uploads a model, and returns its number.
     pub(crate) fn add_model(&mut self, model: Arc<AliasModel>) -> Result<u32, RenderError> {
-        let poses = self.device_buffer(&pose_bytes(&model), BufferUsage::VERTEX_BUFFER)?;
-        let uvs = self.device_buffer(&uv_bytes(&model), BufferUsage::VERTEX_BUFFER)?;
+        let welded = weld_corners(&model);
+        let (poses, pose_set, pose_pool) =
+            self.upload_poses(&pose_bytes(&model, &welded.corners))?;
+        let rest = self.device_buffer(
+            &rest_bytes(&model, &welded.corners),
+            BufferUsage::VERTEX_BUFFER,
+        )?;
+        let uvs = self.device_buffer(&uv_bytes(&welded.corners), BufferUsage::VERTEX_BUFFER)?;
+        let index_bytes: Vec<u8> = welded
+            .indices
+            .iter()
+            .flat_map(|index| index.to_le_bytes())
+            .collect();
+        let indices = self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?;
         let size = (model.skin_width, model.skin_height);
         let pictures: Vec<_> = model
             .skins
@@ -599,8 +611,14 @@ impl Backend {
         let (pool, skin_sets, skins) = self.upload_textures(&pictures)?;
         self.models.push(GpuAlias {
             model,
-            poses,
+            corners: u32::try_from(welded.corners.len()).unwrap_or(0),
+            _poses: poses,
+            pose_set,
+            _pose_pool: pose_pool,
+            rest,
             uvs,
+            indices,
+            index_count: u32::try_from(welded.indices.len()).unwrap_or(0),
             skin_sets,
             _skins: skins,
             _pool: pool,
@@ -1244,7 +1262,7 @@ impl Backend {
         let live = scene.map_or(&[][..], |scene| scene.drawables.live_lights);
         let slots = match scene.filter(|_| self.post.live_shadows) {
             Some(scene) => {
-                let figures = shadow_figures(&self.models, scene.drawables.entities);
+                let figures = shadow_figures(&self.models, scene.drawables.entities, &[]);
                 let instances = scene.drawables.instances;
                 let moving: Vec<(Vec3, f32)> = scene
                     .drawables
@@ -1278,15 +1296,16 @@ impl Backend {
             let angles = [view.yaw, view.pitch, view.roll];
             let seen = view_projection(view.origin, angles, view.fov, aspect);
             let planes = view_planes(&seen);
-            if let Some(moving) = &mut map.moving {
-                let drawables = &scene.drawables;
-                self.moving_overflow |= moving.prepare(
-                    slot,
-                    drawables.moving,
-                    (drawables.palette, drawables.morph_weights),
-                    &planes,
-                )?;
-            }
+            let drawables = &scene.drawables;
+            self.moving_overflow |= map.moving.prepare(
+                slot,
+                drawables.moving,
+                (drawables.palette, drawables.morph_weights),
+                &planes,
+            )?;
+            self.moving_overflow |=
+                map.moving
+                    .prepare_figures(slot, drawables.entities, &self.models, &planes)?;
             if !scene.map.mesh_instances.is_empty() {
                 let levels = LevelView {
                     eye: view.origin,

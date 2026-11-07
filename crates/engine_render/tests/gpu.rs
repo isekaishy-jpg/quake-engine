@@ -2719,7 +2719,94 @@ fn a_moving_mesh_reads_its_own_uvs() {
     assert!(white > black + 40.0, "{white} against {black}");
 }
 
-/// What the two ways of drawing a model cost on the GPU. It says nothing is wrong by passing:
+/// How much blue there is under `light`, with and without its shadows, with `drawables`.
+fn blue_with_shadows_of(
+    renderer: &mut Renderer,
+    drawables: Drawables<'_>,
+    light: Vec3,
+) -> [u64; 2] {
+    [false, true].map(|shadows| {
+        let lights = [blue_light(light, shadows)];
+        let drawables = Drawables {
+            live_lights: &lights,
+            ..drawables
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture")
+            .rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|pixel| u64::from(pixel[2]))
+            .sum::<u64>()
+    })
+}
+
+/// What's behind the view has a shadow that's in it. Above the eye, just under a lamp, a small
+/// thing shades all that the view can see.
+#[test]
+fn a_moving_mesh_out_of_view_still_casts_a_shadow() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(false)))
+        .expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let mut rows = NO_MOVE;
+    rows[2][3] = 158.0;
+    let draws = [MovingDraw {
+        rows,
+        joint_count: 2,
+        center: Vec3::new(64.0, 64.0, 190.0),
+        radius: 12.0,
+        ..MovingDraw::default()
+    }];
+    let drawables = Drawables {
+        moving: &draws,
+        palette: &[NO_MOVE, NO_MOVE],
+        ..Drawables::default()
+    };
+    let light = Vec3::new(64.0, 64.0, 200.0);
+    let [open, blocked] = blue_with_shadows_of(&mut renderer, drawables, light);
+    assert!(blocked + 5000 < open, "{open} {blocked}");
+}
+
+/// The same of one of the fixture's models, which aren't drawn when they're not in view.
+#[test]
+fn a_figure_out_of_view_still_casts_a_shadow() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let mut model = triangle();
+    for pose in &mut model.poses {
+        for vertex in pose {
+            vertex.position[2] = 0;
+        }
+    }
+    // Small, so that it's far enough out of view for all it could reach. Its first pose is a
+    // point, as that's what's drawn with no room, and only moved corners can block anything.
+    model.scale = Vec3::new(0.1, 0.1, 0.1);
+    model.offset = Vec3::ZERO;
+    let shape = model.poses[0].clone();
+    model.poses = vec![vec![AliasVertex::default(); shape.len()], shape];
+    let number = renderer.add_model(Arc::new(model)).expect("model");
+    let entities = [figure_at(number, Vec3::new(60.0, 60.0, 190.0), 1)];
+    let light = Vec3::new(64.0, 64.0, 200.0);
+    let [open, blocked] = blue_with_shadows(&mut renderer, &view_from_above(), &entities, light);
+    assert!(blocked + 5000 < open, "{open} {blocked}");
+}
+
+/// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.
 #[test]
@@ -2816,13 +2903,7 @@ fn speed_of_the_two_paths() {
         ..Drawables::default()
     });
     println!(
-        "SPEED {copies} x {corners}: alias draw {:.4} / moving draw {:.4} + deform {:.4} = {:.4}, \
-         scene {:.4} / {:.4}",
-        alias.models,
-        moving.moving,
-        moving.deform,
-        moving.moving + moving.deform,
-        alias.scene,
-        moving.scene,
+        "SPEED {copies} x {corners}: alias {:.4} + {:.4} / moving {:.4} + {:.4}, scene {:.4} / {:.4}",
+        alias.models, alias.deform, moving.moving, moving.deform, alias.scene, moving.scene,
     );
 }

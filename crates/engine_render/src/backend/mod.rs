@@ -38,7 +38,6 @@ pub use self::clock::GpuTimes;
 use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
-use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
 use crate::instances::InstanceBatch;
@@ -240,7 +239,7 @@ struct GpuMap {
     /// Which level of detail each copy is at.
     instance_levels: Vec<usize>,
     /// Meshes that move, if it has any.
-    moving: Option<GpuMoving>,
+    moving: GpuMoving,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -314,10 +313,22 @@ struct CanvasPass {
 struct GpuAlias {
     /// The model, for its scale and offset.
     model: Arc<AliasModel>,
-    /// Every pose's corners.
-    poses: GpuBuffer,
+    /// How many corners it has, shared where triangles share them.
+    corners: u32,
+    /// Every pose's corners, kept alive for `pose_set`.
+    _poses: GpuBuffer,
+    /// What the compute pass reads them through.
+    pose_set: DescriptorSet,
+    /// Kept alive for `pose_set`.
+    _pose_pool: DescriptorPool,
+    /// Its first pose, as a mesh's corners, for when there's no room to move them.
+    rest: GpuBuffer,
     /// Each corner's place on the skin.
     uvs: GpuBuffer,
+    /// Its triangles.
+    indices: GpuBuffer,
+    /// How many indices that is.
+    index_count: u32,
     /// A descriptor set for each skin.
     skin_sets: Vec<DescriptorSet>,
     /// Kept alive for the sets.
@@ -410,10 +421,8 @@ struct Pipelines {
     surfaces: Vec<SurfacePipelines>,
     /// The outline of what moves.
     mesh_hull: GraphicsPipeline,
-    /// Alias models.
+    /// The fixture's models.
     alias: GraphicsPipeline,
-    /// Outlines of models, as a pushed-out hull.
-    alias_hull: GraphicsPipeline,
     /// Sprites.
     sprite: GraphicsPipeline,
     /// Particles.
@@ -749,7 +758,7 @@ impl Backend {
                     size: MODEL_OFFSET_SIZE,
                 }],
             )?,
-            alias: textured_layout(ALIAS_PUSH_SIZE)?,
+            alias: PipelineLayout::new(&device, &[&frame_layout, &texture_layout])?,
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
             gpu_particle: PipelineLayout::with_push_constants(
@@ -1188,7 +1197,11 @@ impl Backend {
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
         let entities = wanted.map_or(&[][..], |scene| scene.drawables.entities);
-        let figures = shadow::shadow_figures(&self.models, entities);
+        let places = self
+            .map
+            .as_ref()
+            .map_or(&[][..], |map| map.moving.figure_places(self.slot));
+        let figures = shadow::shadow_figures(&self.models, entities, places);
         self.clock.start(rec, self.slot, Span::Shadows);
         self.shadows
             .record(rec, self.map.as_ref(), &ranges, &figures, self.slot);

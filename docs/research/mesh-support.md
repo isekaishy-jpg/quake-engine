@@ -26,7 +26,7 @@ Things like a well belong in a level as mesh prefabs. A ring of 128 sides looked
 - `.emesh` stays the engine's format, binary by default, and gains normals, tangents, a second set of UVs, vertex colours and later skin weights.
 - Skip FBX unless a real need appears. Leave USD for later. OBJ adds little once glTF is in.
 - Large static meshes get one light map on their second UVs, and small props use the existing probes, by the author's choice.
-- A proper mesh drawing path with real normals, which the fixture's models then move onto, as there's one way of drawing. Tried, and they stay: see [proposal 0140](../proposals/0140-meshes-at-run-time.md). It overlaps with the [shader work](effects-water-shaders.md), so the two are designed together.
+- A proper mesh drawing path with real normals, which the fixture's models then move onto, as there's one way of drawing. They have: see [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). It overlaps with the [shader work](effects-water-shaders.md), so the two are designed together.
 - A mesh file can also carry its own collision as separate parts, to override what's generated. Boxes stay as the simple choice.
 - Materials match engine materials by name, with the green fallback. glTF's material model isn't converted, at least at first.
 - Order: static meshes done properly, with instancing and level of detail. Then attach points, which [effects](effects-water-shaders.md) also wants, then skeletal animation, then morph targets.

@@ -136,4 +136,4 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 - **Trying:** clips on a bad network.
 - **Not limits after all:** tangents, as the engine has none to change. Colour targets, until tools agree.
 - **Bigger than meshes:** rewinding for shots online covers every entity, so it goes to the network's own list if it's wanted.
-- **Item 12:** alias models are still cheaper, at about half, and the pictures would still differ. But the gap is now the real work of skinning, and at the scale of real scenes it's a tenth of what overdraw costs, so speed is no longer much of a reason. The look is. **They haven't moved:** there are still two ways of drawing models. Moving them means carrying alias's lighting over as a fragment shader of its own on the mesh path, which hasn't been built or tried.
+- **Item 12:** with this done the human moved the fixture's models over, in [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). So the comparison above, of two paths, is history now.

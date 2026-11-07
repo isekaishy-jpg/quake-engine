@@ -1,13 +1,14 @@
-//! Alias models on the GPU.
+//! The fixture's models, as what the mesh path draws (proposal 0142).
+
+use std::collections::HashMap;
 
 use engine_core::math::Vec3;
-use engine_map::AliasModel;
+use engine_map::{AliasCorner, AliasModel, Rows};
+
+use crate::instances::PLACE_BYTES;
 
 /// Bytes in one corner of one pose: a position, then a normal.
 pub(crate) const POSE_CORNER_BYTES: usize = 8;
-
-/// Bytes of the values a draw pushes.
-pub(crate) const ALIAS_PUSH_SIZE: u32 = 112;
 
 /// A model to draw this frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -34,12 +35,41 @@ pub struct EntityDraw {
     pub in_front: bool,
 }
 
+/// A model's corners, shared where triangles share them, as a mesh's are.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct WeldedCorners {
+    /// Each one: a vertex, and where it is on the skin.
+    pub corners: Vec<AliasCorner>,
+    /// Three to a triangle, wound as a mesh's are.
+    pub indices: Vec<u32>,
+}
+
+/// Shares `model`'s corners. It keeps them three to a triangle, so most are there several times,
+/// and each one kept here is one that's moved every frame.
+#[must_use]
+pub fn weld_corners(model: &AliasModel) -> WeldedCorners {
+    let mut known = HashMap::new();
+    let mut welded = WeldedCorners::default();
+    for triangle in model.corners.as_chunks::<3>().0 {
+        // Quake's triangles wind the other way from a mesh's.
+        for corner in [triangle[0], triangle[2], triangle[1]] {
+            let key = (corner.vertex, corner.uv.map(f32::to_bits));
+            let index = *known.entry(key).or_insert_with(|| {
+                welded.corners.push(corner);
+                u32::try_from(welded.corners.len() - 1).unwrap_or(0)
+            });
+            welded.indices.push(index);
+        }
+    }
+    welded
+}
+
 /// Each pose's corners, one after the other, with a byte position and normal.
 #[must_use]
-pub fn pose_bytes(model: &AliasModel) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(model.poses.len() * model.corners.len() * POSE_CORNER_BYTES);
+pub(crate) fn pose_bytes(model: &AliasModel, corners: &[AliasCorner]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(model.poses.len() * corners.len() * POSE_CORNER_BYTES);
     for pose in &model.poses {
-        for corner in &model.corners {
+        for corner in corners {
             let vertex = usize::try_from(corner.vertex)
                 .ok()
                 .and_then(|index| pose.get(index))
@@ -53,15 +83,40 @@ pub fn pose_bytes(model: &AliasModel) -> Vec<u8> {
     bytes
 }
 
-/// Each corner's place on the skin.
+/// `corners`' places on the skin.
 #[must_use]
-pub fn uv_bytes(model: &AliasModel) -> Vec<u8> {
-    model
-        .corners
+pub(crate) fn uv_bytes(corners: &[AliasCorner]) -> Vec<u8> {
+    corners
         .iter()
         .flat_map(|corner| corner.uv)
         .flat_map(f32::to_le_bytes)
         .collect()
+}
+
+/// `corners` as a mesh's are, in `model`'s first pose, for when there's no room to move them.
+#[must_use]
+pub(crate) fn rest_bytes(model: &AliasModel, corners: &[AliasCorner]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(corners.len() * PLACE_BYTES);
+    let first = model.poses.first();
+    for corner in corners {
+        let vertex = first
+            .and_then(|pose| pose.get(usize::try_from(corner.vertex).ok()?))
+            .copied()
+            .unwrap_or_default();
+        let [x, y, z] = vertex.position.map(f32::from);
+        let (scale, offset) = (model.scale, model.offset);
+        let place = [
+            x * scale.x + offset.x,
+            y * scale.y + offset.y,
+            z * scale.z + offset.z,
+        ];
+        for number in place {
+            bytes.extend_from_slice(&number.to_le_bytes());
+        }
+        bytes.extend(vertex.normal.map(i8::to_le_bytes).into_iter().flatten());
+        bytes.push(127);
+    }
+    bytes
 }
 
 /// The matrix that places a model, column by column, from `R_AliasSetUpTransform`.
@@ -90,29 +145,13 @@ pub fn model_matrix(origin: Vec3, angles: Vec3) -> [f32; 16] {
     ]
 }
 
-/// The values one draw pushes.
+/// `matrix`, which is by columns, as the rows an instance keeps.
 #[must_use]
-pub fn push_bytes(draw: &EntityDraw, model: &AliasModel) -> Vec<u8> {
-    let matrix = model_matrix(draw.origin, draw.angles);
-    let (scale, offset) = (model.scale, model.offset);
-    let in_front = if draw.in_front { 1.0 } else { 0.0 };
-    let values = [
-        scale.x,
-        scale.y,
-        scale.z,
-        draw.blend, //
-        offset.x,
-        offset.y,
-        offset.z,
-        0.0, //
-        draw.ambient,
-        draw.shade,
-        in_front,
-        0.0,
-    ];
-    matrix
-        .iter()
-        .chain(&values)
-        .flat_map(|value| value.to_le_bytes())
-        .collect()
+pub(crate) const fn rows_of_matrix(matrix: &[f32; 16]) -> Rows {
+    let m = matrix;
+    [
+        [m[0], m[4], m[8], m[12]],
+        [m[1], m[5], m[9], m[13]],
+        [m[2], m[6], m[10], m[14]],
+    ]
 }

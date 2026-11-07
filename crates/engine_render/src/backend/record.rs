@@ -5,12 +5,11 @@ use engine_map::{Map, Shading};
 use vulkane::safe::ShaderStageFlags;
 
 use super::clock::{GpuClock, Span};
-use super::deform::bind_moving;
+use super::deform::{bind_figure, bind_moving};
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuSprite, INDEX_TYPE_U32,
     Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene,
 };
-use crate::alias::{POSE_CORNER_BYTES, push_bytes};
 use crate::instances::InstanceBatch;
 use crate::renderer::View;
 use crate::sprite::{
@@ -200,7 +199,7 @@ impl Recorder<'_> {
         self.record_depth(rec, scene, size);
         self.record_world(rec, scene, view, size, false);
         self.record_meshes(rec, scene, view, false);
-        self.record_models(rec, scene);
+        self.record_models(rec);
         self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
         self.record_particles(rec, scene);
@@ -505,10 +504,8 @@ impl Recorder<'_> {
         see_through: bool,
     ) {
         let map = self.map;
-        let Some(moving) = &map.moving else {
-            return;
-        };
-        for job in moving.jobs(self.slot) {
+        let moving = &map.moving;
+        for job in moving.jobs(self.slot).iter().filter(|job| job.in_view) {
             if bind_moving(rec, moving, job, self.slot, true).is_none() {
                 continue;
             }
@@ -549,67 +546,42 @@ impl Recorder<'_> {
         }
     }
 
-    /// Records the models.
-    pub(super) fn record_models(
-        &self,
-        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        scene: &Scene<'_>,
-    ) {
-        if scene.drawables.entities.is_empty() {
+    /// Records the fixture's models, whose corners were moved with everything else's.
+    pub(super) fn record_models(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>) {
+        let moving = &self.map.moving;
+        let figures = moving.figures(self.slot);
+        if figures.is_empty() {
             return;
         }
         self.clock.start(rec, self.slot, Span::Models);
         if self.outline_hull {
-            rec.bind_graphics_pipeline(&self.pipelines.alias_hull);
-            self.record_model_draws(rec, scene, true);
+            rec.bind_graphics_pipeline(&self.pipelines.mesh_hull);
+            rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&self.map.frame_set]);
+            for job in figures.iter().filter(|job| !job.in_front) {
+                let Some(gpu) = self.models.get(job.model as usize) else {
+                    continue;
+                };
+                bind_figure(rec, moving, gpu, job.moved_to, self.slot);
+                rec.draw_indexed(gpu.index_count, 1, 0, 0, job.instance);
+            }
         }
         rec.bind_graphics_pipeline(&self.pipelines.alias);
-        self.record_model_draws(rec, scene, false);
-        self.clock.end(rec, self.slot, Span::Models);
-    }
-
-    /// Records each model with the pipeline that's bound. A hull leaves out
-    /// what's kept in front, which is the view's own weapon.
-    fn record_model_draws(
-        &self,
-        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        scene: &Scene<'_>,
-        hull: bool,
-    ) {
-        let layout = &self.layouts.alias;
-        for draw in scene.drawables.entities {
-            if hull && draw.in_front {
-                continue;
-            }
-            let Some(gpu) = self.models.get(draw.model as usize) else {
+        for job in figures {
+            let Some(gpu) = self.models.get(job.model as usize) else {
                 continue;
             };
             let skin = gpu
                 .skin_sets
-                .get(draw.skin as usize)
+                .get(job.skin as usize)
                 .or(gpu.skin_sets.first());
             let Some(skin) = skin else {
                 continue;
             };
-            let corners = gpu.model.corners.len();
-            let pose_size = (corners * POSE_CORNER_BYTES) as u64;
-            rec.bind_vertex_buffers(
-                0,
-                &[
-                    (&gpu.poses.buffer, u64::from(draw.pose) * pose_size),
-                    (&gpu.poses.buffer, u64::from(draw.next_pose) * pose_size),
-                    (&gpu.uvs.buffer, 0),
-                ],
-            );
-            rec.bind_graphics_descriptor_sets(layout, 0, &[&self.map.frame_set, skin]);
-            rec.push_constants(
-                layout,
-                ShaderStageFlags::VERTEX,
-                0,
-                &push_bytes(draw, &gpu.model),
-            );
-            rec.draw(u32::try_from(corners).unwrap_or(0), 1, 0, 0);
+            bind_figure(rec, moving, gpu, job.moved_to, self.slot);
+            rec.bind_graphics_descriptor_sets(&self.layouts.alias, 0, &[&self.map.frame_set, skin]);
+            rec.draw_indexed(gpu.index_count, 1, 0, 0, job.instance);
         }
+        self.clock.end(rec, self.slot, Span::Models);
     }
 
     /// Records the sprites.

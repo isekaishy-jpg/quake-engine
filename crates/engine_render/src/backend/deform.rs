@@ -7,11 +7,12 @@ use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags2, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize, DescriptorSet,
     DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, PipelineLayout,
-    PipelineStage2, ShaderModule, ShaderStageFlags,
+    PipelineStage2, PushConstantRange, ShaderModule, ShaderStageFlags,
 };
 
 use super::upload::host_buffer;
-use super::{Backend, FRAMES, GpuBuffer, INDEX_TYPE_U32};
+use super::{Backend, FRAMES, GpuAlias, GpuBuffer, INDEX_TYPE_U32};
+use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix, rows_of_matrix};
 use crate::error::RenderError;
 use crate::instances::{
     INSTANCE_BYTES, MovingDraw, PLACE_BYTES, UV_BYTES, ball_in_view, shared_places, shared_uvs,
@@ -20,13 +21,22 @@ use crate::instances::{
 use crate::world::{InstanceLight, OWN_LIGHT_STYLE};
 
 /// Corners in a frame's moved vertices. Past this, a mesh draws at rest.
-const MOST_MOVED_CORNERS: usize = 1 << 18;
+const MOST_MOVED_CORNERS: usize = 1 << 20;
 
 /// Joints in a frame's palette. Past this, a mesh draws at rest.
 const MOST_JOINTS: usize = 1 << 14;
 
-/// Moving meshes in a frame.
-const MOST_MOVING: usize = 1024;
+/// Moving meshes and models in a frame. A workgroup says which in twelve bits.
+const MOST_MOVING: usize = 1 << 12;
+
+/// How many bits of a workgroup's word say which job it does.
+const JOB_BITS: u32 = 12;
+
+/// Bytes in what the shader's told of a model's copy.
+const POSE_JOB_BYTES: usize = 20;
+
+/// Bytes in what the shader's told of a model.
+const POSE_MODEL_BYTES: u32 = 32;
 
 /// Bytes in a joint's three rows.
 const JOINT_BYTES: usize = 48;
@@ -92,6 +102,12 @@ pub(super) struct Deform {
     layout: PipelineLayout,
     /// Its set's layout.
     set_layout: DescriptorSetLayout,
+    /// The pipeline that blends a model's poses.
+    pose_pipeline: ComputePipeline,
+    /// Its layout.
+    pose_layout: PipelineLayout,
+    /// The layout of a model's own set.
+    pub(super) pose_set_layout: DescriptorSetLayout,
 }
 
 impl Deform {
@@ -106,13 +122,27 @@ impl Deform {
             stage_flags: ShaderStageFlags::COMPUTE,
         };
         let set_layout =
-            DescriptorSetLayout::new(device, &[0, 1, 2, 3, 4, 5, 6, 7, 8].map(binding))?;
+            DescriptorSetLayout::new(device, &[0, 1, 2, 3, 4, 5, 6, 7, 8, 9].map(binding))?;
         let layout = PipelineLayout::new(device, &[&set_layout])?;
         let pipeline = ComputePipeline::new(device, &layout, &shader, "cs_deform")?;
+        let pose_set_layout = DescriptorSetLayout::new(device, &[binding(0)])?;
+        let pose_layout = PipelineLayout::with_push_constants(
+            device,
+            &[&set_layout, &pose_set_layout],
+            &[PushConstantRange {
+                stage_flags: ShaderStageFlags::COMPUTE,
+                offset: 0,
+                size: POSE_MODEL_BYTES,
+            }],
+        )?;
+        let pose_pipeline = ComputePipeline::new(device, &pose_layout, &shader, "cs_poses")?;
         Ok(Self {
             pipeline,
             layout,
             set_layout,
+            pose_pipeline,
+            pose_layout,
+            pose_set_layout,
         })
     }
 }
@@ -140,12 +170,40 @@ pub(super) struct MovingJob {
     moved_to: Option<u32>,
     /// Its place in the instance buffer.
     pub(super) instance: u32,
+    /// Whether the view can see it. What it can't still casts a shadow.
+    pub(super) in_view: bool,
     /// What places it, column by column, for shadow maps.
     pub(super) placed: [f32; 16],
     /// Its middle.
     pub(super) center: Vec3,
     /// How far it reaches from there.
     pub(super) radius: f32,
+}
+
+/// One of the fixture's models to move and draw this frame.
+#[derive(Clone, Copy, Debug)]
+pub(super) struct FigureJob {
+    /// Which model.
+    pub(super) model: u32,
+    /// Which skin.
+    pub(super) skin: u32,
+    /// Where its moved corners went, or `None` if it's in its first pose for want of room.
+    pub(super) moved_to: Option<u32>,
+    /// Its place in the instance buffer.
+    pub(super) instance: u32,
+    /// Whether it stays in front of everything.
+    pub(super) in_front: bool,
+}
+
+/// A model's copies this frame, which are next to each other.
+#[derive(Clone, Copy, Debug)]
+struct FigureRun {
+    /// Which model.
+    model: u32,
+    /// Where its workgroups start.
+    first_group: u32,
+    /// How many there are.
+    group_count: u32,
 }
 
 /// What's kept for one frame in flight.
@@ -160,8 +218,22 @@ struct MovingFrame {
     work: GpuBuffer,
     /// Which mesh each workgroup does.
     groups: GpuBuffer,
-    /// How many workgroups there are this frame.
+    /// What the shader's told of each model's copy.
+    pose_work: GpuBuffer,
+    /// How many of the workgroups are for meshes. The rest are the models'.
     group_count: u32,
+    /// Each model's workgroups.
+    runs: Vec<FigureRun>,
+    /// What's to draw of the fixture's models, in view.
+    figures: Vec<FigureJob>,
+    /// Where each entity's moved corners went, by its place in the frame's list.
+    figure_places: Vec<Option<u32>>,
+    /// How many instances are written.
+    instance_count: usize,
+    /// How many moved corners are spoken for.
+    used_corners: usize,
+    /// How many workgroups are.
+    used_groups: usize,
     /// Where each mesh is, as instances.
     instances: GpuBuffer,
     /// The set reading and writing those.
@@ -220,6 +292,21 @@ impl GpuMoving {
         &self.frames[slot].jobs
     }
 
+    /// This frame's models, among those the view can see.
+    pub(super) fn figures(&self, slot: usize) -> &[FigureJob] {
+        &self.frames[slot].figures
+    }
+
+    /// Where each entity's moved corners went this frame.
+    pub(super) fn figure_places(&self, slot: usize) -> &[Option<u32>] {
+        &self.frames[slot].figure_places
+    }
+
+    /// This frame's moved corners.
+    pub(super) fn moved(&self, slot: usize) -> &GpuBuffer {
+        &self.frames[slot].moved
+    }
+
     /// This frame's instances.
     pub(super) fn instances(&self, slot: usize) -> &GpuBuffer {
         &self.frames[slot].instances
@@ -261,9 +348,7 @@ impl GpuMoving {
             let Some(mesh) = meshes.get(draw.mesh as usize) else {
                 continue;
             };
-            if !ball_in_view(planes, draw.center, draw.radius) {
-                continue;
-            }
+            let in_view = ball_in_view(planes, draw.center, draw.radius);
             let Some(instance) = slots.next() else {
                 over = true;
                 break;
@@ -317,7 +402,7 @@ impl GpuMoving {
                 }
                 let job = u32::try_from(moved_jobs).unwrap_or(0);
                 for group in 0..mesh.corners.div_ceil(WORKGROUP) {
-                    groups[used_groups] = (job | group << 10).to_le_bytes();
+                    groups[used_groups] = (job | group << JOB_BITS).to_le_bytes();
                     used_groups += 1;
                 }
                 moved_jobs += 1;
@@ -333,22 +418,125 @@ impl GpuMoving {
                 mesh: draw.mesh,
                 moved_to,
                 instance: u32::try_from(frame.jobs.len()).unwrap_or(0),
+                in_view,
                 placed: columns_of(&draw.rows),
                 center: draw.center,
                 radius: draw.radius,
             });
         }
         frame.group_count = u32::try_from(used_groups).unwrap_or(0);
+        frame.used_groups = used_groups;
+        frame.used_corners = used_corners;
+        frame.instance_count = frame.jobs.len();
+        Ok(over)
+    }
+
+    /// Writes this frame's copies of the fixture's models, after [`Self::prepare`]. Says if any
+    /// had to stay in its first pose, or go undrawn, for want of room.
+    pub(super) fn prepare_figures(
+        &mut self,
+        slot: usize,
+        entities: &[EntityDraw],
+        models: &[GpuAlias],
+        planes: &[[f32; 4]; 6],
+    ) -> Result<bool, RenderError> {
+        let frame = &mut self.frames[slot];
+        frame.runs.clear();
+        frame.figures.clear();
+        frame.figure_places.clear();
+        frame.figure_places.resize(entities.len(), None);
+        let mut order: Vec<usize> = (0..entities.len()).collect();
+        order.sort_by_key(|at| entities[*at].model);
+        let mut over = false;
+        let mut pose_work = frame.pose_work.memory.map()?;
+        let (pose_work, _) = pose_work.as_slice_mut().as_chunks_mut::<POSE_JOB_BYTES>();
+        let mut groups = frame.groups.memory.map()?;
+        let (groups, _) = groups.as_slice_mut().as_chunks_mut::<4>();
+        let mut instances = frame.instances.memory.map()?;
+        let mut slots = instances
+            .as_slice_mut()
+            .as_chunks_mut::<INSTANCE_BYTES>()
+            .0
+            .iter_mut()
+            .skip(frame.instance_count);
+        let mut moved_jobs = 0_usize;
+        for at in order {
+            let draw = &entities[at];
+            let Some(gpu) = models.get(draw.model as usize) else {
+                continue;
+            };
+            let Some(instance) = slots.next() else {
+                over = true;
+                break;
+            };
+            let groups_needed = gpu.corners.div_ceil(WORKGROUP) as usize;
+            let mut moved_to = None;
+            if frame.used_corners + gpu.corners as usize <= MOST_MOVED_CORNERS {
+                let first_out = u32::try_from(frame.used_corners).unwrap_or(0);
+                // A pose that isn't there would read past the buffer.
+                let last = u32::try_from(gpu.model.poses.len().max(1) - 1).unwrap_or(0);
+                let words = [
+                    draw.pose.min(last) * gpu.corners,
+                    draw.next_pose.min(last) * gpu.corners,
+                    gpu.corners,
+                    first_out,
+                    draw.blend.to_bits(),
+                ];
+                let row = pose_work[moved_jobs].as_chunks_mut::<4>().0.iter_mut();
+                for (chunk, word) in row.zip(words) {
+                    *chunk = word.to_le_bytes();
+                }
+                let run = frame.runs.last_mut().filter(|run| run.model == draw.model);
+                let first_group = u32::try_from(frame.used_groups).unwrap_or(0);
+                let added = u32::try_from(groups_needed).unwrap_or(0);
+                if let Some(run) = run {
+                    run.group_count += added;
+                } else {
+                    frame.runs.push(FigureRun {
+                        model: draw.model,
+                        first_group,
+                        group_count: added,
+                    });
+                }
+                let job = u32::try_from(moved_jobs).unwrap_or(0);
+                for group in 0..added {
+                    groups[frame.used_groups] = (job | group << JOB_BITS).to_le_bytes();
+                    frame.used_groups += 1;
+                }
+                moved_jobs += 1;
+                frame.used_corners += gpu.corners as usize;
+                moved_to = Some(first_out);
+            } else {
+                over = true;
+            }
+            frame.figure_places[at] = moved_to;
+            let light = InstanceLight {
+                uv: [draw.ambient, draw.shade],
+                step: if draw.in_front { 1.0 } else { 0.0 },
+                styles: [u8::MAX; 4],
+            };
+            let rows = rows_of_matrix(&model_matrix(draw.origin, draw.angles));
+            write_instance(&rows, &light, instance.as_mut_slice());
+            let instance = u32::try_from(frame.instance_count).unwrap_or(0);
+            frame.instance_count += 1;
+            // What's kept in front is the view's own, so it's always there to see.
+            if draw.in_front || ball_in_view(planes, draw.origin, gpu.reach()) {
+                frame.figures.push(FigureJob {
+                    model: draw.model,
+                    skin: draw.skin,
+                    moved_to,
+                    instance,
+                    in_front: draw.in_front,
+                });
+            }
+        }
         Ok(over)
     }
 }
 
 impl Backend {
     /// Puts `map`'s moving meshes on the GPU, if it has any.
-    pub(super) fn upload_moving(&self, map: &Map) -> Result<Option<GpuMoving>, RenderError> {
-        if map.moving_meshes.is_empty() {
-            return Ok(None);
-        }
+    pub(super) fn upload_moving(&self, map: &Map) -> Result<GpuMoving, RenderError> {
         let mut corner_bytes = Vec::new();
         let mut uv_bytes = Vec::new();
         let mut skin_bytes = Vec::new();
@@ -402,6 +590,19 @@ impl Backend {
             });
             first_corner += u32::try_from(shared.corners.len()).unwrap_or(0);
         }
+        // A level with no moving meshes still has the fixture's models to move, and a buffer
+        // can't be empty.
+        for (bytes, size) in [
+            (&mut corner_bytes, PLACE_BYTES),
+            (&mut uv_bytes, UV_BYTES),
+            (&mut skin_bytes, 8),
+            (&mut head_bytes, 8),
+            (&mut morph_bytes, 16),
+        ] {
+            if bytes.is_empty() {
+                bytes.resize(size, 0);
+            }
+        }
         // Read by the compute pass, and drawn from when a mesh is at rest.
         let corners = self.device_buffer(
             &corner_bytes,
@@ -417,7 +618,7 @@ impl Backend {
             sets,
             &[DescriptorPoolSize {
                 descriptor_type: DescriptorType::STORAGE_BUFFER,
-                descriptor_count: sets * 9,
+                descriptor_count: sets * 10,
             }],
         )?;
         let mut frames = Vec::with_capacity(FRAMES);
@@ -457,6 +658,12 @@ impl Backend {
                 MOST_GROUPS * 4,
                 BufferUsage::STORAGE_BUFFER,
             )?;
+            let pose_work = host_buffer(
+                &self.device,
+                &self.physical,
+                MOST_MOVING * POSE_JOB_BYTES,
+                BufferUsage::STORAGE_BUFFER,
+            )?;
             let set = pool.allocate(&self.deform.set_layout)?;
             let storage = DescriptorType::STORAGE_BUFFER;
             set.write_buffer(
@@ -492,19 +699,33 @@ impl Backend {
                 (MOST_MOVING * JOB_BYTES) as u64,
             );
             set.write_buffer(8, storage, &groups.buffer, 0, (MOST_GROUPS * 4) as u64);
+            set.write_buffer(
+                9,
+                storage,
+                &pose_work.buffer,
+                0,
+                (MOST_MOVING * POSE_JOB_BYTES) as u64,
+            );
             frames.push(MovingFrame {
                 palette,
                 weights,
                 moved,
                 work,
                 groups,
+                pose_work,
                 group_count: 0,
+                runs: Vec::new(),
+                figures: Vec::new(),
+                figure_places: Vec::new(),
+                instance_count: 0,
+                used_corners: 0,
+                used_groups: 0,
                 instances,
                 set,
                 jobs: Vec::new(),
             });
         }
-        Ok(Some(GpuMoving {
+        Ok(GpuMoving {
             corners,
             uvs,
             _skin: skin,
@@ -513,21 +734,55 @@ impl Backend {
             meshes,
             frames,
             _pool: pool,
-        }))
+        })
     }
 
     /// Records moving this frame's meshes. What draws them waits for this.
     pub(super) fn record_deform(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>) {
-        let Some(moving) = self.map.as_ref().and_then(|map| map.moving.as_ref()) else {
+        let Some(map) = &self.map else {
             return;
         };
-        let frame = &moving.frames[self.slot];
-        if frame.group_count == 0 {
+        let frame = &map.moving.frames[self.slot];
+        if frame.group_count == 0 && frame.runs.is_empty() {
             return;
         }
-        rec.bind_compute_pipeline(&self.deform.pipeline);
-        rec.bind_compute_descriptor_sets(&self.deform.layout, 0, &[&frame.set]);
-        rec.dispatch(frame.group_count, 1, 1);
+        if frame.group_count > 0 {
+            rec.bind_compute_pipeline(&self.deform.pipeline);
+            rec.bind_compute_descriptor_sets(&self.deform.layout, 0, &[&frame.set]);
+            rec.dispatch(frame.group_count, 1, 1);
+        }
+        if !frame.runs.is_empty() {
+            rec.bind_compute_pipeline(&self.deform.pose_pipeline);
+        }
+        for run in &frame.runs {
+            let Some(gpu) = self.models.get(run.model as usize) else {
+                continue;
+            };
+            let sets = [&frame.set, &gpu.pose_set];
+            rec.bind_compute_descriptor_sets(&self.deform.pose_layout, 0, &sets);
+            let (scale, offset) = (gpu.model.scale, gpu.model.offset);
+            let words = [
+                scale.x.to_bits(),
+                scale.y.to_bits(),
+                scale.z.to_bits(),
+                run.first_group,
+                offset.x.to_bits(),
+                offset.y.to_bits(),
+                offset.z.to_bits(),
+                0,
+            ];
+            let mut bytes = [0; POSE_MODEL_BYTES as usize];
+            for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
+                *chunk = word.to_le_bytes();
+            }
+            rec.push_constants(
+                &self.deform.pose_layout,
+                ShaderStageFlags::COMPUTE,
+                0,
+                &bytes,
+            );
+            rec.dispatch(run.group_count, 1, 1);
+        }
         // Vulkan 1.3 is required, so this is always there, and if it weren't the device
         // wouldn't have been picked.
         let _barrier = rec.memory_barrier2(
@@ -564,4 +819,54 @@ pub(super) fn bind_moving(
     }
     rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
     Some(())
+}
+
+/// How one of the fixture's models' corners draw, from `moved_to` or at rest.
+pub(super) fn bind_figure(
+    rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+    moving: &GpuMoving,
+    gpu: &GpuAlias,
+    moved_to: Option<u32>,
+    slot: usize,
+) {
+    let (corners, offset) = match moved_to {
+        Some(first) => (moving.moved(slot), u64::from(first) * PLACE_BYTES as u64),
+        None => (&gpu.rest, 0),
+    };
+    rec.bind_vertex_buffers(
+        0,
+        &[
+            (&corners.buffer, offset),
+            (&gpu.uvs.buffer, 0),
+            (&moving.instances(slot).buffer, 0),
+        ],
+    );
+    rec.bind_index_buffer(&gpu.indices.buffer, 0, INDEX_TYPE_U32);
+}
+
+impl Backend {
+    /// A model's poses, as the compute pass reads them.
+    pub(super) fn upload_poses(
+        &self,
+        bytes: &[u8],
+    ) -> Result<(GpuBuffer, DescriptorSet, DescriptorPool), RenderError> {
+        let poses = self.device_buffer(bytes, BufferUsage::STORAGE_BUFFER)?;
+        let pool = DescriptorPool::new(
+            &self.device,
+            1,
+            &[DescriptorPoolSize {
+                descriptor_type: DescriptorType::STORAGE_BUFFER,
+                descriptor_count: 1,
+            }],
+        )?;
+        let set = pool.allocate(&self.deform.pose_set_layout)?;
+        set.write_buffer(
+            0,
+            DescriptorType::STORAGE_BUFFER,
+            &poses.buffer,
+            0,
+            bytes.len().max(POSE_CORNER_BYTES) as u64,
+        );
+        Ok((poses, set, pool))
+    }
 }

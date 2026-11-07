@@ -15,10 +15,11 @@ use vulkane::safe::{
     VertexInputAttribute, VertexInputBinding,
 };
 
+use super::deform::GpuMoving;
 use super::deform::bind_moving;
 use super::upload::device_image;
 use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
-use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix};
+use crate::alias::{EntityDraw, model_matrix};
 use crate::error::RenderError;
 use crate::instances::PLACE_BYTES;
 use crate::live::{LiveLight, MAX_SHADOW_LIGHTS, cube_face};
@@ -37,8 +38,8 @@ const TILES_ACROSS: u32 = ATLAS_SIZE / TILE_SIZE;
 /// How many lights' shadows are redrawn in a frame. The rest wait their turn.
 const REDRAWS_PER_FRAME: usize = 2;
 
-/// Bytes of what a tile's draws push: a matrix, an offset and a scale.
-const PUSH_SIZE: u32 = 96;
+/// Bytes of what a tile's draws push: a matrix and an offset.
+const PUSH_SIZE: u32 = 80;
 
 /// The most an alias model's stored position can be along an axis.
 const POSE_RANGE: f32 = 255.0;
@@ -102,34 +103,41 @@ impl Stance {
     }
 }
 
-/// A figure to draw into shadows.
-pub(super) type Figure<'a> = (&'a GpuAlias, &'a EntityDraw);
+/// A figure to draw into shadows, with where its moved corners went.
+pub(super) type Figure<'a> = (&'a GpuAlias, &'a EntityDraw, Option<u32>);
 
 /// The figures of `entities`. What's kept in front is the view's own weapon,
 /// which casts nothing.
 pub(super) fn shadow_figures<'a>(
     models: &'a [GpuAlias],
     entities: &'a [EntityDraw],
+    places: &[Option<u32>],
 ) -> Vec<Figure<'a>> {
     entities
         .iter()
-        .filter(|draw| !draw.in_front)
-        .filter_map(|draw| Some((models.get(draw.model as usize)?, draw)))
+        .enumerate()
+        .filter(|(_, draw)| !draw.in_front)
+        .filter_map(|(at, draw)| {
+            let place = places.get(at).copied().flatten();
+            Some((models.get(draw.model as usize)?, draw, place))
+        })
         .collect()
 }
 
-/// How far from its origin any part of `model` can reach.
-fn figure_reach(model: &GpuAlias) -> f32 {
-    let (scale, offset) = (model.model.scale, model.model.offset);
-    let corner = |x: f32, y: f32, z: f32| {
-        (offset + Vec3::new(scale.x * x, scale.y * y, scale.z * z)).length()
-    };
-    let far = POSE_RANGE;
-    [0.0, far]
-        .into_iter()
-        .flat_map(|x| [(x, 0.0), (x, far)])
-        .flat_map(|(x, y)| [corner(x, y, 0.0), corner(x, y, far)])
-        .fold(0.0, f32::max)
+impl GpuAlias {
+    /// How far from its origin any part of it can reach.
+    pub(super) fn reach(&self) -> f32 {
+        let (scale, offset) = (self.model.scale, self.model.offset);
+        let corner = |x: f32, y: f32, z: f32| {
+            (offset + Vec3::new(scale.x * x, scale.y * y, scale.z * z)).length()
+        };
+        let far = POSE_RANGE;
+        [0.0, far]
+            .into_iter()
+            .flat_map(|x| [(x, 0.0), (x, far)])
+            .flat_map(|(x, y)| [corner(x, y, 0.0), corner(x, y, far)])
+            .fold(0.0, f32::max)
+    }
 }
 
 /// Shadow maps, and what's in them.
@@ -146,8 +154,6 @@ pub(super) struct Shadows {
     layout: PipelineLayout,
     /// Draws geometry.
     pipeline: GraphicsPipeline,
-    /// Draws alias models.
-    figure_pipeline: GraphicsPipeline,
     /// The same as `pipeline`, for meshes, whose corners are smaller.
     mesh_pipeline: GraphicsPipeline,
     /// Empties a tile.
@@ -253,31 +259,6 @@ impl Shadows {
             .depth_test(true, true)
             .depth_bias(1.5, 2.0, 0.0)
             .build(device)?;
-        let pose_stride = u32::try_from(POSE_CORNER_BYTES).unwrap_or(0);
-        let pose_binding = |binding| VertexInputBinding {
-            binding,
-            stride: pose_stride,
-            input_rate: InputRate::VERTEX,
-        };
-        let pose_attribute = |location| VertexInputAttribute {
-            location,
-            binding: location,
-            format: Format::R8G8B8A8_UINT,
-            offset: 0,
-        };
-        let figure_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_figure")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_shadow")
-            .color_attachment_count(0)
-            .vertex_input(
-                &[pose_binding(0), pose_binding(1)],
-                &[pose_attribute(0), pose_attribute(1)],
-            )
-            .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
-            .depth_test(true, true)
-            .depth_bias(1.5, 2.0, 0.0)
-            .build(device)?;
         let clear = GraphicsPipelineBuilder::new(&layout, &pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_clear")
             .stage(GraphicsShaderStage::Fragment, &shader, "fs_shadow")
@@ -294,7 +275,6 @@ impl Shadows {
             framebuffer,
             layout,
             pipeline,
-            figure_pipeline,
             mesh_pipeline,
             clear,
             ready: Cell::new(false),
@@ -418,17 +398,20 @@ impl Shadows {
     /// The middle and size of each figure that's moved or changed pose since
     /// last frame.
     fn moved_figures(&mut self, figures: &[Figure<'_>]) -> Vec<(Vec3, f32)> {
-        let now: Vec<Stance> = figures.iter().map(|(_, draw)| Stance::of(draw)).collect();
+        let now: Vec<Stance> = figures
+            .iter()
+            .map(|(_, draw, _)| Stance::of(draw))
+            .collect();
         let mut moved: Vec<(Vec3, f32)> = figures
             .iter()
-            .filter(|(_, draw)| !self.stances.contains(&Stance::of(draw)))
-            .map(|(model, draw)| (draw.origin, figure_reach(model)))
+            .filter(|(_, draw, _)| !self.stances.contains(&Stance::of(draw)))
+            .map(|(model, draw, _)| (draw.origin, model.reach()))
             .collect();
         // Where one has gone from, its shadow has to go too. Its model may not
         // be in this frame, so this takes the size of the largest that is.
         let reach = figures
             .iter()
-            .map(|(model, _)| figure_reach(model))
+            .map(|(model, _, _)| model.reach())
             .fold(GONE_REACH, f32::max);
         moved.extend(
             self.stances
@@ -468,7 +451,7 @@ impl Shadows {
             for face in 0..6 {
                 self.record_tile(rec, map, mesh_ranges, *slot * 6 + face, face, light);
                 self.record_moving(rec, map, frame, face, light);
-                self.record_figures(rec, figures, face, light);
+                self.record_figures(rec, figures, (&map.moving, frame), face, light);
             }
         }
         rec.end_render_pass();
@@ -510,7 +493,7 @@ impl Shadows {
         };
         for range in ranges.iter().filter(reached) {
             let offset = range.offset;
-            let tail = [offset.x, offset.y, offset.z, 0.0, 0.0, 0.0, 0.0, 0.0];
+            let tail = [offset.x, offset.y, offset.z, 0.0];
             self.push(rec, &matrix, tail);
             rec.draw_indexed(range.count, 1, range.first, 0, 0);
         }
@@ -526,9 +509,7 @@ impl Shadows {
         face: usize,
         light: &LiveLight,
     ) {
-        let Some(moving) = &map.moving else {
-            return;
-        };
+        let moving = &map.moving;
         let matrix = cube_face(light.origin, face, light.radius);
         rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for job in moving.jobs(frame) {
@@ -541,7 +522,7 @@ impl Shadows {
             let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
                 continue;
             };
-            self.push(rec, &multiply(&matrix, &job.placed), [0.0; 8]);
+            self.push(rec, &multiply(&matrix, &job.placed), [0.0; 4]);
             for part in &mesh.shadow_parts {
                 rec.draw_indexed(part.count, 1, part.first, 0, 0);
             }
@@ -566,7 +547,7 @@ impl Shadows {
             };
             rec.bind_vertex_buffers(0, &[(&mesh.places.buffer, 0)]);
             rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
-            self.push(rec, &multiply(matrix, &caster.placed), [0.0; 8]);
+            self.push(rec, &multiply(matrix, &caster.placed), [0.0; 4]);
             for part in &mesh.shadow_parts {
                 rec.draw_indexed(part.count, 1, part.first, 0, 0);
             }
@@ -578,7 +559,7 @@ impl Shadows {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         matrix: &[f32; 16],
-        tail: [f32; 8],
+        tail: [f32; 4],
     ) {
         let mut bytes = [0; PUSH_SIZE as usize];
         let values = matrix.iter().copied().chain(tail);
@@ -593,35 +574,25 @@ impl Shadows {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         figures: &[Figure<'_>],
+        (moving, slot): (&GpuMoving, usize),
         face: usize,
         light: &LiveLight,
     ) {
-        let reached = |(model, draw): &&Figure<'_>| {
-            (draw.origin - light.origin).length() < light.radius + figure_reach(model)
+        let reached = |(model, draw, _): &&Figure<'_>| {
+            (draw.origin - light.origin).length() < light.radius + model.reach()
         };
         let matrix = cube_face(light.origin, face, light.radius);
-        let mut bound = false;
-        for (gpu, draw) in figures.iter().filter(reached) {
-            if !bound {
-                rec.bind_graphics_pipeline(&self.figure_pipeline);
-                bound = true;
-            }
-            let corners = gpu.model.corners.len();
-            let pose_size = (corners * POSE_CORNER_BYTES) as u64;
-            rec.bind_vertex_buffers(
-                0,
-                &[
-                    (&gpu.poses.buffer, u64::from(draw.pose) * pose_size),
-                    (&gpu.poses.buffer, u64::from(draw.next_pose) * pose_size),
-                ],
-            );
+        rec.bind_graphics_pipeline(&self.mesh_pipeline);
+        for (gpu, draw, moved_to) in figures.iter().filter(reached) {
+            let (corners, offset) = match moved_to {
+                Some(first) => (moving.moved(slot), u64::from(*first) * PLACE_BYTES as u64),
+                None => (&gpu.rest, 0),
+            };
+            rec.bind_vertex_buffers(0, &[(&corners.buffer, offset)]);
+            rec.bind_index_buffer(&gpu.indices.buffer, 0, INDEX_TYPE_U32);
             let placed = multiply(&matrix, &model_matrix(draw.origin, draw.angles));
-            let (scale, offset) = (gpu.model.scale, gpu.model.offset);
-            let tail = [
-                offset.x, offset.y, offset.z, 0.0, scale.x, scale.y, scale.z, draw.blend,
-            ];
-            self.push(rec, &placed, tail);
-            rec.draw(u32::try_from(corners).unwrap_or(0), 1, 0, 0);
+            self.push(rec, &placed, [0.0; 4]);
+            rec.draw_indexed(gpu.index_count, 1, 0, 0, 0);
         }
     }
 }
