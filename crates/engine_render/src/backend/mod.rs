@@ -7,6 +7,7 @@ mod pipeline_cache;
 mod pipelines;
 mod post;
 mod record;
+mod ripple;
 mod shadow;
 mod sim;
 mod smaa;
@@ -43,6 +44,7 @@ use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
 use self::field::{FieldLayout, GpuField};
+use self::ripple::{GpuRipples, RippleLayout};
 use self::sim::{GpuSims, SIM_PUSH, SimLayout};
 use self::terrain::GpuTerrain;
 use self::water::{GpuWater, make_water_layout, make_water_pass, make_water_pipeline};
@@ -103,7 +105,8 @@ const EXTRA_FLOATS: usize = 4 * 16
     + MAX_FOG_VOLUMES * 16
     + 4
     + FOG_LIGHTS * 8
-    + MAX_POOLS * 16;
+    + MAX_POOLS * 16
+    + 4;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -289,6 +292,8 @@ struct GpuMap {
     particle_shaders: Vec<ParticlePipelines>,
     /// The surfaces of shaped water, if it has any.
     water: Option<GpuWater>,
+    /// Ripples, if it has water.
+    ripples: Option<GpuRipples>,
     /// What those were made from.
     particle_codes: Vec<Arc<ShaderCode>>,
     /// Particles compute runs, if its effects have any.
@@ -644,6 +649,10 @@ pub(crate) struct Backend {
     fog_marched: bool,
     /// What's over water's surfaces, as an array.
     water_pictures: Option<GpuImage>,
+    /// What ripples are stepped by.
+    ripple_layout: RippleLayout,
+    /// What the final pass reads with no ripples.
+    ripple_blank: Option<GpuImage>,
     /// The pass the surfaces of shaped water are drawn in.
     water_pass: RenderPass,
     /// What their draws are laid out by.
@@ -839,6 +848,7 @@ impl Backend {
                 image_binding(11, DescriptorType::SAMPLED_IMAGE),
                 image_binding(12, DescriptorType::SAMPLED_IMAGE),
                 image_binding(13, DescriptorType::SAMPLER),
+                image_binding(14, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -892,6 +902,7 @@ impl Backend {
             ],
         )?;
         let sim_layout = SimLayout::new(&device, &particle_depth_layout)?;
+        let ripple_layout = RippleLayout::new(&device)?;
         let water_pass = make_water_pass(&device)?;
         let water_layout = make_water_layout(&device, &frame_layout)?;
         let water_pipeline = make_water_pipeline(&device, &water_layout, &water_pass)?;
@@ -1108,6 +1119,8 @@ impl Backend {
             sim_blank: None,
             fog_marched: false,
             water_pictures: None,
+            ripple_layout,
+            ripple_blank: None,
             water_pass,
             water_layout,
             water_pipeline,
@@ -1413,6 +1426,7 @@ impl Backend {
         self.clock.start(rec, self.slot, Span::Deform);
         self.record_deform(rec);
         self.record_fields(rec);
+        self.record_ripples(rec);
         self.record_sims(rec);
         self.clock.end(rec, self.slot, Span::Deform);
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);

@@ -1,7 +1,7 @@
 //! Bodies of liquid of any shape.
 
 use engine_core::math::Vec3;
-use engine_map::{Contents, Map, NO_WATER, PoolLook, WaterSheet};
+use engine_map::{Contents, Map, NO_WATER, Pool, PoolLook, WaterSheet};
 
 /// A sheet of 3 by 3 samples 10 apart from the origin, rising by 5 each way along x.
 fn slope() -> WaterSheet {
@@ -110,5 +110,38 @@ fn the_look_round_the_eye_is_the_sheets_it_is_in() {
     assert_eq!(
         map.look_at(Vec3::new(50.0, 5.0, 7.0), Contents::Empty),
         None
+    );
+}
+
+/// A surface is found by how near it is, in a pool or on a sheet.
+#[test]
+fn a_surface_near_a_place_is_found() {
+    let look = PoolLook::of(Contents::Water).expect("a liquid");
+    let map = Map {
+        pools: vec![Pool {
+            low: Vec3::new(100.0, 0.0, -50.0),
+            high: Vec3::new(200.0, 100.0, 20.0),
+            look,
+        }],
+        water_sheets: vec![slope()],
+        ..Map::default()
+    };
+    let in_pool = map.surface_near(Vec3::new(150.0, 50.0, 25.0), 10.0);
+    assert_eq!(in_pool.map(|(top, _)| top), Some(20.0));
+    assert!(
+        map.surface_near(Vec3::new(150.0, 50.0, 45.0), 10.0)
+            .is_none(),
+        "too far over"
+    );
+    assert!(
+        map.surface_near(Vec3::new(250.0, 50.0, 25.0), 10.0)
+            .is_none(),
+        "off it"
+    );
+    let on_sheet = map.surface_near(Vec3::new(15.0, 5.0, 9.0), 10.0);
+    assert_eq!(on_sheet.map(|(top, _)| top), Some(7.5));
+    assert!(
+        map.surface_near(Vec3::new(15.0, 5.0, 40.0), 10.0).is_none(),
+        "too far over it"
     );
 }

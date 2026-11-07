@@ -15,7 +15,7 @@ use engine_map::{
     ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
     Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
     SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture,
-    TextureKind, TileLight, WaterOverlay, WaterSheet, mip_chain,
+    TextureKind, TileLight, WaterOverlay, WaterPush, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -1070,6 +1070,12 @@ fn wall_over_a_pool(renderer: &mut Renderer, reflect: f32) -> Capture {
             foam: 0.0,
             foam_look: WaterOverlay::NONE,
             shore: 0.0,
+            splash: 0,
+            spray: 0,
+            splash_sound: 0,
+            trail: 0,
+            trail_size: 28.0,
+            rain_rings: 0.0,
         },
     });
     renderer.load_map(Arc::new(built)).expect("load");
@@ -1153,6 +1159,12 @@ fn water_can_thicken_with_depth() {
         foam: 0.0,
         foam_look: WaterOverlay::NONE,
         shore: 0.0,
+        splash: 0,
+        spray: 0,
+        splash_sound: 0,
+        trail: 0,
+        trail_size: 28.0,
+        rain_rings: 0.0,
     };
     let even = post_centre(pool_map(look), PostSettings::default());
     let deep = post_centre(
@@ -1182,6 +1194,12 @@ fn depth_tints_towards_a_pools_colour() {
         foam: 0.0,
         foam_look: WaterOverlay::NONE,
         shore: 0.0,
+        splash: 0,
+        spray: 0,
+        splash_sound: 0,
+        trail: 0,
+        trail_size: 28.0,
+        rain_rings: 0.0,
     };
     let thick = PoolLook {
         absorption: 0.2,
@@ -5528,6 +5546,12 @@ fn blue_look() -> PoolLook {
         foam: 0.0,
         foam_look: WaterOverlay::NONE,
         shore: 0.0,
+        splash: 0,
+        spray: 0,
+        splash_sound: 0,
+        trail: 0,
+        trail_size: 28.0,
+        rain_rings: 0.0,
     }
 }
 
@@ -5829,6 +5853,312 @@ fn water_fades_out_at_the_shore() {
     let deep = PoolLook { shore: 2.0, ..dark };
     let deep = over_look(&mut renderer, deep, 5.0, Vec::new(), 0.0);
     assert_eq!(deep, hard, "and past that it's as it was");
+}
+
+/// Runs ripples on for `steps` steps, from `from`, with `pushes` at the first.
+fn step_ripples(renderer: &mut Renderer, view: &View, from: u32, steps: u32, pushes: &[WaterPush]) {
+    for step in from..from + steps {
+        let now = View {
+            // Half way through a step, so that rounding can't lose one.
+            time: 1.0 + (step as f32 + 0.5) / 60.0,
+            ..*view
+        };
+        let drawables = Drawables {
+            water_pushes: if step == from { pushes } else { &[] },
+            ..Drawables::default()
+        };
+        let _shot = renderer.capture(&now, drawables, 32, 32).expect("capture");
+    }
+}
+
+/// How high the ripples are at a place, and the most anywhere.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a place inside the field, which is a few hundred cells"
+)]
+fn ripple_at(renderer: &mut Renderer, x: f32, y: f32) -> (f32, f32) {
+    let (heights, [left, low, width]) = renderer.read_ripples().expect("reads").expect("there");
+    let cells = heights.len().isqrt();
+    let cell = width / cells as f32;
+    let at = ((y - low) / cell) as usize * cells + ((x - left) / cell) as usize;
+    let most = heights
+        .iter()
+        .copied()
+        .fold(0.0, |most: f32, height| most.max(height.abs()));
+    (heights[at], most)
+}
+
+/// A push goes out as a ring, and dies away.
+#[test]
+fn a_push_goes_out_as_a_ring_and_dies_away() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = view_from_above();
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    let (_, flat) = ripple_at(&mut renderer, 64.0, 64.0);
+    assert_eq!(flat, 0.0, "nothing's touched it");
+    let push = WaterPush {
+        place: Vec3::new(64.0, 64.0, 30.0),
+        reach: 12.0,
+        strength: 2.0,
+        ..WaterPush::default()
+    };
+    step_ripples(&mut renderer, &view, 3, 1, &[push]);
+    let (middle, _) = ripple_at(&mut renderer, 64.0, 64.0);
+    assert!(middle < -0.5, "it's pushed down: {middle}");
+    let (aside, _) = ripple_at(&mut renderer, 120.0, 64.0);
+    assert!(aside.abs() < 0.01, "and nothing's there yet: {aside}");
+    step_ripples(&mut renderer, &view, 4, 40, &[]);
+    let (aside, soon) = ripple_at(&mut renderer, 100.0, 64.0);
+    assert!(soon > 0.0 && soon < 2.0, "{soon}");
+    let _ = aside;
+    let mut crossed = 0;
+    for step in 0..30 {
+        step_ripples(&mut renderer, &view, 44 + step, 1, &[]);
+        if ripple_at(&mut renderer, 110.0, 64.0).0.abs() > 0.002 {
+            crossed += 1;
+        }
+    }
+    assert!(crossed > 0, "it reached out to here");
+    step_ripples(&mut renderer, &view, 80, 400, &[]);
+    let (_, late) = ripple_at(&mut renderer, 64.0, 64.0);
+    assert!(late < soon * 0.3, "{late} from {soon}");
+}
+
+/// How much is going on in the ripples, all told.
+fn ripple_energy(renderer: &mut Renderer) -> f32 {
+    let (heights, _) = renderer.read_ripples().expect("reads").expect("there");
+    heights.iter().map(|height| height * height).sum()
+}
+
+/// What's in the water dies away, and doesn't only spread out.
+#[test]
+fn ripples_lose_what_they_have() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = view_from_above();
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    let push = WaterPush {
+        place: Vec3::new(64.0, 64.0, 30.0),
+        reach: 12.0,
+        strength: 2.0,
+        ..WaterPush::default()
+    };
+    step_ripples(&mut renderer, &view, 3, 20, &[push]);
+    let soon = ripple_energy(&mut renderer);
+    step_ripples(&mut renderer, &view, 23, 150, &[]);
+    let later = ripple_energy(&mut renderer);
+    assert!(soon > 0.0 && later < soon * 0.2, "{later} from {soon}");
+}
+
+/// Frames come faster than steps, and what pushes on one with no step isn't lost.
+#[test]
+fn a_push_waits_for_a_step() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = view_from_above();
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    let push = [WaterPush {
+        place: Vec3::new(64.0, 64.0, 30.0),
+        reach: 12.0,
+        strength: 2.0,
+        ..WaterPush::default()
+    }];
+    // Still in the step the last frame was in, so there's none due.
+    let same = View {
+        time: 1.0 + 2.6 / 60.0,
+        ..view
+    };
+    let drawables = Drawables {
+        water_pushes: &push,
+        ..Drawables::default()
+    };
+    let _shot = renderer.capture(&same, drawables, 32, 32).expect("capture");
+    assert_eq!(ripple_at(&mut renderer, 64.0, 64.0).0, 0.0, "not yet");
+    step_ripples(&mut renderer, &view, 3, 1, &[]);
+    let (middle, _) = ripple_at(&mut renderer, 64.0, 64.0);
+    assert!(middle < -0.5, "{middle}");
+}
+
+/// They're round the view, wherever that is.
+#[test]
+fn ripples_go_with_the_view() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let far = View {
+        origin: Vec3::new(5000.0, -3000.0, 64.0),
+        ..view_from_above()
+    };
+    step_ripples(&mut renderer, &far, 0, 3, &[]);
+    let (_, [left, low, width]) = renderer.read_ripples().expect("reads").expect("there");
+    assert!((left + width * 0.5 - 5000.0).abs() < 4.0, "{left} {width}");
+    assert!((low + width * 0.5 + 3000.0).abs() < 4.0, "{low} {width}");
+}
+
+/// Ripples stay where they are in the world as the view goes by.
+#[test]
+fn ripples_stay_put_as_the_view_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = view_from_above();
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    let push = WaterPush {
+        place: Vec3::new(64.0, 64.0, 30.0),
+        reach: 12.0,
+        strength: 2.0,
+        ..WaterPush::default()
+    };
+    step_ripples(&mut renderer, &view, 3, 1, &[push]);
+    let before = ripple_at(&mut renderer, 64.0, 64.0).0;
+    let moved = View {
+        origin: Vec3::new(164.0, 64.0, 64.0),
+        ..view
+    };
+    step_ripples(&mut renderer, &moved, 4, 1, &[]);
+    let after = ripple_at(&mut renderer, 64.0, 64.0).0;
+    assert!(after < before * 0.5, "{after} from {before}");
+}
+
+/// A trail pushes as its picture, turned to how it's going.
+#[test]
+fn a_wake_goes_the_way_it_is_going() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // Nothing on the left of the picture, and all on the right.
+    let half = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 255, 255, 0]
+        } else {
+            [255, 255, 255, 255]
+        }
+    });
+    let mut built = map(1);
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    built.water_pictures = vec![Arc::new(half)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = view_from_above();
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    let push = WaterPush {
+        place: Vec3::new(64.0, 64.0, 30.0),
+        reach: 30.0,
+        strength: 2.0,
+        turn: 0.0,
+        picture: 1,
+    };
+    step_ripples(&mut renderer, &view, 3, 1, &[push]);
+    let (left, _) = ripple_at(&mut renderer, 64.0, 44.0);
+    let (right, _) = ripple_at(&mut renderer, 64.0, 84.0);
+    assert!(
+        left.abs() < 0.05 && right < -1.0 || right.abs() < 0.05 && left < -1.0,
+        "{left} and {right}"
+    );
+    let turned = WaterPush {
+        turn: std::f32::consts::FRAC_PI_2,
+        ..push
+    };
+    let mut built = map(1);
+    let solid = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 255, 255, 0]
+        } else {
+            [255, 255, 255, 255]
+        }
+    });
+    built.water_sheets = vec![sheet_over(30.0, 30.0)];
+    built.water_pictures = vec![Arc::new(solid)];
+    renderer.load_map(Arc::new(built)).expect("load");
+    step_ripples(&mut renderer, &view, 0, 3, &[]);
+    step_ripples(&mut renderer, &view, 3, 1, &[turned]);
+    let (near, _) = ripple_at(&mut renderer, 44.0, 64.0);
+    let (far, _) = ripple_at(&mut renderer, 84.0, 64.0);
+    assert!(
+        near.abs() < 0.05 && far < -1.0 || far.abs() < 0.05 && near < -1.0,
+        "{near} and {far}"
+    );
+}
+
+/// A surface shows what's going through it: here in what it mirrors, as nothing else is there.
+#[test]
+fn ripples_show_on_a_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let still = wall_over_a_pool(&mut renderer, 1.0);
+    let view = View {
+        origin: Vec3::new(0.0, -120.0, 24.0),
+        yaw: 90.0,
+        pitch: 6.0,
+        ..view_from_above()
+    };
+    let instances = [ModelInstance {
+        model: 1,
+        origin: Vec3::ZERO,
+        visible: true,
+        ..ModelInstance::default()
+    }];
+    let push = WaterPush {
+        place: Vec3::new(0.0, 40.0, 1.0),
+        reach: 30.0,
+        strength: 4.0,
+        ..WaterPush::default()
+    };
+    let mut shaken = None;
+    for step in 0..8 {
+        let now = View {
+            time: 1.0 + (step as f32 + 0.5) / 60.0,
+            ..view
+        };
+        let drawables = Drawables {
+            water_pushes: if step == 1 { &[push] } else { &[] },
+            ..with_instance(&instances)
+        };
+        shaken = Some(
+            renderer
+                .capture(&now, drawables, 128, 128)
+                .expect("capture"),
+        );
+    }
+    let shaken = shaken.expect("a picture");
+    let different = (0..128)
+        .flat_map(|y| (0..128).map(move |x| (x, y)))
+        .filter(|(x, y)| pixel_at(&still, *x, *y) != pixel_at(&shaken, *x, *y))
+        .count();
+    assert!(different > 50, "{different}");
+}
+
+/// A level with no water has nothing to step.
+#[test]
+fn a_dry_level_has_no_ripples() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    assert!(renderer.read_ripples().expect("reads").is_none());
+    let _shot = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

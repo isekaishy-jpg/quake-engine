@@ -15,6 +15,7 @@ use vulkane::safe::{
     MemoryPropertyFlags, PhysicalDevice, PipelineStage,
 };
 
+use super::ripple::GpuRipples;
 use super::shadow::{ShadowRange, shadow_figures};
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FOG_LIGHTS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer,
@@ -295,6 +296,8 @@ pub(super) struct FrameExtras<'a> {
     pools: &'a [Pool],
     /// Bodies of liquid with a shape.
     sheets: &'a [WaterSheet],
+    /// Where the ripples are, and how wide, which is 0 with none.
+    ripples: [f32; 3],
     /// Fog in places.
     fog_volumes: &'a [FogVolume],
     /// The lights that move, for those in fog.
@@ -461,6 +464,8 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         let at = base + MAX_POOLS * 12 + body * 4;
         out[at..at + 2].copy_from_slice(&[look.foam, look.shore]);
     }
+    let base = base + MAX_POOLS * 16;
+    out[base..base + 3].copy_from_slice(&extra.ripples);
     out
 }
 
@@ -811,6 +816,12 @@ impl Backend {
         let sims = self.upload_sims(map, &fields)?;
         let water = self.upload_water(map)?;
         self.upload_water_pictures(map)?;
+        let held = self.water_pictures.take();
+        let ripples = match &held {
+            Some(image) => self.upload_ripples(map, &image.view)?,
+            None => None,
+        };
+        self.water_pictures = held;
         let particle_pictures = self.upload_particle_pictures(map)?;
         let particle_shaders = self.upload_particle_shaders(&map.effect_shaders)?;
         let shadow_instances = map
@@ -1068,6 +1079,7 @@ impl Backend {
             particle_shaders,
             particle_codes: map.effect_shaders.clone(),
             water,
+            ripples,
             fields,
             terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
@@ -1095,6 +1107,10 @@ impl Backend {
             direction_atlas,
             paint_atlas,
         });
+        // The last level's are gone, and what the final pass reads has to be told.
+        if let Some(target) = &self.scene_target {
+            self.write_ripples(&target.set);
+        }
         Ok(())
     }
 
@@ -1384,6 +1400,11 @@ impl Backend {
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             sheets: scene.map_or(&[][..], |scene| scene.map.water_sheets.as_slice()),
+            ripples: self
+                .map
+                .as_ref()
+                .and_then(|map| map.ripples.as_ref())
+                .map_or([0.0; 3], GpuRipples::place),
             fog_volumes: scene.map_or(&[][..], |scene| scene.map.fog_volumes.as_slice()),
             fog_lights: scene.map_or(&[][..], |scene| scene.drawables.live_lights),
             eye: view.origin,
@@ -1394,6 +1415,8 @@ impl Backend {
             light_shift: view.light_shift,
         };
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);
+        let pushes = scene.map_or(&[][..], |scene| scene.drawables.water_pushes);
+        self.plan_ripples(view.time, view.origin, pushes, self.slot)?;
         self.plan_water(extra.pools, extra.sheets, view.origin);
         let bytes = frame_bytes(view, aspect, lights, sky, fog, &self.post, &extra);
         let slot = self.slot;

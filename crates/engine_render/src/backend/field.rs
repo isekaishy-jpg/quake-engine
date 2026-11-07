@@ -97,14 +97,17 @@ pub(super) struct GpuField {
 
 impl Backend {
     /// One of a field's images, cleared, ready to be read and written.
-    fn field_image(&self, size: u32) -> Result<GpuImage, RenderError> {
+    pub(super) fn field_image(&self, size: u32) -> Result<GpuImage, RenderError> {
         let image = Image::new_2d(
             &self.device,
             Image2dCreateInfo {
                 format: FIELD_FORMAT,
                 width: size,
                 height: size,
-                usage: ImageUsage::SAMPLED | ImageUsage::STORAGE | ImageUsage::TRANSFER_DST,
+                usage: ImageUsage::SAMPLED
+                    | ImageUsage::STORAGE
+                    | ImageUsage::TRANSFER_DST
+                    | ImageUsage::TRANSFER_SRC,
             },
         )?;
         let image = device_image(&self.device, &self.physical, image, false)?;

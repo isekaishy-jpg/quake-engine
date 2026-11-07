@@ -1027,8 +1027,24 @@ fn water_named<'a>(
     Ok(found)
 }
 
-/// Has `look` take up what `water` says of it, with `paths` being pictures by number.
-fn take_look(look: &mut PoolLook, water: &WaterSource, paths: &[String]) {
+/// Every sound `working`'s waters make, each once.
+fn water_sounds_of(working: &WorkingMap) -> Vec<String> {
+    let mut sounds: Vec<String> = Vec::new();
+    for sound in working
+        .water
+        .iter()
+        .filter_map(|water| water.splash_sound.as_ref())
+    {
+        if !sounds.contains(sound) {
+            sounds.push(sound.clone());
+        }
+    }
+    sounds
+}
+
+/// Has `look` take up what `water` says of it, with `paths` being pictures by number, and `sounds`
+/// sounds.
+fn take_look(look: &mut PoolLook, water: &WaterSource, (paths, sounds): (&[String], &[String])) {
     look.color = water.color.unwrap_or(look.color);
     look.absorption = water.absorption.unwrap_or(look.absorption);
     look.caustics = water.caustics.unwrap_or(look.caustics);
@@ -1043,6 +1059,10 @@ fn take_look(look: &mut PoolLook, water: &WaterSource, paths: &[String]) {
     look.view_effect = water.view_effect.as_deref().map_or(0, effect_id);
     look.foam = water.foam.unwrap_or(look.foam);
     look.shore = water.shore.unwrap_or(look.shore);
+    look.splash = water.splash.as_deref().map_or(0, effect_id);
+    look.spray = water.spray.as_deref().map_or(0, effect_id);
+    look.trail_size = water.trail_size.unwrap_or(look.trail_size);
+    look.rain_rings = water.rain_rings.unwrap_or(look.rain_rings);
     let number = |path: &str| {
         let at = paths.iter().position(|known| known == path);
         at.map_or(0, |at| u32::try_from(at + 1).unwrap_or(0))
@@ -1055,6 +1075,10 @@ fn take_look(look: &mut PoolLook, water: &WaterSource, paths: &[String]) {
             strength: *strength,
         };
     }
+    look.trail = water.trail.as_deref().map_or(0, number);
+    let sound = water.splash_sound.as_deref();
+    let at = sound.and_then(|sound| sounds.iter().position(|known| known == sound));
+    look.splash_sound = at.map_or(0, |at| u32::try_from(at + 1).unwrap_or(0));
     if let Some((image, size)) = &water.foam_image {
         look.foam_look.picture = number(image);
         look.foam_look.size = *size;
@@ -1067,7 +1091,8 @@ pub fn water_picture_paths(working: &WorkingMap) -> Vec<String> {
     let mut paths: Vec<String> = Vec::new();
     for water in &working.water {
         let overlays = water.overlays.iter().map(|overlay| &overlay.0);
-        for path in overlays.chain(water.foam_image.iter().map(|foam| &foam.0)) {
+        let foam = water.foam_image.iter().map(|foam| &foam.0);
+        for path in overlays.chain(foam).chain(&water.trail) {
             if !paths.contains(path) {
                 paths.push(path.clone());
             }
@@ -1098,7 +1123,8 @@ fn sheet_look(
         ));
     };
     if let Some(water) = water {
-        take_look(&mut look, water, &water_picture_paths(working));
+        let (paths, sounds) = (water_picture_paths(working), water_sounds_of(working));
+        take_look(&mut look, water, (&paths, &sounds));
     }
     let cell = water.and_then(|water| water.cell).unwrap_or(SHEET_CELL);
     let depth = water.and_then(|water| water.depth).unwrap_or(SHEET_DEPTH);
@@ -1256,7 +1282,8 @@ fn pools_of(working: &WorkingMap) -> Result<Vec<Pool>, CompileError> {
         };
         let said = brush.water.as_deref();
         if let Some(water) = water_named(working, said)? {
-            take_look(&mut look, water, &water_picture_paths(working));
+            let (paths, sounds) = (water_picture_paths(working), water_sounds_of(working));
+            take_look(&mut look, water, (&paths, &sounds));
         }
         let corners = solid_corners(&brush.planes());
         let Some(first) = corners.first() else {
@@ -1475,6 +1502,7 @@ fn compile_with(
         .collect();
     builder.map.pools = pools_of(working)?;
     builder.map.water_sheets = sheets_of(working)?;
+    builder.map.water_sounds = water_sounds_of(working);
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;
         builder.map.stencils.push(stencil);

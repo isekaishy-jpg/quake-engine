@@ -87,6 +87,18 @@ water bog {
 
 Depth is only known where the view can see what's under the water, so an edge that's off the screen has no foam.
 
+## What goes through it
+
+Ripples go out over water near the view, about 500 units each way, and they're seen in what it mirrors and bends. Anything moving through a surface leaves a wake, shots and what falls in leave rings, and these come by themselves. A level can say more:
+
+| Field | Means |
+|---|---|
+| `splash`, `splash_sound` | An [effect](effects.md) and a sound for something going in |
+| `spray` | An effect for something going fast through it |
+| `trail` | A picture to push into the water behind what's going through it, with its point forward. `textures/fx_wake.png` is a V |
+| `trail_size` | How far that reaches |
+| `rain_rings` | How many rings a second rain makes on it, near the view. It's for you to say, as nothing knows it's raining |
+
 ## A murky look
 
 Quake's water is a flat warped picture you can hardly see through. For that, turn the rest off, and use a liquid with no material, which swims as the original's does:

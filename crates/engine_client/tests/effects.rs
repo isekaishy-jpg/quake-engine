@@ -485,3 +485,27 @@ fn a_palette_says_what_colours_they_are() {
         "{draws:?}"
     );
 }
+
+/// What hits something is told of, and what doesn't isn't.
+#[test]
+fn hits_are_kept_for_what_wants_them() {
+    let mut effects = Effects::default();
+    effects.start(&temp(0, Vec3::new(1.0, 2.0, 3.0)));
+    effects.start(&temp(3, Vec3::new(4.0, 5.0, 6.0)));
+    effects.start(&Effect::Particles {
+        origin: Vec3::new(7.0, 8.0, 9.0),
+        direction: Vec3::ZERO,
+        color: 73,
+        count: 3,
+    });
+    effects.start(&temp(11, Vec3::new(0.0, 0.0, 1.0)));
+    assert_eq!(
+        effects.take_impacts(),
+        [
+            Vec3::new(1.0, 2.0, 3.0),
+            Vec3::new(4.0, 5.0, 6.0),
+            Vec3::new(7.0, 8.0, 9.0)
+        ]
+    );
+    assert!(effects.take_impacts().is_empty(), "and only the once");
+}

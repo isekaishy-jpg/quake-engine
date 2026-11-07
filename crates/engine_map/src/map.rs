@@ -423,6 +423,25 @@ impl Map {
         }
     }
 
+    /// The surface of liquid within `reach` of `point`, up or down: how high it is, and how it
+    /// looks.
+    #[must_use]
+    pub fn surface_near(&self, point: Vec3, reach: f32) -> Option<(f32, PoolLook)> {
+        let near = |top: f32| (top - point.z).abs() <= reach;
+        let in_pool = self.pools.iter().find(|pool| {
+            (pool.low.x..=pool.high.x).contains(&point.x)
+                && (pool.low.y..=pool.high.y).contains(&point.y)
+                && near(pool.high.z)
+        });
+        if let Some(pool) = in_pool {
+            return Some((pool.high.z, pool.look));
+        }
+        self.water_sheets.iter().find_map(|sheet| {
+            let top = sheet.height_at(point.x, point.y).filter(|top| near(*top))?;
+            Some((top, sheet.look))
+        })
+    }
+
     /// The moving mesh that the model called `shape` shows, if it is one.
     #[must_use]
     pub fn moving_mesh(&self, shape: &str) -> Option<(usize, &MovingMesh)> {
@@ -672,6 +691,8 @@ pub struct Map {
     pub water_sheets: Vec<WaterSheet>,
     /// What's over the surfaces of bodies of liquid.
     pub water_pictures: Vec<crate::SlotImage>,
+    /// The sounds bodies of liquid make.
+    pub water_sounds: Vec<String>,
     /// Surfaces that shape visible rays.
     pub stencils: Vec<RayStencil>,
     /// Fog, if the map has any.

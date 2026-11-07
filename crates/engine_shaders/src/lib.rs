@@ -55,6 +55,8 @@ pub enum Module<'a> {
     },
     /// Where shaped water's surfaces are.
     Water,
+    /// Ripples on water.
+    Ripple,
     /// Moving lights' shadows.
     Shadow,
     /// Edge smoothing.
@@ -99,6 +101,7 @@ impl Module<'_> {
                 )
             }
             Self::Water => "water".to_owned(),
+            Self::Ripple => "ripple".to_owned(),
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
             Self::Deform => "deform".to_owned(),
@@ -197,6 +200,7 @@ pub fn all_modules<'a>(
         Module::Smaa,
         Module::Deform,
         Module::Water,
+        Module::Ripple,
         Module::PlainSurface,
         Module::Surface(""),
         Module::Surface(BROKEN),

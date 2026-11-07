@@ -328,6 +328,18 @@ pub struct WaterSource {
     pub foam_image: Option<(String, f32)>,
     /// How deep it has to get before it stops fading into what's under it.
     pub shore: Option<f32>,
+    /// The effect something going in starts.
+    pub splash: Option<String>,
+    /// The effect something going fast through it starts.
+    pub spray: Option<String>,
+    /// The sound something going in makes.
+    pub splash_sound: Option<String>,
+    /// What something going through it leaves, as a picture.
+    pub trail: Option<String>,
+    /// How far that reaches.
+    pub trail_size: Option<f32>,
+    /// How many rings a second rain makes on it.
+    pub rain_rings: Option<f32>,
     /// The effect that goes with the view while the eye's in it.
     pub view_effect: Option<String>,
 }
@@ -714,6 +726,7 @@ fn read_overlay(block: &Block) -> Option<(String, f32, [f32; 2], f32)> {
 #[expect(clippy::cast_possible_truncation, reason = "the look stores f32")]
 fn read_water(block: &Block) -> WaterSource {
     let number = |key: &str| block.get(key).and_then(Value::number).map(|v| v as f32);
+    let text = |key: &str| block.get(key).and_then(Value::text).map(str::to_owned);
     WaterSource {
         name: block.name.clone(),
         color: block
@@ -747,6 +760,12 @@ fn read_water(block: &Block) -> WaterSource {
             .and_then(Value::text)
             .map(|image| (image.to_owned(), number("foam_size").unwrap_or(128.0))),
         shore: number("shore"),
+        splash: text("splash"),
+        spray: text("spray"),
+        splash_sound: text("splash_sound"),
+        trail: text("trail"),
+        trail_size: number("trail_size"),
+        rain_rings: number("rain_rings"),
         view_effect: block
             .get("view_effect")
             .and_then(Value::text)

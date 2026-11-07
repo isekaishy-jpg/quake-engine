@@ -145,6 +145,8 @@ pub struct Effects {
     time: f32,
     /// Effects an author described.
     authored: EffectSystem,
+    /// Where things have hit something, since this was last asked.
+    impacts: Vec<Vec3>,
 }
 
 /// The forward direction of `angles`, from `AngleVectors`.
@@ -207,8 +209,13 @@ impl Effects {
         light
     }
 
+    /// Takes where things have hit something.
+    pub fn take_impacts(&mut self) -> Vec<Vec3> {
+        std::mem::take(&mut self.impacts)
+    }
+
     /// Starts a sound at `origin`, as `S_StartSound (-1, 0, ...)`.
-    fn sound(&mut self, name: &str, origin: Vec3) {
+    pub fn sound(&mut self, name: &str, origin: Vec3) {
         self.sounds.push(SoundStart {
             entity: NO_ENTITY,
             channel: 0,
@@ -264,6 +271,10 @@ impl Effects {
 
     /// `CL_ParseTEnt`: starts one of the original's temporary entities.
     fn temp(&mut self, kind: u8, origin: Vec3, end: Vec3, entity: u64) {
+        // Beams go on from frame to frame, and everything else is something hitting something.
+        if !matches!(kind, 5 | 6 | 9 | 10 | 11) {
+            self.impacts.push(origin);
+        }
         match kind {
             0 => {
                 self.bursts
@@ -358,6 +369,7 @@ impl Effects {
                 color,
                 count,
             } => {
+                self.impacts.push(origin);
                 // The original sends 1024 as 255.
                 let count = if count == u8::MAX {
                     1024

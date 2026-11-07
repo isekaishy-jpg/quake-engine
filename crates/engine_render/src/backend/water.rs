@@ -159,6 +159,15 @@ impl Backend {
         Ok(())
     }
 
+    /// Points `set` at the ripples there are, or at none.
+    pub(super) fn write_ripples(&self, set: &DescriptorSet) {
+        let held = self.map.as_ref().and_then(|map| map.ripples.as_ref());
+        let image = held.map(|ripples| &ripples.shown);
+        if let Some(image) = image.or(self.ripple_blank.as_ref()) {
+            set.write_sampled_image(14, &image.view, ImageLayout::GENERAL);
+        }
+    }
+
     /// Points `set` at what's over water, if that's there yet.
     pub(super) fn write_water_pictures(&self, set: &DescriptorSet) {
         if let Some(image) = &self.water_pictures {

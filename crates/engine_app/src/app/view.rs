@@ -12,7 +12,7 @@ use engine_client::{
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
-use engine_map::{Contents, Rows};
+use engine_map::{Contents, Rows, WaterPush};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
     ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
@@ -38,6 +38,8 @@ pub(crate) struct Picture {
     /// The particles.
     particles: Vec<ParticleDraw>,
     particle_sims: Vec<ParticleSim>,
+    /// What's pushing the water near the view.
+    water_pushes: Vec<WaterPush>,
     /// Particles the GPU works out.
     gpu_particles: Vec<GpuParticles>,
     /// The dynamic lights.
@@ -82,6 +84,7 @@ impl Picture {
             particles: &self.particles,
             gpu_particles: &self.gpu_particles,
             particle_sims: &self.particle_sims,
+            water_pushes: &self.water_pushes,
             lights: &self.lights,
             quads: &self.quads,
             stencil_lights: &self.stencil_lights,
@@ -243,6 +246,40 @@ impl World {
         out
     }
 
+    /// Does what going through water does this frame, and says what's pushing it.
+    fn follow_water(
+        &mut self,
+        drawn: &[DrawnEntity],
+        (player, eye): (u64, Vec3),
+        seconds: f32,
+    ) -> Vec<WaterPush> {
+        let impacts = self.effects.take_impacts();
+        let Some(map) = self.map.clone() else {
+            return Vec::new();
+        };
+        let mut movers: Vec<(u64, Vec3)> = drawn
+            .iter()
+            .map(|entity| (entity.state.id, entity.state.origin))
+            .collect();
+        if !movers.iter().any(|(id, _)| *id == player) {
+            movers.push((player, eye));
+        }
+        let events = self
+            .water_play
+            .follow(&map, &movers, &impacts, (eye, seconds));
+        for (effect, place) in events.effects {
+            self.effects
+                .authored_mut()
+                .start(effect, place, None, false);
+        }
+        for (sound, place) in events.sounds {
+            if let Some(name) = map.water_sounds.get(sound) {
+                self.effects.sound(name, place);
+            }
+        }
+        events.pushes
+    }
+
     /// Keeps the effect of what the eye's in going round it, and stops the last one on leaving.
     fn follow_view_effect(&mut self, wanted: u32, origin: Vec3) {
         let authored = self.effects.authored_mut();
@@ -343,6 +380,7 @@ impl World {
         };
         let mut capsules = Vec::new();
         let mut moving = Vec::new();
+        let mut water_pushes = Vec::new();
         let time = self.map_time as f32;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
@@ -419,6 +457,7 @@ impl World {
                 model_flags: 0,
             };
             lights = self.update_effects(time + leftover, &drawn, player);
+            water_pushes = self.follow_water(&drawn, (player.id, origin), frame_seconds);
             moving = self.map.as_ref().map_or_else(Vec::new, |map| {
                 live_lights(map, origin, time, self.live_light_budget)
             });
@@ -535,6 +574,7 @@ impl World {
             particles: self.particle_draws(view.origin),
             gpu_particles: self.gpu_particles(),
             particle_sims: self.particle_sims(),
+            water_pushes,
             lights,
             quads: Vec::new(),
             stencil_lights: self.gates.lights().to_vec(),

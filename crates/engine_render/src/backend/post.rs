@@ -457,7 +457,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 11,
+                    descriptor_count: 12,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -513,6 +513,10 @@ impl Backend {
         }
         self.write_water_pictures(&set);
         set.write_sampler(13, &self.particle_sampler);
+        if self.ripple_blank.is_none() {
+            self.ripple_blank = Some(self.field_image(1)?);
+        }
+        self.write_ripples(&set);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             particle_framebuffer,

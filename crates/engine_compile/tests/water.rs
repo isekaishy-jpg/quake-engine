@@ -283,3 +283,28 @@ brush { material = rock contents = water water = scum cuboid = 0 0 0 9 9 9 }",
     assert_eq!(look.foam_look.size, 40.0);
     assert_eq!(look.shore, 6.0);
 }
+
+/// What play does to a water is said in its block.
+#[test]
+fn a_water_says_what_going_through_it_does() {
+    let map = level_with_pictures(
+        "water scum {
+    splash = water_splash
+    spray = bubbles
+    splash_sound = misc/water1.wav
+    trail = textures/small.png
+    trail_size = 44
+    rain_rings = 30
+}
+brush { material = rock contents = water water = scum cuboid = 0 0 0 9 9 9 }",
+    );
+    let look = map.pools[0].look;
+    assert_eq!(look.splash, effect_id("water_splash"));
+    assert_eq!(look.spray, effect_id("bubbles"));
+    assert_eq!(look.splash_sound, 1);
+    assert_eq!(map.water_sounds, ["misc/water1.wav"]);
+    assert_eq!(look.trail, 1);
+    assert_eq!(look.trail_size, 44.0);
+    assert_eq!(look.rain_rings, 30.0);
+    assert_eq!(map.water_pictures.len(), 1);
+}

@@ -39,8 +39,8 @@ pub use live::{
 pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
 pub use matrix::{height_scale, view_projection};
 pub use renderer::{
-    CapsuleDraw, Capture, Drawables, PostSettings, Renderer, Statistics, Target, TextureFilter,
-    View,
+    CapsuleDraw, Capture, Drawables, PostSettings, Renderer, RippleHeights, Statistics, Target,
+    TextureFilter, View,
 };
 pub use sprite::{
     GpuParticles, LightDraw, MAX_GPU_PARTICLE_DRAWS, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS,

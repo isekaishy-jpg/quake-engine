@@ -7,7 +7,7 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sprite, TileLight};
+use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sprite, TileLight, WaterPush};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, GpuTimes, Scene};
@@ -58,6 +58,9 @@ pub struct View {
     pub light_shift: [f32; 3],
 }
 
+/// How high each cell of ripples is, row by row, then where they are and how wide.
+pub type RippleHeights = (Vec<f32>, [f32; 3]);
+
 /// Everything in a frame besides the map itself.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct Drawables<'a> {
@@ -89,6 +92,8 @@ pub struct Drawables<'a> {
     pub moving: &'a [MovingDraw],
     /// The joints of all of those.
     pub palette: &'a [Rows],
+    /// What's pushing the water near the view.
+    pub water_pushes: &'a [WaterPush],
     /// The morph weights of all of those.
     pub morph_weights: &'a [f32],
 }
@@ -466,6 +471,16 @@ impl Renderer {
     /// Returns [`RenderError`] if the device fails.
     pub fn read_sim(&mut self, id: u64) -> Result<Vec<[f32; 8]>, RenderError> {
         self.backend.read_sim(id)
+    }
+
+    /// How high each cell of the ripples near the view is, row by row, and where they are and how
+    /// wide, for what checks them. A level with no water has none.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn read_ripples(&mut self) -> Result<Option<RippleHeights>, RenderError> {
+        self.backend.read_ripples()
     }
 
     /// Starts or stops timing what the GPU does. Says if it can.

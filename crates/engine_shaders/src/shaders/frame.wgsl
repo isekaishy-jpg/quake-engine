@@ -88,6 +88,8 @@ struct Frame {
     pool_overlay: array<vec4<f32>, 24>,
     // x how far from the shore foam reaches, and y how deep it has to be to stop fading.
     pool_edge: array<vec4<f32>, 8>,
+    // Where the ripples are, and how wide, which is 0 with none.
+    ripple_place: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

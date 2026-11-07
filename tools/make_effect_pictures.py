@@ -111,6 +111,13 @@ def main():
         wobble = 0.03 * math.sin(turn * 2.3)
         runes += np.exp(-((edge - 0.8 - wobble) ** 2) * 900) * (np.cos(angle - spoke) > 0.995)
     save('fx_circle', white(SIDE), np.clip(ring + np.exp(-((edge - 0.5) ** 2) * 500) * 0.8 + runes, 0, 1))
+    # A V with a rounded point at the top, for what goes through water to leave behind it.
+    y = (np.arange(SIDE) + 0.5) / SIDE
+    x = np.abs((np.arange(SIDE) + 0.5) / SIDE * 2 - 1)
+    arm = np.exp(-((x[None, :] - y[:, None] * 0.9) ** 2) * 300)
+    tip = np.exp(-(x[None, :] ** 2 + (y[:, None] - 0.06) ** 2) * 160)
+    fade = 1 - smooth(0.5, 1.0, y[:, None])
+    save('fx_wake', white(SIDE), np.clip((arm + tip) * fade, 0, 1))
     frames = 4
     cell = 128
     smoke = sheet(frames, cell, lambda number, count: puff(cell, 11 + number // 2, 0.45 + 0.55 * number / count, number / count))

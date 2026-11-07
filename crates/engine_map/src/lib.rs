@@ -47,7 +47,7 @@ pub use material::{
 pub use nav::{LINKS, NAV_WAYS, NavGrid, NavLeap, NavLeaps, NavPlace, NavStep, NavWay, Spline};
 pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, chunks_of};
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
-pub use pool::{NO_WATER, Pool, PoolLook, WaterOverlay, WaterSheet, look_around};
+pub use pool::{NO_WATER, Pool, PoolLook, WaterOverlay, WaterPush, WaterSheet, look_around};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
 pub use skeleton::{
     Channel, ChannelPath, Clip, HitCapsule, Interpolation, Joint, JointPose, NO_MOVE, Rows,

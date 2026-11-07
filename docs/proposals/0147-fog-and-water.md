@@ -1,6 +1,6 @@
 # Proposal 0147: fog in a place, and water of any shape
 
-Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 70 to 76, 17, 98 to 102 and 130, from [the research](../research/fog-and-water.md).
+Status: accepted and implemented, 2026-11-07, the [work list](../research/work-list.md), items 70 to 76, 17, 98 to 102 and 130, from [the research](../research/fog-and-water.md).
 
 ## Design
 
@@ -99,4 +99,12 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **Overlays are in one array,** as effects' pictures are, so that a level's waters don't each cost a binding.
 - **How much shows rides in the fraction of how wide it is,** to keep a body's overlay to one entry of the frame.
 
-Filled in as each part lands.
+### What goes through it (98, 99, 102)
+
+- **Tried in the game:** rain rings on a pool, moving what it mirrors. Swimming across it leaves a V behind the swimmer, which comes out of the wave equation by itself, from nothing but rings. At first that was strong enough to tear what the water mirrored, so a wake pushes less hard than anything else.
+- **What it costs:** the final pass with ripples in view is 0.39 to 0.47 ms at 1280 by 720, and the steps add about 0.01 ms a frame, which `gpu_times` shows with what moves meshes.
+- **Pushes wait for a step.** There are 60 steps a second and frames come faster, so a push on a frame with no step was lost. Three in four were, at 200 frames a second. They're kept until a step takes them.
+- **A wake goes by how long a frame is,** or it'd be four times as strong at 240 frames a second as at 60.
+- **It goes with the view by whole cells,** and what's there moves the other way, so ripples stay where they are in the world.
+- **Who's in water is worked out on the client,** from where things are, as it's only for show. It's all in one place and takes no window, so tests can run it.
+- **Rain is the level's to say.** Nothing joins `rain_rings` to the `rain` effect, as a water doesn't know what's falling on it.

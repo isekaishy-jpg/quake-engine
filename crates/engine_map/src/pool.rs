@@ -4,6 +4,21 @@ use engine_core::math::Vec3;
 
 use crate::tree::Contents;
 
+/// Something pushing the water near the view down.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct WaterPush {
+    /// Where it is.
+    pub place: Vec3,
+    /// How far it reaches.
+    pub reach: f32,
+    /// How hard it pushes.
+    pub strength: f32,
+    /// Which way it's going, in radians.
+    pub turn: f32,
+    /// Which of the level's water pictures it pushes as, plus one, or 0 for a ring.
+    pub picture: u32,
+}
+
 /// A picture over a surface, scrolling.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct WaterOverlay {
@@ -56,6 +71,19 @@ pub struct PoolLook {
     pub foam_look: WaterOverlay,
     /// How deep it has to get before it stops fading into what's under it, or 0 for a hard edge.
     pub shore: f32,
+    /// The effect something going in starts, by its id, or 0.
+    pub splash: u32,
+    /// The effect something going fast through it starts, by its id, or 0.
+    pub spray: u32,
+    /// Which of [`crate::Map::water_sounds`] something going in makes, plus one, or 0.
+    pub splash_sound: u32,
+    /// What something going through it leaves, of [`crate::Map::water_pictures`], plus one, or 0
+    /// for a ring.
+    pub trail: u32,
+    /// How far that reaches.
+    pub trail_size: f32,
+    /// How many rings a second rain makes on it, near the view.
+    pub rain_rings: f32,
 }
 
 impl PoolLook {
@@ -77,6 +105,12 @@ impl PoolLook {
                 foam: 0.0,
                 foam_look: WaterOverlay::NONE,
                 shore: 0.0,
+                splash: 0,
+                spray: 0,
+                splash_sound: 0,
+                trail: 0,
+                trail_size: 28.0,
+                rain_rings: 0.0,
             }),
             Contents::Slime => Some(Self {
                 color: [0.12, 0.3, 0.05],
@@ -92,6 +126,12 @@ impl PoolLook {
                 foam: 0.0,
                 foam_look: WaterOverlay::NONE,
                 shore: 0.0,
+                splash: 0,
+                spray: 0,
+                splash_sound: 0,
+                trail: 0,
+                trail_size: 28.0,
+                rain_rings: 0.0,
             }),
             Contents::Lava => Some(Self {
                 color: [0.75, 0.2, 0.03],
@@ -107,6 +147,12 @@ impl PoolLook {
                 foam: 0.0,
                 foam_look: WaterOverlay::NONE,
                 shore: 0.0,
+                splash: 0,
+                spray: 0,
+                splash_sound: 0,
+                trail: 0,
+                trail_size: 28.0,
+                rain_rings: 0.0,
             }),
             _ => None,
         }

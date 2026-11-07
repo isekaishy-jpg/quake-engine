@@ -17,6 +17,8 @@
 // What's over water: pictures that repeat.
 @group(0) @binding(12) var water_pictures: texture_2d_array<f32>;
 @group(0) @binding(13) var water_sampler: sampler;
+// How high ripples near the view are.
+@group(0) @binding(14) var ripples: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -611,6 +613,23 @@ fn bent_through(
     return load_color(at);
 }
 
+// How ripples slope at `place`, in the world.
+fn ripple_slope(place: vec2<f32>) -> vec2<f32> {
+    let width = frame.ripple_place.z;
+    if width <= 0.0 {
+        return vec2<f32>(0.0);
+    }
+    let cells = vec2<f32>(textureDimensions(ripples));
+    let spot = (place - frame.ripple_place.xy) / width * cells;
+    if any(spot < vec2<f32>(2.0)) || any(spot > cells - vec2<f32>(2.0)) {
+        return vec2<f32>(0.0);
+    }
+    let at = vec2<i32>(spot);
+    let across = textureLoad(ripples, at + vec2<i32>(1, 0), 0).x - textureLoad(ripples, at - vec2<i32>(1, 0), 0).x;
+    let up = textureLoad(ripples, at + vec2<i32>(0, 1), 0).x - textureLoad(ripples, at - vec2<i32>(0, 1), 0).x;
+    return vec2<f32>(across, up);
+}
+
 // What overlay `slot` shows at `place`, with its alpha how much of it to take.
 fn overlay_at(slot: i32, place: vec2<f32>) -> vec4<f32> {
     let overlay = frame.pool_overlay[slot];
@@ -691,6 +710,7 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
             if on_it {
                 normal = normalize(normal - vec3<f32>(surface.zw, 0.0));
             }
+            normal = normalize(normal - vec3<f32>(ripple_slope(entry.xy) * 0.6, 0.0));
             color = bent_through(color, uv, normal, surface_look.y, top);
         }
         let inside = (all(far >= low.xyz - vec3<f32>(1.0)) && all(far <= high.xyz + vec3<f32>(1.0)))

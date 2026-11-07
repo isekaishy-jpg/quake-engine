@@ -23,7 +23,7 @@ use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Cameras, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
-    LookScale, ShotClock, StepSmoother, ViewKick, ViewTint, ZoneTracker,
+    LookScale, ShotClock, StepSmoother, ViewKick, ViewTint, WaterPlay, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
@@ -162,6 +162,8 @@ pub(crate) struct World {
     effect_meshes: RestPoses,
     /// The effect going round the view, by its id, or 0.
     view_effect: u32,
+    /// What's following what moves through water.
+    water_play: WaterPlay,
     /// Says when the files effects come from have changed.
     effect_changes: Option<Receiver<()>>,
     /// Which zone the view is in.
@@ -398,6 +400,7 @@ impl World {
         self.effects = Effects::default();
         self.effect_meshes = RestPoses::default();
         self.view_effect = 0;
+        self.water_play = WaterPlay::default();
         self.effects.set_palette(&|index| palette.color(index));
         self.zones = ZoneTracker::default();
         self.palette = Some(palette);
@@ -693,6 +696,7 @@ impl Engine {
                 effects_time: 0.0,
                 effect_meshes: RestPoses::default(),
                 view_effect: 0,
+                water_play: WaterPlay::default(),
                 effect_changes: None,
                 zones: ZoneTracker::default(),
                 ui_script,
