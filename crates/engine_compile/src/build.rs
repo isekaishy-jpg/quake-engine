@@ -1611,6 +1611,9 @@ fn day_of(working: &WorkingMap) -> Option<DayCycle> {
     })
 }
 
+/// How much corners darken in a level that doesn't say.
+const LEVEL_SSAO: f32 = 0.6;
+
 /// How a working map says its sun works.
 fn sun_mode_of(working: &WorkingMap) -> Result<SunMode, CompileError> {
     let world = working.entities.iter().find(|e| e.kind == "worldspawn");
@@ -1653,6 +1656,9 @@ fn look_of(working: &WorkingMap) -> Result<Look, CompileError> {
         light_curve: field("light_curve").unwrap_or(usual.light_curve),
         exposure: field("exposure").unwrap_or(usual.exposure),
         tone,
+        // A level made for this engine has some, and what's carried over from the fixture none.
+        ssao: field("ssao").unwrap_or(LEVEL_SSAO).clamp(0.0, 1.0),
+        ssao_radius: field("ssao_radius").unwrap_or(usual.ssao_radius).max(1.0),
     })
 }
 

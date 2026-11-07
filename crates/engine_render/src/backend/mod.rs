@@ -112,6 +112,7 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 12
     + 256
     + 4
+    + 4
     + 4;
 
 /// How many pools can show in a frame.
@@ -589,6 +590,10 @@ pub(crate) struct Backend {
     ray_pass: RenderPass,
     /// Light in the air.
     ray_pipeline: GraphicsPipeline,
+    /// The pass corners are worked out in.
+    corner_pass: RenderPass,
+    /// How open each pixel is to light from all round.
+    corner_pipeline: GraphicsPipeline,
     /// The final pass's settings.
     post: PostSettings,
     /// SMAA's passes.
@@ -663,6 +668,8 @@ pub(crate) struct Backend {
     sky_blank: Option<GpuImage>,
     /// Whether this frame has rays from the sky.
     sky_rays_shown: bool,
+    /// Whether this frame darkens corners.
+    ssao_shown: bool,
     /// What ripples are stepped by.
     ripple_layout: RippleLayout,
     /// What the final pass reads with no ripples.
@@ -813,6 +820,7 @@ impl Backend {
                 image_binding(6, DescriptorType::SAMPLER),
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
+                image_binding(9, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let texture_layout = DescriptorSetLayout::new(
@@ -1064,6 +1072,9 @@ impl Backend {
         let ray_pass = post::make_ray_pass(&device)?;
         let ray_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays", "")?;
+        let corner_pass = post::make_corner_pass(&device)?;
+        let corner_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &corner_pass, 1, "fs_corners", "")?;
         let smaa = smaa::Smaa::new(&device)?;
         let mut backend = Self {
             saved_pipelines,
@@ -1103,6 +1114,8 @@ impl Backend {
             post_pipeline,
             ray_pass,
             ray_pipeline,
+            corner_pass,
+            corner_pipeline,
             smaa,
             post_set_layout,
             post_layout,
@@ -1143,6 +1156,7 @@ impl Backend {
             sky_ray_picture: None,
             sky_blank: None,
             sky_rays_shown: false,
+            ssao_shown: false,
             ripple_layout,
             ripple_blank: None,
             water_pass,
@@ -1485,7 +1499,17 @@ impl Backend {
             ],
         );
         if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
-            recorder.record_solid(rec, scene, view, size);
+            if self.ssao_shown {
+                // How open each pixel is comes from depth, before anything's shaded, so that
+                // surfaces can darken only the light that comes from all round.
+                recorder.record_ahead(rec, scene, size);
+                rec.end_render_pass();
+                self.record_corners(rec, target);
+                rec.begin_render_pass_ext(&self.scene_again_pass, &target.framebuffer, &[]);
+                recorder.record_shaded(rec, scene, view, size);
+            } else {
+                recorder.record_solid(rec, scene, view, size);
+            }
             let behind = self.particles_behind;
             if behind > 0 {
                 rec.end_render_pass();
@@ -1573,6 +1597,41 @@ impl Backend {
 
     /// Records the final pass.
     /// Draws light in the air, for the final pass to add.
+    /// Works out how open each pixel is to light from all round, from the depth drawn so far.
+    fn record_corners(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        target: &post::SceneTarget,
+    ) {
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::FRAGMENT_SHADER,
+            AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ,
+        );
+        let size = target.corners.size;
+        rec.begin_render_pass_ext(&self.corner_pass, &target.corners.framebuffer, &[]);
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        rec.bind_graphics_pipeline(&self.corner_pipeline);
+        rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+        rec.draw(3, 1, 0, 0);
+        rec.end_render_pass();
+        // Surfaces read this, and depth is drawn into again once it's been read.
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::ALL_GRAPHICS,
+            AccessFlags::COLOR_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ
+                | AccessFlags::DEPTH_STENCIL_ATTACHMENT_READ
+                | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+        );
+    }
+
     fn record_rays(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,

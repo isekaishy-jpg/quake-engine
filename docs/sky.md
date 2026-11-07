@@ -137,10 +137,20 @@ entity world {
 | `exposure` | How much light reaches the eye |
 | `light_curve` | What baked light is raised to. Higher makes dim light dimmer |
 | `tone` | How what's too bright comes down, below |
+| `ssao` | How much corners and creases darken, from 0 for none to 1. 0.6 unless a level says. What's carried over from the fixture has none |
+| `ssao_radius` | How far round a point that looks, in world units. 32 unless it says |
 
 | `tone` | Means |
 |---|---|
 | `neutral` | What's below 0.8 stays as it is, and what's above rolls off and goes towards white. It's the usual |
 | `film` | A film's curve all the way up, with more contrast and a look of its own. It changes all of a level |
 | `hold` | The top is the top, and anything brighter looks the same |
+
+### Corners
+
+Darkening in corners is on light that comes from all round: baked light, and the light a day adds everywhere. Light from one way, which is a sun's own, baked or live, and moving lights, has shadows of its own and is left alone, as is fog. A fixed sun is baked in with everything else, so it's darkened with the rest.
+
+It's worked out from what's solid before anything's shaded. What's see-through, cut out, or moved by its shader isn't in that, so it isn't darkened, and nor are models, which have their capsules' shade.
+
+A player sets `r_ssao` to 0 for none, 1 for some, which is the usual, or 2 for more and smoother.
 

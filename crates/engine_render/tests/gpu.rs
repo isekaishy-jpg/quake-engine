@@ -7413,3 +7413,279 @@ fn speed_of_the_two_paths() {
         alias.models, alias.deform, moving.moving, moving.deform, alias.scene, moving.scene,
     );
 }
+
+/// A floor with a wall standing across it at x = 64, facing back towards x = 0, lit by `style`,
+/// and with as much darkening in corners as `strength`.
+fn creased_map(strength: f32, style: u8) -> Map {
+    let mut built = map(1);
+    built.look.ssao = strength;
+    built.look.ssao_radius = 32.0;
+    // Dim enough that, darkened, it doesn't stay at the top.
+    built.light = vec![[100, 80, 30]; 81];
+    let mut wall = built.faces[0].clone();
+    wall.first_point = 4;
+    wall.axes[0].axis = Vec3::new(0.0, 1.0, 0.0);
+    wall.axes[1].axis = Vec3::new(0.0, 0.0, 1.0);
+    built.points.extend([
+        Vec3::new(64.0, 0.0, 0.0),
+        Vec3::new(64.0, 0.0, 128.0),
+        Vec3::new(64.0, 128.0, 128.0),
+        Vec3::new(64.0, 128.0, 0.0),
+    ]);
+    built.faces.push(wall);
+    for face in &mut built.faces {
+        if let Some(light) = &mut face.light {
+            light.styles = [style, 255, 255, 255];
+        }
+    }
+    built.tree.leaves[1].face_count = 2;
+    built.tree.leaf_faces.push(1);
+    built.models[0].face_count = 2;
+    built
+}
+
+/// Looking down at the crease from the floor's side, with it across the middle.
+fn at_the_crease() -> View {
+    View {
+        origin: Vec3::new(16.0, 64.0, 48.0),
+        pitch: 45.0,
+        ..view_from_above()
+    }
+}
+
+/// A picture of the crease in `built`, with `ssao` as the player's setting.
+fn crease_picture(built: Map, ssao: u8, drawables: Drawables<'_>) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        ssao,
+        ..PostSettings::default()
+    });
+    Some(
+        renderer
+            .capture(&at_the_crease(), drawables, 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// The floor just short of the crease.
+const BY_THE_CREASE: (u32, u32) = (32, 34);
+
+/// Where the floor is too far from the wall for it to shade.
+const OPEN_FLOOR: (u32, u32) = (32, 63);
+
+/// A crease darkens what's lit from all round, at either setting, and open floor stays as it is.
+#[test]
+fn a_crease_darkens_and_open_floor_does_not() {
+    let (x, y) = BY_THE_CREASE;
+    let (open_x, open_y) = OPEN_FLOOR;
+    for setting in [1, 2] {
+        let off = crease_picture(creased_map(1.0, 0), 0, Drawables::default());
+        let on = crease_picture(creased_map(1.0, 0), setting, Drawables::default());
+        if let (Some(off), Some(on)) = (off, on) {
+            let (near_off, near_on) = (pixel(&off, x, y), pixel(&on, x, y));
+            assert!(
+                near_on[1] + 20 < near_off[1],
+                "{setting}: {near_off:?} {near_on:?}"
+            );
+            assert_eq!(
+                pixel(&on, open_x, open_y),
+                pixel(&off, open_x, open_y),
+                "{setting}"
+            );
+        }
+    }
+}
+
+/// A level that has none has none, whatever the player's setting.
+#[test]
+fn a_level_with_no_ssao_has_none() {
+    let (x, y) = BY_THE_CREASE;
+    let off = crease_picture(creased_map(1.0, 0), 0, Drawables::default());
+    let none = crease_picture(creased_map(0.0, 0), 2, Drawables::default());
+    if let (Some(off), Some(none)) = (off, none) {
+        assert_eq!(pixel(&none, x, y), pixel(&off, x, y));
+    }
+}
+
+/// How much less a level's strength darkens than all of it.
+#[test]
+fn a_levels_strength_says_how_much() {
+    let (x, y) = BY_THE_CREASE;
+    let off = crease_picture(creased_map(1.0, 0), 0, Drawables::default());
+    let some = crease_picture(creased_map(0.4, 0), 2, Drawables::default());
+    let all = crease_picture(creased_map(1.0, 0), 2, Drawables::default());
+    if let (Some(off), Some(some), Some(all)) = (off, some, all) {
+        let green = |shot: &Capture| pixel(shot, x, y)[1];
+        assert!(
+            green(&some) < green(&off),
+            "{} {}",
+            green(&off),
+            green(&some)
+        );
+        assert!(
+            green(&all) + 10 < green(&some),
+            "{} {}",
+            green(&some),
+            green(&all)
+        );
+    }
+}
+
+/// A sun's own light comes from one way and has its own shadows, so corners leave it alone,
+/// baked or live.
+#[test]
+fn corners_leave_the_suns_own_light_alone() {
+    let (x, y) = BY_THE_CREASE;
+    let off = crease_picture(creased_map(1.0, SUN_STYLE), 0, Drawables::default());
+    let on = crease_picture(creased_map(1.0, SUN_STYLE), 2, Drawables::default());
+    if let (Some(off), Some(on)) = (off, on) {
+        assert!(pixel(&off, x, y)[0] > 40, "lit by its baked sun");
+        assert_eq!(pixel(&on, x, y), pixel(&off, x, y), "baked");
+    }
+    let unlit = || {
+        let mut built = creased_map(1.0, 0);
+        built.light = vec![[0, 0, 0]; 81];
+        built
+    };
+    // Dim, so that darkened it wouldn't stay at the top.
+    let sun = Some(SunDraw {
+        toward: Vec3::new(-0.6, 0.0, 0.8),
+        color: [0.0, 0.0, 0.3],
+    });
+    let drawables = Drawables {
+        sun,
+        ..Drawables::default()
+    };
+    let (off, on) = (
+        crease_picture(unlit(), 0, drawables),
+        crease_picture(unlit(), 2, drawables),
+    );
+    if let (Some(off), Some(on)) = (off, on) {
+        assert!(pixel(&off, x, y)[2] > 40, "lit by a live sun");
+        assert!(pixel(&off, x, y)[2] < 200, "not at the top");
+        assert_eq!(pixel(&on, x, y), pixel(&off, x, y), "live");
+    }
+}
+
+/// Light a day adds everywhere is from all round, so corners darken it too.
+#[test]
+fn corners_darken_a_days_light() {
+    let (x, y) = BY_THE_CREASE;
+    let unlit = || {
+        let mut built = creased_map(1.0, 0);
+        built.light = vec![[0, 0, 0]; 81];
+        built
+    };
+    let drawables = Drawables {
+        day_light: Some([0.0, 0.3, 0.0, 1.0]),
+        ..Drawables::default()
+    };
+    let (off, on) = (
+        crease_picture(unlit(), 0, drawables),
+        crease_picture(unlit(), 2, drawables),
+    );
+    if let (Some(off), Some(on)) = (off, on) {
+        let (off, on) = (pixel(&off, x, y), pixel(&on, x, y));
+        assert!(on[1] + 20 < off[1], "{off:?} {on:?}");
+    }
+}
+
+/// Turning it off takes it away, and leaves nothing of what was worked out before.
+#[test]
+fn turning_ssao_off_takes_it_away() {
+    let fresh = crease_picture(creased_map(1.0, 0), 0, Drawables::default());
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(creased_map(1.0, 0)))
+        .expect("load");
+    let mut shot = |ssao| {
+        renderer.set_post(PostSettings {
+            ssao,
+            ..PostSettings::default()
+        });
+        renderer
+            .capture(&at_the_crease(), Drawables::default(), 64, 64)
+            .expect("capture")
+    };
+    let (on, off) = (shot(2), shot(0));
+    let (x, y) = BY_THE_CREASE;
+    if let Some(fresh) = fresh {
+        assert_ne!(pixel(&on, x, y), pixel(&fresh, x, y), "it was on");
+        assert_eq!(pixel(&off, x, y), pixel(&fresh, x, y));
+    }
+}
+
+/// What's far in front of a point doesn't shade it, however much of what it looks round it
+/// hides: a ledge high over a floor leaves the floor open.
+#[test]
+fn whats_far_in_front_does_not_shade() {
+    let ledged = || {
+        let mut built = creased_map(1.0, 0);
+        built.look.ssao_radius = 8.0;
+        let mut ledge = built.faces[0].clone();
+        ledge.first_point = 8;
+        built.points.extend([
+            Vec3::new(17.0, 0.0, 40.0),
+            Vec3::new(20.0, 0.0, 40.0),
+            Vec3::new(20.0, 128.0, 40.0),
+            Vec3::new(17.0, 128.0, 40.0),
+        ]);
+        built.faces.push(ledge);
+        built.tree.leaves[1].face_count = 3;
+        built.tree.leaf_faces.push(2);
+        built.models[0].face_count = 3;
+        built
+    };
+    let off = crease_picture(ledged(), 0, Drawables::default());
+    let on = crease_picture(ledged(), 2, Drawables::default());
+    if let (Some(off), Some(on)) = (off, on) {
+        let rows = 44..64;
+        let ledge_shown = rows
+            .clone()
+            .any(|y| pixel(&off, 32, y) != pixel(&off, 32, 63));
+        assert!(ledge_shown, "the ledge is in view");
+        let differ = rows
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|&(x, y)| pixel(&on, x, y) != pixel(&off, x, y))
+            .count();
+        assert_eq!(differ, 0);
+    }
+}
+
+/// What's see-through wasn't seen when corners were worked out, so what's behind it doesn't
+/// darken it.
+#[test]
+fn whats_see_through_is_not_darkened_by_whats_behind() {
+    let (x, y) = BY_THE_CREASE;
+    let glassy = || {
+        let mut built = creased_map(1.0, 0);
+        let mut glass = built.textures[0].clone();
+        glass.material = Some(Arc::new(Material {
+            alpha: AlphaMode::Blend,
+            ..Material::default()
+        }));
+        built.textures.push(glass);
+        let mut sheet = built.faces[0].clone();
+        sheet.first_point = 8;
+        sheet.texture = 1;
+        built.points.extend([
+            Vec3::new(0.0, 0.0, 8.0),
+            Vec3::new(128.0, 0.0, 8.0),
+            Vec3::new(128.0, 128.0, 8.0),
+            Vec3::new(0.0, 128.0, 8.0),
+        ]);
+        built.faces.push(sheet);
+        built.tree.leaves[1].face_count = 3;
+        built.tree.leaf_faces.push(2);
+        built.models[0].face_count = 3;
+        built
+    };
+    let off = crease_picture(glassy(), 0, Drawables::default());
+    let on = crease_picture(glassy(), 2, Drawables::default());
+    if let (Some(off), Some(on)) = (off, on) {
+        assert_eq!(pixel(&on, x, y), pixel(&off, x, y));
+    }
+}

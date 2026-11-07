@@ -128,6 +128,7 @@ entity world { type = worldspawn }
     // What a level gets unless it says, which rolls off where the fixture's maps hold.
     let expected = Look {
         tone: ToneCurve::Neutral,
+        ssao: 0.6,
         ..Look::default()
     };
     assert_eq!(usual.look, expected);

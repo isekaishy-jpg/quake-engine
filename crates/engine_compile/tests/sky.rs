@@ -288,3 +288,49 @@ fn too_many_layers_is_an_error() {
     let error = level(&format!("{four} clouds {{ }}")).expect_err("too many");
     assert!(error.to_string().contains("clouds"), "{error}");
 }
+
+/// How a level with `world` in its world block looks.
+fn look_of(world: &str) -> Look {
+    let text = format!(
+        "format 1 map
+entity world {{ type = worldspawn {world} }}
+brush {{ material = rock cuboid = -64 -64 -96 64 64 -64 }}
+"
+    );
+    let working = read_map(&from_text(&text).expect("parses")).expect("reads");
+    compile(&working, &mut |_: &str| Texture::default())
+        .expect("compiles")
+        .look
+}
+
+/// A level darkens its corners some unless it says, by as much as it says, as far round as it
+/// says.
+#[test]
+fn a_level_says_how_much_corners_darken() {
+    let usual = look_of("");
+    assert!((usual.ssao - 0.6).abs() < 1e-6, "{}", usual.ssao);
+    assert!((usual.ssao_radius - 32.0).abs() < 1e-6);
+    let said = look_of("ssao = 0.25 ssao_radius = 48");
+    assert!((said.ssao - 0.25).abs() < 1e-6);
+    assert!((said.ssao_radius - 48.0).abs() < 1e-6);
+    assert!(look_of("ssao = 0").ssao.abs() < 1e-6, "none");
+}
+
+/// What a level says is held to what makes sense.
+#[test]
+fn corners_are_held_to_what_makes_sense() {
+    let wild = look_of("ssao = 3 ssao_radius = -5");
+    assert!((wild.ssao - 1.0).abs() < 1e-6, "{}", wild.ssao);
+    assert!(
+        (wild.ssao_radius - 1.0).abs() < 1e-6,
+        "{}",
+        wild.ssao_radius
+    );
+    assert!(look_of("ssao = -1").ssao.abs() < 1e-6);
+}
+
+/// What's carried over from the fixture, with no level to say, has none.
+#[test]
+fn a_map_with_no_say_has_no_ssao() {
+    assert!(Look::default().ssao.abs() < 1e-6);
+}

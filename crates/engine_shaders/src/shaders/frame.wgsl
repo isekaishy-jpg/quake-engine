@@ -112,6 +112,8 @@ struct Frame {
     sun_tint: vec4<f32>,
     // Light a day adds everywhere, and w what it multiplies highlights by.
     day_light: vec4<f32>,
+    // How much corners darken, how far that looks, and how many looks it takes.
+    ssao: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

@@ -229,6 +229,8 @@ pub struct PostSettings {
     pub live_shadows: bool,
     /// Whether fog reads the light in the probes.
     pub fog_grid: bool,
+    /// Corners and creases darkened: 0 for none, 1 for some looks round each, 2 for more.
+    pub ssao: u8,
 }
 
 /// How surfaces are filtered.

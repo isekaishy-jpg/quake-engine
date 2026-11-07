@@ -551,6 +551,10 @@ pub struct Look {
     pub exposure: f32,
     /// How what's too bright comes down.
     pub tone: ToneCurve,
+    /// How much corners and creases darken what's lit by light from all round, from 0 for none.
+    pub ssao: f32,
+    /// How far that looks round a point, in world units.
+    pub ssao_radius: f32,
 }
 
 impl Default for Look {
@@ -559,6 +563,8 @@ impl Default for Look {
             light_curve: 1.8,
             exposure: 1.0,
             tone: ToneCurve::Hold,
+            ssao: 0.0,
+            ssao_radius: 32.0,
         }
     }
 }

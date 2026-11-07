@@ -500,6 +500,14 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     let base = base + 1024 + 12 + 256;
     out[base..base + 3].copy_from_slice(&extra.sun_tint);
     out[base + 4..base + 8].copy_from_slice(&extra.day_light);
+    // How much corners darken, how far that looks, and how many looks it takes.
+    let looks = match post.ssao {
+        0 => 0.0,
+        1 => 8.0,
+        _ => 16.0,
+    };
+    let strength = if looks > 0.0 { extra.look.ssao } else { 0.0 };
+    out[base + 8..base + 11].copy_from_slice(&[strength, extra.look.ssao_radius, looks]);
     out
 }
 
@@ -1038,6 +1046,18 @@ impl Backend {
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
         frame_set.write_sampled_image(7, &paint_atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        // How open pixels are comes with the scene's target, and till there is one, they're open.
+        if self.sky_blank.is_none() {
+            let white = [255_u8; 4];
+            self.sky_blank = Some(self.upload_image(&[(1, 1, &white)], Format::R8G8B8A8_UNORM)?);
+        }
+        let corners = self
+            .scene_target
+            .as_ref()
+            .map(|target| &target.corners.image);
+        if let Some(corners) = corners.or(self.sky_blank.as_ref()) {
+            frame_set.write_sampled_image(9, &corners.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
         frame_set.write_sampled_image(
             3,
             &direction_atlas.view,
@@ -1513,6 +1533,7 @@ impl Backend {
             light_shift: view.light_shift,
         };
         self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());
+        self.ssao_shown = self.post.ssao != 0 && extra.look.ssao > 0.0;
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);
         let pushes = scene.map_or(&[][..], |scene| scene.drawables.water_pushes);
         self.plan_ripples(view.time, view.origin, pushes, self.slot)?;

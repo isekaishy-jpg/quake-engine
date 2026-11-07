@@ -283,8 +283,29 @@ impl Recorder<'_> {
         view: &View,
         size: (u32, u32),
     ) {
+        self.record_ahead(rec, scene, size);
+        self.record_shaded(rec, scene, view, size);
+    }
+
+    /// Records what comes before anything solid is shaded: the sky, and depth.
+    pub(super) fn record_ahead(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        size: (u32, u32),
+    ) {
         self.record_sky(rec, scene, size);
         self.record_depth(rec, scene, size);
+    }
+
+    /// Records what's solid, shaded, over the depth that's there.
+    pub(super) fn record_shaded(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        view: &View,
+        size: (u32, u32),
+    ) {
         self.record_world(rec, scene, view, size, false);
         self.record_meshes(rec, scene, view);
         self.record_land(rec, scene, false);

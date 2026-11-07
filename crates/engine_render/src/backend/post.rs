@@ -45,16 +45,18 @@ pub(super) struct SceneTarget {
     pub(super) smaa: SmaaTarget,
     /// Where light in the air is drawn.
     pub(super) rays: RayTarget,
+    /// How open each pixel is to light from all round.
+    pub(super) corners: RayTarget,
     /// Its size.
     pub(super) size: (u32, u32),
 }
 
-/// Where light in the air is drawn, at half the scene's size each way.
+/// Where light in the air is drawn, or how open pixels are, at half the scene's size each way.
 pub(super) struct RayTarget {
     /// Where it's drawn.
     pub(super) framebuffer: Framebuffer,
-    /// Kept alive for the framebuffer.
-    image: GpuImage,
+    /// What's drawn.
+    pub(super) image: GpuImage,
     /// Its size.
     pub(super) size: (u32, u32),
 }
@@ -66,6 +68,27 @@ pub(super) fn make_ray_pass(device: &Device) -> Result<RenderPass, RenderError> 
         RenderPassCreateInfo {
             color_attachments: &[AttachmentDescription {
                 format: SCENE_FORMAT,
+                load_op: AttachmentLoadOp::DONT_CARE,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: ImageLayout::UNDEFINED,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            }],
+            depth_attachment: None,
+        },
+    )?)
+}
+
+/// What's kept of how open a pixel is: how open, and how far it is from the eye, so that a
+/// surface can tell whether it's what was seen there.
+const CORNER_FORMAT: Format = Format::R16G16_SFLOAT;
+
+/// The render pass of how open pixels are, every one of which is drawn.
+pub(super) fn make_corner_pass(device: &Device) -> Result<RenderPass, RenderError> {
+    Ok(RenderPass::new(
+        device,
+        RenderPassCreateInfo {
+            color_attachments: &[AttachmentDescription {
+                format: CORNER_FORMAT,
                 load_op: AttachmentLoadOp::DONT_CARE,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
@@ -229,21 +252,26 @@ impl Backend {
             .build(device)?)
     }
 
-    /// Makes what light in the air is drawn into, for a scene of `size`.
-    fn ray_target(&self, size: (u32, u32)) -> Result<RayTarget, RenderError> {
+    /// Makes what light in the air, or how open pixels are, is drawn into with `pass`, for a scene
+    /// of `size`.
+    fn ray_target(
+        &self,
+        size: (u32, u32),
+        pass: &RenderPass,
+        format: Format,
+    ) -> Result<RayTarget, RenderError> {
         let size = (size.0.div_ceil(2), size.1.div_ceil(2));
         let image = Image::new_2d(
             &self.device,
             Image2dCreateInfo {
-                format: SCENE_FORMAT,
+                format,
                 width: size.0,
                 height: size.1,
                 usage: ImageUsage::COLOR_ATTACHMENT | ImageUsage::SAMPLED,
             },
         )?;
         let image = device_image(&self.device, &self.physical, image, false)?;
-        let framebuffer =
-            Framebuffer::new(&self.device, &self.ray_pass, &[&image.view], size.0, size.1)?;
+        let framebuffer = Framebuffer::new(&self.device, pass, &[&image.view], size.0, size.1)?;
         Ok(RayTarget {
             framebuffer,
             image,
@@ -388,6 +416,14 @@ impl Backend {
             &self.ray_pass,
             samples,
             "fs_rays",
+            "",
+        )?;
+        self.corner_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.corner_pass,
+            samples,
+            "fs_corners",
             "",
         )?;
         for code in codes {
@@ -544,8 +580,17 @@ impl Backend {
             &smaa.weights().view,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
-        let rays = self.ray_target(size)?;
+        let rays = self.ray_target(size, &self.ray_pass, SCENE_FORMAT)?;
         set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let corners = self.ray_target(size, &self.corner_pass, CORNER_FORMAT)?;
+        // Surfaces read it, and the map's set was made before this was.
+        if let Some(map) = &self.map {
+            map.frame_set.write_sampled_image(
+                9,
+                &corners.image.view,
+                ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            );
+        }
         let water = self.water_target(size)?;
         set.write_sampled_image(11, &water.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         if self.water_pictures.is_none() {
@@ -576,6 +621,7 @@ impl Backend {
             _resolved: resolved,
             smaa,
             rays,
+            corners,
             water,
             size,
         });

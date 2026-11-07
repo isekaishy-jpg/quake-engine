@@ -9,6 +9,8 @@
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
 // The sun's three maps, side by side, nearest first.
 @group(0) @binding(8) var sun_shadows: texture_depth_2d;
+// How open pixels are to light from all round, and how far they are, at half the size.
+@group(0) @binding(9) var corner_shade: texture_2d<f32>;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 
@@ -541,11 +543,50 @@ fn keep_hue(color: vec3<f32>, most: f32) -> vec3<f32> {
     return color * (most / max(brightest, most));
 }
 
+// How open a pixel is to light from all round, from 1 for open. It's what the corner pass found
+// round it that saw the same surface, smoothed, so that its noise blurs out and nothing bleeds
+// across an edge. What that pass didn't see, which is what's see-through, is open.
+fn openness(clip: vec2<f32>, world: vec3<f32>) -> f32 {
+    if frame.ssao.x <= 0.0 {
+        return 1.0;
+    }
+    let size = vec2<i32>(textureDimensions(corner_shade));
+    let centre = vec2<i32>(clip * 0.5);
+    let distance = length(world - frame.eye.xyz);
+    let near = max(4.0, distance * 0.03);
+    var total = 0.0;
+    var weight = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let at = clamp(centre + vec2<i32>(x, y), vec2<i32>(0), size - vec2<i32>(1));
+            let shade = textureLoad(corner_shade, at, 0);
+            let alike = max(0.0, 1.0 - abs(shade.y - distance) / near);
+            total = total + shade.x * alike;
+            weight = weight + alike;
+        }
+    }
+    if weight < 0.01 {
+        return 1.0;
+    }
+    return total / weight;
+}
+
+// A layer, darkened by how open it is unless it's the sun's own, which comes from one way and has
+// its own shadows.
+fn shaded_layer(in: VertexOut, slot: f32, style: u32, open: f32) -> vec3<f32> {
+    let color = layer(in, slot, style);
+    if style == SUN_STYLE {
+        return color;
+    }
+    return color * open;
+}
+
 fn light(in: VertexOut) -> vec3<f32> {
-    var baked = vec3<f32>(in.light_uv, in.light_step);
+    let open = openness(in.clip.xy, in.world);
+    var baked = vec3<f32>(in.light_uv, in.light_step) * open;
     if in.styles.x != OWN_LIGHT {
-        baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
-            + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
+        baked = shaded_layer(in, 0.0, in.styles.x, open) + shaded_layer(in, 1.0, in.styles.y, open)
+            + shaded_layer(in, 2.0, in.styles.z, open) + shaded_layer(in, 3.0, in.styles.w, open);
     }
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
@@ -553,7 +594,7 @@ fn light(in: VertexOut) -> vec3<f32> {
         + sun_on(in.world, in.normal.xyz);
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
-    let lit = shaded + moving + frame.day_light.rgb;
+    let lit = shaded + moving + frame.day_light.rgb * open;
     return pow(keep_hue(2.0 * lit, 2.0), vec3<f32>(frame.color_params.x));
 }
 

@@ -1167,3 +1167,97 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
     }
     return vec4<f32>(fog.rgb + color * (3.0 - through * 2.0), fog.w);
 }
+
+// How open each pixel is to light from all round, and how far it is from the eye, worked out
+// from depth before anything's shaded, at half the size each way. Surfaces read it.
+@fragment
+fn fs_corners(in: PostOut) -> @location(0) vec4<f32> {
+    let size = vec2<f32>(textureDimensions(scene_depth));
+    let at = vec2<i32>(in.uv * size);
+    let depth = load_depth(at);
+    if depth >= 1.0 {
+        return vec4<f32>(1.0, -1.0, 0.0, 1.0);
+    }
+    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let point = depth_point(at, size);
+    let open = ambient_occlusion(at, point, size, noise);
+    return vec4<f32>(open, length(point - frame.eye.xyz), 0.0, 1.0);
+}
+
+// Where in the world the pixel at `at` is.
+fn depth_point(at: vec2<i32>, size: vec2<f32>) -> vec3<f32> {
+    return world_at((vec2<f32>(at) + 0.5) / size, load_depth(at));
+}
+
+// A point's normal from depth, from whichever side is nearer each way, so that at an edge it
+// doesn't take the slope across to what's behind.
+fn depth_normal(at: vec2<i32>, point: vec3<f32>, size: vec2<f32>) -> vec3<f32> {
+    let right = depth_point(at + vec2<i32>(1, 0), size) - point;
+    let left = point - depth_point(at - vec2<i32>(1, 0), size);
+    let down = depth_point(at + vec2<i32>(0, 1), size) - point;
+    let up = point - depth_point(at - vec2<i32>(0, 1), size);
+    var across = right;
+    if dot(left, left) < dot(right, right) {
+        across = left;
+    }
+    var along = down;
+    if dot(up, up) < dot(down, down) {
+        along = up;
+    }
+    return normalize(cross(across, along));
+}
+
+// Directions round a point's normal, spread over half a ball and weighted towards the normal,
+// nearer ones first, as close things shade most.
+const AO_LOOKS: array<vec3<f32>, 16> = array<vec3<f32>, 16>(
+    vec3<f32>(0.31, 0.12, 0.94), vec3<f32>(-0.42, 0.33, 0.84), vec3<f32>(0.15, -0.55, 0.82),
+    vec3<f32>(-0.61, -0.29, 0.74), vec3<f32>(0.72, 0.36, 0.59), vec3<f32>(-0.18, 0.79, 0.58),
+    vec3<f32>(0.47, -0.71, 0.52), vec3<f32>(-0.83, 0.14, 0.54), vec3<f32>(0.89, -0.21, 0.40),
+    vec3<f32>(0.05, 0.93, 0.36), vec3<f32>(-0.55, -0.79, 0.27), vec3<f32>(0.66, 0.70, 0.27),
+    vec3<f32>(-0.95, -0.12, 0.29), vec3<f32>(0.37, -0.91, 0.20), vec3<f32>(-0.31, 0.93, 0.19),
+    vec3<f32>(0.97, 0.10, 0.22),
+);
+
+// How open a point is to light from all round, from 1 for open to less in a corner. It looks a
+// little way round its normal, and what's seen in front of where it looks shades it, if it's near
+// enough to count.
+fn ambient_occlusion(at: vec2<i32>, point: vec3<f32>, size: vec2<f32>, noise: f32) -> f32 {
+    var normal = depth_normal(at, point, size);
+    if dot(normal, frame.eye.xyz - point) < 0.0 {
+        normal = -normal;
+    }
+    var side = normalize(cross(normal, vec3<f32>(0.0, 0.0, 1.0)));
+    if abs(normal.z) > 0.9 {
+        side = normalize(cross(normal, vec3<f32>(1.0, 0.0, 0.0)));
+    }
+    // Turned by the noise, so that neighbours look different ways and blur into a smooth shade.
+    let turn = noise * 6.2831853;
+    let other = cross(normal, side);
+    let across = side * cos(turn) + other * sin(turn);
+    let up = cross(normal, across);
+    let radius = frame.ssao.y;
+    let count = i32(frame.ssao.z);
+    var shaded = 0.0;
+    for (var index = 0; index < count; index = index + 1) {
+        let look = AO_LOOKS[index];
+        let reach = radius * mix(0.2, 1.0, f32(index + 1) / f32(count));
+        let sample = point + (across * look.x + up * look.y + normal * look.z) * reach;
+        let clip = frame.view_projection * vec4<f32>(sample, 1.0);
+        if clip.w <= 0.0 {
+            continue;
+        }
+        let ndc = clip.xy / clip.w;
+        let sample_uv = vec2<f32>(ndc.x * 0.5 + 0.5, 0.5 - ndc.y * 0.5);
+        if any(sample_uv < vec2<f32>(0.0)) || any(sample_uv > vec2<f32>(1.0)) {
+            continue;
+        }
+        let seen_depth = load_depth(vec2<i32>(sample_uv * size));
+        let seen = world_at(sample_uv, seen_depth);
+        let in_front = length(seen - frame.eye.xyz) + 1.0 < length(sample - frame.eye.xyz);
+        let near_enough = 1.0 - smoothstep(radius, radius * 2.0, length(seen - point));
+        if in_front {
+            shaded = shaded + near_enough;
+        }
+    }
+    return 1.0 - frame.ssao.x * shaded / f32(max(count, 1));
+}
