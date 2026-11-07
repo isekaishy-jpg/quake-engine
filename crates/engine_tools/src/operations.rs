@@ -274,6 +274,11 @@ pub const OPERATIONS: &[OperationInfo] = &[
             may("origin", ArgKind::Point, "Where it goes"),
             may("angles", ArgKind::Point, "How it turns"),
             may("scale", ArgKind::Number, "How big"),
+            may(
+                "light",
+                ArgKind::Text,
+                "probe to light it from one place, which also shares its triangles with other copies",
+            ),
         ],
     },
     OperationInfo {

@@ -4,12 +4,13 @@ use std::fs;
 use std::path::PathBuf;
 
 use engine_compile::{
-    ConvexPiece, Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known, document_of,
-    fit_convex, import_gltf, place_mesh, read_geometry, read_map_text, read_mesh, write_geometry,
-    write_mesh,
+    ConvexPiece, LoadedMesh, Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known,
+    document_of, fit_convex, import_gltf, place_mesh, read_geometry, read_map_text, read_mesh,
+    resolve_meshes, write_geometry, write_mesh,
 };
 use engine_format::from_text;
 use engine_map::{Map, Texture};
+use std::sync::Arc;
 
 /// A placement that leaves a mesh as it is.
 fn in_place() -> MeshPlacement {
@@ -359,4 +360,83 @@ fn pieces_survive_a_mesh_being_written() {
     let bytes = write_mesh(&mesh);
     let again = read_mesh(&document_of(&bytes).expect("reads")).expect("a mesh");
     assert_eq!(again.convex, mesh.convex);
+}
+
+/// A level with `placements`, all of the mesh `test`, compiled with it placed.
+fn level_of(placements: &[&str]) -> (engine_compile::WorkingMap, Map) {
+    let mut text = String::from("format 1 map\nentity world { type = worldspawn }\nbrush { material = wall cuboid = -64 -64 -32 64 64 -16 }\n
+");
+    for placement in placements {
+        text.push_str(&format!(
+            "mesh {{ source = test {placement} }}
+"
+        ));
+    }
+    let mut working = read_map_text(&text).expect("reads");
+    let mesh = Arc::new(folded(10.0));
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&mesh),
+            occluders: Vec::new(),
+        })
+    })
+    .expect("places");
+    let map = compile(&working, &mut Plain).expect("compiles");
+    (working, map)
+}
+
+/// Copies lit from one place share one mesh, however many there are, and each keeps its own
+/// place and faces.
+#[test]
+fn copies_of_a_mesh_share_its_triangles() {
+    let (_, map) = level_of(&[
+        "origin = [0 0 0] light = probe",
+        "origin = [100 0 0] light = probe",
+        "origin = [200 0 0] light = probe",
+    ]);
+    assert_eq!(map.shared_meshes.len(), 1);
+    assert_eq!(map.mesh_instances.len(), 3);
+    assert_eq!(map.shared_meshes[0].indices.len(), 12);
+    assert!((map.mesh_instances[2].rows[0][3] - 200.0).abs() < 0.001);
+    let faces: Vec<u32> = map
+        .mesh_instances
+        .iter()
+        .map(|copy| copy.first_face)
+        .collect();
+    assert!(faces.windows(2).all(|pair| pair[0] < pair[1]), "{faces:?}");
+}
+
+/// What has a light map of its own stays in the world, so levels look as they did.
+#[test]
+fn a_mesh_with_its_own_light_map_stays_baked() {
+    let (_, map) = level_of(&["origin = [0 0 0]", "origin = [100 0 0] light = probe"]);
+    assert_eq!(map.mesh_instances.len(), 1);
+    assert!((map.mesh_instances[0].rows[0][3] - 100.0).abs() < 0.001);
+}
+
+/// An instance's matrix does what placing its triangles did, turned and stretched.
+#[test]
+fn an_instance_lands_where_its_faces_are() {
+    let (_, map) = level_of(&["origin = [10 20 30] angles = [0 90 0] scale = 2 light = probe"]);
+    let instance = map.mesh_instances[0];
+    let shared = &map.shared_meshes[0];
+    let face = &map.faces[instance.first_face as usize];
+    let baked = map.face_points(face);
+    let first = shared.indices[..3].iter().map(|&index| {
+        let [x, y, z] = shared.corners[index as usize].position;
+        instance.place(engine_core::math::Vec3::new(x, y, z))
+    });
+    for (made, kept) in first.zip(baked) {
+        assert!((made - *kept).length() < 0.01, "{made:?} against {kept:?}");
+    }
+}
+
+/// A level read from its kept geometry has the same instances as a whole compile.
+#[test]
+fn kept_geometry_keeps_its_instances() {
+    let (working, map) = level_of(&["origin = [0 0 0] light = probe", "origin = [50 0 0]"]);
+    let geometry = read_geometry(&write_geometry(&map, 7), 7).expect("reads");
+    let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
+    assert_eq!(again.mesh_instances, map.mesh_instances);
+    assert_eq!(again.shared_meshes, map.shared_meshes);
 }

@@ -18,6 +18,8 @@ pub struct VisibleSet {
     pub indices: Vec<u32>,
     /// Each batch's first index and count.
     pub ranges: Vec<(u32, u32)>,
+    /// The copies of shared meshes that could be seen.
+    pub instances: Vec<u32>,
 }
 
 impl VisibleSet {
@@ -54,6 +56,9 @@ impl VisibleSet {
             tree.mark_visible(leaf, &mut visible);
         }
         let mut drawn = vec![false; map.faces.len()];
+        let mut seen = vec![false; map.mesh_instances.len()];
+        let instances = &mut self.instances;
+        instances.clear();
         let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
         let mut add = |face: u32| {
             let at = face as usize;
@@ -61,7 +66,11 @@ impl VisibleSet {
                 && !*flag
             {
                 *flag = true;
-                if let Some(batch) = mesh.face_batches[at] {
+                if let Some(instance) = mesh.face_instance.get(at).copied().flatten() {
+                    if !std::mem::replace(&mut seen[instance as usize], true) {
+                        instances.push(instance);
+                    }
+                } else if let Some(batch) = mesh.face_batches[at] {
                     per_batch[batch as usize].extend_from_slice(&mesh.face_indices[at]);
                 }
             }

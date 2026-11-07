@@ -17,6 +17,7 @@ use super::{
 use crate::alias::POSE_CORNER_BYTES;
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
+use crate::instances::INSTANCE_BYTES;
 use crate::sprite::PARTICLE_BYTES;
 use crate::world::Vertex;
 
@@ -249,6 +250,16 @@ impl Backend {
         let spirv = spirv(&Module::Surface(code)).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let (bindings, attributes) = world_vertices();
+        let (mesh_bindings, mesh_attributes) = mesh_vertices();
+        let mesh = |entry: &'static str| {
+            GraphicsPipelineBuilder::new(&layouts.material, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_mesh")
+                .stage(GraphicsShaderStage::Fragment, &shader, entry)
+                .vertex_input(&mesh_bindings, &mesh_attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .samples(samples)
+        };
         let surface = |entry: &'static str| {
             GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
@@ -272,6 +283,12 @@ impl Backend {
                 .build(device)?,
             masked: surface("fs_masked").depth_test(true, true).build(device)?,
             blended: surface("fs_material")
+                .depth_test(true, false)
+                .alpha_blending(true)
+                .build(device)?,
+            mesh_opaque: mesh("fs_material").depth_test(true, true).build(device)?,
+            mesh_masked: mesh("fs_masked").depth_test(true, true).build(device)?,
+            mesh_blended: mesh("fs_material")
                 .depth_test(true, false)
                 .alpha_blending(true)
                 .build(device)?,
@@ -399,6 +416,39 @@ impl Backend {
 }
 
 /// How world vertices are laid out.
+/// What a copy of a shared mesh reads: its corners, as the world's, and then the copy.
+fn mesh_vertices() -> ([VertexInputBinding; 2], [VertexInputAttribute; 8]) {
+    let bindings = [
+        VertexInputBinding {
+            binding: 0,
+            stride: u32::try_from(Vertex::SIZE).unwrap_or(0),
+            input_rate: InputRate::VERTEX,
+        },
+        VertexInputBinding {
+            binding: 1,
+            stride: u32::try_from(INSTANCE_BYTES).unwrap_or(0),
+            input_rate: InputRate::INSTANCE,
+        },
+    ];
+    let attribute = |location, binding, format, offset| VertexInputAttribute {
+        location,
+        binding,
+        format,
+        offset,
+    };
+    let attributes = [
+        attribute(0, 0, Format::R32G32B32_SFLOAT, 0),
+        attribute(1, 0, Format::R32G32_SFLOAT, 12),
+        attribute(5, 0, Format::R8G8B8A8_SNORM, 36),
+        attribute(6, 1, Format::R32G32B32A32_SFLOAT, 0),
+        attribute(7, 1, Format::R32G32B32A32_SFLOAT, 16),
+        attribute(8, 1, Format::R32G32B32A32_SFLOAT, 32),
+        attribute(9, 1, Format::R32G32B32_SFLOAT, 48),
+        attribute(10, 1, Format::R8G8B8A8_UINT, 60),
+    ];
+    (bindings, attributes)
+}
+
 fn world_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 6]) {
     let bindings = [VertexInputBinding {
         binding: 0,

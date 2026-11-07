@@ -20,11 +20,15 @@ mesh { source = well origin = 200 -180 0 angles = 0 45 0 scale = 1.4 }
 
 Or give an entity `mesh = well`, and it's that entity's model.
 
-Light maps are laid out for it when the level is baked, so there's no second set of UVs to make. For something small, `light = probe` lights the whole of it from one place, which costs almost nothing:
+Light maps are laid out for it when the level is baked, so there's no second set of UVs to make. For something small, `light = probe` lights the whole of it from one place, which costs almost nothing, and shares its triangles with every other copy:
 
 ```text
 mesh { source = barrel origin = 40 12 0 light = probe }
 ```
+
+## Copies
+
+A placement with `light = probe` is an instance. The mesh is on the GPU once, and each part is one draw for all the copies you can see, so a yard of a hundred barrels costs what one does, plus their places. A copy keeps everything else: it casts shadows, takes moving lights, and is collided with. Use a light map of its own for something large, where light has to fall across it. See [proposal 0140](proposals/0140-meshes-at-run-time.md).
 
 ## What's in a `.emesh`
 

@@ -9,6 +9,10 @@ use engine_map::{
     TexelAxis, Tree,
 };
 
+/// Changes when what's kept changes, so that a file from before it's kept differently reads as
+/// out of date, and isn't misread.
+const GEOMETRY_FORMAT: u64 = 2;
+
 /// What takes a compile its time.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Geometry {
@@ -343,11 +347,15 @@ pub fn write_geometry(map: &Map, hash: u64) -> Vec<u8> {
         out.number(group.first_face);
         out.number(group.face_count);
         out.number(u32::from(group.by_probe));
+        out.number(group.placement.map_or(0, |placement| placement + 1));
     }
     let names: Vec<&str> = map.textures.iter().map(|t| t.name.as_str()).collect();
     let mut document = Document::new("geometry");
     let mut block = Block::new("source");
-    block.set("hash", Value::Text(format!("{hash:016x}")));
+    block.set(
+        "hash",
+        Value::Text(format!("{:016x}", hash ^ GEOMETRY_FORMAT)),
+    );
     block.set("textures", Value::Text(names.join("\n")));
     block.set("data", Value::Bytes(out.0));
     document.blocks.push(block);
@@ -362,7 +370,7 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
         return None;
     }
     let block = document.blocks_of("source").next()?;
-    if block.get("hash")?.text()? != format!("{hash:016x}") {
+    if block.get("hash")?.text()? != format!("{:016x}", hash ^ GEOMETRY_FORMAT) {
         return None;
     }
     let names = block.get("textures")?.text()?;
@@ -396,6 +404,7 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
             first_face: input.number()?,
             face_count: input.number()?,
             by_probe: input.number()? != 0,
+            placement: input.number()?.checked_sub(1),
         });
     }
     Some(geometry)

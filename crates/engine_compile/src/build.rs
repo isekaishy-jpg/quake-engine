@@ -7,9 +7,9 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup, Model, ModelOccluder,
-    Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture, TextureKind, Tree,
-    Zone, ZonePlane,
+    ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup, MeshInstance, Model,
+    ModelOccluder, Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook, TexelAxis, Texture,
+    TextureKind, Tree, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -21,7 +21,7 @@ use crate::geometry::{
     solid_corners, split,
 };
 use crate::light::light_tracks;
-use crate::mesh::{PlacedMesh, PlacedTriangle};
+use crate::mesh::{PlacedMesh, PlacedTriangle, placement_rows, shared_mesh};
 use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
 };
@@ -30,7 +30,7 @@ use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
 /// A direction, as a map keeps it.
 #[expect(clippy::cast_possible_truncation, reason = "held to a byte")]
-fn packed_normal(normal: Point) -> [i8; 3] {
+pub(crate) fn packed_normal(normal: Point) -> [i8; 3] {
     normal.map(|part| (part * 127.0).round().clamp(-127.0, 127.0) as i8)
 }
 
@@ -644,6 +644,48 @@ impl Builder<'_> {
     }
 
     /// Adds a triangle of a mesh.
+    /// Makes an instance of each placement that shares its mesh, keeping each mesh once. A
+    /// placement's faces stay, for its light and for finding it by leaves.
+    fn share_meshes(&mut self, working: &WorkingMap) {
+        let mut numbers: HashMap<&str, u32> = HashMap::new();
+        for group in self.map.mesh_groups.clone() {
+            let placement = group
+                .placement
+                .and_then(|at| working.meshes.get(at as usize));
+            let Some(placement) = placement else {
+                continue;
+            };
+            let Some(mesh) = working.shared.get(&placement.source) else {
+                continue;
+            };
+            let number = if let Some(&number) = numbers.get(placement.source.as_str()) {
+                number
+            } else {
+                let number = u32::try_from(self.map.shared_meshes.len()).unwrap_or(u32::MAX);
+                let shared = shared_mesh(mesh, &mut |name| {
+                    let texture = self.texture_of(name);
+                    let tile = self.map.textures.get(texture as usize);
+                    // A face's places go by its texture's size, or this with none.
+                    let across = if tile.is_some_and(|tile| tile.tile_size().is_some()) {
+                        1.0
+                    } else {
+                        64.0
+                    };
+                    (texture, across)
+                });
+                self.map.shared_meshes.push(shared);
+                numbers.insert(placement.source.as_str(), number);
+                number
+            };
+            self.map.mesh_instances.push(MeshInstance {
+                mesh: number,
+                rows: placement_rows(placement),
+                first_face: group.first_face,
+                face_count: group.face_count,
+            });
+        }
+    }
+
     fn add_triangle(&mut self, triangle: &PlacedTriangle) -> Option<()> {
         let texture = self.texture_of(&triangle.material);
         let tile = self.map.textures.get(texture as usize)?.tile_size();
@@ -781,6 +823,7 @@ impl Builder<'_> {
                     first_face,
                     face_count: last_face - first_face,
                     by_probe: mesh.by_probe,
+                    placement: mesh.placement,
                 });
             }
         }
@@ -972,6 +1015,7 @@ fn compile_with(
     world_meshes.push(&flame_faces);
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
+    builder.share_meshes(working);
     builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);
     let is_world = |kind: &str| kind == "worldspawn";

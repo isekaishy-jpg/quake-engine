@@ -14,8 +14,9 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use engine_core::canvas::Quad;
+use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, Sprite};
+use engine_map::{AliasModel, Map, SharedPart, Sprite};
 use engine_shaders::BUILT_IN;
 use pipelines::make_pass;
 use upload::{depth_image, device_image, host_buffer, uniform_buffer};
@@ -34,6 +35,7 @@ use vulkane::safe::{
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::RenderError;
+use crate::instances::InstanceBatch;
 use crate::live::LIVE_BYTES;
 use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
 use crate::sprite::{
@@ -113,6 +115,30 @@ pub(crate) struct Scene<'a> {
     pub(crate) drawables: Drawables<'a>,
     /// Whether `visible` changed since it was last uploaded.
     pub(crate) changed: bool,
+}
+
+/// A mesh on the GPU, kept once however many times it's drawn.
+struct GpuMesh {
+    /// Its corners.
+    vertices: GpuBuffer,
+    /// Its triangles.
+    indices: GpuBuffer,
+    /// Its parts, by material.
+    parts: Vec<SharedPart>,
+    /// Those that cast shadows.
+    shadow_parts: Vec<SharedPart>,
+}
+
+/// A copy of a shared mesh, as a shadow map draws it.
+struct ShadowInstance {
+    /// Which mesh.
+    mesh: u32,
+    /// What places it, column by column.
+    placed: [f32; 16],
+    /// Its middle.
+    center: Vec3,
+    /// How far it reaches from there.
+    radius: f32,
 }
 
 /// A buffer with its memory.
@@ -195,6 +221,14 @@ impl FrameValues {
 struct GpuMap {
     /// All vertices.
     vertices: GpuBuffer,
+    /// Meshes that placements share.
+    shared_meshes: Vec<GpuMesh>,
+    /// The copies of them to draw, one buffer for each frame in flight.
+    instances: [GpuBuffer; FRAMES],
+    /// Where each mesh's copies are in those.
+    instance_batches: [Vec<InstanceBatch>; FRAMES],
+    /// All the copies, for shadow maps.
+    shadow_instances: Vec<ShadowInstance>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -322,9 +356,24 @@ struct SurfacePipelines {
     masked: GraphicsPipeline,
     /// What's see-through.
     blended: GraphicsPipeline,
+    /// Copies of a shared mesh that are opaque.
+    mesh_opaque: GraphicsPipeline,
+    /// Copies of a shared mesh with holes.
+    mesh_masked: GraphicsPipeline,
+    /// Copies of a shared mesh that are see-through.
+    mesh_blended: GraphicsPipeline,
 }
 
 impl SurfacePipelines {
+    /// The pipeline for copies of a shared mesh, of `kind`.
+    fn mesh(&self, kind: BatchKind) -> &GraphicsPipeline {
+        match kind {
+            BatchKind::Sky | BatchKind::Material => &self.mesh_opaque,
+            BatchKind::Masked => &self.mesh_masked,
+            BatchKind::Blended => &self.mesh_blended,
+        }
+    }
+
     /// The pipeline for `kind`.
     fn get(&self, kind: BatchKind) -> &GraphicsPipeline {
         match kind {

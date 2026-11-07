@@ -16,7 +16,7 @@ use vulkane::safe::{
 };
 
 use super::upload::device_image;
-use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32};
+use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
 use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix};
 use crate::error::RenderError;
 use crate::live::{LiveLight, MAX_SHADOW_LIGHTS, cube_face};
@@ -490,6 +490,31 @@ impl Shadows {
             let tail = [offset.x, offset.y, offset.z, 0.0, 0.0, 0.0, 0.0, 0.0];
             self.push(rec, &matrix, tail);
             rec.draw_indexed(range.count, 1, range.first, 0, 0);
+        }
+        self.record_instances(rec, map, &matrix, light);
+    }
+
+    /// Draws the copies of shared meshes a light reaches into the tile that's set up.
+    fn record_instances(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        matrix: &[f32; 16],
+        light: &LiveLight,
+    ) {
+        let reached = |caster: &&ShadowInstance| {
+            (caster.center - light.origin).length() < light.radius + caster.radius
+        };
+        for caster in map.shadow_instances.iter().filter(reached) {
+            let Some(mesh) = map.shared_meshes.get(caster.mesh as usize) else {
+                continue;
+            };
+            rec.bind_vertex_buffers(0, &[(&mesh.vertices.buffer, 0)]);
+            rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
+            self.push(rec, &multiply(matrix, &caster.placed), [0.0; 8]);
+            for part in &mesh.shadow_parts {
+                rec.draw_indexed(part.count, 1, part.first, 0, 0);
+            }
         }
     }
 

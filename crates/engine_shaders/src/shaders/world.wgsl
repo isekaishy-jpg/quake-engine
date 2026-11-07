@@ -35,6 +35,44 @@ struct VertexOut {
     @location(5) normal: vec4<f32>,
 }
 
+// A copy of a shared mesh: its corners, and what the copy says (proposal 0140).
+struct MeshIn {
+    @location(0) position: vec3<f32>,
+    @location(1) uv: vec2<f32>,
+    @location(5) normal: vec4<f32>,
+    @location(6) row_x: vec4<f32>,
+    @location(7) row_y: vec4<f32>,
+    @location(8) row_z: vec4<f32>,
+    @location(9) light: vec3<f32>,
+    @location(10) styles: vec4<u32>,
+}
+
+@vertex
+fn vs_mesh(in: MeshIn) -> VertexOut {
+    var out: VertexOut;
+    let corner = vec4<f32>(in.position, 1.0);
+    let placed = vec3<f32>(dot(in.row_x, corner), dot(in.row_y, corner), dot(in.row_z, corner));
+    let world = shader_vertex(placed);
+    out.clip = frame.view_projection * vec4<f32>(world, 1.0);
+    out.world = world;
+    out.uv = in.uv;
+    out.light_uv = in.light.xy;
+    out.light_step = in.light.z;
+    out.styles = in.styles;
+    // Cofactors turn a normal rightly under any stretch, and a mirror flips them.
+    let across = vec3<f32>(in.row_x.x, in.row_y.x, in.row_z.x);
+    let along = vec3<f32>(in.row_x.y, in.row_y.y, in.row_z.y);
+    let up = vec3<f32>(in.row_x.z, in.row_y.z, in.row_z.z);
+    let turned = cross(along, up) * in.normal.x + cross(up, across) * in.normal.y
+        + cross(across, along) * in.normal.z;
+    let mirrored = select(1.0, -1.0, dot(across, cross(along, up)) < 0.0);
+    // As a probe's face has: one light for all of it, given its shape here. Something
+    // flattened to nothing has no way to face, and mustn't make one up.
+    let facing = turned / max(length(turned), 0.000001);
+    out.normal = vec4<f32>(facing * mirrored, 1.0);
+    return out;
+}
+
 @vertex
 fn vs_main(in: VertexIn) -> VertexOut {
     var out: VertexOut;

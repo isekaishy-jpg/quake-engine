@@ -18,11 +18,13 @@ use vulkane::safe::{
 use super::shadow::{ShadowRange, shadow_figures};
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer, GpuImage, GpuMap,
-    GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene, TileWrite,
+    GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
+    ShadowInstance, TileWrite,
 };
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
+use crate::instances::{INSTANCE_BYTES, instance_batches, shared_vertices, view_planes};
 use crate::live::live_bytes;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
@@ -31,7 +33,7 @@ use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::surface::built_in_for;
-use crate::world::{BatchKind, uses_material};
+use crate::world::{BatchKind, batch_kind, uses_material};
 use crate::world::{TileImage, VertexPatch, shadow_groups};
 use crate::world::{Vertex, WorldMesh};
 
@@ -81,6 +83,17 @@ fn copy_into_atlas(
             AccessFlags::SHADER_READ,
         ),
     );
+}
+
+/// Whether a material of `map` casts shadows: what's solid, and not a liquid.
+fn casts_shadow(map: &Map, texture: u32) -> bool {
+    map.textures.get(texture as usize).is_some_and(|texture| {
+        texture.kind != TextureKind::Liquid
+            && !matches!(
+                batch_kind(texture),
+                None | Some(BatchKind::Sky | BatchKind::Blended)
+            )
+    })
 }
 
 pub(super) fn host_buffer(
@@ -640,6 +653,53 @@ impl Backend {
             Ok(indices)
         };
         let indices = [index_buffer()?, index_buffer()?];
+        let mut shared_meshes = Vec::with_capacity(map.shared_meshes.len());
+        for shared in &map.shared_meshes {
+            let index_bytes: Vec<u8> = shared
+                .indices
+                .iter()
+                .flat_map(|i| i.to_le_bytes())
+                .collect();
+            shared_meshes.push(GpuMesh {
+                vertices: self
+                    .device_buffer(&shared_vertices(shared), BufferUsage::VERTEX_BUFFER)?,
+                indices: self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?,
+                parts: shared.parts.clone(),
+                shadow_parts: shared
+                    .parts
+                    .iter()
+                    .filter(|part| casts_shadow(map, part.texture))
+                    .copied()
+                    .collect(),
+            });
+        }
+        let shadow_instances = map
+            .mesh_instances
+            .iter()
+            .filter_map(|instance| {
+                let shared = map.shared_meshes.get(instance.mesh as usize)?;
+                let [x, y, z] = instance.rows;
+                Some(ShadowInstance {
+                    mesh: instance.mesh,
+                    placed: [
+                        x[0], y[0], z[0], 0.0, x[1], y[1], z[1], 0.0, x[2], y[2], z[2], 0.0, x[3],
+                        y[3], z[3], 1.0,
+                    ],
+                    center: instance.place(shared.center),
+                    radius: shared.radius * instance.stretch(),
+                })
+            })
+            .collect();
+        let instance_buffer = || {
+            let size = map.mesh_instances.len().max(1) * INSTANCE_BYTES;
+            host_buffer(
+                &self.device,
+                &self.physical,
+                size,
+                BufferUsage::VERTEX_BUFFER,
+            )
+        };
+        let instances = [instance_buffer()?, instance_buffer()?];
 
         let sets = u32::try_from(map.textures.len() + 2).unwrap_or(u32::MAX);
         let material_count = map.textures.len();
@@ -850,6 +910,10 @@ impl Backend {
         self.load_stencils(map)?;
         self.use_post_shader(map.post_shader.as_deref())?;
         self.map = Some(GpuMap {
+            shared_meshes,
+            instances,
+            instance_batches: std::array::from_fn(|_| Vec::new()),
+            shadow_instances,
             sky_set,
             texture_shaders,
             material_sets,
@@ -1180,6 +1244,19 @@ impl Backend {
             }
         }
         if let (Some(scene), Some(map)) = (scene, &mut self.map) {
+            if !scene.map.mesh_instances.is_empty() {
+                let angles = [view.yaw, view.pitch, view.roll];
+                let seen = view_projection(view.origin, angles, view.fov, aspect);
+                let planes = view_planes(&seen);
+                let mut mapped = map.instances[slot].memory.map()?;
+                map.instance_batches[slot] = instance_batches(
+                    scene.map,
+                    &scene.mesh.instance_lights,
+                    &scene.visible.instances,
+                    &planes,
+                    mapped.as_slice_mut(),
+                );
+            }
             if scene.changed {
                 map.indices_stale = [true; FRAMES];
             }

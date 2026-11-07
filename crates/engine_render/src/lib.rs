@@ -11,6 +11,7 @@ mod atlas;
 mod backend;
 mod canvas;
 mod error;
+mod instances;
 mod live;
 mod material;
 mod matrix;
@@ -25,6 +26,9 @@ pub use alias::{EntityDraw, model_matrix, pose_bytes, push_bytes, uv_bytes};
 pub use atlas::{Atlas, AtlasSpace};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
 pub use error::RenderError;
+pub use instances::{
+    INSTANCE_BYTES, InstanceBatch, ball_in_view, instance_batches, view_planes, write_instance,
+};
 pub use live::{
     CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, MAX_LIVE_LIGHTS, MAX_SHADOW_LIGHTS,
     cluster_masks, cube_face, slice_of,
@@ -42,6 +46,7 @@ pub use sprite::{
 };
 pub use streamer::TileStreamer;
 pub use visible::VisibleSet;
+pub use world::InstanceLight;
 pub use world::{
     Batch, BatchKind, ModelRange, ShownTiles, TileImage, Vertex, WorldMesh, build_world, tile_image,
 };

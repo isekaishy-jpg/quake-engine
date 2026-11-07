@@ -9,12 +9,13 @@ use super::{
     Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene,
 };
 use crate::alias::{POSE_CORNER_BYTES, push_bytes};
+use crate::instances::InstanceBatch;
 use crate::renderer::View;
 use crate::sprite::{
     MAX_GPU_PARTICLE_DRAWS, MAX_PARTICLE_DRAWS, ViewAxes, gpu_particle_bytes, sprite_axes,
     sprite_push_bytes,
 };
-use crate::world::{Batch, BatchKind};
+use crate::world::{Batch, BatchKind, batch_kind};
 
 /// The corners of the cube the sky sphere is drawn on.
 const SKY_SPHERE_CORNERS: u32 = 36;
@@ -35,6 +36,10 @@ pub(super) struct Recorder<'a> {
     map: &'a GpuMap,
     /// Its visible indices, for this frame.
     indices: &'a GpuBuffer,
+    /// The copies of shared meshes to draw, for this frame.
+    instances: &'a GpuBuffer,
+    /// Where each mesh's copies are.
+    instance_batches: &'a [InstanceBatch],
     /// Whether models get hull outlines.
     outline_hull: bool,
 }
@@ -151,6 +156,8 @@ impl Backend {
             particles: &self.particles[self.slot],
             map: self.map.as_ref()?,
             indices: &self.map.as_ref()?.indices[self.slot],
+            instances: &self.map.as_ref()?.instances[self.slot],
+            instance_batches: &self.map.as_ref()?.instance_batches[self.slot],
             outline_hull: self.post.outline_hull,
         })
     }
@@ -184,6 +191,7 @@ impl Recorder<'_> {
         self.record_sky(rec, scene, size);
         self.record_depth(rec, scene, size);
         self.record_world(rec, scene, view, size, false);
+        self.record_meshes(rec, scene, view, false);
         self.record_models(rec, scene);
         self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
@@ -402,6 +410,66 @@ impl Recorder<'_> {
             for range in ranges {
                 let first = scene.mesh.world_index_count + range.first;
                 draw(rec, range.batch, first, range.count, instance.frame);
+            }
+        }
+    }
+
+    /// Records the copies of shared meshes: what's see-through, or the rest. Each part of a
+    /// mesh is one draw of all its copies.
+    fn record_meshes(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        view: &View,
+        see_through: bool,
+    ) {
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "time is never negative, and the frame count wraps by design"
+        )]
+        let step = (view.time * ANIMATION_RATE) as u32;
+        let map = self.map;
+        for batch in self.instance_batches {
+            let Some(mesh) = map.shared_meshes.get(batch.mesh as usize) else {
+                continue;
+            };
+            rec.bind_vertex_buffers(
+                0,
+                &[(&mesh.vertices.buffer, 0), (&self.instances.buffer, 0)],
+            );
+            rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
+            for part in &mesh.parts {
+                let Some(kind) = scene
+                    .map
+                    .textures
+                    .get(part.texture as usize)
+                    .and_then(batch_kind)
+                else {
+                    continue;
+                };
+                if (kind == BatchKind::Blended) != see_through {
+                    continue;
+                }
+                let texture = animated_texture(scene.map, part.texture, step, 0);
+                let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
+                    continue;
+                };
+                let shader = map
+                    .texture_shaders
+                    .get(texture as usize)
+                    .copied()
+                    .unwrap_or(0);
+                let Some(surface) = self.pipelines.surfaces.get(shader) else {
+                    continue;
+                };
+                rec.bind_graphics_pipeline(surface.mesh(kind));
+                rec.bind_graphics_descriptor_sets(
+                    &self.layouts.material,
+                    0,
+                    &[&map.frame_set, set],
+                );
+                rec.draw_indexed(part.count, batch.count, part.first, 0, batch.first);
             }
         }
     }

@@ -1,12 +1,15 @@
 //! A map document, read into typed brushes and entities.
 
+use std::collections::HashMap;
+use std::sync::Arc;
+
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
 use engine_map::{Clouds, Contents, Fog, Sky, Spline};
 
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
-use crate::mesh::PlacedMesh;
+use crate::mesh::{Mesh, PlacedMesh};
 
 /// One side of a brush.
 #[derive(Clone, Debug, PartialEq)]
@@ -146,6 +149,8 @@ pub struct WorkingMap {
     pub meshes: Vec<MeshPlacement>,
     /// Those meshes, once placed.
     pub placed: Vec<PlacedMesh>,
+    /// The meshes that placements share, by name.
+    pub shared: HashMap<String, Arc<Mesh>>,
     /// What's changed about how liquids look.
     pub water: Option<WaterSource>,
     /// Fog, if it has any.
@@ -668,6 +673,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .map(|block| read_placement(block, "source"))
             .collect::<Result<Vec<_>, _>>()?,
         placed: Vec::new(),
+        shared: HashMap::new(),
         water: document.blocks_of("water").next().map(read_water),
     })
 }

@@ -69,6 +69,17 @@ pub enum BatchKind {
     Blended,
 }
 
+/// Where an instance's light is, as a vertex would say.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct InstanceLight {
+    /// Its place in the atlas.
+    pub uv: [f32; 2],
+    /// The distance across the atlas to the next style.
+    pub step: f32,
+    /// The style of each layer.
+    pub styles: [u8; 4],
+}
+
 /// The faces of one texture, for one kind of drawing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Batch {
@@ -126,6 +137,10 @@ pub struct WorldMesh {
     pub reserved: u32,
     /// The faces with light in each tile, by tile number.
     pub tile_faces: Vec<Vec<u32>>,
+    /// Which instance each face belongs to, if any.
+    pub face_instance: Vec<Option<u32>>,
+    /// Where each instance's light is.
+    pub(crate) instance_lights: Vec<InstanceLight>,
 }
 
 /// The light of a tile as a square of the atlas.
@@ -223,7 +238,7 @@ pub(crate) fn uses_material(texture: &Texture) -> bool {
 }
 
 /// The batch kind of a texture, or `None` for hidden ones.
-fn batch_kind(texture: &Texture) -> Option<BatchKind> {
+pub(crate) fn batch_kind(texture: &Texture) -> Option<BatchKind> {
     if texture.kind == TextureKind::Hidden {
         return None;
     }
@@ -568,6 +583,34 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
     mesh.face_batches = vec![None; map.faces.len()];
     mesh.face_vertices = vec![(0, 0); map.faces.len()];
     mesh.model_ranges = vec![Vec::new(); map.models.len()];
+    mesh.face_instance = vec![None; map.faces.len()];
+    for (number, instance) in (0_u32..).zip(&map.mesh_instances) {
+        let first = instance.first_face as usize;
+        let last = first + instance.face_count as usize;
+        if let Some(faces) = mesh.face_instance.get_mut(first..last) {
+            faces.fill(Some(number));
+        }
+        let vertex = map.faces.get(first).and_then(|face| {
+            let point = *map.face_points(face).first()?;
+            let number = face.first_point as usize;
+            let place = places.get(first).copied().flatten();
+            Some(make_vertex(
+                map,
+                face,
+                (number, point),
+                place,
+                neutral,
+                atlas_size,
+                false,
+            ))
+        });
+        let vertex = vertex.unwrap_or_default();
+        mesh.instance_lights.push(InstanceLight {
+            uv: vertex.light_uv,
+            step: vertex.light_step,
+            styles: vertex.styles,
+        });
+    }
     for (number, model) in map.models.iter().enumerate() {
         let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
         for index in model.first_face..model.first_face.saturating_add(model.face_count) {
@@ -575,6 +618,10 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             let Some(face) = map.faces.get(at) else {
                 continue;
             };
+            // An instance draws these from its mesh.
+            if mesh.face_instance[at].is_some() {
+                continue;
+            }
             let Some(mut batch) = batch_of_texture
                 .get(face.texture as usize)
                 .copied()

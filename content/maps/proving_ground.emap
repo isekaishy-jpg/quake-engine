@@ -314,3 +314,42 @@ mesh {
     source = "barrel"
     id = 47
 }
+
+mesh {
+    light = "probe"
+    origin = [-680 330 0]
+    source = "barrel"
+    id = 48
+}
+
+mesh {
+    angles = [0 45 0]
+    light = "probe"
+    origin = [-640 330 0]
+    source = "barrel"
+    id = 49
+}
+
+mesh {
+    angles = [0 90 0]
+    light = "probe"
+    origin = [-600 330 0]
+    source = "barrel"
+    id = 50
+}
+
+mesh {
+    light = "probe"
+    origin = [-560 330 0]
+    scale = 1.5
+    source = "barrel"
+    id = 51
+}
+
+mesh {
+    angles = [0 0 90]
+    light = "probe"
+    origin = [-510 330 16]
+    source = "barrel"
+    id = 52
+}

@@ -163,6 +163,76 @@ pub struct MeshGroup {
     pub face_count: u32,
     /// Whether it's lit from one place, as a small prop is.
     pub by_probe: bool,
+    /// Which placement of the level it came from, if it's drawn as an instance.
+    pub placement: Option<u32>,
+}
+
+/// A corner of a [`SharedMesh`].
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeshCorner {
+    /// Where it is, in the mesh's own space.
+    pub position: [f32; 3],
+    /// Its place on the material, where 1 is the texture's width.
+    pub uv: [f32; 2],
+    /// Which way it faces, in steps of 1/127.
+    pub normal: [i8; 3],
+}
+
+/// The triangles of a [`SharedMesh`] with one material.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct SharedPart {
+    /// Its material in [`Map::textures`].
+    pub texture: u32,
+    /// The first of its indices.
+    pub first: u32,
+    /// How many indices it has.
+    pub count: u32,
+}
+
+/// A mesh kept once, however many times it's placed (proposal 0140).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct SharedMesh {
+    /// Its corners.
+    pub corners: Vec<MeshCorner>,
+    /// Its triangles, three to each.
+    pub indices: Vec<u32>,
+    /// Its parts, by material.
+    pub parts: Vec<SharedPart>,
+    /// The middle of what it covers.
+    pub center: Vec3,
+    /// How far it reaches from there.
+    pub radius: f32,
+}
+
+/// A placement of a [`SharedMesh`]. Its faces in [`Map::faces`] hold its light, and are found
+/// by leaves, but aren't drawn.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MeshInstance {
+    /// Which of [`Map::shared_meshes`] it is.
+    pub mesh: u32,
+    /// The three rows of what places it.
+    pub rows: [[f32; 4]; 3],
+    /// The first of its faces.
+    pub first_face: u32,
+    /// How many faces it has.
+    pub face_count: u32,
+}
+
+impl MeshInstance {
+    /// Where `point`, in the mesh's own space, ends up.
+    #[must_use]
+    pub fn place(&self, point: Vec3) -> Vec3 {
+        let row = |row: [f32; 4]| row[0] * point.x + row[1] * point.y + row[2] * point.z + row[3];
+        Vec3::new(row(self.rows[0]), row(self.rows[1]), row(self.rows[2]))
+    }
+
+    /// How much it stretches at most.
+    #[must_use]
+    pub fn stretch(&self) -> f32 {
+        let column =
+            |at: usize| Vec3::new(self.rows[0][at], self.rows[1][at], self.rows[2][at]).length();
+        column(0).max(column(1)).max(column(2))
+    }
 }
 
 /// A convex polygon.
@@ -293,6 +363,10 @@ pub struct Map {
     pub faces: Vec<Face>,
     /// Each placed mesh's faces.
     pub mesh_groups: Vec<MeshGroup>,
+    /// Meshes kept once, for placements to share.
+    pub shared_meshes: Vec<SharedMesh>,
+    /// What's drawn from them.
+    pub mesh_instances: Vec<MeshInstance>,
     /// The named parts of the map.
     pub zones: Vec<crate::Zone>,
     /// The effects that can be started.

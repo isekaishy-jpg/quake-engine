@@ -81,4 +81,16 @@ An alias model is two poses blended, which is a morph with one weight, lit by it
 
 ## Review
 
-Not built yet.
+### Item 7: the mesh and instancing
+
+Built as designed, with one simplification: the compiler doesn't list leaves. A copy keeps its faces in the tree, so a face seen means its copy is seen, and nothing new is stored. An instance takes its light from `make_vertex` on its first face, so it works with light tiles, where a far face has one texel of its average.
+
+Tried in the proving ground beside a baked barrel: copies turned, stretched and tipped on their side all stood where they should, took the flame's moving light, and cast on the floor. The light on a copy differs from the baked one, as it should, as it's one sample.
+
+Found in review: a placement scaled to nothing would have made a NaN of a normal. The kept geometry had no format, so a file from before this would have been misread and not refused. It has one now.
+
+Limits, as they stand:
+
+- **The GPU keeps a mesh once, but the map on the CPU doesn't.** Each copy's triangles stay in `Map::faces`, for the bake and for leaves. That's the cost of finding copies by leaf, about 150 bytes a triangle. It matters at many copies of a heavy mesh, and it hasn't been measured on a level like that yet.
+- **See-through copies aren't sorted** against each other or the world's see-through faces. An opaque prop is what this is for, but a glass one in a row could draw wrongly.
+- **Copies skip the depth pass,** so they pay for what's behind them in the same draw.

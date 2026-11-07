@@ -32,8 +32,9 @@ pub use effect::{
 pub use emitter::Emitter;
 pub use live::{LiveLightSource, along_path};
 pub use map::{
-    Animation, Entity, Face, FaceLight, Look, Map, MegaImage, MegaMaps, MeshGroup, MipLevel, Model,
-    PixelForm, TexelAxis, Texture, TextureKind,
+    Animation, Entity, Face, FaceLight, Look, Map, MegaImage, MegaMaps, MeshCorner, MeshGroup,
+    MeshInstance, MipLevel, Model, PixelForm, SharedMesh, SharedPart, TexelAxis, Texture,
+    TextureKind,
 };
 pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough, PAINT_MASK,

@@ -4,8 +4,11 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
+use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, to_text};
-use engine_map::{Contents, OccluderSphere};
+use engine_map::{Contents, MeshCorner, OccluderSphere, SharedMesh, SharedPart};
+
+use crate::build::packed_normal;
 
 use crate::convex::ConvexPiece;
 use crate::error::CompileError;
@@ -68,6 +71,8 @@ pub struct PlacedMesh {
     pub only_seen: bool,
     /// Whether it's lit from one place, and not by a light map of its own.
     pub by_probe: bool,
+    /// Which of the level's placements this is, if it's drawn as an instance.
+    pub placement: Option<u32>,
 }
 
 /// The numbers of a field, in groups of `N`.
@@ -327,6 +332,85 @@ fn smooth_normals(part: &MeshPart) -> Vec<[Point; 3]> {
         .collect()
 }
 
+/// The three rows of what `placement` does to a point.
+#[must_use]
+pub(crate) fn placement_rows(placement: &MeshPlacement) -> [[f32; 4]; 3] {
+    let transform = Transform::of(placement);
+    let origin = transform.apply([0.0; 3]);
+    let column = |axis: usize| {
+        let mut point = [0.0; 3];
+        point[axis] = 1.0;
+        let end = transform.apply(point);
+        [end[0] - origin[0], end[1] - origin[1], end[2] - origin[2]]
+    };
+    let columns = [column(0), column(1), column(2)];
+    #[expect(clippy::cast_possible_truncation, reason = "maps store f32")]
+    [0, 1, 2].map(|row| {
+        [
+            columns[0][row] as f32,
+            columns[1][row] as f32,
+            columns[2][row] as f32,
+            origin[row] as f32,
+        ]
+    })
+}
+
+/// `mesh` as it's kept for placements to share, with `material` giving a part's texture and
+/// what its places on the material are multiplied by.
+#[must_use]
+pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f32)) -> SharedMesh {
+    let mut shared = SharedMesh::default();
+    let mut known = HashMap::new();
+    let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for part in &mesh.parts {
+        let (texture, across) = material(&part.material);
+        let first = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
+        let worked_out = part.normals.is_empty().then(|| smooth_normals(part));
+        for (number, triangle) in part.triangles.iter().enumerate() {
+            for (at, corner) in triangle.iter().enumerate() {
+                let corner = *corner as usize;
+                let normal = worked_out
+                    .as_ref()
+                    .map_or_else(|| part.normals[corner], |normals| normals[number][at]);
+                #[expect(clippy::cast_possible_truncation, reason = "meshes store f32")]
+                let made = MeshCorner {
+                    position: part.points[corner].map(|part| part as f32),
+                    uv: part.uvs[corner].map(|part| part as f32 * across),
+                    normal: packed_normal(normal),
+                };
+                let key = (
+                    made.position.map(f32::to_bits),
+                    made.uv.map(f32::to_bits),
+                    made.normal,
+                );
+                let index = *known.entry(key).or_insert_with(|| {
+                    for axis in 0..3 {
+                        low[axis] = low[axis].min(made.position[axis]);
+                        high[axis] = high[axis].max(made.position[axis]);
+                    }
+                    shared.corners.push(made);
+                    u32::try_from(shared.corners.len() - 1).unwrap_or(u32::MAX)
+                });
+                shared.indices.push(index);
+            }
+        }
+        let last = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
+        if last > first {
+            shared.parts.push(SharedPart {
+                texture,
+                first,
+                count: last - first,
+            });
+        }
+    }
+    if !shared.corners.is_empty() {
+        let [low, high] = [low, high].map(|[x, y, z]| Vec3::new(x, y, z));
+        shared.center = (low + high) * 0.5;
+        shared.radius = (high - low).length() * 0.5;
+    }
+    shared
+}
+
 /// `mesh` where `placement` puts it.
 #[must_use]
 pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
@@ -474,9 +558,17 @@ pub fn resolve_meshes(
     read: &mut dyn FnMut(&str) -> Result<LoadedMesh, CompileError>,
 ) -> Result<(), CompileError> {
     let mut placed = Vec::with_capacity(working.meshes.len());
-    for placement in &working.meshes {
+    for (number, placement) in (0_u32..).zip(&working.meshes) {
         let loaded = read(&placement.source)?;
-        placed.push(place_mesh(&loaded.mesh, placement));
+        let mut mesh = place_mesh(&loaded.mesh, placement);
+        // With one light for all of it, a copy loses nothing by sharing its triangles.
+        if placement.by_probe {
+            mesh.placement = Some(number);
+            working
+                .shared
+                .insert(placement.source.clone(), Arc::clone(&loaded.mesh));
+        }
+        placed.push(mesh);
     }
     working.placed = placed;
     for entity in &mut working.entities {
