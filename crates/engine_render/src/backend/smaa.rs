@@ -3,7 +3,7 @@
 
 use std::cell::Cell;
 
-use engine_shaders::SMAA_SHADER;
+use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags, AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, ClearValue, CullMode,
     DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorSetLayout,
@@ -82,8 +82,7 @@ impl Smaa {
             }],
         )?;
         let layout = PipelineLayout::new(device, &[&set_layout])?;
-        let spirv = vulkane::safe::naga::compile_wgsl(SMAA_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Smaa).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let pipeline = |entry| {
             GraphicsPipelineBuilder::new(&layout, &pass)

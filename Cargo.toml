@@ -61,7 +61,7 @@ engine_client = { path = "crates/engine_client" }
 engine_console = { path = "crates/engine_console" }
 engine_format = { path = "crates/engine_format" }
 engine_shaders = { path = "crates/engine_shaders" }
-engine_compile = { path = "crates/engine_compile" }
+engine_compile = { path = "crates/engine_compile", default-features = false }
 engine_tools = { path = "crates/engine_tools" }
 engine_editor = { path = "crates/engine_editor" }
 engine_map = { path = "crates/engine_map" }
@@ -106,7 +106,7 @@ fontdue = { version = "=0.9.5", default-features = false, features = ["std", "ha
 # Proposal 0109: reading models, private to `engine_compile`.
 gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names"] }
 # Proposal 0107: checking shaders with no GPU, private to `engine_shaders`.
-naga = { version = "=29.0.4", default-features = false, features = ["wgsl-in"] }
+naga = { version = "=29.0.4", default-features = false, features = ["wgsl-in", "spv-out"] }
 # Proposal 0106: squeezing what a pack holds, private to `engine_assets`.
 miniz_oxide = { version = "=0.9.1", default-features = false, features = ["with-alloc"] }
 # Proposal 0106: block compression for compiled textures, private to `engine_compile`.
@@ -115,7 +115,7 @@ rusty_dds = { version = "=0.9.0", default-features = false, features = ["encode"
 png = { version = "=0.18.0", default-features = false }
 # Proposal 0016: the Vulkan backend, private to `engine_render`. The patched
 # copy adds mipmapped images and samplers, and `fetch-spec` stays off.
-vulkane = { path = "vendor/vulkane", default-features = false, features = ["naga"] }
+vulkane = { path = "vendor/vulkane", default-features = false }
 # Proposal 0011: the application host, private to `engine_platform`.
 engine_host = { path = "crates/engine_host" }
 

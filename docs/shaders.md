@@ -66,3 +66,13 @@ target/release/engine-tool content - check_shaders "{}"
 A shader that's missing or won't compile shows bright green in the game, and says why in the console. `shaders/` holds a default set to start from: `ripple`, `sway`, `pulse`, `ghost` and `dusk`.
 
 The engine's own shaders for old pictures with no material are `classic`, `classic_cutout`, `classic_liquid` and `classic_sky`. A file of the same name in `shaders/` replaces one.
+
+## In a finished game
+
+Shaders are compiled ahead of time, into `compiled/shaders`, and packing does it. While you work, what isn't compiled is compiled as it's needed. A finished game is built without a compiler:
+
+```bash
+cargo build --release -p engine_app --no-default-features
+```
+
+It reads only what's in its `common.pkt`. A shader that doesn't compile stops a pack. See [proposal 0133](proposals/0133-precompiled-shaders.md).

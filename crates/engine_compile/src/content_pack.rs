@@ -1,10 +1,8 @@
 //! A level as a game reads it, and a content folder as one pack (proposal 0106).
 
-use std::collections::BTreeSet;
-use std::path::Path;
 use std::sync::Arc;
 
-use engine_assets::{Archive, DirectoryArchive, FileIds, FileSystem, PackSummary, write_pack_of};
+use engine_assets::FileSystem;
 use engine_core::math::Vec3;
 use engine_format::Document;
 use engine_map::{EffectDef, EffectPoint, Map, Texture};
@@ -16,7 +14,6 @@ use crate::effect_read::read_effect;
 use crate::error::CompileError;
 use crate::material::{MaterialLibrary, document_of};
 use crate::source::read_map;
-use crate::texture_pack::{pack_textures, packed_path};
 
 /// A level's textures while it loads: compiled for the GPU, and in pixels for
 /// what's read here. The first thing that goes wrong is kept for afterwards.
@@ -127,69 +124,4 @@ pub fn play_map(
         hash,
         pictures,
     })
-}
-
-/// Whether a game has any use for the file at `path`. What's only for making
-/// content stays behind, as does a text map with its binary form beside it,
-/// and a picture that's compiled and that no level reads as pixels.
-fn shipped(path: &str, all: &BTreeSet<String>, pixels: &BTreeSet<String>) -> bool {
-    if path.ends_with(".py") || path.ends_with(".json") || path == FILE_ID_TABLE {
-        return false;
-    }
-    if let Some(stem) = path.strip_suffix(".emap") {
-        return !all.contains(&format!("{stem}.ebin"));
-    }
-    !path.ends_with(".png") || pixels.contains(path) || !all.contains(&packed_path(path))
-}
-
-/// The name of the map at `path`, unless a text form of it is there to use.
-fn map_at<'a>(path: &'a str, all: &BTreeSet<String>) -> Option<&'a str> {
-    let file = path.strip_prefix("maps/")?;
-    if let Some(name) = file.strip_suffix(".emap") {
-        return Some(name);
-    }
-    let name = file.strip_suffix(".ebin")?;
-    (!all.contains(&format!("maps/{name}.emap"))).then_some(name)
-}
-
-/// The table of file ids, in the content.
-const FILE_ID_TABLE: &str = "fids.txt";
-
-/// Writes the content at `root` to the container at `out`, with its pictures compiled.
-/// New files get ids in the table beside the content, which is kept in the repository.
-///
-/// # Errors
-///
-/// Returns an error if something can't be read, a map is broken, or writing
-/// fails.
-pub fn pack_content(root: &Path, out: &Path) -> Result<PackSummary, CompileError> {
-    let unread = |error: engine_assets::AssetError| CompileError::Bad(error.to_string());
-    pack_textures(root)?;
-    let archive = DirectoryArchive::new(root);
-    let mut filesystem = FileSystem::new();
-    filesystem.mount(Box::new(DirectoryArchive::new(root)));
-    let all: BTreeSet<String> = archive.paths().into_iter().collect();
-    let mut pixels = BTreeSet::new();
-    for path in &all {
-        if let Some(name) = map_at(path, &all) {
-            let document = document_of(&archive.read(path).map_err(unread)?)?;
-            pixels.extend(play_map(&filesystem, name, &document)?.pictures);
-        }
-    }
-    let wanted = all
-        .iter()
-        .filter(|path| shipped(path, &all, &pixels))
-        .cloned()
-        .collect();
-    let failed = |error: std::io::Error| CompileError::Bad(format!("the container: {error}"));
-    let table = root.join(FILE_ID_TABLE);
-    let mut ids = match std::fs::read_to_string(&table) {
-        Ok(text) => FileIds::parse(&text).map_err(unread)?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => FileIds::default(),
-        Err(error) => return Err(failed(error)),
-    };
-    let mut file = std::fs::File::create(out).map_err(failed)?;
-    let summary = write_pack_of(&archive, wanted, &mut ids, &mut file).map_err(unread)?;
-    std::fs::write(&table, ids.to_text()).map_err(failed)?;
-    Ok(summary)
 }

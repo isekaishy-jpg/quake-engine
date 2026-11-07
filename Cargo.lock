@@ -956,6 +956,7 @@ dependencies = [
  "engine_format",
  "engine_map",
  "engine_physics",
+ "engine_shaders",
  "gltf",
  "png",
  "rusty_dds",
@@ -2053,7 +2054,6 @@ dependencies = [
  "log",
  "num-traits",
  "once_cell",
- "pp-rs",
  "rustc-hash 1.1.0",
  "spirv",
  "thiserror 2.0.21",
@@ -2646,15 +2646,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "50596ddc09eb5ad5f75cacd40209568e66df71baf86e1499a0e99c4cff12a5a6"
 dependencies = [
  "arrayvec",
-]
-
-[[package]]
-name = "pp-rs"
-version = "0.2.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "bb458bb7f6e250e6eb79d5026badc10a3ebb8f9a15d1fff0f13d17c71f4d6dee"
-dependencies = [
- "unicode-xid",
 ]
 
 [[package]]
@@ -3717,7 +3708,6 @@ name = "vulkane"
 version = "0.16.0"
 dependencies = [
  "libloading 0.9.0",
- "naga",
  "ureq",
  "vulkan_gen",
 ]

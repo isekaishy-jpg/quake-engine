@@ -959,6 +959,8 @@ impl PlatformApp for Engine {
         let target = Target::Window(window.native()?);
         self.window = Some(window);
         let saved = Some(self.world.user_directory.join("pipelines.cache"));
+        let content = Arc::clone(&self.world.filesystem);
+        engine_shaders::read_compiled_with(move |path| content.read(path).ok());
         let mut renderer = Renderer::keeping_pipelines(target, self.size, saved)?;
         for name in built_in_shaders() {
             if let Ok(bytes) = self.world.filesystem.read(&format!("shaders/{name}.wgsl")) {

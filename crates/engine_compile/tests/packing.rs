@@ -317,3 +317,25 @@ fn a_hash_follows_the_bytes() {
     assert_eq!(bytes_hash(b"stone"), bytes_hash(b"stone"));
     assert_ne!(bytes_hash(b"stone"), bytes_hash(b"stonf"));
 }
+
+/// A finished game reads only what's compiled, so all of it has to be there.
+#[test]
+fn every_shader_a_game_could_want_is_compiled() {
+    let root = std::env::temp_dir().join(format!("compiled_shaders_{}", std::process::id()));
+    let _gone = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("shaders")).expect("folder");
+    let code = "fn shader_uv(uv: vec2<f32>, world: vec3<f32>) -> vec2<f32> { return uv * 2.0; }
+";
+    fs::write(root.join("shaders").join("twice.wgsl"), code).expect("write");
+    let count = engine_compile::compile_shaders(&root).expect("compiles");
+    let modules = engine_shaders::all_modules(&[code], &[]);
+    assert_eq!(count, modules.len());
+    for module in &modules {
+        let bytes = fs::read(root.join(module.path())).expect("it's there");
+        let words = engine_shaders::compile(module).expect("compiles");
+        assert_eq!(bytes, engine_shaders::compiled_file(&words), "{module:?}");
+    }
+    fs::write(root.join("shaders").join("bad.wgsl"), "this isn't wgsl").expect("write");
+    assert!(engine_compile::compile_shaders(&root).is_err());
+    fs::remove_dir_all(&root).expect("clean up");
+}

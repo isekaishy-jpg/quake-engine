@@ -7,21 +7,29 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["packing"]
+# Compiling shaders and packing content. A game only reads what that made.
+packing = ["dep:engine_shaders", "engine_shaders/compiler"]
+
 [[bin]]
 name = "engine-compile"
 path = "src/bin/engine-compile.rs"
+required-features = ["packing"]
 
 [dependencies]
 engine_assets.workspace = true
 engine_core.workspace = true
 engine_format.workspace = true
 engine_map.workspace = true
+engine_shaders = { workspace = true, optional = true }
 gltf.workspace = true
 png.workspace = true
 rusty_dds.workspace = true
 
 [dev-dependencies]
 engine_physics.workspace = true
+engine_shaders = { workspace = true, features = ["compiler"] }
 
 [lints]
 workspace = true

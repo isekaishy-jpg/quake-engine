@@ -21,6 +21,8 @@ mod material;
 mod mega;
 mod mesh;
 mod nav;
+#[cfg(feature = "packing")]
+mod packing;
 mod ray_grid;
 mod source;
 mod stamp;
@@ -36,7 +38,7 @@ pub use bake::{
 };
 pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
 pub use compiled::{Geometry, read_geometry, write_geometry};
-pub use content_pack::{PlayMap, pack_content, play_map};
+pub use content_pack::{PlayMap, play_map};
 pub use convex::{ConvexPiece, fit_convex};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};
 pub use effect_read::read_effect;
@@ -49,6 +51,8 @@ pub use mesh::{
     LoadedMesh, Mesh, MeshPart, PlacedMesh, PlacedTriangle, occluders_of, place_mesh, read_mesh,
     read_occlusion, resolve_meshes, write_occlusion,
 };
+#[cfg(feature = "packing")]
+pub use packing::{compile_shaders, pack_content};
 pub use ray_grid::RayGrid;
 pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,

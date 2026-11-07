@@ -9,7 +9,7 @@ use vulkane::safe::{
 };
 
 use engine_map::{Map, ProbeGrid, ShaderCode};
-use engine_shaders::post_source;
+use engine_shaders::{Module, spirv};
 
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
@@ -130,14 +130,11 @@ impl Backend {
         code: &str,
     ) -> Result<GraphicsPipeline, RenderError> {
         // Depth isn't resolved, so with samples it's read as it was drawn.
-        let source = post_source(code);
-        let source = if samples > 1 {
-            source.replace("texture_depth_2d", "texture_depth_multisampled_2d")
-        } else {
-            source
-        };
-        let spirv = vulkane::safe::naga::compile_wgsl(&source)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Post {
+            code,
+            samples: samples > 1,
+        })
+        .map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         Ok(GraphicsPipelineBuilder::new(layout, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_post")

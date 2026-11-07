@@ -1,8 +1,6 @@
 //! The render passes and pipelines.
 
-use engine_shaders::{
-    ALIAS_SHADER, BROKEN, CANVAS_SHADER, SPRITE_SHADER, safe_after_depth, surface_source,
-};
+use engine_shaders::{BROKEN, Module, safe_after_depth, spirv};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, BufferUsage, CullMode,
     DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, Format, FrontFace,
@@ -73,8 +71,7 @@ impl Backend {
             ],
         )?;
         let layout = PipelineLayout::new(&self.device, &[&set_layout])?;
-        let spirv = vulkane::safe::naga::compile_wgsl(CANVAS_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Canvas).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(&self.device, &spirv)?;
         let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
         let attribute = |location, format, offset| VertexInputAttribute {
@@ -136,8 +133,7 @@ impl Backend {
         cull: CullMode,
         samples: u32,
     ) -> Result<GraphicsPipeline, RenderError> {
-        let spirv = vulkane::safe::naga::compile_wgsl(ALIAS_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Alias).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let pose_stride = u32::try_from(POSE_CORNER_BYTES).unwrap_or(0);
         let binding = |binding, stride| VertexInputBinding {
@@ -186,8 +182,7 @@ impl Backend {
         pass: &RenderPass,
         samples: u32,
     ) -> Result<(GraphicsPipeline, ParticlePipelines), RenderError> {
-        let spirv = vulkane::safe::naga::compile_wgsl(SPRITE_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Sprite).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let sprite = GraphicsPipelineBuilder::new(&layouts.sprite, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_sprite")
@@ -251,8 +246,7 @@ impl Backend {
         samples: u32,
         code: &str,
     ) -> Result<SurfacePipelines, RenderError> {
-        let spirv = vulkane::safe::naga::compile_wgsl(&surface_source(code))
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Surface(code)).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let (bindings, attributes) = world_vertices();
         let surface = |entry: &'static str| {
@@ -291,9 +285,8 @@ impl Backend {
         pass: &RenderPass,
         samples: u32,
     ) -> Result<Pipelines, RenderError> {
-        let spirv = vulkane::safe::naga::compile_wgsl(&surface_source(""))
-            .map_err(|error| RenderError(error.to_string()))?;
-        let shader = ShaderModule::from_spirv(device, &spirv)?;
+        let surface_spirv = spirv(&Module::Surface("")).map_err(RenderError)?;
+        let shader = ShaderModule::from_spirv(device, &surface_spirv)?;
         let (bindings, attributes) = world_vertices();
         let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass, samples)?;
         let depth_only = GraphicsPipelineBuilder::new(&layouts.world, pass)
@@ -306,10 +299,7 @@ impl Backend {
             .color_writes(false)
             .samples(samples)
             .build(device)?;
-        let plain_source =
-            surface_source("").replace("const PLAIN: bool = false;", "const PLAIN: bool = true;");
-        let plain_spirv = vulkane::safe::naga::compile_wgsl(&plain_source)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let plain_spirv = spirv(&Module::PlainSurface).map_err(RenderError)?;
         let plain_shader = ShaderModule::from_spirv(device, &plain_spirv)?;
         let plain_after_depth = GraphicsPipelineBuilder::new(&layouts.material, pass)
             .stage(GraphicsShaderStage::Vertex, &plain_shader, "vs_main")

@@ -1,9 +1,8 @@
 //! Surface code, and that the engine's own shaders are sound.
 
 use engine_shaders::{
-    ALIAS_SHADER, BUILT_IN, CANVAS_SHADER, SHADOW_SHADER, SMAA_SHADER, SPRITE_SHADER,
-    built_in_shaders, check_module, check_post_code, check_surface_code, post_source,
-    safe_after_depth, surface_source,
+    BUILT_IN, all_modules, built_in_shaders, check_post_code, check_surface_code, compile,
+    post_source, safe_after_depth, surface_source,
 };
 
 #[test]
@@ -29,15 +28,9 @@ fn the_engines_own_surfaces_are_sound() {
 }
 
 #[test]
-fn the_other_shaders_are_sound() {
-    for source in [
-        ALIAS_SHADER,
-        CANVAS_SHADER,
-        SHADOW_SHADER,
-        SMAA_SHADER,
-        SPRITE_SHADER,
-    ] {
-        assert_eq!(check_module(source), Ok(()));
+fn every_module_compiles() {
+    for module in all_modules(&[], &[]) {
+        assert!(compile(&module).is_ok(), "{module:?}");
     }
 }
 

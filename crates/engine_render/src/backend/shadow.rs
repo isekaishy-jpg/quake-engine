@@ -6,7 +6,7 @@ use std::cell::Cell;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::Map;
-use engine_shaders::SHADOW_SHADER;
+use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CompareOp, CullMode, Device,
     Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, Image,
@@ -212,8 +212,7 @@ impl Shadows {
                 size: PUSH_SIZE,
             }],
         )?;
-        let spirv = vulkane::safe::naga::compile_wgsl(SHADOW_SHADER)
-            .map_err(|error| RenderError(error.to_string()))?;
+        let spirv = spirv(&Module::Shadow).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let bindings = [VertexInputBinding {
             binding: 0,

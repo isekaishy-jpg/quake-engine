@@ -21,7 +21,7 @@ engine_compile.workspace = true
 engine_core.workspace = true
 engine_format.workspace = true
 engine_map.workspace = true
-engine_shaders.workspace = true
+engine_shaders = { workspace = true, features = ["compiler"] }
 engine_script.workspace = true
 serde_json.workspace = true
 

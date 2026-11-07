@@ -55,6 +55,7 @@ pub const CRATE_RULES: &[CrateRule] = &[
             "engine_format",
             "engine_map",
             "engine_physics",
+            "engine_shaders",
         ],
     },
     CrateRule {

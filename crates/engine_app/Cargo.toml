@@ -7,6 +7,11 @@ edition.workspace = true
 rust-version.workspace = true
 publish.workspace = true
 
+[features]
+default = ["shader_compiler"]
+# Compiling what isn't compiled, for working on things. A finished game is built without it.
+shader_compiler = ["engine_render/shader_compiler"]
+
 [[bin]]
 name = "quake-engine"
 path = "src/main.rs"
