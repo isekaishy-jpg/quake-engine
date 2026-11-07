@@ -55,6 +55,8 @@ pub enum UiCommand {
         size: f32,
         /// What it says.
         text: String,
+        /// How far apart its letters are spread, in units.
+        tracking: f32,
         /// Its colour.
         color: [f32; 4],
         /// How much of its width goes left of `at`: 0, 0.5 or 1.
@@ -110,6 +112,31 @@ pub struct UiState {
     pub stats: BTreeMap<String, f64>,
     /// The settings it asked for, by name.
     pub settings: BTreeMap<String, f64>,
+    /// Other numbers about what's going on.
+    pub numbers: BTreeMap<String, f64>,
+    /// What's going on, as text.
+    pub texts: BTreeMap<String, String>,
+    /// Everyone's scores, best first.
+    pub scores: Vec<UiScore>,
+    /// What each save slot holds, and nothing for an empty one.
+    pub saves: Vec<String>,
+    /// The keys for each command it asked about.
+    pub keys: BTreeMap<String, Vec<String>>,
+    /// What a key typed, if anything.
+    pub typed: String,
+    /// What's for the player to read, oldest first, with how old each is in seconds.
+    pub messages: Vec<(String, f32)>,
+}
+
+/// A line of the scores, for a script.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct UiScore {
+    /// The player's name.
+    pub name: String,
+    /// Their frags.
+    pub frags: i32,
+    /// Whether this is the player looking.
+    pub own: bool,
 }
 
 /// The status bar and menus.
@@ -118,6 +145,26 @@ pub struct UiScript {
     lua: Lua,
     /// What it's asked for so far.
     out: Rc<RefCell<Vec<UiCommand>>>,
+    /// How wide characters are, by style.
+    widths: TextWidths,
+}
+
+/// How wide each character from a space on is, by style, as a share of the text's size.
+type TextWidths = Rc<RefCell<BTreeMap<String, Vec<f32>>>>;
+
+/// How wide a character is that no font has said anything about, as a share of its size. It's
+/// on the wide side, so that a layout made with it fits.
+const USUAL_CHARACTER_WIDTH: f32 = 0.6;
+
+/// How wide `text` is at `size`, by `widths`, with `tracking` after each character.
+fn text_width(widths: &[f32], text: &str, size: f32, tracking: f32) -> f32 {
+    text.chars()
+        .map(|character| {
+            let place = (character as usize).wrapping_sub(0x20);
+            let share = widths.get(place).copied();
+            share.unwrap_or(USUAL_CHARACTER_WIDTH) * size + tracking
+        })
+        .sum()
 }
 
 /// Four numbers from a table, with `fallback` for what's missing.
@@ -143,16 +190,31 @@ impl UiScript {
     pub fn new(name: &str, source: &str) -> Result<Self, ScriptError> {
         let lua = Lua::new();
         let out = Rc::new(RefCell::new(Vec::new()));
-        register(&lua, &out)?;
+        let widths = TextWidths::default();
+        register(&lua, &out, &widths)?;
         lua.sandbox(true)?;
         lua.load(source).set_name(name).exec()?;
-        Ok(Self { lua, out })
+        Ok(Self { lua, out, widths })
+    }
+
+    /// Tells it how wide characters are in each style, for `ui.measure`.
+    pub fn set_text_widths(&self, widths: BTreeMap<String, Vec<f32>>) {
+        *self.widths.borrow_mut() = widths;
     }
 
     /// The settings it wants to be told about.
     #[must_use]
     pub fn wanted_settings(&self) -> Vec<String> {
         let list: Option<Table> = self.lua.globals().get("settings").ok();
+        list.map_or_else(Vec::new, |list| {
+            list.sequence_values::<String>().flatten().collect()
+        })
+    }
+
+    /// The commands it wants to know the keys of.
+    #[must_use]
+    pub fn wanted_keys(&self) -> Vec<String> {
+        let list: Option<Table> = self.lua.globals().get("key_commands").ok();
         list.map_or_else(Vec::new, |list| {
             list.sequence_values::<String>().flatten().collect()
         })
@@ -174,6 +236,43 @@ impl UiScript {
         };
         table.set("stats", numbers(&state.stats)?)?;
         table.set("settings", numbers(&state.settings)?)?;
+        table.set("numbers", numbers(&state.numbers)?)?;
+        let texts = self.lua.create_table()?;
+        for (name, text) in &state.texts {
+            texts.set(name.as_str(), text.as_str())?;
+        }
+        table.set("texts", texts)?;
+        let scores = self.lua.create_table()?;
+        for (number, score) in state.scores.iter().enumerate() {
+            let line = self.lua.create_table()?;
+            line.set("name", score.name.as_str())?;
+            line.set("frags", score.frags)?;
+            line.set("own", score.own)?;
+            scores.set(number + 1, line)?;
+        }
+        table.set("scores", scores)?;
+        table.set(
+            "saves",
+            self.lua
+                .create_sequence_from(state.saves.iter().map(String::as_str))?,
+        )?;
+        let keys = self.lua.create_table()?;
+        for (command, bound) in &state.keys {
+            let list = self
+                .lua
+                .create_sequence_from(bound.iter().map(String::as_str))?;
+            keys.set(command.as_str(), list)?;
+        }
+        table.set("keys", keys)?;
+        table.set("typed", state.typed.as_str())?;
+        let messages = self.lua.create_table()?;
+        for (number, (text, age)) in state.messages.iter().enumerate() {
+            let message = self.lua.create_table()?;
+            message.set("text", text.as_str())?;
+            message.set("age", *age)?;
+            messages.set(number + 1, message)?;
+        }
+        table.set("messages", messages)?;
         Ok(table)
     }
 
@@ -226,8 +325,27 @@ impl UiScript {
     /// # Errors
     ///
     /// Returns an error if the script fails.
-    pub fn open_menu(&self, state: &UiState) -> Result<Vec<UiCommand>, ScriptError> {
-        Ok(self.call("open_menu", state, None)?.0)
+    pub fn open_menu(&self, state: &UiState, screen: &str) -> Result<Vec<UiCommand>, ScriptError> {
+        Ok(self.call("open_menu", state, Some(screen))?.0)
+    }
+
+    /// Hands the pointer to the menu, at `x` and `y` in units, and whether it just clicked.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the script fails.
+    pub fn menu_pointer(
+        &self,
+        state: &UiState,
+        (x, y): (f32, f32),
+        clicked: bool,
+    ) -> Result<Vec<UiCommand>, ScriptError> {
+        let Ok(function) = self.lua.globals().get::<Function>("menu_pointer") else {
+            return Ok(Vec::new());
+        };
+        let table = self.state_table(state)?;
+        let _answer: Value = function.call((table, x, y, clicked))?;
+        Ok(std::mem::take(&mut *self.out.borrow_mut()))
     }
 
     /// Says a level has begun, for what a game wants from the start, such as its camera.
@@ -250,8 +368,26 @@ impl UiScript {
 }
 
 /// Adds the `ui` table.
-fn register(lua: &Lua, out: &Rc<RefCell<Vec<UiCommand>>>) -> Result<(), ScriptError> {
+fn register(
+    lua: &Lua,
+    out: &Rc<RefCell<Vec<UiCommand>>>,
+    widths: &TextWidths,
+) -> Result<(), ScriptError> {
     let ui = lua.create_table()?;
+    let known = Rc::clone(widths);
+    ui.set(
+        "measure",
+        lua.create_function(move |_, (text, options): (String, Table)| {
+            let style = options
+                .get::<String>("style")
+                .unwrap_or_else(|_| "regular".to_owned());
+            let size = options.get::<f32>("size").unwrap_or(12.0);
+            let tracking = options.get::<f32>("tracking").unwrap_or(0.0);
+            let known = known.borrow();
+            let widths = known.get(&style).map_or(&[][..], Vec::as_slice);
+            Ok(text_width(widths, &text, size, tracking))
+        })?,
+    )?;
     let push = |command: UiCommand, out: &Rc<RefCell<Vec<UiCommand>>>| {
         out.borrow_mut().push(command);
     };
@@ -296,12 +432,14 @@ fn register(lua: &Lua, out: &Rc<RefCell<Vec<UiCommand>>>) -> Result<(), ScriptEr
             let y = options.get::<f32>("y").unwrap_or(0.0);
             let size = options.get::<f32>("size").unwrap_or(12.0);
             let color = four(options.get::<Table>("color").ok(), [1.0; 4]);
+            let tracking = options.get::<f32>("tracking").unwrap_or(0.0);
             let align = options.get::<f32>("align").unwrap_or(0.0);
             push(
                 UiCommand::Text {
                     style,
                     at: [x, y],
                     size,
+                    tracking,
                     text,
                     color,
                     align,

@@ -1,6 +1,6 @@
 //! What the console keeps, and how it's typed into.
 
-use engine_core::canvas::{Canvas, Picture, PictureSource, Quad, TALK_MARK};
+use engine_core::canvas::{Canvas, Picture, PictureSource, Quad};
 use engine_ui::{ConsoleView, canvas_scale};
 
 /// A font and nothing else, at any size.
@@ -19,7 +19,7 @@ impl PictureSource for Font {
 /// What `draw` asks to draw on a screen of 320 by 200.
 fn drawn(draw: impl FnOnce(&mut Canvas<'_>)) -> Vec<Quad> {
     let mut font = Font;
-    let mut canvas = Canvas::new(&mut font, (320, 200), 1);
+    let mut canvas = Canvas::new(&mut font, (320, 200), 1.0);
     draw(&mut canvas);
     canvas.into_quads()
 }
@@ -75,37 +75,12 @@ fn old_lines_come_back_with_the_arrows() {
     assert_eq!(view.input(), "");
 }
 
+/// What the engine says stays in the console, and only what's being typed shows over a game.
 #[test]
-fn new_lines_show_over_the_view_then_go() {
+fn lines_stay_off_the_view() {
     let mut view = ConsoleView::new();
-    view.print("Hi", 10.0);
-    assert_eq!(
-        drawn(|canvas| view.draw_notify(canvas, 11.0, false)).len(),
-        2
-    );
-    assert!(drawn(|canvas| view.draw_notify(canvas, 14.0, false)).is_empty());
-}
-
-#[test]
-fn only_the_last_four_lines_show_over_the_view() {
-    let mut view = ConsoleView::new();
-    for _ in 0..9 {
-        view.print("x", 10.0);
-    }
-    assert_eq!(
-        drawn(|canvas| view.draw_notify(canvas, 11.0, false)).len(),
-        4
-    );
-}
-
-#[test]
-fn a_line_with_breaks_is_kept_as_several() {
-    let mut view = ConsoleView::new();
-    view.print("a\nb", 1.0);
-    assert_eq!(
-        drawn(|canvas| view.draw_notify(canvas, 1.5, false)).len(),
-        2
-    );
+    view.print("Hi");
+    assert!(drawn(|canvas| view.draw_chat(canvas, false)).is_empty());
 }
 
 #[test]
@@ -127,11 +102,39 @@ fn it_slides_down_to_half_the_screen() {
 }
 
 #[test]
-fn the_scale_suits_the_screen_unless_a_setting_says() {
-    assert_eq!(canvas_scale(720, 0.0), 2);
-    assert_eq!(canvas_scale(1080, 0.0), 3);
-    assert_eq!(canvas_scale(200, 0.0), 1);
-    assert_eq!(canvas_scale(1080, 5.0), 5);
+fn the_scale_follows_the_picture() {
+    assert!((canvas_scale((1280, 720)) - 2.0).abs() < 0.001);
+    assert!((canvas_scale((1920, 1080)) - 3.0).abs() < 0.001);
+    assert!((canvas_scale((1600, 900)) - 2.5).abs() < 0.001);
+}
+
+/// Every screen keeps the room a layout was made for, whatever its shape.
+#[test]
+fn every_screen_has_the_same_room() {
+    for size in [
+        (640, 360),
+        (640, 480),
+        (800, 600),
+        (1024, 768),
+        (1280, 720),
+        (1366, 768),
+        (1600, 900),
+        (1920, 1080),
+        (2560, 1080),
+        (900, 1600),
+        (3840, 2160),
+    ] {
+        let scale = canvas_scale(size);
+        #[expect(clippy::cast_precision_loss, reason = "a screen's size")]
+        let room = (size.0 as f32 / scale, size.1 as f32 / scale);
+        assert!(room.0 >= 639.9 && room.1 >= 359.9, "{size:?} has {room:?}");
+    }
+}
+
+/// A window with no size doesn't divide by nothing.
+#[test]
+fn a_window_with_no_size_still_has_a_scale() {
+    assert!(canvas_scale((0, 0)) > 0.0);
 }
 
 #[test]
@@ -185,19 +188,9 @@ fn a_long_line_of_chat_shows_its_end_and_stops_growing() {
     for _ in 0..200 {
         assert_eq!(view.chat_key("A"), None);
     }
-    let quads = drawn(|canvas| view.draw_notify(canvas, 0.0, false));
+    let quads = drawn(|canvas| view.draw_chat(canvas, false));
     let right = quads.iter().map(|quad| quad.place[2]).fold(0.0, f32::max);
     assert!(right <= 320.0, "it stays on the screen: {right}");
     let line = view.chat_key("ENTER").expect("a line");
     assert_eq!(line.len(), "say \"\"".len() + 96);
-}
-
-#[test]
-fn someone_talking_is_bright_and_loses_the_mark() {
-    let mut view = ConsoleView::new();
-    view.print(&format!("{TALK_MARK}ab"), 0.0);
-    view.print("ab", 0.0);
-    let quads = drawn(|canvas| view.draw_notify(canvas, 1.0, false));
-    assert_eq!(quads.len(), 4, "the mark isn't drawn");
-    assert_ne!(quads[0].source, quads[2].source, "it's the bright half");
 }

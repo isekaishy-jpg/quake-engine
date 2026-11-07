@@ -28,19 +28,12 @@ pub struct ViewTint {
     damage: Shift,
     /// Picking something up, fading.
     bonus: Shift,
-    /// What the game holds on the player, such as a powerup.
-    held: Shift,
 }
 
 impl ViewTint {
     /// Says what the eye is in, by the tint of its liquid, if any.
     pub const fn set_surroundings(&mut self, tint: Shift) {
         self.surroundings = tint;
-    }
-
-    /// Says what the game holds on the player.
-    pub const fn set_held(&mut self, tint: Shift) {
-        self.held = tint;
     }
 
     /// Reddens the view, from `V_ParseDamage`.
@@ -74,8 +67,7 @@ impl ViewTint {
     pub fn color(&self) -> Shift {
         let mut blended = [0.0_f32; 3];
         let mut alpha = 0.0_f32;
-        for [red, green, blue, strength] in [self.surroundings, self.damage, self.bonus, self.held]
-        {
+        for [red, green, blue, strength] in [self.surroundings, self.damage, self.bonus] {
             if strength == 0.0 {
                 continue;
             }

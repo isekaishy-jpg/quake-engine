@@ -3,6 +3,7 @@
 
 mod app;
 mod commands;
+mod game_screen;
 mod keys;
 mod level;
 mod look;

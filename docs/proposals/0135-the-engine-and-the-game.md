@@ -12,7 +12,7 @@ At first Quake was the game. The rule from [proposal 0008](0008-crate-boundaries
 |---|---|---|---|
 | Colour over the view | `hud.rs` | `ViewTint`, done | Item 74 |
 | The status bar, menus, scores and the intermission | `hud.rs`, `menu.rs` | Scripts | Items 1, 2 and 6 |
-| What's Quake's in those: pictures, faces, weapons on the bar | `hud.rs` | A script of the fixture's | Item 1 |
+| What's Quake's in those: pictures, faces, weapons on the bar | `hud.rs` | Gone, as Quake uses the engine's UI | Item 6 |
 | WAV files | `wav.rs` | `engine_audio`, as anything may use them | Item 103 |
 | Cameras | `view.rs` | Engine, with scripts choosing | Items 56 to 60 |
 | Weapon rules, for predicting shots | `weapon_rules.rs` | The fixture, as they're the game's, reached as data | Item 6 |

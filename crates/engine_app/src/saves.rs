@@ -71,10 +71,28 @@ pub(crate) fn describe(directory: &Path, name: &str) -> Option<String> {
     (header.version == SAVE_VERSION).then_some(header.description)
 }
 
+/// The name of the newest of `slots` saves, for carrying on.
+pub(crate) fn latest(directory: &Path, slots: usize) -> Option<String> {
+    (0..slots)
+        .map(|slot| format!("s{slot}"))
+        .filter_map(|name| {
+            let path = save_path(directory, &name).ok()?;
+            let changed = fs::metadata(path).ok()?.modified().ok()?;
+            Some((changed, name))
+        })
+        .max()
+        .map(|(_, name)| name)
+}
+
 /// What the menus show for the game being played.
 fn description(world: &World) -> String {
-    let title: String = world.hud.level_title().chars().take(TITLE_WIDTH).collect();
-    let (killed, total) = world.hud.monsters();
+    let title: String = world
+        .game_screen
+        .level_title()
+        .chars()
+        .take(TITLE_WIDTH)
+        .collect();
+    let (killed, total) = world.game_screen.monsters();
     format!("{title:<TITLE_WIDTH$}kills:{killed:3}/{total:3}")
 }
 
@@ -139,6 +157,10 @@ pub(crate) fn load(world: &mut World, name: &str) -> Result<(), Box<dyn Error>> 
 
 /// Writes the bindings, aliases and saved cvars, from `Host_WriteConfiguration`.
 pub(crate) fn write_config(console: &Console<World>, world: &World) {
+    // A game that stopped before its keys were set mustn't save that as the player's choice.
+    if world.bindings.iter().next().is_none() {
+        return;
+    }
     let mut text = String::from("// Written by the engine. Edits are overwritten.\n");
     text.push_str("unbindall\n");
     for (key, command) in world.bindings.iter() {

@@ -87,9 +87,7 @@ pub struct Canvas<'a> {
 impl<'a> Canvas<'a> {
     /// A canvas of `size` pixels, with `scale` pixels to a unit.
     #[must_use]
-    pub fn new(source: &'a mut dyn PictureSource, size: (u32, u32), scale: u32) -> Self {
-        #[expect(clippy::cast_precision_loss, reason = "a scale is a small number")]
-        let scale = scale.max(1) as f32;
+    pub fn new(source: &'a mut dyn PictureSource, size: (u32, u32), scale: f32) -> Self {
         Self {
             source,
             size,

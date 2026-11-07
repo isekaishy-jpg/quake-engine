@@ -257,6 +257,24 @@ impl UiTheme {
         !self.fonts.is_empty()
     }
 
+    /// How wide each character from a space on is in `style`, as a share of the text's size,
+    /// for a script to lay out by. A style that's missing uses another, as drawing does.
+    #[must_use]
+    pub fn character_widths(&self, style: FontStyle) -> Vec<f32> {
+        const SIZE: f32 = 100.0;
+        let font = self.fonts.get(&style).or_else(|| {
+            let style = self.fonts.keys().min_by_key(|style| **style as u8)?;
+            self.fonts.get(style)
+        });
+        let Some(font) = font else {
+            return Vec::new();
+        };
+        CHARACTERS
+            .filter_map(char::from_u32)
+            .map(|character| font.metrics(character, SIZE).advance_width / SIZE)
+            .collect()
+    }
+
     /// `style` at `pixels`, baked the first time it's asked for. The picture goes
     /// to `canvas`. A style that's missing uses another.
     pub fn font(

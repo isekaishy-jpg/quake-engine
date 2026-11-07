@@ -412,3 +412,4 @@ Newest last. One line for each thing finished, with its commit.
 - Items 31 to 38: f65b7c8
 - Item 124 begun: 4881c8d
 - Items 56 to 60: 71b1a6a
+- Item 60 made static, by the human: 292cee9

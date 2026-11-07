@@ -27,12 +27,6 @@ pub const PICTURE_WAD: &str = "gfx.wad";
 /// The console's background.
 pub const BACKGROUND_PICTURE: &str = "gfx/conback.lmp";
 
-/// What's shown over a paused game.
-pub const PAUSE_PICTURE: &str = "gfx/pause.lmp";
-
-/// What's shown while a level loads.
-pub const LOADING_PICTURE: &str = "gfx/loading.lmp";
-
 /// The sound of someone talking.
 pub const TALK_SOUND: &str = "misc/talk.wav";
 

@@ -16,24 +16,20 @@ pub use theme::{
 
 use engine_core::canvas::{CHARACTER_SIZE, Canvas};
 
-/// The picture height that gives each canvas unit a pixel.
-const HEIGHT_PER_SCALE: u32 = 360;
+/// The room in units that every screen has, at the least. A UI is laid out for this.
+const UNITS: (f32, f32) = (640.0, 360.0);
 
-/// How many pixels make a canvas unit on a screen `height` tall, for a setting
-/// of `wanted`, where 0 picks one to suit the screen.
+/// The fewest pixels to a unit, so that a window with no size still has a scale.
+const LEAST_SCALE: f32 = 0.25;
+
+/// How many pixels make a canvas unit on a screen of `size`. It's relative to the picture, so
+/// every screen has the same room and what's on it only grows with the resolution. Nothing
+/// can ask for less room than a layout was made for.
 #[must_use]
-pub fn canvas_scale(height: u32, wanted: f32) -> u32 {
-    #[expect(
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a setting of a few units"
-    )]
-    let wanted = wanted.max(0.0) as u32;
-    if wanted > 0 {
-        wanted
-    } else {
-        (height / HEIGHT_PER_SCALE).max(1)
-    }
+pub fn canvas_scale(size: (u32, u32)) -> f32 {
+    #[expect(clippy::cast_precision_loss, reason = "a screen's size")]
+    let (width, height) = (size.0 as f32 / UNITS.0, size.1 as f32 / UNITS.1);
+    width.min(height).max(LEAST_SCALE)
 }
 
 /// Draws the frame rate in the top right corner.

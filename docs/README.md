@@ -14,6 +14,7 @@
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
+  - [Making the UI and menus usable](research/ui-and-menus.md): what good menus need, and how we measured up
   - [Meshes](meshes.md): bringing models in, and placing them
   - [Mesh and prefab standard](mesh-standard.md): what a mesh or prefab has to be
   - [Cameras](cameras.md): which camera, and setting them up
@@ -177,6 +178,7 @@
     - [0136: standards for art and meshes](proposals/0136-art-standards.md)
     - [0137: tools an agent can trust](proposals/0137-mcp-you-can-trust.md)
     - [0138: cameras](proposals/0138-cameras.md)
+    - [0139: all of the UI as a script](proposals/0139-the-ui-as-scripts.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

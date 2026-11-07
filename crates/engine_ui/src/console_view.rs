@@ -18,12 +18,6 @@ const MAX_LINES: usize = 1024;
 /// The most typed lines kept.
 const MAX_HISTORY: usize = 64;
 
-/// `con_notifytime`, in seconds.
-const NOTIFY_SECONDS: f64 = 3.0;
-
-/// How many lines show over the view.
-const NOTIFY_LINES: usize = 4;
-
 /// How much of the screen the console covers.
 const COVER: f32 = 0.5;
 
@@ -96,8 +90,6 @@ struct Chat {
 pub struct ConsoleView {
     /// Every line kept, oldest first.
     lines: VecDeque<String>,
-    /// When recent lines arrived.
-    notify: VecDeque<(f64, String)>,
     /// What's being typed.
     input: String,
     /// Lines typed so far.
@@ -124,7 +116,7 @@ impl ConsoleView {
     }
 
     /// Adds a line, which arrived at `time`.
-    pub fn print(&mut self, line: &str, time: f64) {
+    pub fn print(&mut self, line: &str) {
         for part in line.split('\n') {
             if self.lines.len() == MAX_LINES {
                 let _oldest = self.lines.pop_front();
@@ -132,10 +124,6 @@ impl ConsoleView {
             self.lines.push_back(part.to_owned());
             if self.scroll > 0 {
                 self.scroll += 1;
-            }
-            self.notify.push_back((time, part.to_owned()));
-            if self.notify.len() > NOTIFY_LINES {
-                let _oldest = self.notify.pop_front();
             }
         }
     }
@@ -202,15 +190,9 @@ impl ConsoleView {
         None
     }
 
-    /// Forgets what's over the view.
-    pub fn clear_notify(&mut self) {
-        self.notify.clear();
-    }
-
     /// Empties it.
     pub fn clear(&mut self) {
         self.lines.clear();
-        self.notify.clear();
         self.scroll = 0;
     }
 
@@ -258,7 +240,7 @@ impl ConsoleView {
         match key {
             "ENTER" => {
                 let line = std::mem::take(&mut self.input);
-                self.print(&format!("{PROMPT}{line}"), f64::NEG_INFINITY);
+                self.print(&format!("{PROMPT}{line}"));
                 self.history_at = 0;
                 self.scroll = 0;
                 if line.is_empty() {
@@ -313,14 +295,8 @@ impl ConsoleView {
 
     /// Draws recent lines at the top of the view, at game time `time`, and
     /// under them any line of chat, from `Con_DrawNotify`.
-    pub fn draw_notify(&self, canvas: &mut Canvas<'_>, time: f64, blink: bool) {
-        let mut y = 0.0;
-        for (arrived, line) in &self.notify {
-            if time - arrived < NOTIFY_SECONDS && time >= *arrived {
-                draw_line(canvas, 0.0, y, line);
-                y += CHARACTER_SIZE;
-            }
-        }
+    pub fn draw_chat(&self, canvas: &mut Canvas<'_>, blink: bool) {
+        let y = 0.0;
         if let Some(chat) = &self.chat {
             let label = if chat.team { "say_team:" } else { "say:" };
             canvas.text(CHARACTER_SIZE, y, label.as_bytes());

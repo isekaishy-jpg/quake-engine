@@ -14,17 +14,16 @@ use engine_net::{
 };
 use engine_render::Capture;
 use engine_server::Kicked;
-use fixture_quake::{DEFAULT_CONFIG, GAME_COMMANDS, Screen};
+use fixture_quake::{DEFAULT_CONFIG, GAME_COMMANDS};
 
 use crate::app::{MOVE_BINDINGS, World};
 use crate::keys::to_hex;
 use crate::saves;
-use crate::screen::MenuActions;
 
-/// The width of a screenshot.
+/// The width of a screenshot, unless it's given.
 const SCREENSHOT_WIDTH: u32 = 1280;
 
-/// The height of a screenshot.
+/// The height of a screenshot, unless it's given.
 const SCREENSHOT_HEIGHT: u32 = 720;
 
 /// Registers the commands.
@@ -48,6 +47,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("restart", restart);
     console.register("newgame", newgame);
     console.register("reset_defaults", reset_defaults);
+    console.register("check_bindings", check_bindings);
     console.register("togglemenu", togglemenu);
     console.register("toggleconsole", toggleconsole);
     console.register("clear", clear);
@@ -57,6 +57,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("menu_options", open_menu);
     console.register("menu_keys", open_menu);
     console.register("menu_video", open_menu);
+    console.register("menu_audio", open_menu);
     console.register("menu_quit", open_menu);
     console.register("help", open_menu);
     console.register("bf", bonus_flash);
@@ -241,24 +242,33 @@ fn reset_defaults(console: &mut Console<World>, _world: &mut World, _args: &Args
     console.add(MOVE_BINDINGS);
 }
 
+/// `check_bindings`: a player with no keys at all can't reach the menus to fix it, so they get
+/// the usual ones back.
+fn check_bindings(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    if world.bindings.iter().next().is_none() {
+        console.add(&format!("exec {DEFAULT_CONFIG}"));
+        console.add(MOVE_BINDINGS);
+    }
+}
+
 /// `togglemenu`: opens or closes the menus.
-fn togglemenu(console: &mut Console<World>, world: &mut World, _args: &Args) {
+fn togglemenu(_console: &mut Console<World>, world: &mut World, _args: &Args) {
     if world.console_view.is_open() && world.client.is_some() {
         world.console_view.set_open(false);
         return;
     }
     if world.ui_script.is_some() {
         world.toggle_script_menu();
-        return;
+    } else {
+        // With no UI at all, the console is what's left.
+        let open = !world.console_view.is_open();
+        world.console_view.set_open(open);
     }
-    let mut menu = std::mem::take(&mut world.menu);
-    menu.toggle(&mut MenuActions { console, world });
-    world.menu = menu;
 }
 
 /// `toggleconsole`: opens or closes the console.
 fn toggleconsole(_console: &mut Console<World>, world: &mut World, _args: &Args) {
-    world.menu.close();
+    world.script_menu = false;
     let open = !world.console_view.is_open() || world.client.is_none();
     world.console_view.set_open(open);
 }
@@ -269,21 +279,20 @@ fn clear(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 }
 
 /// Opens the menu screen a command is named for.
-fn open_menu(console: &mut Console<World>, world: &mut World, args: &Args) {
+fn open_menu(_console: &mut Console<World>, world: &mut World, args: &Args) {
     let screen = match args.get(0) {
-        "menu_save" => Screen::Save,
-        "menu_load" => Screen::Load,
-        "menu_options" => Screen::Options,
-        "menu_keys" => Screen::Keys,
-        "menu_video" => Screen::Video,
-        "menu_quit" => Screen::Quit,
-        "menu_multiplayer" => Screen::Multiplayer,
-        "help" => Screen::Help,
-        _ => Screen::Main,
+        "menu_save" => "save",
+        "menu_load" => "load",
+        "menu_options" => "options",
+        "menu_keys" => "keys",
+        "menu_video" => "video",
+        "menu_audio" => "audio",
+        "menu_quit" => "quit",
+        "menu_multiplayer" => "multiplayer",
+        "help" => "help",
+        _ => "main",
     };
-    let mut menu = std::mem::take(&mut world.menu);
-    menu.open(screen, &mut MenuActions { console, world });
-    world.menu = menu;
+    world.open_script_menu(screen);
 }
 
 /// `bf`: flashes the view.
@@ -305,12 +314,12 @@ fn centerview(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 
 /// `+showscores`: holds the scores open.
 fn show_scores(_console: &mut Console<World>, world: &mut World, _args: &Args) {
-    world.hud.set_show_scores(true);
+    world.game_screen.set_show_scores(true);
 }
 
 /// `-showscores`: lets the scores go.
 fn hide_scores(_console: &mut Console<World>, world: &mut World, _args: &Args) {
-    world.hud.set_show_scores(false);
+    world.game_screen.set_show_scores(false);
 }
 
 /// `startdemos`: the last line of `quake.rc`. Stock demos can't play here, so
@@ -670,7 +679,8 @@ fn write_png(capture: &Capture, path: &str) -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// `screenshot path`: writes the current view to a PNG file.
+/// `screenshot path [width height]`: writes the current view to a PNG file, drawn at that size
+/// and with the UI laid out for it, so that any resolution can be looked at.
 fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
     let default_path = saves::screenshot_path(&world.user_directory);
     let path = if args.get(1).is_empty() {
@@ -678,19 +688,16 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
     } else {
         args.get(1)
     };
+    let width = args.get(2).parse().unwrap_or(SCREENSHOT_WIDTH);
+    let height = args.get(3).parse().unwrap_or(SCREENSHOT_HEIGHT);
     let mut picture = world.view(0.0, 1.0, 0.0);
-    picture.quads = world.overlay((SCREENSHOT_WIDTH, SCREENSHOT_HEIGHT));
+    picture.quads = world.overlay((width, height));
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;
     };
     let result = renderer
-        .capture(
-            &picture.view,
-            picture.drawables(),
-            SCREENSHOT_WIDTH,
-            SCREENSHOT_HEIGHT,
-        )
+        .capture(&picture.view, picture.drawables(), width, height)
         .map_err(Into::into)
         .and_then(|capture| write_png(&capture, path));
     match result {

@@ -9,7 +9,7 @@ mod view;
 
 use self::shading::{Flames, StencilGates};
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
 use std::rc::Rc;
@@ -42,18 +42,18 @@ use engine_shaders::built_in_shaders;
 use engine_ui::ConsoleView;
 use engine_ui::UiTheme;
 use fixture_quake::{
-    GAME_RULES, Hud, Intermission, LIVE_RULES, LoadedLevel, Menu, Palette, ROCKET_BLAST, SCRIPTS,
-    SKY_SOUND, STARTUP_SCRIPT, Score, TALK_SOUND, WATER_SOUND, mount_coloured_levels, mount_game,
-    mount_music,
+    GAME_RULES, LIVE_RULES, LoadedLevel, Palette, ROCKET_BLAST, SCRIPTS, SKY_SOUND, STARTUP_SCRIPT,
+    TALK_SOUND, WATER_SOUND, mount_coloured_levels, mount_game, mount_music,
 };
 use sound::AudioLevels;
 use view::DEFAULT_FOV;
 
+use crate::game_screen::{GameScreen, Intermission, Score};
 use crate::keys::Keys;
 use crate::look::{load_theme, load_ui_script};
 use crate::models::ModelBank;
 use crate::options::{Options, common_pack};
-use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
+use crate::screen::PictureBank;
 use crate::sounds::SoundBank;
 use crate::{commands, saves};
 
@@ -179,13 +179,19 @@ pub(crate) struct World {
     /// The map, for the light on models.
     map: Option<Arc<Map>>,
     /// The status bar and the rest of what's over the view.
-    pub(crate) hud: Hud,
+    pub(crate) game_screen: GameScreen,
     /// The colour over the view.
     pub(crate) view_tint: ViewTint,
+    /// Where the pointer is, in pixels.
+    pub(crate) pointer: (f32, f32),
+    /// Whether the left button is held.
+    pub(crate) pointer_held: bool,
+    /// What's for the player to read, with when it came.
+    pub(crate) messages: VecDeque<(f64, String)>,
+    /// What the player is called.
+    pub(crate) player_name: String,
     /// What the view is seen from.
     pub(crate) cameras: Cameras,
-    /// The menus.
-    pub(crate) menu: Menu,
     /// The console, as it's drawn.
     pub(crate) console_view: ConsoleView,
     /// Pictures loaded so far.
@@ -200,16 +206,10 @@ pub(crate) struct World {
     level_wait: u8,
     /// Console commands from the game, waiting to run.
     pub(crate) commands: Vec<String>,
-    /// `ui_scale`.
-    pub(crate) ui_scale: f32,
-    /// `crosshair`.
-    pub(crate) crosshair: bool,
     /// `gamma`.
     gamma: f32,
     /// The frame rate as it's shown, or empty.
     pub(crate) rate_text: String,
-    /// The settings the menus show.
-    pub(crate) menu_settings: MenuSettings,
     /// Where configs and saves go.
     pub(crate) user_directory: PathBuf,
     /// Listens for others, while hosting.
@@ -264,7 +264,7 @@ impl World {
 
     /// Whether the player sees the game itself, with nothing open over it.
     pub(crate) fn is_playing_screen(&self) -> bool {
-        !self.menu.is_open() && !self.script_menu && !self.console_view.is_open()
+        !self.script_menu && !self.console_view.is_open()
     }
 
     /// Whether other people are involved, so the game can't stop for one.
@@ -290,8 +290,8 @@ impl World {
         self.server.is_some()
             && !self.is_online()
             && self.level_pending.is_none()
-            && self.hud.intermission() == Intermission::None
-            && !self.hud.is_dead()
+            && self.game_screen.intermission() == Intermission::None
+            && !self.game_screen.is_dead()
     }
 
     /// Loads the map called `name` and moves to its spawn point, carrying what
@@ -365,16 +365,14 @@ impl World {
         self.flames = Flames::default();
         let map = Arc::clone(map);
         self.map_time = 0.0;
-        self.hud = Hud::new();
+        self.game_screen = GameScreen::default();
         self.view_tint = ViewTint::default();
         self.cameras = Cameras::default();
-        self.hud.set_palette(&palette);
         self.kick = ViewKick::default();
         self.paused = false;
-        self.menu.close();
         self.script_menu = false;
         self.console_view.set_open(false);
-        self.console_view.clear_notify();
+        self.messages.clear();
         self.audio.stop_sounds();
         let water = self
             .sounds
@@ -447,9 +445,9 @@ impl World {
                 self.look.set_view(f64::from(yaw), f64::from(pitch));
             }
             self.map_time = client.time();
-            self.hud.set_stats(client.stats(), client.time());
+            self.game_screen.set_stats(client.stats(), client.time());
             let own = client.player_entity();
-            self.hud.set_scores(
+            self.game_screen.set_scores(
                 client
                     .scores()
                     .iter()
@@ -598,7 +596,8 @@ impl Engine {
         console.register_cvar("ambient_level", "0.3", saved);
         console.register_cvar("ambient_water", "0.5", saved);
         console.register_cvar("gamma", "1", saved);
-        console.register_cvar("ui_scale", "0", saved);
+        console.register_cvar("ui_contrast", "0", saved);
+        console.register_cvar("hud_plate", "0", saved);
         console.register_cvar("crosshair", "0", saved);
         console.register_cvar("cl_alwaysrun", "1", saved);
         console.register_cvar(
@@ -680,10 +679,13 @@ impl Engine {
                 next_flags: 0.0,
                 level: Level::default(),
                 map: None,
-                hud: Hud::new(),
+                game_screen: GameScreen::default(),
                 view_tint: ViewTint::default(),
+                pointer: (0.0, 0.0),
+                pointer_held: false,
+                messages: VecDeque::new(),
+                player_name: String::new(),
                 cameras: Cameras::default(),
-                menu: Menu::new(),
                 console_view: ConsoleView::new(),
                 pictures: PictureBank::default(),
                 paused: false,
@@ -691,11 +693,8 @@ impl Engine {
                 level_pending: None,
                 level_wait: 0,
                 commands: Vec::new(),
-                ui_scale: 0.0,
-                crosshair: false,
                 gamma: 1.0,
                 rate_text: String::new(),
-                menu_settings: MenuSettings::new(),
                 user_directory,
                 net_server: None,
                 connecting: None,
@@ -737,7 +736,6 @@ impl Engine {
         // With no game, there's always something to type at.
         if self.world.client.is_none()
             && self.world.connecting.is_none()
-            && !self.world.menu.is_open()
             && !self.world.script_menu
             && !self.world.console_view.is_open()
         {
@@ -825,6 +823,7 @@ impl Engine {
             if text.starts_with(TALK_MARK) {
                 self.world.play_local(TALK_SOUND);
             }
+            self.world.tell_player(&text);
             self.console.print(text);
         }
         for command in std::mem::take(&mut self.world.commands) {
@@ -860,13 +859,11 @@ impl Engine {
             reason = "settings need no more than f32"
         )]
         let number = |engine: &Self, name: &str| engine.cvar_number(name) as f32;
-        self.world.ui_scale = number(self, "ui_scale");
         let wanted = self.world.ui_script.as_ref().map(UiScript::wanted_settings);
         for name in wanted.unwrap_or_default() {
             let value = self.cvar_number(&name);
             self.world.console_settings.insert(name, value);
         }
-        self.world.crosshair = number(self, "crosshair") != 0.0;
         self.world.gamma = number(self, "gamma").clamp(0.3, 2.0);
         self.world.buttons.always_run = number(self, "cl_alwaysrun") != 0.0;
         let correction = f64::from(number(self, "cl_shot_correction"));
@@ -878,6 +875,7 @@ impl Engine {
             .cvar("name")
             .map_or("player", engine_console::Cvar::value)
             .to_owned();
+        self.world.player_name.clone_from(&name);
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -890,10 +888,6 @@ impl Engine {
                 client.send_info(&name, colors);
             }
             self.world.identity = SeatInfo { name, colors };
-        }
-        for name in MENU_SETTINGS {
-            let value = number(self, name);
-            self.world.menu_settings.insert(name, value);
         }
     }
 
@@ -957,7 +951,7 @@ impl Engine {
         for line in lines {
             let plain = line.strip_prefix(TALK_MARK).unwrap_or(&line);
             let _ignored = writeln!(output, "{plain}");
-            self.world.console_view.print(&line, self.world.map_time);
+            self.world.console_view.print(&line);
         }
         let _ignored = output.flush();
     }
@@ -983,6 +977,7 @@ impl PlatformApp for Engine {
         if !self.has_config {
             self.console.add(MOVE_BINDINGS);
         }
+        self.console.add("check_bindings");
         Ok(())
     }
 
@@ -1038,6 +1033,17 @@ impl PlatformApp for Engine {
                 self.key(name, true, false);
                 self.key(name, false, false);
             }
+            InputEvent::Button {
+                button: MouseButton::Left,
+                pressed: true,
+            } if self.world.script_menu => {
+                self.world.pointer_held = true;
+                self.world.pointer_to_script(true);
+            }
+            InputEvent::Button {
+                button: MouseButton::Left,
+                pressed: false,
+            } if self.world.script_menu => self.world.pointer_held = false,
             InputEvent::Button { button, pressed } => {
                 let name = match button {
                     MouseButton::Left => "MOUSE1",
@@ -1046,7 +1052,14 @@ impl PlatformApp for Engine {
                 };
                 self.key(name, pressed, false);
             }
-            InputEvent::Pointer { .. } => {}
+            InputEvent::Pointer { x, y } => {
+                #[expect(clippy::cast_possible_truncation, reason = "a place on a screen")]
+                let place = (x as f32, y as f32);
+                self.world.pointer = place;
+                if self.world.script_menu {
+                    self.world.pointer_to_script(false);
+                }
+            }
             InputEvent::FocusLost => {
                 self.world.buttons.release();
                 self.console.add("m_capture 0");

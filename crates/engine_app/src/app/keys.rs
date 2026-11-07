@@ -3,7 +3,6 @@
 use engine_client::canonical_key;
 
 use super::Engine;
-use crate::screen::MenuActions;
 
 impl Engine {
     /// Takes a key, which goes to what's on top, as `Key_Event`.
@@ -20,19 +19,8 @@ impl Engine {
             return;
         }
         if self.world.script_menu {
-            self.world.menu_key_to_script(&key);
-        } else if self.world.menu.is_open() {
-            let text = self.world.console_view.typed(&key);
-            let mut menu = std::mem::take(&mut self.world.menu);
-            menu.key(
-                &key,
-                text,
-                &mut MenuActions {
-                    console: &mut self.console,
-                    world: &mut self.world,
-                },
-            );
-            self.world.menu = menu;
+            let typed = self.world.console_view.typed(&key);
+            self.world.menu_key_to_script(&key, typed);
         } else if self.world.console_view.is_open() {
             self.console_key(&key);
         } else if self.world.console_view.is_chatting() {
@@ -130,9 +118,7 @@ impl Engine {
             completed.push(' ');
         } else {
             for name in &matches {
-                self.world
-                    .console_view
-                    .print(&format!("  {name}"), f64::NEG_INFINITY);
+                self.world.console_view.print(&format!("  {name}"));
             }
         }
         self.world.console_view.set_input(&completed);

@@ -2,6 +2,7 @@
 
 use std::collections::HashMap;
 
+use crate::game_screen::Intermission;
 use engine_audio::Listener;
 use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject};
 use engine_client::{
@@ -16,7 +17,6 @@ use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, ParticleColor,
     ParticleDraw, ParticleShape, SpriteDraw, View,
 };
-use fixture_quake::Intermission;
 
 use super::World;
 use super::shading::{StencilMask, capsule_draws, live_lights, model_light};
@@ -96,16 +96,17 @@ impl World {
     pub(super) fn show_events(&mut self, events: Vec<ScreenEvent>) {
         for event in events {
             match event {
-                ScreenEvent::CenterPrint(text) => self.hud.center_print(text),
+                ScreenEvent::CenterPrint(text) => self.game_screen.center_print(text),
                 ScreenEvent::Command(text) => self.commands.push(text),
                 ScreenEvent::Damage { armor, blood, from } => self.hurt(armor, blood, from),
                 ScreenEvent::Camera { camera, blend } => self.change_camera(&camera, blend),
                 ScreenEvent::Intermission(kind) => {
-                    self.hud.set_intermission(Intermission::from_number(kind));
+                    self.game_screen
+                        .set_intermission(Intermission::from_number(kind));
                 }
                 ScreenEvent::LevelTitle(text) => {
-                    self.console_view.print(&text, f64::NEG_INFINITY);
-                    self.hud.set_level_title(text);
+                    self.console_view.print(&text);
+                    self.game_screen.set_level_title(text);
                 }
             }
         }
@@ -117,7 +118,6 @@ impl World {
         reason = "f32 keeps angles to a few thousandths of a degree"
     )]
     pub(super) fn hurt(&mut self, armor: u8, blood: u8, from: Vec3) {
-        self.hud.damage();
         self.view_tint.hurt(armor, blood);
         let Some(client) = &self.client else {
             return;
@@ -222,7 +222,7 @@ impl World {
             if self.theme.has_fonts() {
                 self.zone_title = Some((title, self.map_time));
             } else {
-                self.hud.center_print(title);
+                self.game_screen.center_print(title);
             }
         }
         if let Some(Some(music)) = change.music {
@@ -445,7 +445,6 @@ impl World {
             .and_then(|map| look_around(&map.pools, origin, contents));
         self.view_tint
             .set_surroundings(look.map_or([0.0; 4], |look| look.tint));
-        self.view_tint.set_held(self.hud.powerup_tint());
         self.view_tint.pass(fade);
         let view = View {
             origin,

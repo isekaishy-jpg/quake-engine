@@ -1,29 +1,29 @@
 //! Quake's stats and item bits, from `quakedef.h` and `defs.qc`.
 
 /// `STAT_HEALTH`.
-pub(crate) const STAT_HEALTH: usize = 0;
+pub const STAT_HEALTH: usize = 0;
 /// `STAT_AMMO`.
-pub(crate) const STAT_AMMO: usize = 3;
+pub const STAT_AMMO: usize = 3;
 /// `STAT_ARMOR`.
-pub(crate) const STAT_ARMOR: usize = 4;
+pub const STAT_ARMOR: usize = 4;
 /// `STAT_SHELLS`, the first of four ammo counts.
 pub(crate) const STAT_SHELLS: usize = 6;
 /// `STAT_ACTIVEWEAPON`.
-pub(crate) const STAT_ACTIVE_WEAPON: usize = 10;
+pub const STAT_ACTIVE_WEAPON: usize = 10;
 /// `STAT_TOTALSECRETS`.
 pub(crate) const STAT_TOTAL_SECRETS: usize = 11;
 /// `STAT_TOTALMONSTERS`.
-pub(crate) const STAT_TOTAL_MONSTERS: usize = 12;
+pub const STAT_TOTAL_MONSTERS: usize = 12;
 /// `STAT_SECRETS`.
 pub(crate) const STAT_SECRETS: usize = 13;
 /// `STAT_MONSTERS`.
-pub(crate) const STAT_MONSTERS: usize = 14;
+pub const STAT_MONSTERS: usize = 14;
 /// The items, which the original sends apart from its stats.
-pub(crate) const STAT_ITEMS: usize = 15;
+pub const STAT_ITEMS: usize = 15;
 /// Whether this is deathmatch.
 pub(crate) const STAT_DEATHMATCH: usize = 16;
 /// How many stats there are.
-pub(crate) const STAT_COUNT: usize = 17;
+pub const STAT_COUNT: usize = 17;
 
 /// `IT_SHOTGUN`, the first of seven weapons.
 pub(crate) const IT_SHOTGUN: i32 = 1;
@@ -39,22 +39,8 @@ pub(crate) const IT_GRENADE_LAUNCHER: i32 = 16;
 pub(crate) const IT_ROCKET_LAUNCHER: i32 = 32;
 /// `IT_LIGHTNING`.
 pub(crate) const IT_LIGHTNING: i32 = 64;
-/// `IT_SHELLS`.
-pub(crate) const IT_SHELLS: i32 = 256;
-/// `IT_NAILS`.
-pub(crate) const IT_NAILS: i32 = 512;
-/// `IT_ROCKETS`.
-pub(crate) const IT_ROCKETS: i32 = 1024;
-/// `IT_CELLS`.
-pub(crate) const IT_CELLS: i32 = 2048;
 /// `IT_AXE`.
 pub(crate) const IT_AXE: i32 = 4096;
-/// `IT_ARMOR1`.
-pub(crate) const IT_ARMOR1: i32 = 8192;
-/// `IT_ARMOR2`.
-pub(crate) const IT_ARMOR2: i32 = 16384;
-/// `IT_ARMOR3`.
-pub(crate) const IT_ARMOR3: i32 = 32768;
 /// `IT_INVISIBILITY`.
 pub(crate) const IT_INVISIBILITY: i32 = 1 << 19;
 /// `IT_INVULNERABILITY`.
@@ -63,3 +49,29 @@ pub(crate) const IT_INVULNERABILITY: i32 = 1 << 20;
 pub(crate) const IT_SUIT: i32 = 1 << 21;
 /// `IT_QUAD`.
 pub(crate) const IT_QUAD: i32 = 1 << 22;
+
+/// The stats, by what the UI script calls them.
+pub const STAT_NAMES: [(&str, usize); 12] = [
+    ("health", STAT_HEALTH),
+    ("ammo", STAT_AMMO),
+    ("shells", STAT_SHELLS),
+    ("nails", STAT_SHELLS + 1),
+    ("rockets", STAT_SHELLS + 2),
+    ("cells", STAT_SHELLS + 3),
+    ("weapon", STAT_ACTIVE_WEAPON),
+    ("total_secrets", STAT_TOTAL_SECRETS),
+    ("total_monsters", STAT_TOTAL_MONSTERS),
+    ("secrets", STAT_SECRETS),
+    ("monsters", STAT_MONSTERS),
+    ("deathmatch", STAT_DEATHMATCH),
+];
+
+/// What's held, by what the UI script calls it.
+pub const ITEM_NAMES: [(&str, i32); 6] = [
+    ("key1", 1 << 17),
+    ("key2", 1 << 18),
+    ("invisibility", IT_INVISIBILITY),
+    ("invulnerability", IT_INVULNERABILITY),
+    ("suit", IT_SUIT),
+    ("quad", IT_QUAD),
+];

@@ -1,6 +1,8 @@
 //! Reading the engine's own look from content (proposal 0117). A game without it
 //! goes on with what it has.
 
+use std::collections::BTreeMap;
+
 use engine_assets::FileSystem;
 use engine_script::UiScript;
 use engine_ui::{FontStyle, KitPiece, UiAnimation, UiKit, UiTheme};
@@ -102,7 +104,20 @@ pub(crate) fn load_ui_script(filesystem: &FileSystem, theme: &UiTheme) -> Option
     let bytes = filesystem.read(UI_SCRIPT).ok()?;
     let source = String::from_utf8(bytes).ok()?;
     match UiScript::new(UI_SCRIPT, &source) {
-        Ok(script) => Some(script),
+        Ok(script) => {
+            script.set_text_widths(BTreeMap::from([
+                (
+                    "regular".to_owned(),
+                    theme.character_widths(FontStyle::Regular),
+                ),
+                ("bold".to_owned(), theme.character_widths(FontStyle::Bold)),
+                (
+                    "display".to_owned(),
+                    theme.character_widths(FontStyle::Display),
+                ),
+            ]));
+            Some(script)
+        }
         Err(error) => {
             eprintln!("{UI_SCRIPT}: {error}");
             None

@@ -1,7 +1,9 @@
 //! Firing ahead of the server (proposals 0052 and 0053).
 
 use engine_core::math::view_axes;
-use fixture_quake::{Intermission, WeaponRule, shot_launch, weapon_rule};
+use fixture_quake::{WeaponRule, shot_launch, weapon_rule};
+
+use crate::game_screen::Intermission;
 
 use super::World;
 
@@ -19,10 +21,11 @@ impl World {
 
     /// The rule of the weapon in hand, if the player could fire it.
     pub(super) fn weapon_ready(&self) -> Option<WeaponRule> {
-        let ammo = self.hud.ammo();
-        let rule = weapon_rule(self.hud.active_weapon(), ammo)?;
+        let ammo = self.game_screen.ammo();
+        let rule = weapon_rule(self.game_screen.active_weapon(), ammo)?;
         // A click from the dead is a wish to come back, not a shot.
-        let idle = self.hud.is_dead() || self.hud.intermission() != Intermission::None;
+        let idle =
+            self.game_screen.is_dead() || self.game_screen.intermission() != Intermission::None;
         (ammo >= rule.ammo && !idle).then_some(rule)
     }
 

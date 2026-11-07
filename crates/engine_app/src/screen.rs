@@ -4,20 +4,15 @@ use std::collections::{BTreeMap, HashMap};
 
 use engine_assets::FileSystem;
 use engine_compile::decode_png;
-use engine_console::Console;
-use engine_core::canvas::{Canvas, Image, Picture, PictureSource, Quad};
+use engine_core::canvas::{Canvas, Image, Picture, PictureSource, Quad, TALK_MARK};
 use engine_core::math::Vec3;
 use engine_core::sound::SoundStart;
 use engine_render::Renderer;
-use engine_script::{UiCommand, UiScript, UiState};
+use engine_script::{UiCommand, UiScore, UiScript, UiState};
 use engine_ui::{
-    FontStyle, UiTheme, canvas_scale, draw_frame, draw_piece, draw_plaque, draw_rate, draw_text,
-    measure_text,
+    FontStyle, UiTheme, canvas_scale, draw_frame, draw_piece, draw_rate, draw_text, measure_text,
 };
-use fixture_quake::{
-    BACKGROUND_PICTURE, Hud, Intermission, LOADING_PICTURE, MenuHost, PAUSE_PICTURE, PICTURE_WAD,
-    Palette, SAVE_SLOTS, Wad, load_palette, load_picture,
-};
+use fixture_quake::{BACKGROUND_PICTURE, PICTURE_WAD, Palette, Wad, load_palette, load_picture};
 
 use crate::app::World;
 use crate::look::{CONSOLE_PICTURE, SPLASH_PICTURE};
@@ -32,8 +27,11 @@ const MENU_SOUND_ENTITY: u64 = u64::MAX;
 /// What's shown in the corner of the console.
 const VERSION: &str = concat!("Quake Engine ", env!("CARGO_PKG_VERSION"));
 
-/// What dims the view behind the menus, from `Draw_FadeScreen`.
-const MENU_FADE: [f32; 4] = [0.0, 0.0, 0.0, 0.8];
+/// How many messages are shown at once.
+const MOST_MESSAGES: usize = 4;
+
+/// How many places there are to save.
+const SAVE_SLOTS: usize = 12;
 
 /// Pictures loaded so far, by name.
 #[derive(Default)]
@@ -56,33 +54,41 @@ impl PictureBank {
     }
 }
 
-/// What's told to the status bar and menu script.
-#[expect(clippy::cast_possible_truncation, reason = "a menu's clock")]
-fn ui_state(
-    size: (f32, f32),
-    run_time: f64,
-    in_game: bool,
-    hud: &Hud,
-    script: &UiScript,
-    settings: &BTreeMap<String, f64>,
-) -> UiState {
-    let mut stats = BTreeMap::new();
-    if in_game {
-        stats.insert("health".to_owned(), f64::from(hud.health()));
-        stats.insert("armor".to_owned(), f64::from(hud.armor()));
-        stats.insert("ammo".to_owned(), f64::from(hud.ammo()));
+/// Draws `text`, with its letters `tracking` units further apart than they'd be.
+fn draw_spaced(
+    canvas: &mut Canvas<'_>,
+    theme: &mut UiTheme,
+    style: FontStyle,
+    (at, size, tracking, align): ([f32; 2], f32, f32, f32),
+    text: &str,
+    color: [f32; 4],
+) {
+    if tracking == 0.0 {
+        let width = measure_text(canvas, theme, style, size, text);
+        draw_text(
+            canvas,
+            theme,
+            style,
+            (at[0] - width * align, at[1], size),
+            text,
+            color,
+        );
+        return;
     }
-    let wanted = script.wanted_settings();
-    UiState {
-        width: size.0,
-        height: size.1,
-        time: run_time as f32,
-        in_game,
-        stats,
-        settings: wanted
-            .iter()
-            .filter_map(|name| Some((name.clone(), *settings.get(name)?)))
-            .collect(),
+    let mut letter = [0; 4];
+    let widths: Vec<f32> = text
+        .chars()
+        .map(|character| {
+            let one = character.encode_utf8(&mut letter);
+            measure_text(canvas, theme, style, size, one) + tracking
+        })
+        .collect();
+    let whole: f32 = widths.iter().sum();
+    let mut x = at[0] - whole * align;
+    for (character, width) in text.chars().zip(widths) {
+        let one = character.encode_utf8(&mut letter);
+        draw_text(canvas, theme, style, (x, at[1], size), one, color);
+        x += width;
     }
 }
 
@@ -113,6 +119,7 @@ fn draw_ui(canvas: &mut Canvas<'_>, theme: &mut UiTheme, commands: &[UiCommand])
                 style,
                 at,
                 size,
+                tracking,
                 text,
                 color,
                 align,
@@ -122,9 +129,14 @@ fn draw_ui(canvas: &mut Canvas<'_>, theme: &mut UiTheme, commands: &[UiCommand])
                     "display" => FontStyle::Display,
                     _ => FontStyle::Regular,
                 };
-                let width = measure_text(canvas, theme, style, *size, text);
-                let place = (at[0] - width * align, at[1], *size);
-                draw_text(canvas, theme, style, place, text, *color);
+                draw_spaced(
+                    canvas,
+                    theme,
+                    style,
+                    (*at, *size, *tracking, *align),
+                    text,
+                    *color,
+                );
             }
             UiCommand::Run(_)
             | UiCommand::Sound(_)
@@ -280,43 +292,135 @@ impl PictureSource for PictureLoader<'_> {
 }
 
 impl World {
+    /// What the script's told about everything, for a screen of `size` units.
+    #[expect(clippy::cast_possible_truncation, reason = "a menu's clock")]
+    fn ui_state(&self, size: (f32, f32), script: &UiScript, typed: Option<char>) -> UiState {
+        let in_game = self.client.is_some();
+        let mut numbers = self.game_screen.numbers();
+        let flag = |on: bool| f64::from(u8::from(on));
+        numbers.insert("playing".to_owned(), flag(self.is_playing_screen()));
+        numbers.insert("paused".to_owned(), flag(self.paused));
+        numbers.insert("held".to_owned(), flag(self.pointer_held));
+        let mut stats = if in_game {
+            self.game_screen.stats_by_name()
+        } else {
+            BTreeMap::new()
+        };
+        stats.insert("can_save".to_owned(), flag(self.can_save()));
+        let mut texts = self.game_screen.texts();
+        texts.insert("name".to_owned(), self.player_name.clone());
+        texts.insert("rate".to_owned(), self.rate_text.clone());
+        let latest = saves::latest(&self.user_directory, SAVE_SLOTS).unwrap_or_default();
+        texts.insert("latest_save".to_owned(), latest);
+        let wanted = script.wanted_settings();
+        UiState {
+            width: size.0,
+            height: size.1,
+            time: self.run_time.as_secs_f64() as f32,
+            in_game,
+            stats,
+            settings: wanted
+                .iter()
+                .filter_map(|name| Some((name.clone(), *self.console_settings.get(name)?)))
+                .collect(),
+            numbers,
+            texts,
+            scores: self
+                .game_screen
+                .scores()
+                .iter()
+                .map(|score| UiScore {
+                    name: score.name.clone(),
+                    frags: score.frags,
+                    own: score.own,
+                })
+                .collect(),
+            saves: (0..SAVE_SLOTS)
+                .map(|slot| {
+                    saves::describe(&self.user_directory, &format!("s{slot}")).unwrap_or_default()
+                })
+                .collect(),
+            keys: script
+                .wanted_keys()
+                .into_iter()
+                .map(|command| {
+                    let keys = self.bindings.keys_for(&command);
+                    (command, keys)
+                })
+                .collect(),
+            typed: typed.map(String::from).unwrap_or_default(),
+            messages: self
+                .messages
+                .iter()
+                .map(|(arrived, text)| (text.clone(), (self.map_time - arrived) as f32))
+                .collect(),
+        }
+    }
+
+    /// Notes what the game said, if it's for the player to read. A player alone needs no word
+    /// that they've come in, and that stays in the console.
+    pub(crate) fn tell_player(&mut self, text: &str) {
+        let plain = text.strip_prefix(TALK_MARK).unwrap_or(text).trim();
+        if plain.is_empty() || (!self.is_online() && plain.ends_with("entered the game")) {
+            return;
+        }
+        if self.messages.len() == MOST_MESSAGES {
+            let _oldest = self.messages.pop_front();
+        }
+        self.messages.push_back((self.map_time, plain.to_owned()));
+    }
+
     /// What a script's told outside of drawing, when the size doesn't matter.
-    fn ui_state_now(&self, script: &UiScript) -> UiState {
-        ui_state(
-            (0.0, 0.0),
-            self.run_time.as_secs_f64(),
-            self.client.is_some(),
-            &self.hud,
-            script,
-            &self.console_settings,
-        )
+    fn ui_state_now(&self, script: &UiScript, typed: Option<char>) -> UiState {
+        self.ui_state((0.0, 0.0), script, typed)
+    }
+
+    /// Opens the script's menu on the screen called `screen`.
+    pub(crate) fn open_script_menu(&mut self, screen: &str) {
+        if let Some(script) = &self.ui_script {
+            self.script_menu = true;
+            let state = self.ui_state_now(script, None);
+            let result = script.open_menu(&state, screen);
+            self.after_ui(result);
+        }
+    }
+
+    /// Tells the script where the pointer is, in units, and if it just clicked.
+    pub(crate) fn pointer_to_script(&mut self, clicked: bool) {
+        let scale = self
+            .renderer
+            .as_ref()
+            .map_or(1.0, |renderer| canvas_scale(renderer.size()));
+        let place = (self.pointer.0 / scale, self.pointer.1 / scale);
+        if let Some(script) = &self.ui_script {
+            let state = self.ui_state_now(script, None);
+            let result = script.menu_pointer(&state, place, clicked);
+            self.after_ui(result);
+        }
     }
 
     /// Opens or closes the script's menu.
     pub(crate) fn toggle_script_menu(&mut self) {
-        self.script_menu = !self.script_menu;
-        if self.script_menu
-            && let Some(script) = &self.ui_script
-        {
-            let state = self.ui_state_now(script);
-            let result = script.open_menu(&state);
-            self.after_ui(result);
+        if self.script_menu {
+            self.script_menu = false;
+        } else {
+            self.open_script_menu("");
         }
     }
 
     /// Tells the script a level has begun.
     pub(crate) fn level_started_to_script(&mut self) {
         if let Some(script) = &self.ui_script {
-            let state = self.ui_state_now(script);
+            let state = self.ui_state_now(script, None);
             let result = script.level_started(&state);
             self.after_ui(result);
         }
     }
 
     /// Hands a key to the script's menu.
-    pub(crate) fn menu_key_to_script(&mut self, key: &str) {
+    pub(crate) fn menu_key_to_script(&mut self, key: &str, typed: Option<char>) {
         if let Some(script) = &self.ui_script {
-            let state = self.ui_state_now(script);
+            let state = self.ui_state_now(script, typed);
             let result = script.menu_key(&state, key);
             self.after_ui(result);
         }
@@ -357,7 +461,13 @@ impl World {
         let playing = self.is_playing_screen();
         let running = self.client.is_some();
         let (time, run_time) = (self.map_time, self.run_time.as_secs_f64());
-        let scale = canvas_scale(size.1, self.ui_scale);
+        let scale = canvas_scale(size);
+        #[expect(clippy::cast_precision_loss, reason = "a screen's size")]
+        let units = (size.0 as f32 / scale, size.1 as f32 / scale);
+        let state = self
+            .ui_script
+            .as_ref()
+            .map(|script| self.ui_state(units, script, None));
         let Some(renderer) = &mut self.renderer else {
             return Vec::new();
         };
@@ -379,39 +489,14 @@ impl World {
             if tint[3] > 0.0 {
                 canvas.fill([0.0, 0.0, canvas.width(), canvas.height()], tint);
             }
-            if self.crosshair && playing && self.hud.intermission() == Intermission::None {
-                let (x, y) = (canvas.width() / 2.0 - 4.0, canvas.height() / 2.0 - 4.0);
-                canvas.character(x, y, b'+');
-            }
-            match self
-                .ui_script
-                .as_ref()
-                .filter(|script| script.draws_status())
-            {
-                Some(script) => {
-                    self.hud.draw_messages(&mut canvas, playing);
-                    if self.hud.intermission() == Intermission::None {
-                        let state = ui_state(
-                            (canvas.width(), canvas.height()),
-                            run_time,
-                            running,
-                            &self.hud,
-                            script,
-                            &self.console_settings,
-                        );
-                        match script.draw_status(&state) {
-                            Ok(commands) => draw_ui(&mut canvas, &mut self.theme, &commands),
-                            Err(error) => failed = Some(error.to_string()),
-                        }
-                    }
+            if let (Some(script), Some(state)) = (&self.ui_script, &state) {
+                match script.draw_status(state) {
+                    Ok(commands) => draw_ui(&mut canvas, &mut self.theme, &commands),
+                    Err(error) => failed = Some(error.to_string()),
                 }
-                None => self.hud.draw(&mut canvas, playing),
-            }
-            if self.paused {
-                draw_plaque(&mut canvas, PAUSE_PICTURE);
             }
             if playing {
-                self.console_view.draw_notify(&mut canvas, time, blink);
+                self.console_view.draw_chat(&mut canvas, blink);
             }
         }
         let own_look = self.theme.has_fonts() && canvas.size_of(CONSOLE_PICTURE).is_some();
@@ -422,44 +507,16 @@ impl World {
         };
         self.console_view
             .draw(&mut canvas, background, VERSION, blink, theme);
-        if self.menu.is_open() {
-            // From `M_Draw`: the menus need something quiet behind them.
-            let whole = [0.0, 0.0, canvas.width(), canvas.height()];
-            if running {
-                canvas.fill(whole, MENU_FADE);
-            } else {
-                canvas.stretched(BACKGROUND_PICTURE, whole, 1.0);
-            }
-        }
-        // The menus only read what they're told, so this doesn't need them to
-        // borrow the whole of the world.
-        let view = MenuView {
-            settings: &self.menu_settings,
-            keys: &self.bindings,
-        };
-        self.menu.draw(&mut canvas, run_time, &view);
         if self.script_menu
-            && let Some(script) = &self.ui_script
+            && let (Some(script), Some(state)) = (&self.ui_script, &state)
         {
-            let state = ui_state(
-                (canvas.width(), canvas.height()),
-                run_time,
-                running,
-                &self.hud,
-                script,
-                &self.console_settings,
-            );
-            match script.draw_menu(&state) {
+            match script.draw_menu(state) {
                 Ok(commands) => draw_ui(&mut canvas, &mut self.theme, &commands),
                 Err(error) => failed = Some(error.to_string()),
             }
         }
         if self.level_pending.is_some() {
-            if self.theme.kit.pieces.contains_key("spinner-00") {
-                draw_spinner(&mut canvas, &self.theme, run_time);
-            } else {
-                draw_plaque(&mut canvas, LOADING_PICTURE);
-            }
+            draw_spinner(&mut canvas, &self.theme, run_time);
         }
         if let Some((title, began)) = &self.zone_title {
             #[expect(clippy::cast_possible_truncation, reason = "a fade's time")]
@@ -467,7 +524,7 @@ impl World {
             draw_zone_title(&mut canvas, &mut self.theme, title, age);
         }
         draw_splash(&mut canvas, run_time);
-        if !self.rate_text.is_empty() {
+        if self.ui_script.is_none() && !self.rate_text.is_empty() {
             draw_rate(&mut canvas, &self.rate_text);
         }
         let quads = canvas.into_quads();
@@ -492,116 +549,5 @@ impl World {
             };
             self.audio.start(&sound, clip);
         }
-    }
-}
-
-/// The settings menus draw, copied once a tick.
-pub(crate) type MenuSettings = HashMap<&'static str, f32>;
-
-/// The settings the menus show.
-pub(crate) const MENU_SETTINGS: [&str; 12] = [
-    "topcolor",
-    "bottomcolor",
-    "gamma",
-    "sensitivity",
-    "bgmvolume",
-    "volume",
-    "cl_alwaysrun",
-    "m_pitch",
-    "vid_vsync",
-    "show_fps",
-    "fov",
-    "ui_scale",
-];
-
-/// What the menus see while they're being drawn.
-struct MenuView<'a> {
-    /// The settings.
-    settings: &'a MenuSettings,
-    /// The bindings.
-    keys: &'a engine_client::Bindings,
-}
-
-impl MenuHost for MenuView<'_> {
-    fn setting(&self, name: &str) -> f32 {
-        self.settings.get(name).copied().unwrap_or(0.0)
-    }
-
-    fn set_setting(&mut self, _name: &str, _value: f32) {}
-
-    fn run(&mut self, _command: &str) {}
-
-    fn keys_for(&self, command: &str) -> Vec<String> {
-        self.keys.keys_for(command)
-    }
-
-    fn play(&mut self, _sound: &str) {}
-
-    fn saves(&self) -> Vec<Option<String>> {
-        Vec::new()
-    }
-
-    fn in_game(&self) -> bool {
-        false
-    }
-
-    fn can_save(&self) -> bool {
-        false
-    }
-
-    fn name(&self) -> String {
-        String::new()
-    }
-}
-
-/// What the menus can do when a key arrives.
-pub(crate) struct MenuActions<'a> {
-    /// The console.
-    pub(crate) console: &'a mut Console<World>,
-    /// The world.
-    pub(crate) world: &'a mut World,
-}
-
-impl MenuHost for MenuActions<'_> {
-    fn setting(&self, name: &str) -> f32 {
-        self.console
-            .cvar(name)
-            .map_or(0.0, engine_console::Cvar::number)
-    }
-
-    fn set_setting(&mut self, name: &str, value: f32) {
-        // Rounded, so steps of a tenth stay tidy in the config.
-        let value = (value * 1000.0).round() / 1000.0;
-        self.console.add(&format!("{name} {value}"));
-    }
-
-    fn run(&mut self, command: &str) {
-        self.console.add(command);
-    }
-
-    fn keys_for(&self, command: &str) -> Vec<String> {
-        self.world.bindings.keys_for(command)
-    }
-
-    fn play(&mut self, sound: &str) {
-        self.world.play_local(sound);
-    }
-
-    fn saves(&self) -> Vec<Option<String>> {
-        (0..SAVE_SLOTS)
-            .map(|slot| saves::describe(&self.world.user_directory, &format!("s{slot}")))
-            .collect()
-    }
-
-    fn in_game(&self) -> bool {
-        self.world.client.is_some()
-    }
-
-    fn can_save(&self) -> bool {
-        self.world.can_save()
-    }
-
-    fn name(&self) -> String {
-        self.world.identity.name.clone()
     }
 }
