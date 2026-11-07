@@ -427,12 +427,8 @@ fn sun_shadow(point: vec3<f32>, normal: vec3<f32>) -> f32 {
 // The sun's light on a pixel, and how much of it gets there. It's kept for the highlight.
 var<private> sun_seen: f32 = 0.0;
 
-// A sun that isn't baked, on a surface. Its plane comes from the pixel, facing the eye.
-fn sun_on(world: vec3<f32>, smooth_normal: vec3<f32>) -> vec3<f32> {
-    sun_seen = 0.0;
-    if live.sun_toward.w < 0.5 {
-        return vec3<f32>(0.0);
-    }
+// A surface's normal for a sun: from the pixel, facing the eye, or the mesh's own.
+fn sun_normal(world: vec3<f32>, smooth_normal: vec3<f32>) -> vec3<f32> {
     var normal = normalize(cross(dpdx(world), dpdy(world)));
     if dot(normal, frame.eye.xyz - world) < 0.0 {
         normal = -normal;
@@ -440,11 +436,89 @@ fn sun_on(world: vec3<f32>, smooth_normal: vec3<f32>) -> vec3<f32> {
     if dot(smooth_normal, smooth_normal) > 0.01 {
         normal = normalize(smooth_normal);
     }
+    return normal;
+}
+
+// A sun that isn't baked, on a surface.
+fn sun_on(world: vec3<f32>, smooth_normal: vec3<f32>) -> vec3<f32> {
+    sun_seen = 0.0;
+    if live.sun_toward.w < 0.5 {
+        return vec3<f32>(0.0);
+    }
+    let normal = sun_normal(world, smooth_normal);
     let facing = dot(normal, live.sun_toward.xyz);
     if facing <= 0.0 {
         return vec3<f32>(0.0);
     }
     sun_seen = sun_shadow(world, normal);
+    return live.sun_light.rgb * facing * sun_seen;
+}
+
+// Whether a sun on an arc is drawn from the shadows baked along it.
+fn on_arc() -> bool {
+    return live.sun_toward.w > 0.5 && live.sun_light.w > 0.5;
+}
+
+// The angles a sun on an arc reaches the sample at `at` at, a bit each: its colour's three bytes,
+// and its edge's.
+fn arc_bits(at: vec2<i32>) -> u32 {
+    let size = vec2<i32>(textureDimensions(lightmap));
+    let stored = textureLoad(lightmap, clamp(at, vec2<i32>(0), size - vec2<i32>(1)), 0);
+    let bytes = vec4<u32>(round(stored * 255.0));
+    return bytes.x | (bytes.y << 8u) | (bytes.z << 16u) | (bytes.w << 24u);
+}
+
+// How much of the sample at `at` the sun reaches, between the two angles it's between.
+fn arc_corner(at: vec2<i32>, first: u32, next: u32, along: f32) -> f32 {
+    let bits = arc_bits(at);
+    return mix(f32((bits >> first) & 1u), f32((bits >> next) & 1u), along);
+}
+
+// How much of a point the sun reaches, from the four samples round `uv`, so that a shadow's edge
+// moves smoothly as the sun does.
+fn arc_seen(uv: vec2<f32>) -> f32 {
+    let size = vec2<f32>(textureDimensions(lightmap));
+    let texel = uv * size - vec2<f32>(0.5);
+    let base = vec2<i32>(floor(texel));
+    let between = fract(texel);
+    let place = clamp(live.sun_light.w - 1.0, 0.0, 31.0);
+    let first = u32(floor(place));
+    let next = min(first + 1u, 31u);
+    let along = place - floor(place);
+    let top = mix(
+        arc_corner(base, first, next, along),
+        arc_corner(base + vec2<i32>(1, 0), first, next, along),
+        between.x,
+    );
+    let bottom = mix(
+        arc_corner(base + vec2<i32>(0, 1), first, next, along),
+        arc_corner(base + vec2<i32>(1, 1), first, next, along),
+        between.x,
+    );
+    // Where the blend crosses the middle is where the edge is: brought to a short ramp there, a
+    // shadow's edge goes straight between samples and doesn't step from one to the next.
+    return smoothstep(0.3, 0.7, mix(top, bottom, between.y));
+}
+
+// A sun on an arc, on a surface: lit as it is now, and shaded by where its layer says it reaches.
+// What has no layer of it never faces the arc, or is lit by what it's given.
+fn arc_sun(in: VertexOut) -> vec3<f32> {
+    sun_seen = 0.0;
+    var slot = -1.0;
+    for (var index = 0u; index < 4u; index = index + 1u) {
+        if in.styles[index] == SUN_STYLE && slot < 0.0 {
+            slot = f32(index);
+        }
+    }
+    if slot < 0.0 || in.styles.x == OWN_LIGHT {
+        return vec3<f32>(0.0);
+    }
+    let normal = sun_normal(in.world, in.normal.xyz);
+    let facing = dot(normal, live.sun_toward.xyz);
+    if facing <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    sun_seen = arc_seen(in.light_uv + vec2<f32>(in.light_step * slot, 0.0));
     return live.sun_light.rgb * facing * sun_seen;
 }
 
@@ -574,11 +648,14 @@ fn openness(clip: vec2<f32>, world: vec3<f32>) -> f32 {
 // A layer, darkened by how open it is unless it's the sun's own, which comes from one way and has
 // its own shadows.
 fn shaded_layer(in: VertexOut, slot: f32, style: u32, open: f32) -> vec3<f32> {
-    let color = layer(in, slot, style);
     if style == SUN_STYLE {
-        return color;
+        // On an arc, the sun's layer is where it reaches, not light.
+        if on_arc() {
+            return vec3<f32>(0.0);
+        }
+        return layer(in, slot, style);
     }
-    return color * open;
+    return layer(in, slot, style) * open;
 }
 
 fn light(in: VertexOut) -> vec3<f32> {
@@ -591,7 +668,7 @@ fn light(in: VertexOut) -> vec3<f32> {
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
     let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster, in.normal.xyz)
-        + sun_on(in.world, in.normal.xyz);
+        + select(sun_on(in.world, in.normal.xyz), arc_sun(in), on_arc());
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
     let lit = shaded + moving + frame.day_light.rgb * open;

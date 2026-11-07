@@ -10,8 +10,9 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 
 use engine_core::math::Vec3;
 use engine_map::{
-    AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material, MegaImage,
-    MipLevel, ProbeGrid, RESIDENT, SUN_BOUNCE_STYLE, SUN_STYLE, SunMode, TerrainSheet, TextureKind,
+    ARC_ANGLES, AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material,
+    MegaImage, MipLevel, ProbeGrid, RESIDENT, SUN_BOUNCE_STYLE, SUN_STYLE, SunMode, TerrainSheet,
+    TextureKind,
 };
 
 use crate::charts::{Chart, map_charts};
@@ -161,6 +162,78 @@ struct Scene<'a> {
     lifts: HashMap<u32, Vec3>,
     /// The fixed lights.
     lights: &'a [BakeLight],
+    /// For a sun on an arc that this bake keeps the shadows of, each angle along it, as the
+    /// directions of the rays across its slice of the arc. Empty otherwise.
+    arc: Vec<[Point; ARC_RAYS]>,
+}
+
+/// How many rays each angle along a sun's arc takes, across its slice of the arc.
+const ARC_RAYS: usize = 3;
+
+/// The angles along `map`'s arc, as [`Scene::arc`] keeps them, if this bake keeps its shadows: a
+/// final one, of a sun on an arc that shines. A sun on an arc goes through a day.
+fn arc_rays(map: &Map, level: BakeLevel, shines: bool) -> Vec<[Point; ARC_RAYS]> {
+    let day = map
+        .day
+        .filter(|_| map.sun_mode == SunMode::Arc && level == BakeLevel::Final && shines);
+    let Some(day) = day else {
+        return Vec::new();
+    };
+    #[expect(clippy::cast_precision_loss, reason = "a few angles")]
+    (0..ARC_ANGLES)
+        .map(|angle| {
+            std::array::from_fn(|ray| {
+                let across = (ray as f64 + 0.5) / ARC_RAYS as f64 - 0.5;
+                #[expect(clippy::cast_possible_truncation, reason = "an hour")]
+                let place = (angle as f64 + across) as f32;
+                wide(day.sun_toward(map.sun_arc.hour_at(place)))
+            })
+        })
+        .collect()
+}
+
+/// Which angles along the arc the sun reaches `point` at, a bit each. Each takes rays across its
+/// slice of the arc and is lit if most are, so what's thinner than a slice stays out and doesn't
+/// come and go.
+fn arc_bits(scene: &Scene<'_>, point: Point, normal: Point) -> u32 {
+    let start = add_scaled(point, normal, SURFACE_OFFSET);
+    let mut bits = 0;
+    for (bit, rays) in scene.arc.iter().enumerate() {
+        let lit = rays
+            .iter()
+            .filter(|toward| {
+                let reach = (scene.top + 64.0 - start[2]) / toward[2].max(1e-3);
+                let target = add_scaled(start, **toward, reach.clamp(64.0, SUN_DISTANCE));
+                toward[2] > 0.0 && !shadowed(scene, start, target)
+            })
+            .count();
+        if lit * 2 > rays.len() {
+            bits |= 1 << bit;
+        }
+    }
+    bits
+}
+
+/// A sun's layer on `bake` with the angles each sample sees it at in place of its colour: the
+/// low three bytes as the colour, and the high as the sample's edge.
+fn arc_layer(scene: &Scene<'_>, bake: &FaceBake) -> Option<(Vec<[f64; 3]>, Vec<u8>)> {
+    if !bake.layers.iter().any(|(style, _)| *style == SUN_STYLE) {
+        return None;
+    }
+    let mut colors = Vec::with_capacity(bake.points.len());
+    let mut highs = Vec::with_capacity(bake.points.len());
+    for (index, point) in bake.points.iter().enumerate() {
+        let normal = bake
+            .normals
+            .as_ref()
+            .and_then(|normals| normals.get(index))
+            .copied()
+            .unwrap_or(bake.normal);
+        let [low, middle, high, top] = arc_bits(scene, *point, normal).to_le_bytes();
+        colors.push([low, middle, high].map(f64::from));
+        highs.push(top);
+    }
+    Some((colors, highs))
 }
 
 /// A mesh's triangles, with bounds to pass most rays by.
@@ -1187,7 +1260,10 @@ fn light_of_face<'a>(
         .map(|point| light_on(scene, source, *point, normal, false))
         .collect();
     let most = open.iter().map(|(color, _)| energy_of(*color)).sum::<f64>();
-    if most <= 0.0 {
+    // A sun on an arc needs its layer wherever some of the arc faces a face, however little
+    // reaches it as it's baked.
+    let keep = source.style == SUN_STYLE && scene.arc.iter().any(|rays| dot(rays[1], normal) > 0.0);
+    if most <= 0.0 && !keep {
         return None;
     }
     let mut lit = open.clone();
@@ -1219,7 +1295,7 @@ fn light_of_face<'a>(
         share.colors.push(color);
         share.directions.push(direction.map(|part| part * energy));
     }
-    (share.energy > 0.0).then_some(share)
+    (share.energy > 0.0 || keep).then_some(share)
 }
 
 /// A light layer, and the sharp light it holds, if it's one.
@@ -2224,7 +2300,9 @@ fn bake_probes(
             }
             for source in scene.lights {
                 // What's drawn live lights models as it goes.
-                if source.style == SUN_STYLE && map.sun_mode == SunMode::Live {
+                if source.style == SUN_STYLE
+                    && (map.sun_mode == SunMode::Live || !scene.arc.is_empty())
+                {
                     continue;
                 }
                 let (color, from) = light_on(scene, source, *point, *normal, true);
@@ -2518,6 +2596,7 @@ pub fn bake_light_as(
             .iter()
             .filter_map(|(face, lift)| Some((map.faces.get(*face as usize)?.first_point, *lift)))
             .collect(),
+        arc: arc_rays(map, quality.level, lights.iter().any(|light| light.sun)),
         lights: &lights,
         // Room for what's bounced, and a sun's has a layer of its own.
         light_room: MAX_LAYERS - if own_sun { 2 } else { 1 },
@@ -2610,6 +2689,26 @@ pub fn bake_light_as(
         }
     }
     share_samples(&scene, &mut bakes);
+    // A sun on an arc keeps where it reaches each sample at each angle, and the game lights it as
+    // it goes. All of a level has it, as how its layer is read is the same everywhere.
+    if !scene.arc.is_empty() {
+        let arcs = in_parallel(&bakes, |bake| {
+            bake.as_ref().and_then(|bake| arc_layer(&scene, bake))
+        });
+        for (bake, arc) in bakes.iter_mut().zip(arcs) {
+            let (Some(bake), Some((colors, highs))) = (bake, arc) else {
+                continue;
+            };
+            for (style, layer) in &mut bake.layers {
+                if *style == SUN_STYLE {
+                    *layer = colors.clone();
+                }
+            }
+            bake.edges.retain(|(style, _)| *style != SUN_STYLE);
+            bake.edges.push((SUN_STYLE, highs));
+        }
+    }
+    let arc_baked = !scene.arc.is_empty();
 
     let mut samples = Vec::new();
     let mut directions = Vec::new();
@@ -2678,5 +2777,6 @@ pub fn bake_light_as(
     });
     map.probes = probes;
     map.lit = true;
+    map.sun_arc_baked = arc_baked;
     Ok(())
 }

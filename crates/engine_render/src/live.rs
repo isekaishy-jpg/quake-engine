@@ -211,7 +211,7 @@ pub(crate) fn live_bytes(
     lights: &[LiveLight],
     capsules: &[CapsuleDraw],
     slots: &[Option<usize>],
-    sun: Option<(SunDraw, SunShadow)>,
+    sun: Option<(SunDraw, SunShadow, Option<f32>)>,
 ) -> Vec<u8> {
     let mut floats = Vec::with_capacity(LIVE_BYTES / 4);
     let lights = lights.get(..MAX_LIVE_LIGHTS).unwrap_or(lights);
@@ -267,13 +267,15 @@ pub(crate) fn live_bytes(
         bytes.extend_from_slice(&mask.to_le_bytes());
     }
     let mut sun_floats = vec![0.0_f32; SUN_BYTES / 4];
-    if let Some((draw, shadow)) = sun {
+    if let Some((draw, shadow, arc)) = sun {
         for (at, matrix) in shadow.matrices.iter().enumerate() {
             sun_floats[at * 16..at * 16 + 16].copy_from_slice(matrix);
         }
         let toward = draw.toward.normalized();
         sun_floats[48..52].copy_from_slice(&[toward.x, toward.y, toward.z, 1.0]);
         sun_floats[52..55].copy_from_slice(&draw.color);
+        // One past where it is along its arc, so that none is none.
+        sun_floats[55] = arc.map_or(0.0, |place| place + 1.0);
         sun_floats[56..59].copy_from_slice(&SUN_REACHES);
     }
     for float in sun_floats {

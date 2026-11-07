@@ -29,7 +29,7 @@ mod tree;
 mod zone;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
-pub use day::{DAY_HOURS, DayCycle, DayLook, DayState, LightKey, LightSet};
+pub use day::{ARC_ANGLES, DAY_HOURS, DayCycle, DayLook, DayState, LightKey, LightSet, SunArc};
 pub use effect::{
     ColorCurve, Curve, EffectDef, EffectDraw, EffectMesh, EffectPoint, EffectSettings,
     EmitterShape, GpuEmitter, ParticleBlend, ParticleCollide, ParticleEmitter, ParticleForce,

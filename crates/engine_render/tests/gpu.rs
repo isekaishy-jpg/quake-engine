@@ -7689,3 +7689,145 @@ fn whats_see_through_is_not_darkened_by_whats_behind() {
         assert_eq!(pixel(&on, x, y), pixel(&off, x, y));
     }
 }
+
+/// The square with its sun's layer holding `bits`: the angles along an arc the sun reaches it at.
+fn arc_square(models: u32, bits: u32) -> Map {
+    let mut built = map(models);
+    let [low, middle, high, top] = bits.to_le_bytes();
+    built.light = vec![[low, middle, high]; 81];
+    built.light_edges = vec![top; 81];
+    for face in &mut built.faces {
+        if let Some(light) = &mut face.light {
+            light.styles = [SUN_STYLE, 255, 255, 255];
+        }
+    }
+    built
+}
+
+/// A dim blue sun overhead, at `arc` along its arc if it's on one.
+fn arc_drawables(color: [f32; 3], arc: Option<f32>) -> Drawables<'static> {
+    Drawables {
+        sun: Some(SunDraw {
+            toward: Vec3::new(0.0, 0.0, 1.0),
+            color,
+        }),
+        sun_arc: arc,
+        ..Drawables::default()
+    }
+}
+
+/// The middle of the square with `bits`, under a dim blue sun at `arc`.
+fn under_arc(bits: u32, arc: Option<f32>) -> Option<[u8; 4]> {
+    let drawables = arc_drawables([0.0, 0.0, 0.4], arc);
+    centre_of(arc_square(1, bits), &view_from_above(), drawables)
+}
+
+/// A sun on an arc lights what its bits say it reaches where it is along the arc, all four bytes
+/// of them, and not what they say it doesn't.
+#[test]
+fn a_sun_on_an_arc_lights_where_its_bits_say() {
+    let bits = 0xff00_ffff;
+    let (early, middle, late) = (
+        under_arc(bits, Some(5.0)),
+        under_arc(bits, Some(20.0)),
+        under_arc(bits, Some(28.0)),
+    );
+    let none = under_arc(0, Some(5.0));
+    if let (Some(early), Some(middle), Some(late), Some(none)) = (early, middle, late, none) {
+        assert!(early[2] > none[2] + 30, "{early:?} {none:?}");
+        assert!(late[2] > none[2] + 30, "{late:?} {none:?}");
+        assert_eq!(middle, none);
+    }
+}
+
+/// Between two angles, it's between what they say, so a shadow's edge moves smoothly.
+#[test]
+fn between_angles_an_arc_blends() {
+    let bits = 0x0000_ffff;
+    let (lit, half, dark) = (
+        under_arc(bits, Some(15.0)),
+        under_arc(bits, Some(15.5)),
+        under_arc(bits, Some(16.0)),
+    );
+    if let (Some(lit), Some(half), Some(dark)) = (lit, half, dark) {
+        assert!(half[2] > dark[2] + 10, "{dark:?} {half:?}");
+        assert!(half[2] + 10 < lit[2], "{half:?} {lit:?}");
+    }
+}
+
+/// On an arc, the sun's layer is where it reaches, not light, however bright its bytes are.
+#[test]
+fn an_arcs_layer_is_not_light() {
+    let black = [0.0; 3];
+    let on_arc = centre_of(
+        arc_square(1, u32::MAX),
+        &view_from_above(),
+        arc_drawables(black, Some(5.0)),
+    );
+    let dark = centre_of(
+        arc_square(1, 0),
+        &view_from_above(),
+        arc_drawables(black, Some(5.0)),
+    );
+    let baked = centre_of(
+        arc_square(1, u32::MAX),
+        &view_from_above(),
+        Drawables::default(),
+    );
+    if let (Some(on_arc), Some(dark), Some(baked)) = (on_arc, dark, baked) {
+        assert_eq!(on_arc, dark);
+        assert!(
+            baked[0] > dark[0] + 50,
+            "as a baked sun, it's light: {baked:?}"
+        );
+    }
+}
+
+/// On an arc, shadows come from the bits, and none are drawn: what's over the square doesn't shade
+/// it, as its bits say the sun reaches it. Off one, the sun's live and it does.
+#[test]
+fn on_an_arc_no_shadows_are_drawn() {
+    // At a slant, so that a shadow would fall where the blocker doesn't hide it from above.
+    let shot = |arc: Option<f32>, blocker: bool| -> Option<Capture> {
+        // Off an arc the layer's drawn as light, so there it's dark, for the sun to show.
+        let bits = if arc.is_some() { u32::MAX } else { 0 };
+        let mut renderer = renderer()?;
+        renderer
+            .load_map(Arc::new(arc_square(2, bits)))
+            .expect("load");
+        let over = [ModelInstance {
+            model: 1,
+            origin: Vec3::new(64.0, 0.0, 30.0),
+            visible: true,
+            ..ModelInstance::default()
+        }];
+        let drawables = Drawables {
+            instances: if blocker { &over } else { &[] },
+            sun: Some(SunDraw {
+                toward: Vec3::new(1.0, 0.0, 1.0),
+                color: [0.0, 0.0, 0.4],
+            }),
+            sun_arc: arc,
+            ..Drawables::default()
+        };
+        Some(
+            renderer
+                .capture(&view_from_above(), drawables, 64, 64)
+                .expect("capture"),
+        )
+    };
+    let darker = |open: &Capture, covered: &Capture| {
+        (0..64)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(covered, *x, *y)[2].saturating_add(30) < pixel(open, *x, *y)[2])
+            .count()
+    };
+    let (arc_open, arc_covered) = (shot(Some(5.0), false), shot(Some(5.0), true));
+    let (live_open, live_covered) = (shot(None, false), shot(None, true));
+    if let (Some(arc_open), Some(arc_covered), Some(live_open), Some(live_covered)) =
+        (arc_open, arc_covered, live_open, live_covered)
+    {
+        assert!(darker(&live_open, &live_covered) > 40, "live");
+        assert_eq!(darker(&arc_open, &arc_covered), 0, "on an arc");
+    }
+}

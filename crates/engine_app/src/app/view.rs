@@ -89,6 +89,8 @@ fn sun_reaches(sun: Option<SunDraw>, client: &engine_client::Client, at: Vec3) -
 /// What a day does to a frame, now.
 #[derive(Clone, Debug, Default)]
 pub(super) struct DayNow {
+    /// Where along its arc that sun is, if its shadows were baked along one and it's on it.
+    pub(super) sun_arc: Option<f32>,
     /// A sun that isn't baked, or at night the moon.
     pub(super) sun: Option<SunDraw>,
     /// Towards the sun.
@@ -116,14 +118,18 @@ pub(super) fn day_now(map: &Map, hour: Option<f32>, toward: Option<Vec3>, eye: V
         };
     };
     let strength = map.sun_strength / 255.0;
-    let sun = (map.sun_mode == SunMode::Live)
+    let sun = map
+        .sun_drawn()
         .then(|| day.sky.sun_or_moon(day.toward, strength))
         .flatten()
         .map(|(toward, color)| SunDraw { toward, color });
+    // Off its arc, a sun whose shadows were baked along one has them drawn as a live one's.
+    let sun_arc = sun.and_then(|sun| map.arc_place(sun.toward));
     let [red, green, blue] = day.look.shine;
     let ambient = day.look.ambient;
     DayNow {
         sun,
+        sun_arc,
         toward: Some(day.toward),
         sun_tint: Some(day.sun_tint),
         fog: day.look.fog,
@@ -182,6 +188,7 @@ impl Picture {
             sky_ray_floor: self.sky_ray_floor.as_ref(),
             sun_tint: self.day.sun_tint,
             sun: self.day.sun,
+            sun_arc: self.day.sun_arc,
             sun_toward: self.day.toward,
             sky_now: self.day.sky.as_ref(),
             fog_color: self.day.fog,

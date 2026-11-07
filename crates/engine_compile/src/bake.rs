@@ -429,6 +429,9 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
         Value::Bytes(directions.as_flattened().to_vec()),
     );
     block.set("edges", Value::Bytes(edges.clone()));
+    if map.sun_arc_baked {
+        block.set("sun_arc", Value::Number(1.0));
+    }
     block.set("paint", Value::Bytes(paint.as_flattened().to_vec()));
     if let Some(split) = &split {
         let mut cells = Vec::with_capacity(split.cells.len() * 8);
@@ -648,6 +651,7 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     map.light = triples(samples);
     map.light_directions = triples(directions);
     map.light_edges = bytes_of(light, "edges").unwrap_or_default().to_vec();
+    map.sun_arc_baked = light.get("sun_arc").is_some();
     if let (Some(data), Some(starts)) = (
         bytes_of(light, "visibility"),
         bytes_of(light, "visible_from"),

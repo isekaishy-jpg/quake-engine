@@ -35,7 +35,7 @@ One block with no new fields looks much as it did.
 - **`fixed`** is what a sun always was, baked in with everything else, and what a level has unless it says.
 - **`baked`** goes on a layer of its own, along with what it bounces. Its colour can change with no new bake.
 - **`live`** isn't baked at all, apart from what it bounces. Three cascades of shadows follow the view, the nearest each frame and the others in turn.
-- **`arc`** gives each sample of the sun's layer 32 bits, one for each angle through `sun_arc`, and the sun moves along it. It needs a final bake. Until there is one it's drawn as `baked`.
+- **`arc`** gives each sample of the sun's layer 32 bits, one for each angle through `sun_arc`, and the sun moves along it. It needs a final bake. Until there is one it's drawn as `baked`. `sun_arc` is two hours of the day the sun's up, and the moon goes along it twelve hours on.
 
 The moon works the same way as the sun, from the other side of the day, with a `moon_color`, `moon_size` and `stars`. Whichever is higher casts the shadows.
 
@@ -118,6 +118,18 @@ Each of those comes from the research, and none needs more for what the items as
 - **What faces away from the sun is skipped before its shadow is looked at.** It would come out dark either way, as it's in its own shadow, but that's nine samples of a map saved, and no test can tell the two apart.
 - **A shadow from straight up is under what casts it,** which is right, and it's what made a test look wrong at first.
 - **What isn't done yet is day's:** the sky's colour, and turning down what a sun bounced as it sets, are item 66. `sun_toward` is for trying it, and a day drives it.
+
+### The shadow heat map (68)
+
+- **Tried in the game:** a yard with a table of brick and a post through a day, with a sun on an arc from a final bake, and with a live one. At 8, 10, 12, 14 and 16 their shadows fall in the same places, and the arc draws no shadow maps: 0.001 ms where the live one's are 0.09.
+- **The bits go where a sample's colour and edge were:** three bytes of colour and one of edge, which every layer already has. So it needs nothing new stored, and a saved bake only says that it has them.
+- **The shader reads the four samples round a point,** blends each between the two angles the sun's between, and blends those as light is. At first their edges stepped from sample to sample, so the edge is where the blend crosses the middle, which goes straight between samples. Edges are still as fine as the light: at 8 units they step a little on a long thin shadow at a low sun, and at 16 more.
+- **Each angle takes three rays across its slice,** and is lit if most are. What's smaller than a slice can't stop two, so it stays out and doesn't come and go. Something long, like a pole, can stop all three where the sun goes along it, and that's right.
+- **A face the sun as baked doesn't reach still gets the layer,** if any of the arc faces it. At first the side of a pillar towards the sunrise had none, as the sun as baked was side on to it.
+- **The arc needs a day,** as an arc is hours. A level with `sun = arc` and no day is an error.
+- **Off its arc, the shadows are live.** That's only where `sun_toward` puts the sun, as a day keeps it on its path.
+- **What looked like a fault wasn't.** The feet of walls glowed on the arc and not on the live sun, but they glow on a live sun with a final bake too: it's the final bake's finer bounce.
+- **What it costs to bake:** 96 rays a sample, which in that yard was 1.3 s for a final bake against 0.8 for a live sun's.
 
 ### A day, and sets of light (66, 67)
 

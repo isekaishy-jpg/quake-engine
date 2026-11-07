@@ -70,6 +70,7 @@ The world says how its sun works, with `sun_intensity` for how bright and the sk
 | `fixed` | Baked in with everything else, as it always was. It's what a level gets unless it says |
 | `baked` | Baked on layers of its own, with what it bounces, so that a day can change its colour with no new bake |
 | `live` | Not baked, apart from what it bounces, so that it can go anywhere and cast shadows as it goes |
+| `arc` | Its shadows baked at 32 angles along an arc through the day, so that it moves along it and they go with it, with no new bake and no maps of them to draw. It needs a day, and a final bake. Until there is one, it's `baked` |
 
 A live sun lights surfaces and their highlights, and models that can see the sky towards it. Its shadows come from three maps round the view, the nearest finest. When it sets it's the moon, from the far side of the sky, if the sky has one:
 
@@ -79,6 +80,14 @@ A live sun lights surfaces and their highlights, and models that can see the sky
 | `moon_size` | How large it looks |
 
 `sun_toward x y z` at the console moves it, to try a level, and on its own puts it back.
+
+### A sun on an arc
+
+`sun_arc = 8 14` says which hours the arc goes through, from 6 to 18. All of a day, sunrise to sunset, unless it says. The moon's across the sky from the sun, so at night it goes along the same arc, twelve hours on. A narrower arc has its angles closer together: all of a day is an angle each 5.8 degrees, and 8 to 14 one each 2.9.
+
+Between two angles, a shadow is between what they say, and between two samples, its edge is where their blend crosses the middle, so it moves smoothly. Its edges are as fine as the level's light: a finer `light_spacing` makes them finer. What's smaller than an angle's slice of the arc doesn't come and go between angles, and is left out.
+
+Models take it as a live sun, from whether they can see the sky towards it. Off its arc, which is only where `sun_toward` puts it, its shadows are drawn as a live one's. What it bounces is baked once, from the sky's `sun_direction`, as a baked or live sun's is.
 
 ## A day
 
@@ -118,7 +127,7 @@ A key is named by its hour, and keys go round, so what's after the last blends i
 | `ambient` | Light added everywhere, on the scale of a sample of baked light |
 | `shine` | What highlights are multiplied by |
 
-A zone can have its own with `light_set`, and `light_blend` says how far in it takes for it to be all there is, 256 unless it says. A zone inside another goes over it. A sun that's baked on its own layers, or live, goes with the day, and what it bounced goes down with it. A fixed sun can't, as it's baked in with everything else.
+A zone can have its own with `light_set`, and `light_blend` says how far in it takes for it to be all there is, 256 unless it says. A zone inside another goes over it. A sun that's baked on its own layers, live or on an arc goes with the day, and what it bounced goes down with it. A fixed sun can't, as it's baked in with everything else.
 
 ## How light comes out
 
@@ -148,7 +157,7 @@ entity world {
 
 ### Corners
 
-Darkening in corners is on light that comes from all round: baked light, and the light a day adds everywhere. Light from one way, which is a sun's own, baked or live, and moving lights, has shadows of its own and is left alone, as is fog. A fixed sun is baked in with everything else, so it's darkened with the rest.
+Darkening in corners is on light that comes from all round: baked light, and the light a day adds everywhere. Light from one way, which is a sun's own, baked, live or on an arc, and moving lights, has shadows of its own and is left alone, as is fog. A fixed sun is baked in with everything else, so it's darkened with the rest.
 
 It's worked out from what's solid before anything's shaded. What's see-through, cut out, or moved by its shader isn't in that, so it isn't darkened, and nor are models, which have their capsules' shade.
 

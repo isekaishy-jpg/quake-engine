@@ -13,6 +13,43 @@ pub const DAY_HOURS: f32 = 24.0;
 const SUNRISE: f32 = 6.0;
 const SUNSET: f32 = 18.0;
 
+/// How many angles along its arc a sun keeps each sample's shadow at: a bit each, in one number.
+pub const ARC_ANGLES: usize = 32;
+
+/// How far off its arc light can come from and still count as on it, as the sine of the angle.
+const ARC_SLACK: f32 = 0.05;
+
+/// The hours a sun's shadows are baked through, which it moves along with no new bake
+/// (proposal 0148). The moon is always across the sky from the sun, so it goes along the same
+/// arc, twelve hours on.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SunArc {
+    /// The hour it starts at.
+    pub from: f32,
+    /// The hour it ends at.
+    pub to: f32,
+}
+
+impl Default for SunArc {
+    /// All of a day, from sunrise to sunset.
+    fn default() -> Self {
+        Self {
+            from: SUNRISE,
+            to: SUNSET,
+        }
+    }
+}
+
+impl SunArc {
+    /// The hour at `place` along it, from 0 at its start to one less than [`ARC_ANGLES`] at its
+    /// end.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss, reason = "a few angles")]
+    pub fn hour_at(self, place: f32) -> f32 {
+        self.from + (self.to - self.from) * place / (ARC_ANGLES - 1) as f32
+    }
+}
+
 /// How a level's day goes.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct DayCycle {
@@ -47,6 +84,34 @@ impl DayCycle {
         #[expect(clippy::cast_possible_truncation, reason = "a day's worth of hours")]
         let gone = (seconds * f64::from(DAY_HOURS) / f64::from(self.length)) as f32;
         (hour + gone).rem_euclid(DAY_HOURS)
+    }
+
+    /// Where along `arc` light from `toward` comes from, as [`SunArc::hour_at`] takes it, or
+    /// `None` if that's off it. Light that's below the horizon is off it.
+    #[must_use]
+    #[expect(clippy::cast_precision_loss, reason = "a few angles")]
+    pub fn arc_place(&self, arc: SunArc, toward: Vec3) -> Option<f32> {
+        let toward = toward.normalized();
+        let rising = self.sun_toward(SUNRISE);
+        let noon = self.sun_toward((SUNRISE + SUNSET) * 0.5);
+        let across = rising.cross(noon);
+        if toward.dot(across).abs() > ARC_SLACK {
+            return None;
+        }
+        let turned = toward.dot(noon).atan2(toward.dot(rising));
+        if turned < 0.0 {
+            return None;
+        }
+        let hour = SUNRISE + turned / std::f32::consts::PI * (SUNSET - SUNRISE);
+        let span = arc.to - arc.from;
+        if span.abs() < 1e-3 {
+            return None;
+        }
+        let last = (ARC_ANGLES - 1) as f32;
+        let place = (hour - arc.from) / span * last;
+        (-0.5..=last + 0.5)
+            .contains(&place)
+            .then(|| place.clamp(0.0, last))
     }
 
     /// Towards the sun at `hour`. It comes up at six, is highest at noon, goes down at six, and is

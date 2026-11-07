@@ -10,8 +10,8 @@ use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, DayCycle, Entity, Face, LandPicture, Leaf, Look,
     Map, MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
-    OccluderSphere, Plane, Pool, PoolLook, SunMode, TerrainSheet, TexelAxis, Texture, TextureKind,
-    ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
+    OccluderSphere, Plane, Pool, PoolLook, SunArc, SunMode, TerrainSheet, TexelAxis, Texture,
+    TextureKind, ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -1510,6 +1510,12 @@ fn compile_with(
         .unwrap_or(0.0) as f32;
     builder.map.sun_strength = strength;
     builder.map.day = day_of(working);
+    builder.map.sun_arc = sun_arc_of(working)?;
+    if builder.map.sun_mode == SunMode::Arc && builder.map.day.is_none() {
+        return Err(CompileError::Bad(
+            "a sun on an arc goes through a day: give the world day_start or day_length".to_owned(),
+        ));
+    }
     builder.map.light_sets.clone_from(&working.light_sets);
     builder.map.light_set = world
         .and_then(|world| world.text("light_set"))
@@ -1621,10 +1627,36 @@ fn sun_mode_of(working: &WorkingMap) -> Result<SunMode, CompileError> {
         None | Some("fixed") => Ok(SunMode::Fixed),
         Some("baked") => Ok(SunMode::Baked),
         Some("live") => Ok(SunMode::Live),
+        Some("arc") => Ok(SunMode::Arc),
         Some(other) => Err(CompileError::Bad(format!(
-            "a sun is fixed, baked or live, not {other}"
+            "a sun is fixed, baked, live or arc, not {other}"
         ))),
     }
+}
+
+/// The hours a working map's sun on an arc goes through. They're hours the sun's up, and the moon
+/// goes the same way twelve hours on.
+#[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+fn sun_arc_of(working: &WorkingMap) -> Result<SunArc, CompileError> {
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn");
+    let Some(value) = world.and_then(|world| world.field("sun_arc")) else {
+        return Ok(SunArc::default());
+    };
+    let bad =
+        || CompileError::Bad("sun_arc is two hours, from 6 to 18, the first sooner".to_owned());
+    let numbers = value.numbers().ok_or_else(bad)?;
+    let [from, to] = numbers.as_slice() else {
+        return Err(bad());
+    };
+    let usual = SunArc::default();
+    let inside = |hour: f64| (f64::from(usual.from)..=f64::from(usual.to)).contains(&hour);
+    if !inside(*from) || !inside(*to) || to <= from {
+        return Err(bad());
+    }
+    Ok(SunArc {
+        from: *from as f32,
+        to: *to as f32,
+    })
 }
 
 /// How a working map says its light comes out.

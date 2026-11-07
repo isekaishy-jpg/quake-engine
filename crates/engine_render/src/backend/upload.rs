@@ -17,7 +17,7 @@ use vulkane::safe::{
 };
 
 use super::ripple::GpuRipples;
-use super::shadow::{ShadowRange, shadow_figures};
+use super::shadow::{SUN_CASCADES, ShadowRange, SunShadow, shadow_figures};
 use super::{
     Backend, DEPTH_FORMAT, EXTRA_FLOATS, FOG_LIGHTS, FRAME_SIZE, FRAMES, GpuAlias, GpuBuffer,
     GpuImage, GpuMap, GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_FOG_VOLUMES, MAX_POOLS,
@@ -1564,9 +1564,18 @@ impl Backend {
         let size = self.scene_size();
         let capsules = scene.map_or(&[][..], |scene| scene.drawables.capsules);
         let sun = scene.and_then(|scene| scene.drawables.sun);
+        let arc = scene.and_then(|scene| scene.drawables.sun_arc);
+        // A sun on an arc has its shadows baked, so there are no maps of them to draw.
+        let drawn = sun.filter(|_| arc.is_none());
         self.shadows
-            .plan_sun(sun.map(|sun| sun.toward), view.origin);
-        let sun = sun.zip(self.shadows.sun_shadow());
+            .plan_sun(drawn.map(|sun| sun.toward), view.origin);
+        let shadow = match arc {
+            Some(_) => Some(SunShadow {
+                matrices: [[0.0; 16]; SUN_CASCADES],
+            }),
+            None => self.shadows.sun_shadow(),
+        };
+        let sun = sun.zip(shadow).map(|(sun, shadow)| (sun, shadow, arc));
         let bytes = live_bytes(view, aspect, size, live, capsules, &slots, sun);
         let values = &mut self.frame_values[slot];
         values.live.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);

@@ -2,7 +2,7 @@
 
 use engine_compile::{CompileError, compile, read_map};
 use engine_format::from_text;
-use engine_map::{Look, Map, Sky, Texture, ToneCurve, USUAL_CLOUD_CURVE};
+use engine_map::{Look, Map, Sky, SunArc, SunMode, Texture, ToneCurve, USUAL_CLOUD_CURVE};
 
 /// A level with `text` in its sky.
 fn level(text: &str) -> Result<Map, CompileError> {
@@ -333,4 +333,52 @@ fn corners_are_held_to_what_makes_sense() {
 #[test]
 fn a_map_with_no_say_has_no_ssao() {
     assert!(Look::default().ssao.abs() < 1e-6);
+}
+
+/// The sun and arc of a level with `world` in its world block.
+fn sun_of(world: &str) -> Result<(SunMode, SunArc), CompileError> {
+    let text = format!(
+        "format 1 map
+entity world {{ type = worldspawn {world} }}
+brush {{ material = rock cuboid = -64 -64 -96 64 64 -64 }}
+"
+    );
+    let working = read_map(&from_text(&text).expect("parses"))?;
+    let map = compile(&working, &mut |_: &str| Texture::default())?;
+    Ok((map.sun_mode, map.sun_arc))
+}
+
+/// A sun can be on an arc, through all of a day unless the level says which hours.
+#[test]
+fn a_sun_can_be_on_an_arc() {
+    let (mode, arc) = sun_of("sun = arc day_start = 10").expect("compiles");
+    assert_eq!(mode, SunMode::Arc);
+    assert_eq!(arc, SunArc::default());
+    let (_, arc) = sun_of("sun = arc day_start = 10 sun_arc = 8 14").expect("compiles");
+    assert_eq!(
+        arc,
+        SunArc {
+            from: 8.0,
+            to: 14.0
+        }
+    );
+}
+
+/// An arc goes through a day, over hours the sun's up, from the sooner to the later.
+#[test]
+fn an_arc_is_held_to_what_makes_sense() {
+    let error = sun_of("sun = arc").expect_err("no day");
+    assert!(error.to_string().contains("day"), "{error}");
+    for wrong in [
+        "sun_arc = 14 8",
+        "sun_arc = 4 12",
+        "sun_arc = 8 20",
+        "sun_arc = 9",
+        "sun_arc = 8 8",
+    ] {
+        let error = sun_of(&format!("sun = arc day_start = 10 {wrong}")).expect_err(wrong);
+        assert!(error.to_string().contains("sun_arc"), "{wrong}: {error}");
+    }
+    let error = sun_of("sun = arcs day_start = 10").expect_err("no such sun");
+    assert!(error.to_string().contains("arc"), "{error}");
 }

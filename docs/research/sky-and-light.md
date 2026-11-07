@@ -72,6 +72,8 @@ Two values only hold one shadow. A sample that's shaded twice as the sun moves, 
 - **What it costs to bake:** 32 rays a sample where one was, and more for thin things. It's why it's for the final bake.
 - **Thin things:** something narrower than about 1/30 of how far away it is falls between two angles. So each bit takes several rays through its slice of the arc, and is lit if most are.
 - **Going soft:** two neighbouring bits, blended by where the sun is between them, and four samples of a map blended as usual, make the edge move smoothly.
+- **Where the bits go:** a layer already has three bytes of colour and one of edge for each sample, so the sun's layer holds them with nothing new.
+- **The moon:** it's always across the sky from the sun, so its path is the sun's twelve hours on, and one arc over the hours the sun's up serves both.
 
 ## Final bakes (69)
 

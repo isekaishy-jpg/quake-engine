@@ -1,7 +1,9 @@
 //! A day: where the sun is at an hour, and sets of light keyed through it.
 
 use engine_core::math::Vec3;
-use engine_map::{DayCycle, LightKey, LightSet, Map, Sky, Zone, ZonePlane};
+use engine_map::{
+    ARC_ANGLES, DayCycle, LightKey, LightSet, Map, Sky, SunArc, SunMode, Zone, ZonePlane,
+};
 
 /// Whether two colours are near enough the same.
 fn near(a: [f32; 3], b: [f32; 3]) -> bool {
@@ -274,4 +276,117 @@ fn a_sun_can_be_put_somewhere() {
         .expect("a day");
     assert!((day.toward - toward.normalized()).length() < 0.001);
     assert!((day.sky.sun_direction - toward.normalized()).length() < 0.001);
+}
+
+/// A day turned and tilted, so nothing lines up with an axis by chance.
+fn leaning_day() -> DayCycle {
+    DayCycle {
+        heading: 35.0,
+        height: 50.0,
+        ..DayCycle::default()
+    }
+}
+
+/// An arc goes from its first hour to its last, through its angles.
+#[test]
+fn an_arc_goes_through_its_hours() {
+    let arc = SunArc {
+        from: 9.0,
+        to: 15.0,
+    };
+    assert!((arc.hour_at(0.0) - 9.0).abs() < 1e-4);
+    #[expect(clippy::cast_precision_loss, reason = "a few angles")]
+    let last = (ARC_ANGLES - 1) as f32;
+    assert!((arc.hour_at(last) - 15.0).abs() < 1e-4);
+    assert!((arc.hour_at(last * 0.5) - 12.0).abs() < 1e-4);
+    assert_eq!(
+        SunArc::default(),
+        SunArc {
+            from: 6.0,
+            to: 18.0
+        }
+    );
+}
+
+/// Where light is along an arc is where the sun was at that hour.
+#[test]
+fn light_on_an_arc_is_found_where_it_is() {
+    let day = leaning_day();
+    let arc = SunArc {
+        from: 8.0,
+        to: 16.0,
+    };
+    for place in [0.0, 3.5, 10.0, 15.25, 30.0, 31.0] {
+        let toward = day.sun_toward(arc.hour_at(place));
+        let found = day.arc_place(arc, toward).expect("on it");
+        assert!((found - place).abs() < 0.01, "{place} {found}");
+    }
+}
+
+/// The moon's across the sky from the sun, so at night it's on the arc where the sun was twelve
+/// hours before.
+#[test]
+fn the_moon_goes_along_the_same_arc() {
+    let day = leaning_day();
+    let arc = SunArc::default();
+    let moon = day.sun_toward(22.0) * -1.0;
+    let found = day.arc_place(arc, moon).expect("on it");
+    let place = (10.0 - 6.0) / 12.0 * 31.0;
+    assert!((found - place).abs() < 0.01, "{found}");
+}
+
+/// Light that's off an arc, past its ends, or under the ground isn't on it.
+#[test]
+fn light_off_an_arc_is_not_on_it() {
+    let day = leaning_day();
+    let arc = SunArc {
+        from: 9.0,
+        to: 12.0,
+    };
+    assert!(
+        day.arc_place(arc, day.sun_toward(15.0)).is_none(),
+        "after it"
+    );
+    assert!(
+        day.arc_place(arc, day.sun_toward(7.0)).is_none(),
+        "before it"
+    );
+    let near_end = day.sun_toward(arc.hour_at(31.3));
+    let held = day.arc_place(arc, near_end).expect("within half an angle");
+    assert!((held - 31.0).abs() < 1e-4, "held to its last angle: {held}");
+    // Out of the plane of its path, at an hour inside it.
+    let across = day.sun_toward(6.0).cross(day.sun_toward(12.0));
+    let aside = (day.sun_toward(10.5) + across * 0.3).normalized();
+    assert!(day.arc_place(arc, aside).is_none(), "off its path");
+    let whole = SunArc::default();
+    assert!(
+        day.arc_place(whole, day.sun_toward(5.9)).is_none(),
+        "just under the ground"
+    );
+}
+
+/// A sun on an arc is drawn from its shadows only once a final bake has them, and till then
+/// it's baked. A live sun is drawn as it goes.
+#[test]
+fn a_sun_on_an_arc_needs_its_bake() {
+    let mut map = Map {
+        sun_mode: SunMode::Arc,
+        day: Some(leaning_day()),
+        ..Map::default()
+    };
+    let toward = leaning_day().sun_toward(12.0);
+    assert!(!map.arc_drawn() && !map.sun_drawn());
+    assert!(map.arc_place(toward).is_none());
+    map.sun_arc_baked = true;
+    assert!(map.arc_drawn() && map.sun_drawn());
+    let place = map.arc_place(toward).expect("on it");
+    assert!((place - 15.5).abs() < 0.01, "{place}");
+    let live = Map {
+        sun_mode: SunMode::Live,
+        sun_arc_baked: true,
+        day: Some(leaning_day()),
+        ..Map::default()
+    };
+    assert!(live.sun_drawn() && !live.arc_drawn());
+    assert!(live.arc_place(toward).is_none());
 }

@@ -526,6 +526,9 @@ pub enum SunMode {
     Baked,
     /// Not baked, apart from what it bounces, so that it can go anywhere.
     Live,
+    /// Its shadows baked at angles along an arc, which it moves along with no new bake. Until
+    /// a final bake has them, it's drawn as [`SunMode::Baked`].
+    Arc,
 }
 
 /// How light too bright for a screen comes down to fit it.
@@ -742,6 +745,11 @@ pub struct Map {
     pub sun_strength: f32,
     /// How its day goes, if it has one. Without, the sun stays where the sky puts it.
     pub day: Option<crate::DayCycle>,
+    /// The hours a sun on an arc has its shadows baked through.
+    pub sun_arc: crate::SunArc,
+    /// Whether its sun's layer holds a bit for each angle along that arc, which only a final
+    /// bake of a sun on an arc gives it.
+    pub sun_arc_baked: bool,
     /// Its sets of light, for a day.
     pub light_sets: Vec<crate::LightSet>,
     /// The set the whole level has, by name. A level with a day and none has one from its sky.
@@ -770,6 +778,26 @@ impl Model {
 }
 
 impl Map {
+    /// Whether its sun is drawn from the shadows baked along its arc.
+    #[must_use]
+    pub fn arc_drawn(&self) -> bool {
+        self.sun_mode == SunMode::Arc && self.sun_arc_baked
+    }
+
+    /// Whether its sun is lit as it goes, live or along its arc, and not baked into its light.
+    #[must_use]
+    pub fn sun_drawn(&self) -> bool {
+        self.sun_mode == SunMode::Live || self.arc_drawn()
+    }
+
+    /// Where along its arc light from `toward` is, if its sun is drawn from shadows baked along
+    /// one and that's on it. Off it, the sun's shadows are drawn as a live one's.
+    #[must_use]
+    pub fn arc_place(&self, toward: Vec3) -> Option<f32> {
+        let day = self.day.filter(|_| self.arc_drawn())?;
+        day.arc_place(self.sun_arc, toward)
+    }
+
     /// Whether nothing solid stands over `point`, all the way to the top of the
     /// world, so that a mirror there could see the sky.
     #[must_use]

@@ -134,6 +134,9 @@ pub struct Drawables<'a> {
     pub sun_tint: Option<[f32; 3]>,
     /// A sun that isn't baked, which lights and shades as it goes. At night it's the moon.
     pub sun: Option<SunDraw>,
+    /// Where along its arc that sun is, if its shadows were baked along one. Then they're read
+    /// from its layer of baked light, and none are drawn.
+    pub sun_arc: Option<f32>,
     /// Towards the sun, where it is now, for the sky, with none being where the level says.
     pub sun_toward: Option<Vec3>,
     /// The sky as a day has it now, with none being as the level has it.
