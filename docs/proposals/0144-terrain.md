@@ -1,6 +1,6 @@
 # Proposal 0144: terrain
 
-Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 43 and 125 to 132, from [the research](../research/terrain.md).
+Status: done, 2026-11-07, the [work list](../research/work-list.md), items 43 and 125 to 132, from [the research](../research/terrain.md).
 
 ## Design
 
@@ -35,15 +35,15 @@ A chunk has one face in `Map::faces`, flat, which never draws. That gives it wha
 - **Light:** the bake's surface samples go by the heights, and sheets block light by their triangles, as meshes do.
 - **Visibility:** leaves, as above.
 - **Paths:** the walkable grids are built with collision, so they find land by themselves. That's to be tried.
-- **Box3D** gets a height field for what rolls.
+- **Box3D** gets a height field for what rolls. Dropped: nothing rolls, as the review says.
 
 ### Painting (128, 131, 132)
 
 - A sheet has up to eight layers, each a material's colour, normal with height in blue, and shine, in texture arrays of one size.
-- Weights are two RGBA images over the sheet, at a texel a cell or finer.
+- Weights are two RGBA images over the sheet, at a texel a cell or finer. Changed: they're in a buffer, as the review says.
 - `fs_terrain` reads weights, and reads only layers with some, blended by height.
 - Each layer has its own world size, and land has a large soft colour variation from noise. Hex tiling can be turned on for a layer.
-- Far land reads a colour baked for each chunk, past a distance.
+- Far land reads a colour baked for each chunk, past a distance. Changed: it reads each picture's mean, as the review says.
 - How far this goes for materials is measured in review.
 
 ### Shaping (127), and the brush (45)
@@ -126,4 +126,26 @@ Five bugs were put back, and each fails a test: light ignoring holes, land left 
 - **Baking takes the cost away,** as the item said it could. The mega texture now mixes a layer's bumps and shine into its normal and specular images, as it did its colour. `flatten` has only the colour to go on, so a layer with a surface stays live rather than lose it.
 - Tried in the game: wood painted over rock, with each one's own bumps, and the wood's shine under a lamp.
 
-Filled in as each part lands.
+### Tiles, what's thrown, and land at scale
+
+- **Land on tiled levels works.** Tried in the game on 6 by 6 tiles, moving across them and back to the same picture. The stand-in faces have no vertices, so streaming was writing a chunk's light over the first vertices of the world. Now a chunk's light moves with its tile by itself. The test keeps a floor beside land, and failed on that with the fix taken out.
+- **No height field in Box3D.** The proposal gave it one for what rolls. Nothing in the engine is a rigid body: Box3D's only used to cast through hulls. What bounces, falls or flies goes through `move_box`, which has land. Three tests throw things on land and down a hole. A shape nothing reads would be dead code. If rigid bodies come, `vendor/box3d` has a height field with holes, ready for them.
+- **A real cave and bridge,** made only with `engine-tool` and flown through in the game. Sun comes down through the hole and lights the cave floor, sky shows through it from below, and a bridge casts its shadow on the land under it.
+- **Land at scale,** 16 by 16 chunks, 32768 units across and over a million cells. It didn't finish compiling in 15 minutes at first, and now takes 26 seconds. It loads in a second, and draws in about 2 ms on the GPU at the frame rate's limit. Four things were wrong, and it took timing each stage to find them, as the first two guesses were wrong:
+  - **Cells:** every cell looks at every other, and at 256 units land had tens of thousands. A map with land now has at most about 4096, unless it says. Land draws by what's near, so it loses little.
+  - **Bounced light:** with no tiles, every probe looked at every source. Over land they're held in tiles of 2048.
+  - **Probes:** a dense grid through all that air. It now has a budget of half a million, and it spaces out past that. A probe in the land is dark, and costs nothing. Maps under the budget are as they were.
+  - **Frames:** each chunk's heights were read twice a frame, a couple of million reads, which took the frame rate from 206 to 120. They're kept now.
+  - Two more were worth doing on the way: a line to the sun stops where land can't reach, and the path grid goes straight to the heights where a column can change. That gave a byte for byte identical bake on a level with stairs, thin floors and land.
+
+### Against the acceptance criteria
+
+- A sheet draws with no cracks or pops, and at the frame rate's limit over a large land. Pops are for a person to judge in motion.
+- A player walks it, up slopes and not up cliffs, and falls through a hole.
+- It's lit and shadowed by the bake, and casts on what stands on it.
+- What's behind a wall isn't drawn.
+- A cave, an overhang and a bridge can be made, and walked.
+- Eight layers paint, and what it costs a pixel is measured.
+- All of it can be made with `engine-tool`.
+
+What's left of terrain has its own place on the list: water on land is item 130, after item 17, and the Terrain tab is item 44. A hole's edge steps by a cell, as it does in most engines, and a mesh hides it where that shows.

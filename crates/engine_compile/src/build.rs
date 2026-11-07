@@ -91,6 +91,9 @@ fn read_zone(entity: &EntitySource) -> Zone {
     }
 }
 
+/// The most cells a map with land is cut into, unless it says otherwise.
+const MOST_LAND_CELLS: f64 = 4096.0;
+
 /// Supplies textures for materials.
 pub trait TextureSource {
     /// The texture of `material`.
@@ -1256,11 +1259,32 @@ fn compile_with(
         .find(|entity| entity.kind == "worldspawn")
         .and_then(|world| world.fields.iter().find(|(key, _)| key == "cell_size"))
         .and_then(|(_, value)| value.number())
-        .unwrap_or(DEFAULT_CELL)
+        .unwrap_or_else(|| usual_cell(&builder.map))
         .max(32.0);
     cut_cells(&mut builder.map, &mut builder.planes, size);
     builder.planes_to_map();
     Ok(finished(builder.map))
+}
+
+/// How wide `map`'s cells are, if it doesn't say. Every cell looks at every other, and land's wide
+/// and mostly open air, so over land they're as wide as it takes to keep their number down. Land
+/// draws by what's near, so it doesn't lose much by that.
+fn usual_cell(map: &Map) -> f64 {
+    let Some(world) = map.models.first().filter(|_| !map.terrain.is_empty()) else {
+        return DEFAULT_CELL;
+    };
+    let across = world.maxs - world.mins;
+    let mut size = DEFAULT_CELL;
+    let count = |size: f64| {
+        [across.x, across.y, across.z]
+            .map(|side| (f64::from(side) / size).ceil().max(1.0))
+            .iter()
+            .product::<f64>()
+    };
+    while count(size) > MOST_LAND_CELLS {
+        size *= 2.0;
+    }
+    size
 }
 
 /// How a working map says its light comes out.

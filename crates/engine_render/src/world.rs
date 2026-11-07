@@ -635,28 +635,9 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             if let Some(slot) = mesh.face_chunk.get_mut(face_at) {
                 *slot = Some(chunk);
             }
-            let corner = |index: usize| {
-                let face = map.faces.get(face_at)?;
-                let point = *map.face_points(face).get(index)?;
-                let number = face.first_point as usize + index;
-                let place = places.get(face_at).copied().flatten();
-                Some(make_vertex(
-                    map,
-                    face,
-                    (number, point),
-                    place,
-                    neutral,
-                    atlas_size,
-                    false,
-                ))
-            };
-            let (low, high) = (corner(0).unwrap_or_default(), corner(2).unwrap_or_default());
-            mesh.chunk_lights.push(ChunkLight {
-                low: low.light_uv,
-                high: high.light_uv,
-                step: low.light_step,
-                styles: low.styles,
-            });
+            let place = places.get(face_at).copied().flatten();
+            mesh.chunk_lights
+                .push(chunk_light(map, face_at, place, neutral, atlas_size, false));
             chunk += 1;
         }
     }
@@ -851,7 +832,82 @@ pub fn tile_image(mesh: &WorldMesh, map: &Map, tile: u32, light: &TileLight) -> 
     Some(image)
 }
 
-/// `face`'s vertices, given its place in the atlas.
+/// Where the light of the chunk that face `face_at` stands in for is, given its place in the atlas.
+fn chunk_light(
+    map: &Map,
+    face_at: usize,
+    place: Option<LightPlace>,
+    neutral: [u32; 2],
+    atlas_size: u32,
+    detail: bool,
+) -> ChunkLight {
+    let corner = |index: usize| {
+        let face = map.faces.get(face_at)?;
+        let point = *map.face_points(face).get(index)?;
+        let number = face.first_point as usize + index;
+        let point = (number, point);
+        Some(make_vertex(
+            map, face, point, place, neutral, atlas_size, detail,
+        ))
+    };
+    let (low, high) = (corner(0).unwrap_or_default(), corner(2).unwrap_or_default());
+    ChunkLight {
+        low: low.light_uv,
+        high: high.light_uv,
+        step: low.light_step,
+        styles: low.styles,
+    }
+}
+
+/// What the light of `image`'s chunks of land becomes with it at `corner`, by chunk.
+#[must_use]
+pub(crate) fn detail_chunks(
+    map: &Map,
+    mesh: &WorldMesh,
+    image: &TileImage,
+    corner: [u32; 2],
+) -> Vec<(u32, ChunkLight)> {
+    image
+        .places
+        .iter()
+        .filter_map(|(face, position)| {
+            let chunk = mesh.face_chunk.get(*face as usize).copied().flatten()?;
+            let light = map.faces.get(*face as usize)?.light?;
+            let place = LightPlace {
+                position: [corner[0] + position[0], corner[1] + position[1]],
+                width: light.width,
+            };
+            let found = chunk_light(
+                map,
+                *face as usize,
+                Some(place),
+                [0, 0],
+                mesh.atlas_size,
+                true,
+            );
+            Some((chunk, found))
+        })
+        .collect()
+}
+
+/// What the light of `tile`'s chunks of land goes back to with its light gone, by chunk.
+#[must_use]
+pub(crate) fn far_chunks(map: &Map, mesh: &WorldMesh, tile: u32) -> Vec<(u32, ChunkLight)> {
+    let faces = mesh.tile_faces.get(tile as usize);
+    faces
+        .into_iter()
+        .flatten()
+        .filter_map(|face| {
+            let chunk = mesh.face_chunk.get(*face as usize).copied().flatten()?;
+            let place = mesh.far_places.get(*face as usize).copied().flatten();
+            let found = chunk_light(map, *face as usize, place, [0, 0], mesh.atlas_size, false);
+            Some((chunk, found))
+        })
+        .collect()
+}
+
+/// `face`'s vertices, given its place in the atlas. A chunk of land has none: its light goes with
+/// the land, so it's for [`detail_chunks`] and [`far_chunks`].
 fn patch_of(
     map: &Map,
     mesh: &WorldMesh,
@@ -859,6 +915,15 @@ fn patch_of(
     place: Option<LightPlace>,
     detail: bool,
 ) -> Option<VertexPatch> {
+    if mesh
+        .face_chunk
+        .get(face as usize)
+        .copied()
+        .flatten()
+        .is_some()
+    {
+        return None;
+    }
     let found = map.faces.get(face as usize)?;
     let (first, _) = *mesh.face_vertices.get(face as usize)?;
     let mut bytes = Vec::with_capacity(found.point_count as usize * Vertex::SIZE);

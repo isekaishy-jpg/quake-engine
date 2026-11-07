@@ -1319,7 +1319,7 @@ impl Backend {
                 let mut mapped = land.nodes[slot].memory.map()?;
                 land.batches[slot] = terrain_nodes(
                     scene.map,
-                    (&scene.visible.chunks, &land.lights),
+                    (&scene.visible.chunks, &land.lights, &land.ranges),
                     (view.origin, &planes),
                     mapped.as_slice_mut(),
                 );

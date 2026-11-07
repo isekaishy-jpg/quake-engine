@@ -48,7 +48,7 @@ pub use sprite::{
     sprite_push_bytes,
 };
 pub use streamer::TileStreamer;
-pub use terrain::{GRIDS, LEVEL_REACH, TerrainBatch, grid_indices, terrain_nodes};
+pub use terrain::{GRIDS, LEVEL_REACH, TerrainBatch, chunk_ranges, grid_indices, terrain_nodes};
 pub use visible::VisibleSet;
 pub use world::InstanceLight;
 pub use world::{

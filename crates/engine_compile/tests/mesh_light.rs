@@ -383,6 +383,72 @@ fn land_is_lit_by_its_slopes_and_shades_itself() {
         at(quarter / 2 + quarter, middle),
     );
     assert!(shaded + 40 < sunny, "{shaded} and {sunny}");
+    // The far end of the shadow, where what's in the way is near the end of the line's way up.
+    let far_end = at(1, middle);
+    assert!(far_end + 40 < sunny, "{far_end} and {sunny}");
+}
+
+/// A level of land `data`, baked.
+fn baked_land(text: &str, data: TerrainData) -> Map {
+    let mut working = read_map_text(text).expect("reads");
+    working.terrain[0].data = data;
+    let mut map = compile(&working, &mut WithGlass).expect("compiles");
+    let mut images = |path: &str| Err(engine_compile::CompileError::Bad(path.to_owned()));
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    map
+}
+
+/// What's under the land is solid, so a probe there stays dark, as one in a wall does, and what's
+/// lit by probes doesn't take light from it.
+#[test]
+fn a_probe_under_land_stays_dark() {
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    data.heights.fill(600.0);
+    let map = baked_land(LAND_ROOM, data);
+    let probes = map.probes.as_ref().expect("probes");
+    let at = |z: f32| {
+        let local = (z - probes.origin.z) / probes.spacing;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "inside the grid"
+        )]
+        let layer = local as u32;
+        let [across, along, _] = probes.size;
+        let middle = (layer * along + along / 2) * across + across / 2;
+        probes.colors[middle as usize]
+    };
+    assert_eq!(at(200.0), [[0; 3]; 6], "in the land");
+    let open = at(probes.origin.z + probes.spacing * (probes.size[2] - 1) as f32);
+    assert!(open.iter().flatten().any(|part| *part > 0), "{open:?}");
+}
+
+/// Every cell looks at every other, so wide land is cut into wider ones, and a level with no land
+/// isn't touched.
+#[test]
+fn wide_land_has_wider_cells() {
+    let text = "format 1 map
+entity world { type = worldspawn light_spacing = 1024 }
+brush { material = floor cuboid = -64 -64 -100 8256 8256 -64 }
+brush { material = floor cuboid = 0 0 3000 32 32 3032 }
+terrain { source = ridge material = floor }
+";
+    let map = baked_land(text, TerrainData::flat([4, 4], 32.0));
+    let cells = map.tree.leaves.len();
+    assert!(cells <= 4200, "{cells}");
+    assert!(cells > 200, "{cells}");
+    let wall = text.replace("terrain { source = ridge material = floor }\n", "");
+    let working = read_map_text(&wall).expect("reads");
+    let plain = compile(&working, &mut WithGlass).expect("compiles");
+    assert!(
+        plain.tree.leaves.len() > cells,
+        "{}",
+        plain.tree.leaves.len()
+    );
 }
 
 /// Paths find land by themselves: someone can stand on a hill, at its height, and there's nowhere

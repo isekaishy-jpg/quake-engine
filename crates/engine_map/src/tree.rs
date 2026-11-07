@@ -171,6 +171,42 @@ impl Tree {
         }
     }
 
+    /// Adds to `out` the heights between `top` and `bottom` where the column at `x`, `y` could go
+    /// in or out of what's solid below `child`, in no order. It's every plane the column crosses
+    /// on the way, so it takes one walk down the tree where looking at each height would take a
+    /// walk for each.
+    pub fn clip_crossings(
+        &self,
+        child: ClipChild,
+        (x, y): (f32, f32),
+        (top, bottom): (f32, f32),
+        out: &mut Vec<f32>,
+    ) {
+        let ClipChild::Node(index) = child else {
+            return;
+        };
+        let Some(node) = self
+            .clip_nodes
+            .get(usize::try_from(index).unwrap_or(usize::MAX))
+        else {
+            return;
+        };
+        let Some(plane) = self.plane(node.plane) else {
+            return;
+        };
+        let side = |z: f32| plane.normal.dot(Vec3::new(x, y, z)) - plane.distance;
+        let (above, below) = (side(top), side(bottom));
+        let child_of = |side: f32| node.children[usize::from(side < 0.0)];
+        if (above < 0.0) == (below < 0.0) {
+            self.clip_crossings(child_of(above), (x, y), (top, bottom), out);
+            return;
+        }
+        let z = top + (bottom - top) * above / (above - below);
+        out.push(z);
+        self.clip_crossings(child_of(above), (x, y), (top, z), out);
+        self.clip_crossings(child_of(below), (x, y), (z, bottom), out);
+    }
+
     /// The leaf at `index`.
     #[must_use]
     pub fn leaf(&self, index: u32) -> Option<&Leaf> {

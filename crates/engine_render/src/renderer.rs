@@ -17,7 +17,10 @@ use crate::instances::MovingDraw;
 use crate::live::LiveLight;
 use crate::sprite::{GpuParticles, LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
-use crate::world::{ShownTiles, WorldMesh, build_world, detail_patches, far_patches, tile_image};
+use crate::world::{
+    ShownTiles, WorldMesh, build_world, detail_chunks, detail_patches, far_chunks, far_patches,
+    tile_image,
+};
 
 /// How many light styles a view carries.
 const STYLE_COUNT: usize = 64;
@@ -264,6 +267,8 @@ impl Renderer {
         };
         let patches = detail_patches(&loaded.map, &loaded.mesh, &image, corner);
         self.backend.write_tile_light(&image, corner, &patches)?;
+        let chunks = detail_chunks(&loaded.map, &loaded.mesh, &image, corner);
+        self.backend.set_chunk_lights(&chunks);
         Ok(true)
     }
 
@@ -279,6 +284,8 @@ impl Renderer {
         if loaded.shown.free(tile) {
             let patches = far_patches(&loaded.map, &loaded.mesh, tile);
             self.backend.write_vertices(&patches)?;
+            let chunks = far_chunks(&loaded.map, &loaded.mesh, tile);
+            self.backend.set_chunk_lights(&chunks);
         }
         Ok(())
     }

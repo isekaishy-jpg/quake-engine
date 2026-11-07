@@ -1449,6 +1449,60 @@ fn a_tile_shows_its_average_until_its_light_arrives() {
     assert_eq!(centre_of(&mut renderer), near, "just the same");
 }
 
+/// Land below a floor, with its light out in tile 0 and the floor's kept near.
+fn tiled_land(average: [u8; 3]) -> (Map, TileLight) {
+    let mut built = map_with_land();
+    built.textures[0].material = None;
+    built.terrain[0].data.heights.fill(-100.0);
+    let tile = TileLight {
+        light: built.light.clone(),
+        ..TileLight::default()
+    };
+    for face in built.faces.iter_mut().skip(1) {
+        let light = face.light.as_mut().expect("lit");
+        light.tile = 0;
+        light.average = average;
+    }
+    built.tile_size = 1024.0;
+    built.light_tiles = Some(LightTiles::new(1024.0, vec![[0, 0]]));
+    (built, tile)
+}
+
+/// Land's light comes and goes with its tile, as a face's does, and it leaves the other faces as
+/// they were: a chunk has no vertices of its own to write.
+#[test]
+fn land_shows_its_tiles_light() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let (built, tile) = tiled_land([0, 10, 240]);
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(64.0, 64.0, 300.0),
+        ..view_from_above()
+    };
+    let shot = |renderer: &mut Renderer| {
+        renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture")
+    };
+    let far = shot(&mut renderer);
+    let (floor, land) = ((32, 32), (4, 4));
+    let land_far = pixel_at(&far, land.0, land.1);
+    assert!(land_far[2] > land_far[0] + 100, "the average: {land_far:?}");
+    assert!(renderer.show_tile_light(0, &tile).expect("shows"));
+    let near = shot(&mut renderer);
+    let land_near = pixel_at(&near, land.0, land.1);
+    assert!(land_near[0] > land_near[2] + 50, "its own: {land_near:?}");
+    assert_eq!(
+        pixel_at(&near, floor.0, floor.1),
+        pixel_at(&far, floor.0, floor.1),
+        "the floor's as it was"
+    );
+    renderer.hide_tile_light(0).expect("hides");
+    assert_eq!(shot(&mut renderer).rgba, far.rgba, "and back");
+}
+
 /// A streamer brings a tile's light to the view off the main thread, and takes
 /// it away when the view goes far off.
 #[test]

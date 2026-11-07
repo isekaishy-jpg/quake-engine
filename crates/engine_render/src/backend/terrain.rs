@@ -12,8 +12,9 @@ use super::upload::{compiled_format, device_image, host_buffer};
 use super::{Backend, FRAMES, GpuBuffer, GpuImage};
 use crate::error::RenderError;
 use crate::terrain::{
-    ChunkLight, GRIDS, NODE_BYTES, TerrainBatch, chunk_list, grid_indices, height_bytes,
-    hole_bytes, layer_bytes, normal_bytes, paint_bytes, sheet_bytes, sheet_normals,
+    ChunkLight, GRIDS, NODE_BYTES, TerrainBatch, chunk_list, chunk_ranges, grid_indices,
+    height_bytes, hole_bytes, layer_bytes, normal_bytes, paint_bytes, sheet_bytes, sheet_normals,
+    sheet_ranges,
 };
 
 /// Parts of the land in a frame. Past this, what's furthest goes undrawn.
@@ -39,6 +40,8 @@ pub(super) struct GpuTerrain {
     _surfaces: GpuImage,
     /// Where each sheet's heights, holes and paint start, in samples and in bytes.
     firsts: Vec<(u64, u64, u64)>,
+    /// How many chunks come before each sheet.
+    first_chunks: Vec<u32>,
     /// What reads those.
     pub(super) set: DescriptorSet,
     /// Kept alive for the set.
@@ -53,6 +56,8 @@ pub(super) struct GpuTerrain {
     pub(super) batches: [Vec<TerrainBatch>; FRAMES],
     /// Where each chunk's light is.
     pub(super) lights: Vec<ChunkLight>,
+    /// The low and high height of each chunk.
+    pub(super) ranges: Vec<[f32; 2]>,
     /// Every chunk, at the level shadows use, as a part of the land to draw.
     pub(super) whole: GpuBuffer,
     /// Each chunk's middle and how far it reaches, in the same order.
@@ -97,6 +102,14 @@ impl Backend {
     ) -> Result<(), RenderError> {
         self.wait_for_frame()?;
         self.device.wait_idle()?;
+        let first_chunk: u32 = self.loaded_sheet_chunks(number);
+        if let Some(land) = self.map.as_mut().and_then(|map| map.terrain.as_mut()) {
+            let ranges = sheet_ranges(sheet);
+            let first = first_chunk as usize;
+            if let Some(slots) = land.ranges.get_mut(first..first + ranges.len()) {
+                slots.copy_from_slice(&ranges);
+            }
+        }
         let Some(land) = self.map.as_ref().and_then(|map| map.terrain.as_ref()) else {
             return Ok(());
         };
@@ -119,6 +132,13 @@ impl Backend {
             self.write_into(&land.paint, paint, sheet.data.paint.as_flattened())?;
         }
         Ok(())
+    }
+
+    /// How many chunks come before sheet `number`.
+    fn loaded_sheet_chunks(&self, number: usize) -> u32 {
+        let land = self.map.as_ref().and_then(|map| map.terrain.as_ref());
+        land.and_then(|land| land.first_chunks.get(number).copied())
+            .unwrap_or(0)
     }
 
     /// `pictures` as one array, which has at least two layers, as one layer wouldn't be seen as
@@ -223,6 +243,18 @@ impl Backend {
         ))
     }
 
+    /// Moves the light of these chunks of land, as tiles come and go.
+    pub(crate) fn set_chunk_lights(&mut self, lights: &[(u32, ChunkLight)]) {
+        let land = self.map.as_mut().and_then(|map| map.terrain.as_mut());
+        if let Some(land) = land {
+            for (chunk, light) in lights {
+                if let Some(slot) = land.lights.get_mut(*chunk as usize) {
+                    *slot = *light;
+                }
+            }
+        }
+    }
+
     /// Puts `map`'s land on the GPU, if it has any.
     pub(super) fn upload_terrain(
         &self,
@@ -314,6 +346,16 @@ impl Backend {
             _colors: colors,
             _surfaces: surfaces,
             firsts,
+            first_chunks: map
+                .terrain
+                .iter()
+                .scan(0, |before, sheet| {
+                    let first = *before;
+                    *before += sheet.chunk_count();
+                    Some(first)
+                })
+                .collect(),
+            ranges: chunk_ranges(map),
             set,
             _pool: pool,
             indices,

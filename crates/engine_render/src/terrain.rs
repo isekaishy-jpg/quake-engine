@@ -113,8 +113,13 @@ fn node_at(level: usize, first: [u32; 2], cells: u32) -> TerrainNode {
 
 /// The parts of chunk `x`, `y` of `sheet` to draw from `eye`: all of it at one level, or its
 /// quarters if it's near enough for the finest.
-fn chunk_nodes(sheet: &TerrainSheet, (x, y): (u32, u32), eye: Vec3, out: &mut Vec<TerrainNode>) {
-    let heights = sheet.chunk_heights(x, y);
+fn chunk_nodes(
+    sheet: &TerrainSheet,
+    (x, y): (u32, u32),
+    heights: [f32; 2],
+    eye: Vec3,
+    out: &mut Vec<TerrainNode>,
+) {
     let first = [x * CHUNK_CELLS, y * CHUNK_CELLS];
     let (low, high) = bounds_of(sheet, first, CHUNK_CELLS, heights);
     let level = level_at(distance_to(eye, low, high));
@@ -131,11 +136,26 @@ fn chunk_nodes(sheet: &TerrainSheet, (x, y): (u32, u32), eye: Vec3, out: &mut Ve
     }
 }
 
+/// The low and high height of each chunk of `sheet`, row by row.
+#[must_use]
+pub(crate) fn sheet_ranges(sheet: &TerrainSheet) -> Vec<[f32; 2]> {
+    let [across, down] = sheet.data.chunks();
+    (0..down)
+        .flat_map(|y| (0..across).map(move |x| sheet.chunk_heights(x, y)))
+        .collect()
+}
+
+/// The low and high height of every chunk of `map`, which is too much reading to do each frame.
+#[must_use]
+pub fn chunk_ranges(map: &Map) -> Vec<[f32; 2]> {
+    map.terrain.iter().flat_map(sheet_ranges).collect()
+}
+
 /// Writes the parts of the land that `planes` can see, among `chunks`, to `out`, grid by grid so
 /// that each is one draw, and says where they went.
 pub fn terrain_nodes(
     map: &Map,
-    (chunks, lights): (&[u32], &[ChunkLight]),
+    (chunks, lights, ranges): (&[u32], &[ChunkLight], &[[f32; 2]]),
     (eye, planes): (Vec3, &[[f32; 4]; 6]),
     out: &mut [u8],
 ) -> Vec<TerrainBatch> {
@@ -152,7 +172,7 @@ pub fn terrain_nodes(
         {
             let at = chunk - first_chunk;
             let (x, y) = (at % across, at / across);
-            let heights = sheet.chunk_heights(x, y);
+            let heights = ranges.get(chunk as usize).copied().unwrap_or_default();
             let first = [x * CHUNK_CELLS, y * CHUNK_CELLS];
             let (low, high) = bounds_of(sheet, first, CHUNK_CELLS, heights);
             let middle = (low + high) * 0.5;
@@ -160,7 +180,7 @@ pub fn terrain_nodes(
                 continue;
             }
             found.clear();
-            chunk_nodes(sheet, (x, y), eye, &mut found);
+            chunk_nodes(sheet, (x, y), heights, eye, &mut found);
             for node in &found {
                 let Some(grid) = GRIDS.iter().position(|size| *size == node.grid) else {
                     continue;

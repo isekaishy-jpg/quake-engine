@@ -823,6 +823,23 @@ fn a_mega_surface_holds_a_layers_bumps_and_shine() {
     assert_eq!(texel_of(material.specular, bare)[0], 0);
 }
 
+/// Over wide land most of a grid of probes is air, so it's kept to what can be held, and a room
+/// has the spacing it always had.
+#[test]
+fn a_wide_world_has_its_probes_further_apart() {
+    let wide = "format 1 map\n\
+        entity world { type = worldspawn light_spacing = 2048 cell_size = 16384 }\n\
+        brush { material = floor cuboid = -4096 -4096 -32 4096 4096 0 }\n\
+        brush { material = floor cuboid = 0 0 16384 32 32 16416 }\n";
+    let map = baked(wide, &[]);
+    let probes = map.probes.as_ref().expect("probes");
+    assert!((probes.spacing - 256.0).abs() < 0.01, "{}", probes.spacing);
+    assert!(probes.colors.len() <= 1 << 19, "{}", probes.colors.len());
+    let map = baked(ROOM, &[]);
+    let probes = map.probes.as_ref().expect("probes");
+    assert!((probes.spacing - 128.0).abs() < 0.01, "{}", probes.spacing);
+}
+
 /// Reading a bake puts mega surfaces and their light just where baking did.
 #[test]
 fn a_bake_keeps_mega_surfaces_where_they_were() {

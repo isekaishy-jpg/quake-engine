@@ -20,6 +20,7 @@
   - [Making the UI and menus usable](research/ui-and-menus.md): what good menus need, and how we measured up
   - [Meshes](meshes.md): bringing models in, and placing them
   - [Mesh and prefab standard](mesh-standard.md): what a mesh or prefab has to be
+  - [Land](terrain.md): sheets of heights, shaped and painted, caves and bridges
   - [Cameras](cameras.md): which camera, and setting them up
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one

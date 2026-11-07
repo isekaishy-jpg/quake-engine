@@ -125,7 +125,7 @@ Railings, grilles and leaves show their detail and have holes between. As they'r
 
 ## Terrain sets
 
-Terrain is painted from sets of ground, blended together, so each has to work beside the others. This section firms up with the terrain work on the [work list](research/work-list.md).
+Terrain is painted from sets of ground, blended together, so each has to work beside the others. [Land](terrain.md) says how they're used.
 
 - **A repeating set,** at 1024 by 1024, with colour, normal and height.
 - **Height matters here.** Blends follow it, so stones stick out through dirt. Give true height, not brightness.

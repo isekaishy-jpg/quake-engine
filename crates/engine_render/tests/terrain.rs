@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_map::{Map, TerrainData, TerrainSheet};
-use engine_render::{GRIDS, TerrainBatch, grid_indices, terrain_nodes};
+use engine_render::{GRIDS, TerrainBatch, chunk_ranges, grid_indices, terrain_nodes};
 
 /// Land of `chunks` by `chunks`, flat.
 fn map_of(chunks: u32) -> Map {
@@ -31,7 +31,8 @@ fn parts(map: &Map, eye: Vec3) -> (Vec<Part>, Vec<TerrainBatch>) {
     let count: u32 = map.terrain.iter().map(TerrainSheet::chunk_count).sum();
     let chunks: Vec<u32> = (0..count).collect();
     let mut out = vec![0; 1 << 20];
-    let batches = terrain_nodes(map, (&chunks, &[]), (eye, &EVERYWHERE), &mut out);
+    let ranges = chunk_ranges(map);
+    let batches = terrain_nodes(map, (&chunks, &[], &ranges), (eye, &EVERYWHERE), &mut out);
     let total: u32 = batches.iter().map(|batch| batch.count).sum();
     let word = |at: usize| u32::from_le_bytes(out[at..at + 4].try_into().expect("four"));
     let parts = (0..total as usize)

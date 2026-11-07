@@ -58,6 +58,12 @@ const BOUNCE_STRIDE: usize = 2;
 /// How many probes apart a grid sits, in world units.
 const PROBE_SPACING: f64 = 128.0;
 
+/// How wide the tiles bounced light is held in are, over land on a level that has none.
+const LAND_BOUNCE_TILE: f64 = 2048.0;
+
+/// The most probes in a grid.
+const MOST_PROBES: u64 = 1 << 19;
+
 /// The directions a probe looks in.
 const PROBE_SIDES: [Point; 6] = [
     [1.0, 0.0, 0.0],
@@ -145,6 +151,8 @@ struct Scene<'a> {
     mesh_grid: RayGrid,
     /// Land, which blocks light where it's solid.
     land: &'a [TerrainSheet],
+    /// How far each sheet reaches.
+    land_reach: &'a [LandReach],
     /// How high the world goes. Nothing above can stop the sun.
     top: f64,
     /// How far stamped faces lift their samples, by their first point.
@@ -236,26 +244,97 @@ impl MeshShadow {
     }
 }
 
-/// Whether land is between `a` and `b`, which goes by stepping along the line a cell at a time,
-/// and asking if each place is in it.
+/// The part of the line from `a` to `b` that can meet `sheet`, as shares along it. Land's solid for
+/// a thickness, or as far as it goes, so a line that's up in the sky is done with at once, where
+/// stepping along it would take thousands of looks at the heights.
+fn land_share(sheet: &LandReach, a: Point, b: Point) -> Option<(f64, f64)> {
+    let (mut first, mut last) = (0.0_f64, 1.0_f64);
+    for axis in 0..3 {
+        let way = b[axis] - a[axis];
+        let (low, high) = (sheet.low[axis], sheet.high[axis]);
+        if way.abs() < 1e-9 {
+            if a[axis] < low || a[axis] > high {
+                return None;
+            }
+            continue;
+        }
+        let (enter, leave) = ((low - a[axis]) / way, (high - a[axis]) / way);
+        first = first.max(enter.min(leave));
+        last = last.min(enter.max(leave));
+    }
+    (first <= last).then_some((first, last))
+}
+
+/// How far a sheet of land can reach.
+pub(crate) struct LandReach {
+    /// Its low corner, which can be a long way down.
+    low: Point,
+    /// Its high corner.
+    high: Point,
+}
+
+impl LandReach {
+    /// How far `sheet` reaches.
+    pub(crate) fn of(sheet: &TerrainSheet) -> Self {
+        let [across, down] = sheet.data.chunks();
+        let (mut low, mut high) = (f64::MAX, f64::MIN);
+        for y in 0..down {
+            for x in 0..across {
+                let [bottom, top] = sheet.chunk_heights(x, y);
+                low = low.min(f64::from(bottom));
+                high = high.max(f64::from(top));
+            }
+        }
+        let thick = f64::from(sheet.thickness);
+        // Up, it's solid from its heights down, and down, from its heights up.
+        let (under, over) = match (sheet.facing_down, thick > 0.0) {
+            (false, true) => (low - thick, high),
+            (false, false) => (f64::MIN / 2.0, high),
+            (true, true) => (low, high + thick),
+            (true, false) => (low, f64::MAX / 2.0),
+        };
+        let [x, y] = [sheet.origin.x, sheet.origin.y].map(f64::from);
+        let cell = f64::from(sheet.data.cell);
+        let [width, depth] = sheet.data.cells.map(|cells| f64::from(cells) * cell);
+        Self {
+            low: [x, y, under],
+            high: [x + width, y + depth, over],
+        }
+    }
+}
+
+/// Whether land is between `a` and `b`, which goes by stepping along the part of the line that can
+/// meet it a cell at a time, and asking if each place is in it.
 fn land_between(scene: &Scene<'_>, a: Point, b: Point) -> bool {
-    let length = dot(add_scaled(b, a, -1.0), add_scaled(b, a, -1.0)).sqrt();
-    scene.land.iter().any(|sheet| {
-        let step = f64::from(sheet.data.cell) * 0.5;
-        #[expect(
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a count of steps"
-        )]
-        let steps = (length / step).ceil() as u32;
-        (1..steps).any(|at| {
-            let share = f64::from(at) / f64::from(steps);
-            let place = add_scaled(a, add_scaled(b, a, -1.0), share);
-            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
-            let place = Vec3::new(place[0] as f32, place[1] as f32, place[2] as f32);
-            sheet.holds(place)
+    let way = add_scaled(b, a, -1.0);
+    let length = dot(way, way).sqrt();
+    scene
+        .land
+        .iter()
+        .zip(scene.land_reach)
+        .any(|(sheet, reach)| {
+            let Some((first, last)) = land_share(reach, a, b) else {
+                return false;
+            };
+            let step = f64::from(sheet.data.cell) * 0.5;
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a count of steps"
+            )]
+            let steps = ((last - first) * length / step).ceil() as u32;
+            (0..=steps).any(|at| {
+                let share = first + (last - first) * f64::from(at) / f64::from(steps.max(1));
+                // The ends of the line are what's being lit, and aren't in the way.
+                if share <= 0.0 || share >= 1.0 {
+                    return false;
+                }
+                let place = add_scaled(a, way, share);
+                #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+                let place = Vec3::new(place[0] as f32, place[1] as f32, place[2] as f32);
+                sheet.holds(place)
+            })
         })
-    })
 }
 
 /// Whether anything solid is between `a` and `b`: brushes or meshes.
@@ -2047,6 +2126,17 @@ pub(crate) fn in_parallel<T: Sync, R: Send>(items: &[T], work: impl Fn(&T) -> R 
     done.into_iter().flat_map(|(_, batch)| batch).collect()
 }
 
+/// How far apart probes are, given how many a spacing makes each way. Over wide land most of a
+/// grid is air, and it has to be kept to what can be baked and held.
+fn probe_spacing(size_at: impl Fn(f64) -> [u32; 3]) -> f64 {
+    let mut spacing = PROBE_SPACING;
+    let count = |[x, y, z]: [u32; 3]| u64::from(x) * u64::from(y) * u64::from(z);
+    while count(size_at(spacing)) > MOST_PROBES {
+        spacing *= 2.0;
+    }
+    spacing
+}
+
 /// Bakes `probes` over the world's bounds, for moving things.
 #[expect(clippy::cast_possible_truncation, reason = "the tree takes f32")]
 fn bake_probes(
@@ -2063,16 +2153,17 @@ fn bake_probes(
         clippy::cast_sign_loss,
         reason = "world sizes are small"
     )]
-    let count = |axis: usize| ((high[axis] - low[axis]) / PROBE_SPACING).ceil() as u32 + 1;
-    let size = [count(0), count(1), count(2)];
+    let count = |axis: usize, spacing: f64| ((high[axis] - low[axis]) / spacing).ceil() as u32 + 1;
+    let spacing = probe_spacing(|spacing| [0, 1, 2].map(|axis| count(axis, spacing)));
+    let size = [0, 1, 2].map(|axis| count(axis, spacing));
     let mut positions = Vec::new();
     for z in 0..size[2] {
         for y in 0..size[1] {
             for x in 0..size[0] {
                 positions.push([
-                    low[0] + f64::from(x) * PROBE_SPACING,
-                    low[1] + f64::from(y) * PROBE_SPACING,
-                    low[2] + f64::from(z) * PROBE_SPACING,
+                    low[0] + f64::from(x) * spacing,
+                    low[1] + f64::from(y) * spacing,
+                    low[2] + f64::from(z) * spacing,
                 ]);
             }
         }
@@ -2084,6 +2175,9 @@ fn bake_probes(
         let place = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
         let leaf = map.tree.leaf(map.tree.leaf_at(place));
         let open = leaf.is_some_and(|leaf| leaf.contents != engine_map::Contents::Solid);
+        if scene.land.iter().any(|sheet| sheet.holds(place)) {
+            return (colors, direction_bytes(direction));
+        }
         let base = if open { ambient } else { 0.0 };
         for (side, normal) in PROBE_SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
@@ -2102,7 +2196,7 @@ fn bake_probes(
     #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
     let origin = Vec3::new(low[0] as f32, low[1] as f32, low[2] as f32);
     #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
-    let spacing = PROBE_SPACING as f32;
+    let spacing = spacing as f32;
     Some(ProbeGrid {
         origin,
         spacing,
@@ -2231,6 +2325,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         });
     }
     let land = map.terrain.clone();
+    let land_reach: Vec<LandReach> = land.iter().map(LandReach::of).collect();
     let meshes: Vec<MeshShadow> = working
         .placed
         .iter()
@@ -2245,6 +2340,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         glass,
         mesh_grid: RayGrid::new(meshes.iter().map(|mesh| (mesh.low, mesh.high))),
         land: &land,
+        land_reach: &land_reach,
         meshes,
         top: map
             .models
@@ -2280,7 +2376,14 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             bakes[*first as usize] = bake;
         }
     }
-    let sources = bounce_sources(&bakes, spacing, f64::from(shared.tile_size));
+    // Land's wide, and looking at all of it from each place is most of a bake. What bounces from
+    // a tile away is next to nothing, so it's held in tiles whether the level is or not.
+    let bounce_tile = if shared.terrain.is_empty() || shared.tile_size > 0.0 {
+        f64::from(shared.tile_size)
+    } else {
+        LAND_BOUNCE_TILE
+    };
+    let sources = bounce_sources(&bakes, spacing, bounce_tile);
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
             let mut light = bounced_face(&scene, &sources, bake, bounce_gain);

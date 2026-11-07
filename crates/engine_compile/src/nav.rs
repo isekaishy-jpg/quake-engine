@@ -95,12 +95,35 @@ impl Hull<'_> {
         high
     }
 
+    /// The heights where the column at `x` and `y` could change between open and solid, lowest
+    /// first.
+    fn crossings(&self, x: f32, y: f32, top: f32, bottom: f32) -> Vec<f32> {
+        let mut found = Vec::new();
+        let tree = &self.map.tree;
+        tree.clip_crossings(self.root, (x, y), (top, bottom), &mut found);
+        for sheet in &self.map.terrain {
+            sheet.box_crossings((x, y), self.size, &mut found);
+        }
+        found.sort_by(f32::total_cmp);
+        found
+    }
+
     /// The floors of the column at `x` and `y`, top first.
     fn floors(&self, x: f32, y: f32, top: f32, bottom: f32) -> Vec<f32> {
+        let crossings = self.crossings(x, y, top, bottom);
+        let mut waiting = crossings.iter().rev().copied().peekable();
         let mut out = Vec::new();
         let mut z = top;
         let mut was_open = !self.solid(Vec3::new(x, y, z));
         while z > bottom {
+            // Nothing changes before the next crossing, so most of a column isn't looked at.
+            while waiting.next_if(|crossing| *crossing > z).is_some() {}
+            let until = waiting.peek().copied().unwrap_or(bottom);
+            let clear = ((z - until) / SCAN).floor() - 1.0;
+            if clear >= 1.0 {
+                z -= clear * SCAN;
+                continue;
+            }
             let next = z - SCAN;
             let open = !self.solid(Vec3::new(x, y, next));
             if was_open && !open {

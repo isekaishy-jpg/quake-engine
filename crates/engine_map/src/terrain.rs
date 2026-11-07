@@ -319,6 +319,31 @@ impl TerrainSheet {
         .any(|(x, y)| self.holds(point + Vec3::new(*x, *y, z)))
     }
 
+    /// Adds to `out` the heights where a box at `x`, `y` could go in or out of the land, in no
+    /// order.
+    pub fn box_crossings(
+        &self,
+        (x, y): (f32, f32),
+        (mins, maxs): (Vec3, Vec3),
+        out: &mut Vec<f32>,
+    ) {
+        let z = if self.facing_down { maxs.z } else { mins.z };
+        let inward = if self.facing_down { 1.0 } else { -1.0 };
+        for (across, along) in [
+            (mins.x, mins.y),
+            (maxs.x, mins.y),
+            (maxs.x, maxs.y),
+            (mins.x, maxs.y),
+        ] {
+            if let Some(height) = self.height_at(x + across, y + along) {
+                out.push(height - z);
+                if self.thickness > 0.0 {
+                    out.push(height - z + self.thickness * inward);
+                }
+            }
+        }
+    }
+
     /// The low and high height of the chunk at `x`, `y`.
     #[must_use]
     pub fn chunk_heights(&self, x: u32, y: u32) -> [f32; 2] {
