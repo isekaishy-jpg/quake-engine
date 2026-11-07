@@ -117,9 +117,7 @@ fn read_clips(
             ..Clip::default()
         };
         for channel in animation.channels() {
-            let Some(joint) = by_node.get(&channel.target().node().index()) else {
-                continue;
-            };
+            let joint = by_node.get(&channel.target().node().index()).copied();
             let reader = channel.reader(|buffer| buffers.get(buffer.index()).map(|data| &data[..]));
             let (Some(inputs), Some(outputs)) = (reader.read_inputs(), reader.read_outputs())
             else {
@@ -127,6 +125,11 @@ fn read_clips(
             };
             let times: Vec<f32> = inputs.collect();
             let (path, values): (ChannelPath, Vec<f32>) = match outputs {
+                ReadOutputs::MorphTargetWeights(values) => {
+                    (ChannelPath::Weights, values.into_f32().collect())
+                }
+                // Moving what isn't a joint moves nothing of ours.
+                _ if joint.is_none() => continue,
                 ReadOutputs::Translations(values) => (
                     ChannelPath::Translation,
                     values
@@ -140,8 +143,6 @@ fn read_clips(
                 ReadOutputs::Scales(values) => {
                     (ChannelPath::Scale, values.flat_map(scale_of).collect())
                 }
-                // Morph weights aren't a joint's.
-                ReadOutputs::MorphTargetWeights(_) => continue,
             };
             clip.length = clip.length.max(times.last().copied().unwrap_or(0.0));
             let interpolation = match channel.sampler().interpolation() {
@@ -150,7 +151,7 @@ fn read_clips(
                 gltf::animation::Interpolation::CubicSpline => Interpolation::Cubic,
             };
             clip.channels.push(Channel {
-                joint: *joint,
+                joint: joint.unwrap_or(u16::MAX),
                 path,
                 interpolation,
                 times,
@@ -175,7 +176,11 @@ pub(crate) fn read_skeleton(
     scale: f64,
 ) -> Result<Option<ImportedSkeleton>, CompileError> {
     let wanted = joint_nodes(document);
-    if wanted.is_empty() {
+    let morphs = document
+        .meshes()
+        .flat_map(|mesh| mesh.primitives().collect::<Vec<_>>())
+        .any(|primitive| primitive.morph_targets().len() > 0);
+    if wanted.is_empty() && !morphs {
         return Ok(None);
     }
     let mut order = Vec::new();
@@ -255,6 +260,7 @@ pub(crate) fn read_skeleton(
             clips,
             places,
             reach: 0.0,
+            ..Skeleton::default()
         },
         by_skin,
     }))
@@ -296,6 +302,46 @@ impl ImportedSkeleton {
             .unwrap_or(u8::MAX);
         (joints, weights)
     }
+}
+
+/// The strings in the list called `targetNames` in `extras`, which is JSON. This is the only
+/// thing read from it, so it's read by hand.
+fn listed_names(extras: &str) -> Vec<String> {
+    let Some((_, after)) = extras.split_once("\"targetNames\"") else {
+        return Vec::new();
+    };
+    let Some((_, after)) = after.split_once('[') else {
+        return Vec::new();
+    };
+    let mut names = Vec::new();
+    let mut characters = after.chars();
+    let mut name: Option<String> = None;
+    while let Some(character) = characters.next() {
+        match (character, &mut name) {
+            ('\\', Some(name)) => name.extend(characters.next()),
+            ('"', Some(_)) => names.extend(name.take()),
+            ('"', None) => name = Some(String::new()),
+            (']', None) => break,
+            (character, Some(name)) => name.push(character),
+            _ => {}
+        }
+    }
+    names
+}
+
+/// The names of `mesh`'s morph targets, which aren't in glTF proper. Exporters put them in the
+/// mesh's extras, as `targetNames`, and with none they're numbered.
+pub(crate) fn morph_names(mesh: &gltf::Mesh<'_>, count: usize) -> Vec<String> {
+    let listed = mesh
+        .extras()
+        .as_ref()
+        .map_or_else(Vec::new, |raw| listed_names(raw.get()));
+    (0..count)
+        .map(|at| {
+            let name = listed.get(at);
+            name.map_or_else(|| format!("target{at}"), |name| name.replace(' ', "_"))
+        })
+        .collect()
 }
 
 /// How far any corner of `mesh` gets from a joint that carries it, at rest.

@@ -1,5 +1,6 @@
 //! Models by name, and how an entity becomes something to draw.
 
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -8,8 +9,8 @@ use engine_client::{BeamPiece, DrawnEntity};
 use engine_core::entity::EntityState;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, MOVING_MESH_PREFIX, Map, MovingMesh, OccluderSphere, Rows, Sprite, moved,
-    placed_at, pose_occlusion,
+    AliasModel, JointPose, MOVING_MESH_PREFIX, Map, MovingMesh, NO_MOVE, OccluderSphere, Rows,
+    Skeleton, Sprite, blend_poses, moved, placed_at, pose_occlusion,
 };
 use engine_render::{EntityDraw, LightDraw, MovingDraw, Renderer, SpriteDraw, model_matrix};
 use fixture_quake::{load_palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
@@ -26,35 +27,103 @@ const MAX_LIGHT: f32 = 192.0;
 /// The least light on the player's weapon.
 const MIN_WEAPON_LIGHT: f32 = 24.0;
 
+/// How long a change of clip takes to blend, in seconds.
+const CLIP_BLEND_SECONDS: f32 = 0.2;
+
 /// What the map calls full light, for what moves.
 const MOVING_FULL_LIGHT: f32 = 255.0;
 
 /// Light at which a skin shows as it is.
 const NEUTRAL_LIGHT: f32 = 128.0;
 
+/// What a client last saw of an entity's clip.
+#[derive(Clone, Copy, Debug)]
+struct ClipSeen {
+    /// The clip, plus one.
+    clip: u16,
+    /// When it began.
+    start: f32,
+    /// What it's changing from, as the clip, when that began, and when the change came.
+    from: Option<(u16, f32, f32)>,
+}
+
+/// How `state`'s skeleton stands at `time`, blending out of what it played before.
+fn pose_at(
+    skeleton: &Skeleton,
+    state: &EntityState,
+    time: f32,
+    seen: &mut ClipSeen,
+) -> Vec<JointPose> {
+    if seen.clip != state.clip || seen.start.to_bits() != state.clip_start.to_bits() {
+        seen.from = Some((seen.clip, seen.start, time));
+        seen.clip = state.clip;
+        seen.start = state.clip_start;
+    }
+    let clip_of = |number: u16| usize::from(number).checked_sub(1);
+    let pose = skeleton.pose(clip_of(state.clip), time - state.clip_start);
+    let Some((clip, start, changed)) = seen.from else {
+        return pose;
+    };
+    let share = (time - changed) / CLIP_BLEND_SECONDS;
+    if !(0.0..1.0).contains(&share) {
+        seen.from = None;
+        return pose;
+    }
+    blend_poses(&skeleton.pose(clip_of(clip), time - start), &pose, share)
+}
+
+/// How much of each morph target shows on `state`: what its clip says, then what a script has set.
+fn weights_of(skeleton: &Skeleton, state: &EntityState, time: f32) -> Vec<f32> {
+    let clip = usize::from(state.clip).checked_sub(1);
+    let mut weights = skeleton.weights(clip, time - state.clip_start);
+    for [target, value] in state.morphs {
+        if value != 0
+            && let Some(weight) = weights.get_mut(usize::from(target))
+        {
+            *weight = f32::from(value) / 255.0;
+        }
+    }
+    weights
+}
+
 /// Adds `moving`, the map's mesh number `mesh`, as `state` has it, to what's drawn.
 fn draw_moving(
-    mesh: usize,
-    moving: &MovingMesh,
+    (mesh, moving): (usize, &MovingMesh),
     state: &EntityState,
-    light: f32,
-    time: f32,
+    (light, time): (f32, f32),
+    seen: &mut ClipSeen,
     lists: &mut DrawLists,
 ) {
     let skeleton = &moving.skeleton;
-    let clip = usize::from(state.clip).checked_sub(1);
-    let placed = skeleton.placed(&skeleton.pose(clip, time - state.clip_start));
+    let placed = skeleton.placed(&pose_at(skeleton, state, time, seen));
     let (middle, radius) = skeleton.bounds(&placed);
     let rows = placed_at(state.origin, state.angles);
     let first_joint = u32::try_from(lists.palette.len()).unwrap_or(0);
-    let joint_count = u32::try_from(placed.len()).unwrap_or(0);
+    // A mesh with morphs and no joints stays where it is, as a joint that moves nothing.
+    if placed.is_empty() {
+        lists.palette.push(NO_MOVE);
+    }
     lists.palette.extend(skeleton.palette(&placed));
+    let joint_count = u32::try_from(placed.len().max(1)).unwrap_or(0);
+    let weights = weights_of(skeleton, state, time);
+    let first_weight = u32::try_from(lists.morph_weights.len()).unwrap_or(0);
+    let showing = weights.iter().any(|weight| *weight != 0.0);
+    let weight_count = if showing {
+        u32::try_from(weights.len()).unwrap_or(0)
+    } else {
+        0
+    };
+    if showing {
+        lists.morph_weights.extend(weights);
+    }
     let level = (light / MOVING_FULL_LIGHT).clamp(0.0, 2.0);
     lists.moving.push(MovingDraw {
         mesh: u32::try_from(mesh).unwrap_or(0),
         rows,
         first_joint,
         joint_count,
+        first_weight,
+        weight_count,
         light: [level; 3],
         center: moved(&rows, middle),
         radius,
@@ -141,6 +210,8 @@ pub(crate) struct DrawLists {
     pub(crate) moving: Vec<MovingDraw>,
     /// The joints of all of those.
     pub(crate) palette: Vec<Rows>,
+    /// The morph weights of all of those.
+    pub(crate) morph_weights: Vec<f32>,
     /// The shade of each model, as it's posed: the whole, then its parts.
     pub(crate) shades: Vec<Vec<(Vec3, f32)>>,
 }
@@ -156,6 +227,9 @@ pub(crate) struct ModelBank {
     names: HashMap<u32, String>,
     /// Models in a player's colours, by number and colours.
     colored: HashMap<(u32, u8), Arc<Asset>>,
+    /// What each entity showing a moving mesh last played, for blending between clips. It's
+    /// only for looks, so it's kept here, and the server's poses don't blend.
+    clips: RefCell<HashMap<u64, ClipSeen>>,
 }
 
 impl ModelBank {
@@ -164,6 +238,7 @@ impl ModelBank {
         self.by_number.clear();
         self.names.clear();
         self.colored.clear();
+        self.clips.borrow_mut().clear();
     }
 
     /// Loads model `number` in `colors`, the first time.
@@ -256,7 +331,13 @@ impl ModelBank {
             // Only what's baked: the shader adds moving lights to what it's given, as it does
             // for everything else, and adding them here too would count them twice.
             let light = lighting.map.light_at(state.origin, lighting.styles);
-            draw_moving(mesh, moving, state, light, lighting.time, lists);
+            let mut clips = self.clips.borrow_mut();
+            let seen = clips.entry(state.id).or_insert(ClipSeen {
+                clip: state.clip,
+                start: state.clip_start,
+                from: None,
+            });
+            draw_moving((mesh, moving), state, (light, lighting.time), seen, lists);
             return;
         }
         let colored = colors.and_then(|colors| self.colored.get(&(number, colors)));

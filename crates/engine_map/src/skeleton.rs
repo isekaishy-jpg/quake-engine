@@ -155,6 +155,8 @@ pub enum ChannelPath {
     Rotation,
     /// How a joint is stretched.
     Scale,
+    /// How much of each morph target shows, which is the whole mesh's, and on no joint.
+    Weights,
 }
 
 /// How a channel goes between its keys.
@@ -232,10 +234,18 @@ fn normalized_turn(turn: [f32; 4]) -> [f32; 4] {
 
 impl Channel {
     /// How many numbers one of its values has.
-    const fn width(&self) -> usize {
+    fn width(&self) -> usize {
         match self.path {
             ChannelPath::Rotation => 4,
             ChannelPath::Translation | ChannelPath::Scale => 3,
+            ChannelPath::Weights => {
+                let parts = if self.interpolation == Interpolation::Cubic {
+                    3
+                } else {
+                    1
+                };
+                self.values.len() / (self.times.len() * parts).max(1)
+            }
         }
     }
 
@@ -251,14 +261,15 @@ impl Channel {
     }
 
     /// Its value at `time`, into `out`. Before the first key and after the last it holds.
-    fn sample(&self, time: f32, out: &mut [f32; 4]) {
+    fn sample(&self, time: f32, out: &mut [f32]) {
         let width = self.width();
         let count = self.times.len();
         if count == 0 {
             return;
         }
         let next = self.times.partition_point(|key| *key <= time);
-        let copy = |values: &[f32], out: &mut [f32; 4]| {
+        let width = width.min(out.len());
+        let copy = |values: &[f32], out: &mut [f32]| {
             for (slot, value) in out.iter_mut().zip(values) {
                 *slot = *value;
             }
@@ -286,7 +297,7 @@ impl Channel {
                     [from[0], from[1], from[2], from[3]],
                     [to[0], to[1], to[2], to[3]],
                 );
-                *out = turn_between(a, b, share);
+                out[..4].copy_from_slice(&turn_between(a, b, share));
             }
             Interpolation::Linear => {
                 for at in 0..width {
@@ -303,11 +314,26 @@ impl Channel {
                         + (t3 - t2) * span * arriving.get(at).copied().unwrap_or(0.0);
                 }
                 if self.path == ChannelPath::Rotation {
-                    *out = normalized_turn(*out);
+                    let turn = normalized_turn([out[0], out[1], out[2], out[3]]);
+                    out[..4].copy_from_slice(&turn);
                 }
             }
         }
     }
+}
+
+/// `from` going to `to` by `share`, joint by joint, which is how a change of clip is smoothed.
+#[must_use]
+pub fn blend_poses(from: &[JointPose], to: &[JointPose], share: f32) -> Vec<JointPose> {
+    let between = |a: [f32; 3], b: [f32; 3]| [0, 1, 2].map(|at| a[at] + (b[at] - a[at]) * share);
+    from.iter()
+        .zip(to)
+        .map(|(a, b)| JointPose {
+            translation: between(a.translation, b.translation),
+            rotation: turn_between(a.rotation, b.rotation, share),
+            scale: between(a.scale, b.scale),
+        })
+        .collect()
 }
 
 /// A named place on a skeleton.
@@ -332,6 +358,10 @@ pub struct Skeleton {
     pub places: Vec<SkeletonPlace>,
     /// How far any corner gets from the joints that carry it, for bounds that follow a pose.
     pub reach: f32,
+    /// What each morph target is called.
+    pub morph_names: Vec<String>,
+    /// How much of each shows with no clip saying otherwise.
+    pub rest_weights: Vec<f32>,
 }
 
 impl Skeleton {
@@ -374,9 +404,30 @@ impl Skeleton {
                     channel.sample(time, &mut value);
                     joint.rotation = value;
                 }
+                ChannelPath::Weights => {}
             }
         }
         pose
+    }
+
+    /// How much of each morph target shows, `time` seconds into `clip`.
+    #[must_use]
+    pub fn weights(&self, clip: Option<usize>, time: f32) -> Vec<f32> {
+        let mut weights = self.rest_weights.clone();
+        weights.resize(self.morph_names.len(), 0.0);
+        let Some(clip) = clip.and_then(|clip| self.clips.get(clip)) else {
+            return weights;
+        };
+        let time = if clip.length > 0.0 {
+            time.rem_euclid(clip.length)
+        } else {
+            0.0
+        };
+        let channels = clip.channels.iter();
+        for channel in channels.filter(|channel| channel.path == ChannelPath::Weights) {
+            channel.sample(time, &mut weights);
+        }
+        weights
     }
 
     /// What places each joint in the mesh's space, for `pose`.

@@ -166,6 +166,7 @@ fn turning_skeleton() -> Skeleton {
             offset,
         }],
         reach: 0.0,
+        ..Skeleton::default()
     }
 }
 
@@ -271,4 +272,60 @@ fn a_client_is_told_the_clip_and_when_it_began() {
         .expect("told");
     assert_eq!(state.clip, 1);
     assert!((f64::from(state.clip_start) - started).abs() < 0.001);
+}
+
+/// A figure that has morph targets.
+fn morphing_figure() -> (Simulation, EntityId) {
+    let mut skeleton = turning_skeleton();
+    skeleton.morph_names = ["a", "b", "c", "d", "e"].map(str::to_owned).to_vec();
+    let mut map = Map::clone(&room());
+    map.moving_meshes.push(MovingMesh {
+        name: "arm".to_owned(),
+        skeleton,
+        ..MovingMesh::default()
+    });
+    let mut simulation = Simulation::new(Arc::new(map), Vec3::new(200.0, 200.0, 0.0));
+    let figure = simulation.spawn();
+    simulation.set_shape(figure, "mesh:arm");
+    (simulation, figure)
+}
+
+#[test]
+fn a_morph_is_set_by_name_and_told_to_clients() {
+    let (mut simulation, figure) = morphing_figure();
+    assert!(simulation.set_morph(figure, "b", 1.0));
+    assert!(!simulation.set_morph(figure, "nothing", 1.0));
+    let told = simulation.entity_states();
+    let state = told
+        .iter()
+        .find(|state| state.id == figure.to_bits())
+        .expect("told");
+    assert_eq!(state.morphs[0], [1, 255]);
+}
+
+/// Setting one again changes it, and doesn't take another place.
+#[test]
+fn setting_a_morph_again_changes_it() {
+    let (mut simulation, figure) = morphing_figure();
+    assert!(simulation.set_morph(figure, "a", 1.0));
+    assert!(simulation.set_morph(figure, "a", 0.5));
+    let morphs = simulation.entity(figure).expect("there").morphs;
+    assert_eq!(morphs[0], [0, 128]);
+    assert_eq!(morphs[1][1], 0);
+}
+
+/// Only so many can be set at once, and it says when there's no room, until one's let go.
+#[test]
+fn only_so_many_morphs_can_be_set_at_once() {
+    let (mut simulation, figure) = morphing_figure();
+    for name in ["a", "b", "c", "d"] {
+        assert!(simulation.set_morph(figure, name, 1.0), "{name}");
+    }
+    assert!(!simulation.set_morph(figure, "e", 1.0), "no room");
+    assert!(
+        simulation.set_morph(figure, "e", 0.0),
+        "letting go of nothing is fine"
+    );
+    assert!(simulation.set_morph(figure, "b", 0.0));
+    assert!(simulation.set_morph(figure, "e", 1.0), "room again");
 }

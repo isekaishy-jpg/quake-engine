@@ -13,8 +13,8 @@ use crate::convex::fit_convex;
 use crate::derive::encode_png;
 use crate::error::CompileError;
 use crate::geometry::{Point, dot, normalized};
-use crate::gltf_skin::{ImportedSkeleton, reach_of, read_skeleton};
-use crate::mesh::{Mesh, MeshAttach, MeshPart};
+use crate::gltf_skin::{ImportedSkeleton, morph_names, reach_of, read_skeleton};
+use crate::mesh::{Mesh, MeshAttach, MeshPart, MorphMove};
 
 /// What a model comes to, in the engine's own files.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -309,6 +309,29 @@ impl Importer<'_> {
         );
         let triangles: Vec<[u32; 3]> = corners.as_chunks::<3>().0.to_vec();
         let material = self.material(&primitive.material())?;
+        let scale = self.unmoved[0][0].abs().max(f64::MIN_POSITIVE);
+        let mut morphs = Vec::new();
+        for (positions, normals, _tangents) in reader.read_morph_targets() {
+            let positions: Vec<[f32; 3]> = positions.map_or_else(Vec::new, Iterator::collect);
+            let normals: Vec<[f32; 3]> = normals.map_or_else(Vec::new, Iterator::collect);
+            let mut moves = Vec::new();
+            for corner in 0..points.len() {
+                let of = |list: &[[f32; 3]]| list.get(corner).copied().unwrap_or([0.0; 3]);
+                let (position, normal) = (of(&positions), of(&normals));
+                // Most of a target doesn't move, and what doesn't isn't kept.
+                if position.iter().chain(&normal).all(|part| part.abs() < 1e-6) {
+                    continue;
+                }
+                let turned =
+                    |value: [f32; 3]| to_engine(turned_plain(matrix, value.map(f64::from)));
+                moves.push(MorphMove {
+                    corner: u32::try_from(corner).unwrap_or(u32::MAX),
+                    position: turned(position),
+                    normal: turned(normal).map(|part| part / scale),
+                });
+            }
+            morphs.push(moves);
+        }
         let (mut joints, mut weights) = (Vec::new(), Vec::new());
         if let (Some(skin), Some(skeleton)) = (skin, &self.skeleton) {
             // A corner can have more than one set of four. They're read together, and only
@@ -344,6 +367,7 @@ impl Importer<'_> {
             levels: Vec::new(),
             joints,
             weights,
+            morphs,
         });
         Ok(())
     }
@@ -383,6 +407,15 @@ impl Importer<'_> {
         if let Some(mesh) = node.mesh() {
             let name = node.name().or(mesh.name()).map_or_else(String::new, slug);
             let skin = node.skin().map(|skin| skin.index());
+            let targets = mesh
+                .primitives()
+                .map(|primitive| primitive.morph_targets().len());
+            let targets = targets.max().unwrap_or(0);
+            if let (true, Some(imported)) = (targets > 0, &mut self.skeleton) {
+                imported.skeleton.morph_names = morph_names(&mesh, targets);
+                let rest = node.weights().or(mesh.weights()).unwrap_or(&[]);
+                imported.skeleton.rest_weights = rest.to_vec();
+            }
             let unmoved = self.unmoved;
             let placed = if skin.is_some() { &unmoved } else { &matrix };
             for primitive in mesh.primitives() {
@@ -547,6 +580,11 @@ fn joint_number(joint: Option<u16>) -> Value {
 fn write_skeleton(document: &mut Document, skeleton: &Skeleton) {
     let mut settings = Block::new("skeleton");
     settings.set("reach", Value::Number(f64::from(skeleton.reach)));
+    settings.set("morph_names", Value::Text(skeleton.morph_names.join(" ")));
+    settings.set(
+        "rest_weights",
+        numbers(skeleton.rest_weights.iter().copied()),
+    );
     document.blocks.push(settings);
     for joint in &skeleton.joints {
         let mut block = Block::new("joint");
@@ -575,6 +613,7 @@ fn write_skeleton(document: &mut Document, skeleton: &Skeleton) {
                 ChannelPath::Translation => "translation",
                 ChannelPath::Rotation => "rotation",
                 ChannelPath::Scale => "scale",
+                ChannelPath::Weights => "weights",
             };
             child.set("path", Value::Text(path.to_owned()));
             let between = match channel.interpolation {
@@ -627,6 +666,17 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
             };
             block.set("joints", bytes(&part.joints));
             block.set("weights", bytes(&part.weights));
+        }
+        for (target, moves) in part.morphs.iter().enumerate() {
+            let numbers = moves.iter().flat_map(|one| {
+                let [x, y, z] = one.position;
+                let [nx, ny, nz] = one.normal;
+                [f64::from(one.corner), x, y, z, nx, ny, nz]
+            });
+            block.set(
+                &format!("morph_{target}"),
+                Value::List(numbers.map(Value::Number).collect()),
+            );
         }
         for (level, triangles) in (1_usize..).zip(&part.levels) {
             let corners = triangles.iter().flatten().map(|c| f64::from(*c));

@@ -52,6 +52,8 @@ pub(crate) struct Picture {
     moving: Vec<MovingDraw>,
     /// The joints of those.
     palette: Vec<Rows>,
+    /// The morph weights of those.
+    morph_weights: Vec<f32>,
 }
 
 /// How far the eye sits above a dead player's middle.
@@ -77,6 +79,7 @@ impl Picture {
             live_lights: &self.live_lights,
             moving: &self.moving,
             palette: &self.palette,
+            morph_weights: &self.morph_weights,
         }
     }
 }
@@ -485,6 +488,7 @@ impl World {
             sprites: lists.sprites,
             moving: lists.moving,
             palette: lists.palette,
+            morph_weights: lists.morph_weights,
             particles: self.particle_draws(),
             gpu_particles: self.gpu_particles(),
             lights,

@@ -4,7 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use engine_core::entity::{EFFECT_MUZZLE_FLASH, EntityState, ModelInstance};
+use engine_core::entity::{EFFECT_MUZZLE_FLASH, EntityState, MOST_SET_MORPHS, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY, PlayerState, UserCommand};
 use engine_map::{Map, MovingMesh, after, angles_of_rows, moved, placed_at};
@@ -152,6 +152,9 @@ pub struct Entity {
     /// When that began.
     #[serde(default)]
     pub clip_start: f64,
+    /// Morph targets a script has set, each as the target and its weight out of 255.
+    #[serde(default)]
+    pub morphs: [[u8; 2]; MOST_SET_MORPHS],
 }
 
 /// Something a script has to handle.
@@ -655,6 +658,7 @@ impl Simulation {
                 clip: entity.clip,
                 #[expect(clippy::cast_possible_truncation, reason = "a clip's start")]
                 clip_start: entity.clip_start as f32,
+                morphs: entity.morphs,
             })
             .collect()
     }
@@ -838,6 +842,42 @@ impl Simulation {
             &skeleton.place(&place.name, &placed)?,
         );
         Some((moved(&rows, Vec3::ZERO), angles_of_rows(&rows)))
+    }
+
+    /// Sets morph target `name` on `id` to `weight`, from 0 to 1, over what a clip says. Weight
+    /// 0 gives it back to the clip. Says if it could: it needs such a target, and a place, as
+    /// only so many can be set at once.
+    pub fn set_morph(&mut self, id: EntityId, name: &str, weight: f32) -> bool {
+        let Some(entity) = self.entities.get(id) else {
+            return false;
+        };
+        let Some(mesh) = self.moving_mesh_of(entity) else {
+            return false;
+        };
+        let names = &mesh.skeleton.morph_names;
+        let Some(target) = names.iter().position(|known| known == name) else {
+            return false;
+        };
+        let target = u8::try_from(target).unwrap_or(u8::MAX);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a weight out of 255"
+        )]
+        let value = (weight.clamp(0.0, 1.0) * 255.0).round() as u8;
+        let Some(entity) = self.entities.get_mut(id) else {
+            return false;
+        };
+        let place = entity
+            .morphs
+            .iter()
+            .position(|morph| morph[1] != 0 && morph[0] == target)
+            .or_else(|| entity.morphs.iter().position(|morph| morph[1] == 0));
+        let Some(place) = place else {
+            return value == 0;
+        };
+        entity.morphs[place] = [target, value];
+        true
     }
 
     /// Plays the clip called `name` on `id`, from now. Says if it has such a clip. With no name,

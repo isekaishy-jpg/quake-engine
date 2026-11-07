@@ -54,6 +54,7 @@ A player is 56 units tall and 32 wide, and steps up 18. Things are made for that
 - **256 joints** at most, counting what's above them.
 - **A joint that twists far** wants a twist bone, or it loses volume.
 - **Clips are named,** as scripts play them by name.
+- **Shape keys are named,** for the same reason. They move corners and normals. UVs and colours don't change.
 
 ## Texturing
 

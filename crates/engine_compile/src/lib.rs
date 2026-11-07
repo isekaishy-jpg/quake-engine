@@ -51,8 +51,8 @@ pub use gltf_import::{ImportedModel, import_gltf, write_mesh};
 pub use light::{BakeInput, ImageReader, bake_light, light_tracks};
 pub use material::{MaterialLibrary, decode_png, document_of};
 pub use mesh::{
-    LoadedMesh, Mesh, MeshAttach, MeshPart, PlacedMesh, PlacedTriangle, angles_of, occluders_of,
-    place_mesh, read_mesh, read_occlusion, resolve_meshes, write_occlusion,
+    LoadedMesh, Mesh, MeshAttach, MeshPart, MorphMove, PlacedMesh, PlacedTriangle, angles_of,
+    occluders_of, place_mesh, read_mesh, read_occlusion, resolve_meshes, write_occlusion,
 };
 #[cfg(feature = "packing")]
 pub use packing::{compile_shaders, pack_content};

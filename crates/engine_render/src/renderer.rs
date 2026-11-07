@@ -84,6 +84,8 @@ pub struct Drawables<'a> {
     pub moving: &'a [MovingDraw],
     /// The joints of all of those.
     pub palette: &'a [Rows],
+    /// The morph weights of all of those.
+    pub morph_weights: &'a [f32],
 }
 
 /// A character that shades what's behind it, with no shadow map.

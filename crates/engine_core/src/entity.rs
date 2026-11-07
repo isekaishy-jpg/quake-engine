@@ -49,7 +49,13 @@ pub struct EntityState {
     pub clip: u16,
     /// When that began.
     pub clip_start: f32,
+    /// Morph targets a script has set, each as the target and its weight out of 255. A weight of
+    /// 0 is an empty place.
+    pub morphs: [[u8; 2]; MOST_SET_MORPHS],
 }
+
+/// How many morph targets a script can set on an entity at once. A clip can move any of them.
+pub const MOST_SET_MORPHS: usize = 4;
 
 /// Something launched, whose path is fixed from here on (proposal 0052).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

@@ -12,8 +12,8 @@ use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
     Material, MaterialLayer, MeshCorner, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK,
     PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading,
-    SharedMesh, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame,
-    SpriteImage, TextureKind, TileLight,
+    SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
+    SpriteFrame, SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -2293,6 +2293,7 @@ fn draw_moving(renderer: &mut Renderer, palette: &[Rows]) -> Capture {
         light: [0.0; 3],
         center: Vec3::new(64.0, 64.0, 32.0),
         radius: 200.0,
+        ..MovingDraw::default()
     };
     let drawables = Drawables {
         moving: &[draw],
@@ -2376,6 +2377,7 @@ fn a_mesh_with_no_palette_draws_at_rest() {
         light: [0.0; 3],
         center: Vec3::new(64.0, 64.0, 32.0),
         radius: 200.0,
+        ..MovingDraw::default()
     };
     let drawables = Drawables {
         moving: &[draw],
@@ -2388,4 +2390,118 @@ fn a_mesh_with_no_palette_draws_at_rest() {
     assert!(count > 20, "{count}");
     assert!(renderer.take_moving_overflow(), "and it says so");
     assert!(!renderer.take_moving_overflow(), "once");
+}
+
+/// The square of `map_with_a_moving_square`, with a morph target that moves all of it along X.
+fn map_with_a_morphing_square() -> Map {
+    let mut map = map_with_a_moving_square(false);
+    let moving = &mut map.moving_meshes[0];
+    moving.mesh.morph_heads = vec![[0, 1], [1, 1], [2, 1], [3, 1]];
+    moving.mesh.morphs = vec![
+        SharedMorph {
+            target: 0,
+            position: [16.0, 0.0, 0.0],
+            normal: [0.0; 3],
+        };
+        4
+    ];
+    map
+}
+
+/// What's drawn of the square with `weights`.
+fn draw_morphing(renderer: &mut Renderer, weights: &[f32]) -> Capture {
+    let draw = MovingDraw {
+        rows: NO_MOVE,
+        joint_count: 2,
+        weight_count: u32::try_from(weights.len()).expect("few"),
+        center: Vec3::new(64.0, 64.0, 32.0),
+        radius: 200.0,
+        ..MovingDraw::default()
+    };
+    let drawables = Drawables {
+        moving: &[draw],
+        palette: &[NO_MOVE, NO_MOVE],
+        morph_weights: weights,
+        ..Drawables::default()
+    };
+    renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture")
+}
+
+/// A morph moves corners by its weight: half the weight is half as far.
+#[test]
+fn a_morph_moves_corners_by_its_weight() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_morphing_square()))
+        .expect("load");
+    let empty = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let shown = |capture: &Capture| middle_of_change(capture, &empty);
+    let (a, b, _) = shown(&draw_morphing(&mut renderer, &[]));
+    let (c, d, _) = shown(&draw_morphing(&mut renderer, &[1.0]));
+    let (e, f, _) = shown(&draw_morphing(&mut renderer, &[0.5]));
+    let whole = (c - a).hypot(d - b);
+    let half = (e - a).hypot(f - b);
+    assert!(whole > 8.0, "{whole}");
+    assert!((half / whole - 0.5).abs() < 0.15, "{half} of {whole}");
+}
+
+/// Morphs come before joints, as glTF has it: a morph along X, then a turn, ends up where the
+/// turn takes it. The other way round, it would go along X whatever the joint did.
+#[test]
+fn a_morph_comes_before_the_joints() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_morphing_square()))
+        .expect("load");
+    let empty = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    // A joint that takes X to Y, about the square's middle.
+    let turn: Rows = [
+        [0.0, -1.0, 0.0, 128.0],
+        [1.0, 0.0, 0.0, 0.0],
+        [0.0, 0.0, 1.0, 0.0],
+    ];
+    let draw = |renderer: &mut Renderer, weights: &[f32]| {
+        let one = MovingDraw {
+            rows: NO_MOVE,
+            joint_count: 2,
+            weight_count: u32::try_from(weights.len()).expect("few"),
+            center: Vec3::new(64.0, 64.0, 32.0),
+            radius: 200.0,
+            ..MovingDraw::default()
+        };
+        let drawables = Drawables {
+            moving: &[one],
+            palette: &[turn, NO_MOVE],
+            morph_weights: weights,
+            ..Drawables::default()
+        };
+        let capture = renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture");
+        middle_of_change(&capture, &empty)
+    };
+    let (a, b, _) = draw(&mut renderer, &[]);
+    let (c, d, _) = draw(&mut renderer, &[1.0]);
+    // Without the turn, a morph along X went the other way on the picture.
+    let (e, f, _) = middle_of_change(&draw_morphing(&mut renderer, &[]), &empty);
+    let (g, h, _) = middle_of_change(&draw_morphing(&mut renderer, &[1.0]), &empty);
+    let along = (c - a, d - b);
+    let plain = (g - e, h - f);
+    assert!(along.0.hypot(along.1) > 8.0, "it moved: {along:?}");
+    assert!(plain.0.hypot(plain.1) > 8.0, "it moved: {plain:?}");
+    let across = along.0 * plain.0 + along.1 * plain.1;
+    assert!(
+        across.abs() < 16.0,
+        "the morph was turned: {along:?} against {plain:?}"
+    );
 }

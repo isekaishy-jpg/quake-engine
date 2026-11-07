@@ -84,7 +84,15 @@ engine.set_model(id, "mesh:arm")
 engine.set_clip(id, "wave")
 ```
 
-`engine.set_clip` says if there's such a clip, and with no name it goes back to rest. Asking for what's playing leaves it playing. A clip goes round.
+`engine.set_clip` says if there's such a clip, and with no name it goes back to rest. Asking for what's playing leaves it playing. A clip goes round, and changing clip blends over a fifth of a second.
+
+A shape key comes in as a morph target, by its name. A clip can move it, and a script can set it:
+
+```lua
+engine.set_morph(id, "smile", 0.5)
+```
+
+That's over what a clip says. A weight of 0 gives it back to the clip. Four can be set on a thing at once, and it says if there's no room.
 
 An empty under a bone is an attach point that goes with the bone. It's the server that works out where it is, so what's held to it is right for everyone.
 

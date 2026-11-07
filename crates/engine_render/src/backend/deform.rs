@@ -2,7 +2,7 @@
 //! they're drawn like any other mesh (proposal 0140).
 
 use engine_core::math::Vec3;
-use engine_map::{Map, Rows, SharedPart};
+use engine_map::{Map, Rows, SharedMorph, SharedPart};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags2, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize, DescriptorSet,
@@ -28,8 +28,52 @@ const MOST_MOVING: usize = 1024;
 /// Bytes in a joint's three rows.
 const JOINT_BYTES: usize = 48;
 
+/// Morph weights in a frame's list. Past this, a mesh draws with none.
+const MOST_WEIGHTS: usize = 1 << 14;
+
 /// Bytes in what a dispatch is told.
-const JOB_BYTES: u32 = 16;
+const JOB_BYTES: u32 = 24;
+
+/// A float as a half float's bits, which is what morphs are kept in. They're small offsets, so
+/// that's plenty, at a quarter of what's kept for each.
+#[must_use]
+pub fn half_bits(value: f32) -> u16 {
+    let bits = value.to_bits();
+    let sign = u16::try_from((bits >> 16) & 0x8000).unwrap_or(0);
+    let exponent = i32::try_from((bits >> 23) & 0xff).unwrap_or(0) - 127 + 15;
+    let fraction = bits & 0x007f_ffff;
+    if exponent >= 31 {
+        // Too big for a half, so as big as there is.
+        return sign | 0x7bff;
+    }
+    if exponent <= 0 {
+        if exponent < -10 {
+            return sign;
+        }
+        // Too small to have an exponent: the fraction shifts down, with its hidden bit.
+        let shift = u32::try_from(14 - exponent).unwrap_or(24);
+        let whole = fraction | 0x0080_0000;
+        let rounded = (whole + (1 << (shift - 1))) >> shift;
+        return sign | u16::try_from(rounded).unwrap_or(0);
+    }
+    let exponent = u32::try_from(exponent).unwrap_or(0);
+    // Rounded, and a carry out of the fraction goes on into the exponent, as it should.
+    let rounded = ((exponent << 10) | (fraction >> 13)) + ((fraction >> 12) & 1);
+    sign | u16::try_from(rounded).unwrap_or(0x7bff)
+}
+
+/// `morph` as four words.
+fn morph_words(morph: &SharedMorph) -> [u32; 4] {
+    let pair = |low: f32, high: f32| u32::from(half_bits(low)) | (u32::from(half_bits(high)) << 16);
+    let [x, y, z] = morph.position;
+    let [nx, ny, nz] = morph.normal;
+    [
+        u32::from(morph.target),
+        pair(x, y),
+        pair(z, nx),
+        pair(ny, nz),
+    ]
+}
 
 /// How many corners a workgroup does, which is in the shader too.
 const WORKGROUP: u32 = 64;
@@ -55,8 +99,7 @@ impl Deform {
             descriptor_count: 1,
             stage_flags: ShaderStageFlags::COMPUTE,
         };
-        let set_layout =
-            DescriptorSetLayout::new(device, &[binding(0), binding(1), binding(2), binding(3)])?;
+        let set_layout = DescriptorSetLayout::new(device, &[0, 1, 2, 3, 4, 5, 6].map(binding))?;
         let layout = PipelineLayout::with_push_constants(
             device,
             &[&set_layout],
@@ -98,6 +141,10 @@ pub(super) struct MovingJob {
     moved_to: Option<u32>,
     /// Where its joints start in the palette.
     first_joint: u32,
+    /// Where its morph weights start.
+    first_weight: u32,
+    /// How many it has, or 0 if none of them show.
+    weight_count: u32,
     /// Its place in the instance buffer.
     pub(super) instance: u32,
     /// What places it, column by column, for shadow maps.
@@ -112,6 +159,8 @@ pub(super) struct MovingJob {
 struct MovingFrame {
     /// The joints.
     palette: GpuBuffer,
+    /// The morph weights.
+    weights: GpuBuffer,
     /// The moved corners.
     moved: GpuBuffer,
     /// Where each mesh is, as instances.
@@ -128,6 +177,10 @@ pub(super) struct GpuMoving {
     corners: GpuBuffer,
     /// Everyone's joints and weights. Kept alive for the sets.
     _skin: GpuBuffer,
+    /// Where each corner's morphs are. Kept alive for the sets.
+    _morph_heads: GpuBuffer,
+    /// Everyone's morphs. Kept alive for the sets.
+    _morphs: GpuBuffer,
     /// Each mesh.
     pub(super) meshes: Vec<GpuMovingMesh>,
     /// Each frame in flight's.
@@ -176,7 +229,7 @@ impl GpuMoving {
         &mut self,
         slot: usize,
         draws: &[MovingDraw],
-        palette: &[Rows],
+        (palette, morph_weights): (&[Rows], &[f32]),
         planes: &[[f32; 4]; 6],
     ) -> Result<bool, RenderError> {
         let meshes = &self.meshes;
@@ -185,6 +238,9 @@ impl GpuMoving {
         let mut over = false;
         let mut used_corners = 0_usize;
         let mut used_joints = 0_usize;
+        let mut used_weights = 0_usize;
+        let mut weights = frame.weights.memory.map()?;
+        let (weights, _) = weights.as_slice_mut().as_chunks_mut::<4>();
         let mut joints = frame.palette.memory.map()?;
         let joints = joints.as_slice_mut();
         let mut instances = frame.instances.memory.map()?;
@@ -227,6 +283,17 @@ impl GpuMoving {
             } else {
                 over = true;
             }
+            let first = draw.first_weight as usize;
+            let own = morph_weights.get(first..first + draw.weight_count as usize);
+            let first_weight = u32::try_from(used_weights).unwrap_or(0);
+            let mut weight_count = 0;
+            if let Some(own) = own.filter(|own| used_weights + own.len() <= MOST_WEIGHTS) {
+                for (slot, weight) in weights[used_weights..].iter_mut().zip(own) {
+                    *slot = weight.to_le_bytes();
+                }
+                used_weights += own.len();
+                weight_count = draw.weight_count;
+            }
             let [red, green, blue] = draw.light;
             let light = InstanceLight {
                 uv: [red, green],
@@ -238,6 +305,8 @@ impl GpuMoving {
                 mesh: draw.mesh,
                 moved_to,
                 first_joint,
+                first_weight,
+                weight_count,
                 instance: u32::try_from(frame.jobs.len()).unwrap_or(0),
                 placed: columns_of(&draw.rows),
                 center: draw.center,
@@ -256,6 +325,8 @@ impl Backend {
         }
         let mut corner_bytes = Vec::new();
         let mut skin_bytes = Vec::new();
+        let mut head_bytes = Vec::new();
+        let mut morph_bytes = Vec::new();
         let mut meshes = Vec::with_capacity(map.moving_meshes.len());
         let mut first_corner = 0_u32;
         for moving in &map.moving_meshes {
@@ -271,6 +342,18 @@ impl Backend {
                     .unwrap_or([255, 0, 0, 0]);
                 skin_bytes.extend_from_slice(&joints);
                 skin_bytes.extend_from_slice(&weights);
+                // Heads say where in everyone's morphs, so this mesh's are moved along.
+                let first = u32::try_from(morph_bytes.len() / 16).unwrap_or(0);
+                let [own, count] = shared.morph_heads.get(corner).copied().unwrap_or([0, 0]);
+                head_bytes.extend_from_slice(&(first + own).to_le_bytes());
+                head_bytes.extend_from_slice(&count.to_le_bytes());
+            }
+            for morph in &shared.morphs {
+                morph_bytes.extend(
+                    morph_words(morph)
+                        .iter()
+                        .flat_map(|word| word.to_le_bytes()),
+                );
             }
             let index_bytes: Vec<u8> = shared
                 .indices
@@ -297,13 +380,15 @@ impl Backend {
             BufferUsage::STORAGE_BUFFER | BufferUsage::VERTEX_BUFFER,
         )?;
         let skin = self.device_buffer(&skin_bytes, BufferUsage::STORAGE_BUFFER)?;
+        let heads = self.device_buffer(&head_bytes, BufferUsage::STORAGE_BUFFER)?;
+        let morphs = self.device_buffer(&morph_bytes, BufferUsage::STORAGE_BUFFER)?;
         let sets = u32::try_from(FRAMES).unwrap_or(2);
         let pool = DescriptorPool::new(
             &self.device,
             sets,
             &[DescriptorPoolSize {
                 descriptor_type: DescriptorType::STORAGE_BUFFER,
-                descriptor_count: sets * 4,
+                descriptor_count: sets * 7,
             }],
         )?;
         let mut frames = Vec::with_capacity(FRAMES);
@@ -313,6 +398,12 @@ impl Backend {
                 &self.device,
                 &self.physical,
                 MOST_JOINTS * JOINT_BYTES,
+                BufferUsage::STORAGE_BUFFER,
+            )?;
+            let weights = host_buffer(
+                &self.device,
+                &self.physical,
+                MOST_WEIGHTS * 4,
                 BufferUsage::STORAGE_BUFFER,
             )?;
             let moved = self.scratch_buffer(
@@ -343,8 +434,18 @@ impl Backend {
                 (MOST_JOINTS * JOINT_BYTES) as u64,
             );
             set.write_buffer(3, storage, &moved.buffer, 0, moved_bytes as u64);
+            set.write_buffer(4, storage, &heads.buffer, 0, head_bytes.len().max(4) as u64);
+            set.write_buffer(
+                5,
+                storage,
+                &morphs.buffer,
+                0,
+                morph_bytes.len().max(16) as u64,
+            );
+            set.write_buffer(6, storage, &weights.buffer, 0, (MOST_WEIGHTS * 4) as u64);
             frames.push(MovingFrame {
                 palette,
+                weights,
                 moved,
                 instances,
                 set,
@@ -354,6 +455,8 @@ impl Backend {
         Ok(Some(GpuMoving {
             corners,
             _skin: skin,
+            _morph_heads: heads,
+            _morphs: morphs,
             meshes,
             frames,
             _pool: pool,
@@ -377,7 +480,14 @@ impl Backend {
             else {
                 continue;
             };
-            let words = [mesh.first_corner, mesh.corners, first_out, job.first_joint];
+            let words = [
+                mesh.first_corner,
+                mesh.corners,
+                first_out,
+                job.first_joint,
+                job.first_weight,
+                job.weight_count,
+            ];
             let mut bytes = [0; JOB_BYTES as usize];
             for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
                 *chunk = word.to_le_bytes();

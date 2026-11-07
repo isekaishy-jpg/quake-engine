@@ -1278,8 +1278,12 @@ impl Backend {
             let planes = view_planes(&seen);
             if let Some(moving) = &mut map.moving {
                 let drawables = &scene.drawables;
-                self.moving_overflow |=
-                    moving.prepare(slot, drawables.moving, drawables.palette, &planes)?;
+                self.moving_overflow |= moving.prepare(
+                    slot,
+                    drawables.moving,
+                    (drawables.palette, drawables.morph_weights),
+                    &planes,
+                )?;
             }
             if !scene.map.mesh_instances.is_empty() {
                 let levels = LevelView {

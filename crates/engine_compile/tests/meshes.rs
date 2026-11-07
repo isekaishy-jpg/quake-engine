@@ -922,3 +922,66 @@ fn a_skin_with_no_such_joint_is_refused() {
     let text = "format 1 mesh\npart { material = a points = [0 0 0] uvs = [0 0] triangles = [] joints = [3 0 0 0] weights = [255 0 0 0] }\n";
     assert!(read_mesh(&from_text(text).expect("reads")).is_err());
 }
+
+/// The shape key comes in by name, and only what it moves is kept.
+#[test]
+fn a_shape_key_comes_in_from_blender() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("has one");
+    assert_eq!(skeleton.morph_names, ["swell"]);
+    let part = &mesh.parts[0];
+    assert_eq!(part.morphs.len(), 1);
+    let moves = &part.morphs[0];
+    assert!(!moves.is_empty());
+    assert!(
+        moves.len() < part.points.len(),
+        "{} of {}",
+        moves.len(),
+        part.points.len()
+    );
+}
+
+/// It swells round the middle, outwards, at the scale of the rest, and not up the arm.
+#[test]
+fn a_shape_key_is_in_our_axes_and_scale() {
+    let mesh = rigged();
+    let part = &mesh.parts[0];
+    let widest = part.morphs[0]
+        .iter()
+        .max_by(|a, b| {
+            let out = |one: &&engine_compile::MorphMove| one.position[0].hypot(one.position[1]);
+            out(a).total_cmp(&out(b))
+        })
+        .expect("some");
+    let place = part.points[widest.corner as usize];
+    assert!(
+        (place[2] - 48.0).abs() < 8.0,
+        "widest near the middle: {place:?}"
+    );
+    // At the middle it doubles a radius of 11.2 units.
+    let out = widest.position[0].hypot(widest.position[1]);
+    assert!((out - 11.2).abs() < 1.0, "{out}");
+    assert!(widest.position[2].abs() < 0.01, "{:?}", widest.position);
+}
+
+#[test]
+fn morphs_survive_a_file() {
+    let mesh = rigged();
+    let back = read_mesh(&document_of(&write_mesh(&mesh)).expect("reads")).expect("is a mesh");
+    assert_eq!(back.parts[0].morphs.len(), 1);
+    assert_eq!(back.parts[0].morphs[0].len(), mesh.parts[0].morphs[0].len());
+    assert_eq!(
+        back.parts[0].morphs[0][0].corner,
+        mesh.parts[0].morphs[0][0].corner
+    );
+    let (kept, was) = (back.skeleton.expect("kept"), mesh.skeleton.expect("was"));
+    assert_eq!(kept.morph_names, was.morph_names);
+    assert_eq!(kept.rest_weights, was.rest_weights);
+}
+
+/// A morph that names no corner is refused, not read past the end of a list.
+#[test]
+fn a_morph_with_no_such_corner_is_refused() {
+    let text = "format 1 mesh\npart { material = a points = [0 0 0] uvs = [0 0] triangles = [] morph_0 = [5 1 0 0 0 0 0] }\n";
+    assert!(read_mesh(&from_text(text).expect("reads")).is_err());
+}

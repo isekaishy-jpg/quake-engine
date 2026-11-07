@@ -181,6 +181,17 @@ pub struct AttachPoint {
     pub angles: Vec3,
 }
 
+/// What a morph target does to a corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SharedMorph {
+    /// Which target.
+    pub target: u16,
+    /// How far it moves the corner, at full weight.
+    pub position: [f32; 3],
+    /// How much it changes which way the corner faces.
+    pub normal: [f32; 3],
+}
+
 /// A corner of a [`SharedMesh`].
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct MeshCorner {
@@ -214,6 +225,11 @@ pub struct SharedMesh {
     pub joints: Vec<[u8; 4]>,
     /// How much of each corner goes with each of those, out of 255.
     pub weights: Vec<[u8; 4]>,
+    /// Where each corner's morphs are in `morphs`, and how many it has. Most corners of most
+    /// targets don't move, so only what does is kept.
+    pub morph_heads: Vec<[u32; 2]>,
+    /// What morph targets do, corner by corner.
+    pub morphs: Vec<SharedMorph>,
     /// Its parts by material, for each level of detail, the finest first.
     pub levels: Vec<Vec<SharedPart>>,
     /// The share of the view's height it has to fall below to go to each coarser level.

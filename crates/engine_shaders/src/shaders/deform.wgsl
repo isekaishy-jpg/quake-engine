@@ -9,6 +9,10 @@ struct Job {
     first_out: u32,
     // Where this mesh's joints start.
     first_joint: u32,
+    // Where this mesh's morph weights start, and how many it has. With none showing, it's 0,
+    // and corners don't look for morphs at all.
+    first_weight: u32,
+    weight_count: u32,
 }
 
 // A vertex is ten words, as the world's: three of place, two of uv, two of light place, one of
@@ -21,6 +25,12 @@ const VERTEX_WORDS: u32 = 10u;
 // Three rows to each joint.
 @group(0) @binding(2) var<storage, read> palette: array<vec4<f32>>;
 @group(0) @binding(3) var<storage, read_write> moved: array<u32>;
+// Where each corner's morphs are, and how many it has. Most corners of most targets don't move,
+// so only what does is kept, sorted by corner, and a corner gathers its own with no atomics.
+@group(0) @binding(4) var<storage, read> morph_heads: array<vec2<u32>>;
+// Each is a target, then the corner's move and turn as six half floats.
+@group(0) @binding(5) var<storage, read> morphs: array<vec4<u32>>;
+@group(0) @binding(6) var<storage, read> morph_weights: array<f32>;
 
 var<immediate> job: Job;
 
@@ -32,14 +42,31 @@ fn cs_deform(@builtin(global_invocation_id) id: vec3<u32>) {
     let corner = job.first_in + id.x;
     let from_word = corner * VERTEX_WORDS;
     let to_word = (job.first_out + id.x) * VERTEX_WORDS;
-    let place = vec4<f32>(
+    var place = vec4<f32>(
         bitcast<f32>(source[from_word]),
         bitcast<f32>(source[from_word + 1u]),
         bitcast<f32>(source[from_word + 2u]),
         1.0,
     );
     let packed = source[from_word + 9u];
-    let normal = unpack4x8snorm(packed);
+    var normal = unpack4x8snorm(packed);
+    let spare = normal.w;
+    // Morphs come before skinning, as glTF has it.
+    if job.weight_count > 0u {
+        let head = morph_heads[corner];
+        for (var at = head.x; at < head.x + head.y; at += 1u) {
+            let morph = morphs[at];
+            if morph.x >= job.weight_count {
+                continue;
+            }
+            let weight = morph_weights[job.first_weight + morph.x];
+            let first = unpack2x16float(morph.y);
+            let second = unpack2x16float(morph.z);
+            let third = unpack2x16float(morph.w);
+            place += vec4<f32>(first.x, first.y, second.x, 0.0) * weight;
+            normal += vec4<f32>(second.y, third.x, third.y, 0.0) * weight;
+        }
+    }
     let carried = skin[corner];
     let weights = unpack4x8unorm(carried.y);
 
@@ -68,5 +95,5 @@ fn cs_deform(@builtin(global_invocation_id) id: vec3<u32>) {
     for (var word = 3u; word < 9u; word += 1u) {
         moved[to_word + word] = source[from_word + word];
     }
-    moved[to_word + 9u] = pack4x8snorm(vec4<f32>(facing, normal.w));
+    moved[to_word + 9u] = pack4x8snorm(vec4<f32>(facing, spare));
 }

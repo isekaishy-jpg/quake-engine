@@ -35,7 +35,7 @@ pub use live::{LiveLightSource, along_path};
 pub use map::{
     Animation, AttachPoint, Entity, Face, FaceLight, Look, MOVING_MESH_PREFIX, Map, MegaImage,
     MegaMaps, MeshCorner, MeshGroup, MeshInstance, MipLevel, Model, MovingMesh, PixelForm,
-    SharedMesh, SharedPart, TexelAxis, Texture, TextureKind,
+    SharedMesh, SharedMorph, SharedPart, TexelAxis, Texture, TextureKind,
 };
 pub use material::{
     AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough, PAINT_MASK,
@@ -48,7 +48,7 @@ pub use pool::{Pool, PoolLook, look_around};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
 pub use skeleton::{
     Channel, ChannelPath, Clip, Interpolation, Joint, JointPose, NO_MOVE, Rows, Skeleton,
-    SkeletonPlace, after, angles_of_rows, moved, placed_at, turned,
+    SkeletonPlace, after, angles_of_rows, blend_poses, moved, placed_at, turned,
 };
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};

@@ -8,7 +8,7 @@ use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, to_text};
 use engine_map::{
     AttachPoint, Channel, ChannelPath, Clip, Contents, Interpolation, Joint, JointPose, MeshCorner,
-    NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedPart, Skeleton, SkeletonPlace,
+    NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedMorph, SharedPart, Skeleton, SkeletonPlace,
 };
 
 use crate::build::packed_normal;
@@ -40,6 +40,19 @@ pub struct MeshPart {
     pub joints: Vec<[u8; 4]>,
     /// How much of each corner goes with each of those, out of 255.
     pub weights: Vec<[u8; 4]>,
+    /// What each morph target does to its corners, for those it moves.
+    pub morphs: Vec<Vec<MorphMove>>,
+}
+
+/// What a morph target does to a corner.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MorphMove {
+    /// Which corner.
+    pub corner: u32,
+    /// How far it goes.
+    pub position: Point,
+    /// How much it changes which way it faces.
+    pub normal: Point,
 }
 
 impl MeshPart {
@@ -219,6 +232,32 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 .collect()
         };
         let (joints, weights) = (bytes("joints"), bytes("weights"));
+        let mut morphs = Vec::new();
+        for target in 0.. {
+            let name = format!("morph_{target}");
+            if block.get(&name).is_none() {
+                break;
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "corner numbers are small and checked next"
+            )]
+            let moves: Vec<MorphMove> = groups::<7>(block, &name)
+                .iter()
+                .map(|[corner, x, y, z, nx, ny, nz]| MorphMove {
+                    corner: *corner as u32,
+                    position: [*x, *y, *z],
+                    normal: [*nx, *ny, *nz],
+                })
+                .collect();
+            if moves.iter().any(|one| one.corner as usize >= known) {
+                return Err(CompileError::Bad(
+                    "a mesh's morph has no such corner".to_owned(),
+                ));
+            }
+            morphs.push(moves);
+        }
         if !joints.is_empty() && (joints.len() != points.len() || weights.len() != points.len()) {
             return Err(CompileError::Bad(
                 "a mesh's skin isn't one for each corner".to_owned(),
@@ -238,6 +277,7 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
             levels,
             joints,
             weights,
+            morphs,
         });
     }
     mesh.skeleton = read_skeleton_of(document);
@@ -351,6 +391,7 @@ fn read_skeleton_of(document: &Document) -> Option<Skeleton> {
                     path: match channel.get("path").and_then(Value::text) {
                         Some("rotation") => ChannelPath::Rotation,
                         Some("scale") => ChannelPath::Scale,
+                        Some("weights") => ChannelPath::Weights,
                         _ => ChannelPath::Translation,
                     },
                     interpolation: match channel.get("between").and_then(Value::text) {
@@ -377,11 +418,17 @@ fn read_skeleton_of(document: &Document) -> Option<Skeleton> {
             offset: rows_from(&floats(block, "offset")),
         })
         .collect();
+    let names = settings
+        .get("morph_names")
+        .and_then(Value::text)
+        .unwrap_or_default();
     Some(Skeleton {
         joints,
         clips,
         places,
         reach,
+        morph_names: names.split_whitespace().map(str::to_owned).collect(),
+        rest_weights: floats(settings, "rest_weights"),
     })
 }
 
@@ -648,6 +695,35 @@ fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
     }
 }
 
+/// Lays out `mesh`'s morphs by the corners of `shared`, as what moves a corner is read from it.
+fn keep_morphs(shared: &mut SharedMesh, mesh: &Mesh, became: &HashMap<(usize, u32), Vec<u32>>) {
+    if mesh.parts.iter().all(|part| part.morphs.is_empty()) {
+        return;
+    }
+    let mut by_corner: Vec<Vec<SharedMorph>> = vec![Vec::new(); shared.corners.len()];
+    for (number, part) in mesh.parts.iter().enumerate() {
+        for (target, moves) in (0_u16..).zip(&part.morphs) {
+            for one in moves {
+                #[expect(clippy::cast_possible_truncation, reason = "meshes draw in f32")]
+                let morph = SharedMorph {
+                    target,
+                    position: one.position.map(|part| part as f32),
+                    normal: one.normal.map(|part| part as f32),
+                };
+                for corner in became.get(&(number, one.corner)).into_iter().flatten() {
+                    by_corner[*corner as usize].push(morph);
+                }
+            }
+        }
+    }
+    for morphs in by_corner {
+        let first = u32::try_from(shared.morphs.len()).unwrap_or(u32::MAX);
+        let count = u32::try_from(morphs.len()).unwrap_or(u32::MAX);
+        shared.morph_heads.push([first, count]);
+        shared.morphs.extend(morphs);
+    }
+}
+
 /// `mesh` as it's kept for placements to share, with `material` giving a part's texture and
 /// what its places on the material are multiplied by. Levels share corners, so a coarser one
 /// only costs its indices.
@@ -655,6 +731,9 @@ fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
 pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f32)) -> SharedMesh {
     let mut shared = SharedMesh::default();
     let mut known = HashMap::new();
+    // Which of the kept corners each of a part's became, as one can become several where its
+    // normals are worked out.
+    let mut became: HashMap<(usize, u32), Vec<u32>> = HashMap::new();
     let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
     let level_count = 1 + mesh
         .parts
@@ -713,6 +792,11 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
                         u32::try_from(shared.corners.len() - 1).unwrap_or(u32::MAX)
                     });
                     shared.indices.push(index);
+                    let from = u32::try_from(corner).unwrap_or(u32::MAX);
+                    let list = became.entry((number, from)).or_default();
+                    if !list.contains(&index) {
+                        list.push(index);
+                    }
                 }
             }
             let last = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
@@ -726,6 +810,7 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
         }
         shared.levels.push(parts);
     }
+    keep_morphs(&mut shared, mesh, &became);
     shared.level_sizes = if mesh.level_sizes.is_empty() {
         USUAL_LEVEL_SIZES.to_vec()
     } else {

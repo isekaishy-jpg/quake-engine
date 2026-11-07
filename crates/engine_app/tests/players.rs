@@ -590,6 +590,7 @@ fn snapshot(tick: u32) -> Snapshot {
                 angles: Vec3::ZERO,
                 clip: 0,
                 clip_start: 0.0,
+                morphs: [[0; 2]; 4],
             })
             .collect(),
         boxes: vec![(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))],

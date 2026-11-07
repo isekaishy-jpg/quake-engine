@@ -104,7 +104,7 @@ serde_json = { version = "=1.0.154", default-features = false, features = ["std"
 # Proposal 0117: drawing text from a font, private to `engine_ui`.
 fontdue = { version = "=0.9.5", default-features = false, features = ["std", "hashbrown"] }
 # Proposal 0109: reading models, private to `engine_compile`.
-gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names"] }
+gltf = { version = "=1.4.1", default-features = false, features = ["import", "utils", "names", "extras"] }
 # Proposal 0140: making levels of detail, for tools only, private to `engine_compile`.
 meshopt = { version = "=0.7.0" }
 # Proposal 0107: checking shaders with no GPU, private to `engine_shaders`.

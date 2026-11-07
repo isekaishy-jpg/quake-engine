@@ -823,6 +823,13 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "set_morph",
+            lua.create_function(move |_, (id, name, weight): (f64, String, f32)| {
+                Ok(sim.borrow_mut().set_morph(id_from(id), &name, weight))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "attach_point",
             lua.create_function(move |_, (id, name): (f64, String)| {
                 let place = sim.borrow().place_on(id_from(id), &name);

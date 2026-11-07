@@ -24,6 +24,10 @@ pub struct MovingDraw {
     pub first_joint: u32,
     /// How many it has.
     pub joint_count: u32,
+    /// Where its morph weights start in the frame's list.
+    pub first_weight: u32,
+    /// How many it has, or 0 if none of them show.
+    pub weight_count: u32,
     /// Its light, as a colour.
     pub light: [f32; 3],
     /// Its middle, in the world, as it's posed.

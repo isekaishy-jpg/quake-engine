@@ -41,7 +41,7 @@ No compute pass culls instances for now, as visibility by leaf comes first and a
 
 - **Skin:** linear, four joints a vertex, as `u8` indices and weights that sum to 1, so a mesh has up to 256 joints. More than one set in a file is reduced to the four strongest, and the importer says so.
 - **Joints:** one storage buffer holds every palette this frame, with each mesh saying where its own begins. A joint is three rows of `vec4`, 48 bytes.
-- **Morphs:** sparse, with entries sorted by vertex: which target, then position and normal differences as half floats. One thread reads its own vertex's entries, so no atomics. Morphs go before skin, as glTF has it. Targets with no weight are left out of the list a dispatch gets, and with no active target or joints the pass is skipped for that mesh.
+- **Morphs:** sparse, with entries sorted by vertex: which target, then position and normal differences as half floats. One thread reads its own vertex's entries, so no atomics. Morphs go before skin, as glTF has it. With no target showing, a mesh's corners don't look for morphs at all.
 - **Clips:** `.emesh` keeps glTF's animations, as `LINEAR`, `STEP` or `CUBICSPLINE`, sampled with rotations by slerp the short way and normalised. A clip can also move morph weights.
 - **Bounds** come from the pose, not the rest pose, or culling pops.
 - **Who works it out:** one function in shared code samples a clip to a pose, so that the server and client agree. An entity's state says its clip and when it began. The client blends between clips over a short time, which is only for looks. Scripts set morph weights by name.
@@ -158,6 +158,21 @@ Limits, as they stand:
 - **A moving mesh draws its finest level.** Its corners are all moved anyway, so a coarser level would only save drawing.
 - **The outline hull doesn't draw moving meshes.** It's off by default. Item 12 decides how alias models and meshes share that.
 - **A moving mesh has no collision of its own.** It has the box its entity has, as alias models do.
-- **Clips don't blend.** Changing clip is a cut. The design had the client blending over a short time, and that's still to do.
 - **A clip's clock is the map's,** so what a client shows is as good as its clock is. Bad networks haven't been tried.
+
+### Item 11: morph targets, and blending clips
+
+Built as designed, with one change: scripts can set four targets on an entity at once, as that's what goes over the network, and a clip can move any of them. `engine.set_morph` says when there's no room.
+
+Tried in the game with the Blender arm's shape key, driven by a script: it swells at the middle and thins again, lit and shadowed as before.
+
+**Clips blend now.** A client blends over a fifth of a second, which is only for looks, so the server's poses don't, and what's held to a joint goes by the server. Measured in the game, with the arm side on and the clip changing at full bend, the tip came back in steps of at most 8 pixels. With the blend off, the same change was one jump of 21.5. The first try at measuring this proved nothing, as the clip had already swung upright by the time it changed.
+
+- **The test for order had passed with nothing on the screen.** Its mesh had no place, so it was squashed to a point. With that fixed, it fails if morphs come after joints, and passes as they are.
+- **A mesh with morphs and no joints** has a joint that moves nothing, or corners would read past what's there.
+
+Limits, as they stand:
+
+- **Only position and normal are morphed.** glTF asks a client for tangents too, and the engine works those out from screen derivatives, so it has none to change. UV and colour targets aren't read.
+- **Static copies don't morph.** They show the mesh as it was made.
 

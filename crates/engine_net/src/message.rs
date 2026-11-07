@@ -1,6 +1,6 @@
 //! What client and server say to each other.
 
-use engine_core::entity::{Effect, EntityState, ModelInstance, Projectile};
+use engine_core::entity::{Effect, EntityState, MOST_SET_MORPHS, ModelInstance, Projectile};
 use engine_core::math::Vec3;
 use engine_core::player::{Liquid, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
@@ -901,6 +901,7 @@ pub(crate) fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         put_vec3(out, entity.angles);
         out.extend_from_slice(&entity.clip.to_le_bytes());
         out.extend_from_slice(&entity.clip_start.to_le_bytes());
+        out.extend(entity.morphs.iter().flatten());
     }
     let count = u32::try_from(snapshot.boxes.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&count.to_le_bytes());
@@ -990,6 +991,13 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             angles: reader.vec3()?,
             clip: reader.u16()?,
             clip_start: reader.f32()?,
+            morphs: {
+                let mut morphs = [[0; 2]; MOST_SET_MORPHS];
+                for morph in &mut morphs {
+                    *morph = [reader.byte()?, reader.byte()?];
+                }
+                morphs
+            },
         });
     }
     let count = usize::try_from(reader.u32()?).ok()?;

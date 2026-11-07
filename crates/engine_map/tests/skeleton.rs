@@ -3,7 +3,7 @@
 use engine_core::math::Vec3;
 use engine_map::{
     Channel, ChannelPath, Clip, Interpolation, Joint, JointPose, NO_MOVE, Skeleton, SkeletonPlace,
-    after, moved, turned,
+    after, blend_poses, moved, turned,
 };
 
 /// Close enough.
@@ -324,4 +324,82 @@ fn bounds_follow_the_pose() {
     let (center, radius) = skeleton.bounds(&placed);
     assert!(near(center.x, 49.75), "{center:?}");
     assert!(radius > 49.0, "{radius}");
+}
+
+/// Halfway through a blend, a joint is halfway, and at the ends it's what it was going between.
+#[test]
+fn a_blend_goes_from_one_pose_to_the_other() {
+    let from = [JointPose {
+        translation: [0.0, 0.0, 0.0],
+        rotation: about_z(0.0),
+        ..JointPose::default()
+    }];
+    let to = [JointPose {
+        translation: [10.0, 0.0, 0.0],
+        rotation: about_z(90.0),
+        ..JointPose::default()
+    }];
+    let halfway = blend_poses(&from, &to, 0.5);
+    assert!(near(halfway[0].translation[0], 5.0));
+    let facing = turned(&halfway[0].rows(), Vec3::new(1.0, 0.0, 0.0));
+    let wanted = about_z(45.0);
+    let want = turned(
+        &JointPose {
+            rotation: wanted,
+            ..JointPose::default()
+        }
+        .rows(),
+        Vec3::new(1.0, 0.0, 0.0),
+    );
+    assert!(same(facing, want), "{facing:?}");
+    assert_eq!(
+        blend_poses(&from, &to, 0.0)[0].translation,
+        from[0].translation
+    );
+    assert!(near(blend_poses(&from, &to, 1.0)[0].translation[0], 10.0));
+}
+
+/// A skeleton with two morph targets, the first resting at a half.
+fn morphing() -> Skeleton {
+    Skeleton {
+        morph_names: vec!["smile".to_owned(), "frown".to_owned()],
+        rest_weights: vec![0.5],
+        ..Skeleton::default()
+    }
+}
+
+#[test]
+fn morph_weights_rest_where_the_model_says() {
+    assert_eq!(morphing().weights(None, 0.0), [0.5, 0.0]);
+}
+
+#[test]
+fn a_clip_moves_morph_weights() {
+    let mut skeleton = morphing();
+    let keys = [0.0, 0.0, 1.0, 0.5];
+    skeleton.clips.push(clip(vec![channel(
+        0,
+        ChannelPath::Weights,
+        &[0.0, 2.0],
+        &keys,
+    )]));
+    let weights = skeleton.weights(Some(0), 1.0);
+    assert!(
+        near(weights[0], 0.5) && near(weights[1], 0.25),
+        "{weights:?}"
+    );
+}
+
+/// Weights aren't a joint's, whatever joint they happen to name.
+#[test]
+fn morph_weights_leave_joints_alone() {
+    let mut skeleton = two_joints();
+    let keys = [1.0, 1.0];
+    skeleton.clips.push(clip(vec![channel(
+        0,
+        ChannelPath::Weights,
+        &[0.0, 2.0],
+        &keys,
+    )]));
+    assert_eq!(skeleton.pose(Some(0), 1.0)[0], skeleton.joints[0].rest);
 }

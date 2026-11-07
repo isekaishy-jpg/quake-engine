@@ -59,6 +59,7 @@ fn snapshot() -> Snapshot {
             angles: Vec3::new(4.0, 5.0, 6.0),
             clip: 3,
             clip_start: 12.5,
+            morphs: [[1, 200], [0; 2], [0; 2], [0; 2]],
         }],
         boxes: vec![(Vec3::new(1.0, 2.0, 3.0), Vec3::new(4.0, 5.0, 6.0))],
         weapon_model: 3,

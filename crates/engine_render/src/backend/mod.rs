@@ -33,6 +33,7 @@ use vulkane::safe::{
     SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, WaitSemaphore,
 };
 
+pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
