@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use engine_assets::{Archive, DirectoryArchive, FileSystem, PackArchive};
 use engine_compile::{
     MaterialLibrary, Role, bytes_hash, encode_png, pack_content, pack_picture, pack_textures,
-    packed_path, picture_roles, play_map, read_packed,
+    packed_path, picture_roles, placeholder_texture, play_map, read_packed,
 };
 use engine_format::from_text;
 use engine_map::PixelForm;
@@ -58,6 +58,36 @@ fn mounted(root: &Path) -> FileSystem {
     let mut filesystem = FileSystem::new();
     filesystem.mount(Box::new(DirectoryArchive::new(root)));
     filesystem
+}
+
+/// Level pictures aren't in the repository, so a material can be here without its picture. A
+/// fresh copy still has to build, with the gap plain to see.
+#[test]
+fn a_material_without_its_picture_is_a_placeholder() {
+    let root = folder("no-picture");
+    write_picture(&root, "textures/here.png", &picture(16));
+    write_material(&root, "here", "base = textures/here.png");
+    write_material(&root, "gone", "base = textures/gone.png");
+    let filesystem = mounted(&root);
+    let mut library = MaterialLibrary::new(&filesystem);
+    assert!(library.load("here").expect("loads").material.is_some());
+    assert!(library.missing_pictures().is_empty());
+    let gone = library.load("gone").expect("still loads");
+    assert_eq!(gone, placeholder_texture("gone"));
+    library.load("gone").expect("still loads");
+    assert_eq!(library.missing_pictures(), ["gone".to_owned()]);
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// A material that's broken in itself is still an error, and isn't taken for a missing picture.
+#[test]
+fn a_material_with_no_base_is_still_an_error() {
+    let root = folder("no-base");
+    write_material(&root, "broken", "");
+    let filesystem = mounted(&root);
+    let mut library = MaterialLibrary::new(&filesystem);
+    assert!(library.load("broken").is_err());
+    fs::remove_dir_all(&root).expect("clean up");
 }
 
 #[test]

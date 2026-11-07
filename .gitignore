@@ -13,3 +13,8 @@
 /content/ui/
 /content/fonts/
 /delivered/
+
+# Pictures for levels, kept on your own machine. See docs/texture-standard.md.
+/content/textures/qg[0-9]*
+/content/textures/uc[0-9]*
+/content/textures/painted_plain_*

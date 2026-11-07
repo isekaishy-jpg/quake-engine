@@ -212,6 +212,8 @@ pub struct MaterialLibrary<'a> {
     /// Whether the material being read can use compiled pictures. Layers are
     /// mixed into their base here, which takes pixels.
     compiled_pictures: bool,
+    /// Materials shown as placeholders, as their pictures aren't here.
+    missing_pictures: Vec<String>,
 }
 
 impl std::fmt::Debug for MaterialLibrary<'_> {
@@ -350,7 +352,26 @@ impl<'a> MaterialLibrary<'a> {
             meshes: HashMap::new(),
             playing: false,
             compiled_pictures: false,
+            missing_pictures: Vec::new(),
         }
+    }
+
+    /// Materials shown as placeholders so far, as their pictures aren't here. Level pictures are
+    /// kept out of the repository, so a fresh copy has none.
+    #[must_use]
+    pub fn missing_pictures(&self) -> &[String] {
+        &self.missing_pictures
+    }
+
+    /// Whether a material's own picture isn't here.
+    fn has_no_picture(&self, document: &Document) -> bool {
+        let block = document.blocks_of("surface").next();
+        let base = block
+            .and_then(|block| block.get("base"))
+            .and_then(Value::text);
+        base.is_some_and(|base| {
+            !self.filesystem.exists(base) && !self.filesystem.exists(&packed_path(base))
+        })
     }
 
     /// A library for playing: it reads pictures as they were compiled, where it
@@ -702,8 +723,8 @@ impl<'a> MaterialLibrary<'a> {
         })
     }
 
-    /// The texture of `name`, from `materials/<name>.emat`. A missing material
-    /// shows a placeholder, so a map still plays and the gap is plain to see.
+    /// The texture of `name`, from `materials/<name>.emat`. A missing material, or one whose
+    /// picture is missing, shows a placeholder, so a map still plays and the gap is plain to see.
     ///
     /// # Errors
     ///
@@ -726,6 +747,12 @@ impl<'a> MaterialLibrary<'a> {
     /// says so.
     fn load_as(&mut self, name: &str, compiled: bool) -> Result<Texture, CompileError> {
         match self.document_named(name, 0)? {
+            Some(document) if self.has_no_picture(&document) => {
+                if !self.missing_pictures.iter().any(|known| known == name) {
+                    self.missing_pictures.push(name.to_owned());
+                }
+                Ok(placeholder_texture(name))
+            }
             Some(document) => self.read_as(name, &document, compiled),
             None => Ok(placeholder_texture(name)),
         }

@@ -33,6 +33,9 @@ A set is the pictures of one surface, and a material that says how they're used.
 
 `<name>` is `<pack>_<kind>`, in lower case with underscores, such as `qg03_elder_crypt_wall_blocks`. A pack's id is two letters, two digits, then its name.
 
+
+Level pictures, `textures/qg*` and `textures/uc*`, stay on your own machine and aren't in the repository, so they don't fill up what's changed. Their materials are in it. A fresh copy has the materials without the pictures, so what uses them shows as a coloured placeholder, the compiler says how many, and a level still builds and plays. To see them, copy `content/textures` from a machine that has them.
+
 ## Pictures
 
 - **Format:** PNG, 8 bits a channel. RGB, or RGBA where alpha means something.

@@ -56,6 +56,13 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
         })
     };
     let mut map = compile(&working, &mut textures)?;
+    let missing = library.missing_pictures();
+    if !missing.is_empty() {
+        eprintln!(
+            "{name}: placeholders for {} materials with no pictures here",
+            missing.len()
+        );
+    }
     if let Some(error) = failure {
         return Err(error.into());
     }

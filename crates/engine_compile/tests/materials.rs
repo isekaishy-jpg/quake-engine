@@ -96,10 +96,6 @@ fn a_missing_material_is_a_placeholder_and_a_broken_one_an_error() {
     let cases = [
         ("no_base", "format 1 material\nsurface { gloss = 1 }\n"),
         (
-            "no_image",
-            "format 1 material\nsurface { base = textures/none.png }\n",
-        ),
-        (
             "bad_mode",
             "format 1 material\nsurface { base = textures/0.png shading = odd }\n",
         ),
