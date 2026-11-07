@@ -11,6 +11,7 @@ mod bsp;
 mod game;
 mod items;
 mod layout;
+mod level_text;
 mod mdl;
 mod pak;
 mod scripts;
@@ -29,6 +30,7 @@ pub use layout::{
     LoadedLevel, PICTURE_WAD, SKY_SOUND, STARTUP_SCRIPT, TALK_SOUND, WATER_SOUND, load_level,
     load_palette, music_file,
 };
+pub use level_text::restore_messages;
 pub use mdl::{parse_colored_mdl, parse_mdl};
 pub use pak::PakArchive;
 pub use scripts::SCRIPTS;

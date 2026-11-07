@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 
 use engine_assets::{Archive, AssetError, DirectoryArchive, FileSystem};
 
+use crate::level_text::restore_messages;
 use crate::pak::PakArchive;
 
 /// Finds `name` in `directory`, ignoring case, since Steam's files are
@@ -36,8 +37,22 @@ pub fn mount_music(filesystem: &mut FileSystem, base: &Path, game: &str) {
 pub fn mount_coloured_levels(filesystem: &mut FileSystem, base: &Path, game: &str) {
     let path = base.join("rerelease").join(game).join("pak0.pak");
     if let Ok(pak) = PakArchive::open(&path) {
-        filesystem.mount(Box::new(ColouredLevels::new(pak)));
+        let originals = original_paks(&base.join(game));
+        filesystem.mount(Box::new(ColouredLevels::with_originals(pak, originals)));
     }
+}
+
+/// The original paks of a game, last first, as a later one overrides what's before it.
+fn original_paks(directory: &Path) -> Vec<Box<dyn Archive>> {
+    let mut paks: Vec<Box<dyn Archive>> = Vec::new();
+    for number in 0.. {
+        let path = find_ignoring_case(directory, &format!("pak{number}.pak"));
+        let Some(pak) = path.and_then(|path| PakArchive::open(&path).ok()) else {
+            break;
+        };
+        paks.insert(0, Box::new(pak));
+    }
+    paks
 }
 
 /// An archive's levels that have coloured light, and nothing else of it. A `.lit` file
@@ -46,12 +61,29 @@ pub fn mount_coloured_levels(filesystem: &mut FileSystem, base: &Path, game: &st
 pub struct ColouredLevels<A: Archive> {
     /// What's read from.
     archive: A,
+    /// Where the same levels are as they first were, for what they say.
+    originals: Vec<Box<dyn Archive>>,
 }
 
 impl<A: Archive> ColouredLevels<A> {
     /// The coloured levels in `archive`.
     pub const fn new(archive: A) -> Self {
-        Self { archive }
+        Self {
+            archive,
+            originals: Vec::new(),
+        }
+    }
+
+    /// The coloured levels in `archive`, saying what `originals` have them say.
+    #[must_use]
+    pub fn with_originals(archive: A, originals: Vec<Box<dyn Archive>>) -> Self {
+        Self { archive, originals }
+    }
+
+    /// The level at `path` as it first was.
+    fn original(&self, path: &str) -> Option<Vec<u8>> {
+        let archive = self.originals.iter().find(|pak| pak.contains(path))?;
+        archive.read(path).ok()
     }
 
     /// Whether `path` is a level with coloured light, or that light.
@@ -83,11 +115,14 @@ impl<A: Archive> Archive for ColouredLevels<A> {
     }
 
     fn read(&self, path: &str) -> Result<Vec<u8>, AssetError> {
-        if self.keeps(path) {
-            self.archive.read(path)
-        } else {
-            Err(AssetError::NotFound(path.to_owned()))
+        if !self.keeps(path) {
+            return Err(AssetError::NotFound(path.to_owned()));
         }
+        let bytes = self.archive.read(path)?;
+        if path.ends_with(".bsp") {
+            return Ok(restore_messages(&bytes, self.original(path).as_deref()));
+        }
+        Ok(bytes)
     }
 }
 

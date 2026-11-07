@@ -2242,6 +2242,8 @@ fn the_end_of_a_level_holds_the_player_at_the_camera_until_a_button() {
     let held = game.player();
     assert!(held.frozen);
     assert_eq!(held.origin, Vec3::new(100.0, 50.0, -100.0));
+    // The camera's at the same place, so their body would be all round it.
+    game.check(r#"assert(not find_entity(world, "classname", "player").visible, "still shown")"#);
     let walking = UserCommand {
         forward: 400.0,
         ..UserCommand::default()

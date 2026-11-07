@@ -185,7 +185,7 @@ function hold_at_camera(player, pos)
 	player.takedamage = DAMAGE_NO
 	player.solid = SOLID_NOT
 	player.movetype = MOVETYPE_NONE
-	player.modelindex = 0
+	player.visible = false
 	player.frozen = true
 	player.weaponhidden = true
 	setorigin(player, pos.origin)
