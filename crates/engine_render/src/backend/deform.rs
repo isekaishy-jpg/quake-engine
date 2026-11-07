@@ -7,14 +7,17 @@ use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags2, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize, DescriptorSet,
     DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, PipelineLayout,
-    PipelineStage2, PushConstantRange, ShaderModule, ShaderStageFlags,
+    PipelineStage2, ShaderModule, ShaderStageFlags,
 };
 
 use super::upload::host_buffer;
 use super::{Backend, FRAMES, GpuBuffer, INDEX_TYPE_U32};
 use crate::error::RenderError;
-use crate::instances::{INSTANCE_BYTES, MovingDraw, ball_in_view, write_instance};
-use crate::world::{InstanceLight, OWN_LIGHT_STYLE, Vertex};
+use crate::instances::{
+    INSTANCE_BYTES, MovingDraw, PLACE_BYTES, UV_BYTES, ball_in_view, shared_places, shared_uvs,
+    write_instance,
+};
+use crate::world::{InstanceLight, OWN_LIGHT_STYLE};
 
 /// Corners in a frame's moved vertices. Past this, a mesh draws at rest.
 const MOST_MOVED_CORNERS: usize = 1 << 18;
@@ -31,8 +34,11 @@ const JOINT_BYTES: usize = 48;
 /// Morph weights in a frame's list. Past this, a mesh draws with none.
 const MOST_WEIGHTS: usize = 1 << 14;
 
-/// Bytes in what a dispatch is told.
-const JOB_BYTES: u32 = 24;
+/// Bytes in what the shader's told of a mesh.
+const JOB_BYTES: usize = 24;
+
+/// Workgroups in a frame: as many as its corners fill, and a part-filled one for each mesh.
+const MOST_GROUPS: usize = MOST_MOVED_CORNERS / WORKGROUP as usize + MOST_MOVING;
 
 /// A float as a half float's bits, which is what morphs are kept in. They're small offsets, so
 /// that's plenty, at a quarter of what's kept for each.
@@ -99,16 +105,9 @@ impl Deform {
             descriptor_count: 1,
             stage_flags: ShaderStageFlags::COMPUTE,
         };
-        let set_layout = DescriptorSetLayout::new(device, &[0, 1, 2, 3, 4, 5, 6].map(binding))?;
-        let layout = PipelineLayout::with_push_constants(
-            device,
-            &[&set_layout],
-            &[PushConstantRange {
-                stage_flags: ShaderStageFlags::COMPUTE,
-                offset: 0,
-                size: JOB_BYTES,
-            }],
-        )?;
+        let set_layout =
+            DescriptorSetLayout::new(device, &[0, 1, 2, 3, 4, 5, 6, 7, 8].map(binding))?;
+        let layout = PipelineLayout::new(device, &[&set_layout])?;
         let pipeline = ComputePipeline::new(device, &layout, &shader, "cs_deform")?;
         Ok(Self {
             pipeline,
@@ -139,12 +138,6 @@ pub(super) struct MovingJob {
     pub(super) mesh: u32,
     /// Where its moved corners went, or `None` if it's drawn at rest.
     moved_to: Option<u32>,
-    /// Where its joints start in the palette.
-    first_joint: u32,
-    /// Where its morph weights start.
-    first_weight: u32,
-    /// How many it has, or 0 if none of them show.
-    weight_count: u32,
     /// Its place in the instance buffer.
     pub(super) instance: u32,
     /// What places it, column by column, for shadow maps.
@@ -163,6 +156,12 @@ struct MovingFrame {
     weights: GpuBuffer,
     /// The moved corners.
     moved: GpuBuffer,
+    /// What the shader's told of each mesh.
+    work: GpuBuffer,
+    /// Which mesh each workgroup does.
+    groups: GpuBuffer,
+    /// How many workgroups there are this frame.
+    group_count: u32,
     /// Where each mesh is, as instances.
     instances: GpuBuffer,
     /// The set reading and writing those.
@@ -175,6 +174,8 @@ struct MovingFrame {
 pub(super) struct GpuMoving {
     /// Everyone's corners at rest.
     corners: GpuBuffer,
+    /// Everyone's UVs, which don't move.
+    uvs: GpuBuffer,
     /// Everyone's joints and weights. Kept alive for the sets.
     _skin: GpuBuffer,
     /// Where each corner's morphs are. Kept alive for the sets.
@@ -198,19 +199,20 @@ fn columns_of(rows: &Rows) -> [f32; 16] {
 }
 
 impl GpuMoving {
-    /// The corners and buffers to bind to draw `job`.
-    pub(super) fn vertices_of(&self, job: &MovingJob, slot: usize) -> (&GpuBuffer, u64) {
-        let vertex = Vertex::SIZE as u64;
+    /// Where `job`'s corners are, to draw it.
+    pub(super) fn places_of(&self, job: &MovingJob, slot: usize) -> (&GpuBuffer, u64) {
+        let place = PLACE_BYTES as u64;
         match job.moved_to {
-            Some(first) => (&self.frames[slot].moved, u64::from(first) * vertex),
-            None => {
-                let first = self
-                    .meshes
-                    .get(job.mesh as usize)
-                    .map_or(0, |mesh| mesh.first_corner);
-                (&self.corners, u64::from(first) * vertex)
-            }
+            Some(first) => (&self.frames[slot].moved, u64::from(first) * place),
+            None => (&self.corners, u64::from(self.first_corner(job)) * place),
         }
+    }
+
+    /// Where `job`'s mesh starts among everyone's corners.
+    fn first_corner(&self, job: &MovingJob) -> u32 {
+        self.meshes
+            .get(job.mesh as usize)
+            .map_or(0, |mesh| mesh.first_corner)
     }
 
     /// This frame's jobs.
@@ -239,6 +241,12 @@ impl GpuMoving {
         let mut used_corners = 0_usize;
         let mut used_joints = 0_usize;
         let mut used_weights = 0_usize;
+        let mut used_groups = 0_usize;
+        let mut moved_jobs = 0_usize;
+        let mut work = frame.work.memory.map()?;
+        let (work, _) = work.as_slice_mut().as_chunks_mut::<JOB_BYTES>();
+        let mut groups = frame.groups.memory.map()?;
+        let (groups, _) = groups.as_slice_mut().as_chunks_mut::<4>();
         let mut weights = frame.weights.memory.map()?;
         let (weights, _) = weights.as_slice_mut().as_chunks_mut::<4>();
         let mut joints = frame.palette.memory.map()?;
@@ -294,6 +302,26 @@ impl GpuMoving {
                 used_weights += own.len();
                 weight_count = draw.weight_count;
             }
+            if let Some(first_out) = moved_to {
+                let words = [
+                    mesh.first_corner,
+                    mesh.corners,
+                    first_out,
+                    first_joint,
+                    first_weight,
+                    weight_count,
+                ];
+                let row = work[moved_jobs].as_chunks_mut::<4>().0.iter_mut();
+                for (chunk, word) in row.zip(words) {
+                    *chunk = word.to_le_bytes();
+                }
+                let job = u32::try_from(moved_jobs).unwrap_or(0);
+                for group in 0..mesh.corners.div_ceil(WORKGROUP) {
+                    groups[used_groups] = (job | group << 10).to_le_bytes();
+                    used_groups += 1;
+                }
+                moved_jobs += 1;
+            }
             let [red, green, blue] = draw.light;
             let light = InstanceLight {
                 uv: [red, green],
@@ -304,15 +332,13 @@ impl GpuMoving {
             frame.jobs.push(MovingJob {
                 mesh: draw.mesh,
                 moved_to,
-                first_joint,
-                first_weight,
-                weight_count,
                 instance: u32::try_from(frame.jobs.len()).unwrap_or(0),
                 placed: columns_of(&draw.rows),
                 center: draw.center,
                 radius: draw.radius,
             });
         }
+        frame.group_count = u32::try_from(used_groups).unwrap_or(0);
         Ok(over)
     }
 }
@@ -324,6 +350,7 @@ impl Backend {
             return Ok(None);
         }
         let mut corner_bytes = Vec::new();
+        let mut uv_bytes = Vec::new();
         let mut skin_bytes = Vec::new();
         let mut head_bytes = Vec::new();
         let mut morph_bytes = Vec::new();
@@ -331,7 +358,8 @@ impl Backend {
         let mut first_corner = 0_u32;
         for moving in &map.moving_meshes {
             let shared = &moving.mesh;
-            corner_bytes.extend(crate::instances::shared_vertices(shared));
+            corner_bytes.extend(shared_places(shared));
+            uv_bytes.extend(shared_uvs(shared));
             for corner in 0..shared.corners.len() {
                 // A mesh with no skin stays with its first joint, which is at rest, or nothing.
                 let joints = shared.joints.get(corner).copied().unwrap_or([0; 4]);
@@ -379,6 +407,7 @@ impl Backend {
             &corner_bytes,
             BufferUsage::STORAGE_BUFFER | BufferUsage::VERTEX_BUFFER,
         )?;
+        let uvs = self.device_buffer(&uv_bytes, BufferUsage::VERTEX_BUFFER)?;
         let skin = self.device_buffer(&skin_bytes, BufferUsage::STORAGE_BUFFER)?;
         let heads = self.device_buffer(&head_bytes, BufferUsage::STORAGE_BUFFER)?;
         let morphs = self.device_buffer(&morph_bytes, BufferUsage::STORAGE_BUFFER)?;
@@ -388,11 +417,11 @@ impl Backend {
             sets,
             &[DescriptorPoolSize {
                 descriptor_type: DescriptorType::STORAGE_BUFFER,
-                descriptor_count: sets * 7,
+                descriptor_count: sets * 9,
             }],
         )?;
         let mut frames = Vec::with_capacity(FRAMES);
-        let moved_bytes = MOST_MOVED_CORNERS * Vertex::SIZE;
+        let moved_bytes = MOST_MOVED_CORNERS * PLACE_BYTES;
         for _ in 0..FRAMES {
             let palette = host_buffer(
                 &self.device,
@@ -415,6 +444,18 @@ impl Backend {
                 &self.physical,
                 MOST_MOVING * INSTANCE_BYTES,
                 BufferUsage::VERTEX_BUFFER,
+            )?;
+            let work = host_buffer(
+                &self.device,
+                &self.physical,
+                MOST_MOVING * JOB_BYTES,
+                BufferUsage::STORAGE_BUFFER,
+            )?;
+            let groups = host_buffer(
+                &self.device,
+                &self.physical,
+                MOST_GROUPS * 4,
+                BufferUsage::STORAGE_BUFFER,
             )?;
             let set = pool.allocate(&self.deform.set_layout)?;
             let storage = DescriptorType::STORAGE_BUFFER;
@@ -443,10 +484,21 @@ impl Backend {
                 morph_bytes.len().max(16) as u64,
             );
             set.write_buffer(6, storage, &weights.buffer, 0, (MOST_WEIGHTS * 4) as u64);
+            set.write_buffer(
+                7,
+                storage,
+                &work.buffer,
+                0,
+                (MOST_MOVING * JOB_BYTES) as u64,
+            );
+            set.write_buffer(8, storage, &groups.buffer, 0, (MOST_GROUPS * 4) as u64);
             frames.push(MovingFrame {
                 palette,
                 weights,
                 moved,
+                work,
+                groups,
+                group_count: 0,
                 instances,
                 set,
                 jobs: Vec::new(),
@@ -454,6 +506,7 @@ impl Backend {
         }
         Ok(Some(GpuMoving {
             corners,
+            uvs,
             _skin: skin,
             _morph_heads: heads,
             _morphs: morphs,
@@ -469,32 +522,12 @@ impl Backend {
             return;
         };
         let frame = &moving.frames[self.slot];
-        if frame.jobs.iter().all(|job| job.moved_to.is_none()) {
+        if frame.group_count == 0 {
             return;
         }
         rec.bind_compute_pipeline(&self.deform.pipeline);
         rec.bind_compute_descriptor_sets(&self.deform.layout, 0, &[&frame.set]);
-        for job in &frame.jobs {
-            let (Some(first_out), Some(mesh)) =
-                (job.moved_to, moving.meshes.get(job.mesh as usize))
-            else {
-                continue;
-            };
-            let words = [
-                mesh.first_corner,
-                mesh.corners,
-                first_out,
-                job.first_joint,
-                job.first_weight,
-                job.weight_count,
-            ];
-            let mut bytes = [0; JOB_BYTES as usize];
-            for (chunk, word) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(words) {
-                *chunk = word.to_le_bytes();
-            }
-            rec.push_constants(&self.deform.layout, ShaderStageFlags::COMPUTE, 0, &bytes);
-            rec.dispatch(mesh.corners.div_ceil(WORKGROUP), 1, 1);
-        }
+        rec.dispatch(frame.group_count, 1, 1);
         // Vulkan 1.3 is required, so this is always there, and if it weren't the device
         // wouldn't have been picked.
         let _barrier = rec.memory_barrier2(
@@ -515,12 +548,14 @@ pub(super) fn bind_moving(
     instances: bool,
 ) -> Option<()> {
     let mesh = moving.meshes.get(job.mesh as usize)?;
-    let (corners, offset) = moving.vertices_of(job, slot);
+    let (corners, offset) = moving.places_of(job, slot);
     if instances {
+        let uvs = u64::from(mesh.first_corner) * UV_BYTES as u64;
         rec.bind_vertex_buffers(
             0,
             &[
                 (&corners.buffer, offset),
+                (&moving.uvs.buffer, uvs),
                 (&moving.instances(slot).buffer, 0),
             ],
         );

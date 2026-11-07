@@ -1,5 +1,6 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
+mod clock;
 mod deform;
 mod pipeline_cache;
 mod pipelines;
@@ -33,6 +34,8 @@ use vulkane::safe::{
     SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, WaitSemaphore,
 };
 
+pub use self::clock::GpuTimes;
+use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
 use crate::alias::ALIAS_PUSH_SIZE;
@@ -122,8 +125,10 @@ pub(crate) struct Scene<'a> {
 
 /// A mesh on the GPU, kept once however many times it's drawn.
 struct GpuMesh {
-    /// Its corners.
-    vertices: GpuBuffer,
+    /// Its corners' places and normals.
+    places: GpuBuffer,
+    /// Its corners' UVs.
+    uvs: GpuBuffer,
     /// Its triangles.
     indices: GpuBuffer,
     /// Its parts by material, for each level of detail.
@@ -541,6 +546,8 @@ pub(crate) struct Backend {
     queue_family: u32,
     /// What moves meshes.
     deform: Deform,
+    /// Times what the GPU does.
+    clock: GpuClock,
     /// Whether a moving mesh has had to draw at rest.
     moving_overflow: bool,
     /// The GPU's name.
@@ -808,6 +815,7 @@ impl Backend {
         };
         let particles = [particle_buffer()?, particle_buffer()?];
         let command_pool = CommandPool::new(&device, queue_family)?;
+        let clock = GpuClock::new(&device, &physical, queue_family);
         let frame_done = [Fence::new(&device)?, Fence::new(&device)?];
         let available = [Semaphore::binary(&device)?, Semaphore::binary(&device)?];
         let post_pipeline =
@@ -876,6 +884,7 @@ impl Backend {
             queue,
             queue_family,
             deform,
+            clock,
             moving_overflow: false,
             device_name,
             physical,
@@ -906,6 +915,7 @@ impl Backend {
             self.frame_done[slot].wait(u64::MAX)?;
             self.frame_done[slot].reset()?;
             self.in_flight[slot] = false;
+            self.clock.read(slot);
         }
         self.commands[slot] = None;
         self.written_tiles[slot].borrow_mut().clear();
@@ -1099,6 +1109,16 @@ impl Backend {
         }
     }
 
+    /// Starts or stops timing what the GPU does. Says if it can.
+    pub(crate) fn time_gpu(&mut self, on: bool) -> bool {
+        self.clock.set_on(on)
+    }
+
+    /// What the GPU's clock has seen since this was last asked.
+    pub(crate) fn take_gpu_times(&mut self) -> GpuTimes {
+        self.clock.take()
+    }
+
     /// Whether a moving mesh has had to draw at rest since this was last asked.
     pub(crate) fn take_moving_overflow(&mut self) -> bool {
         std::mem::take(&mut self.moving_overflow)
@@ -1157,17 +1177,22 @@ impl Backend {
         view: &View,
         size: (u32, u32),
     ) {
+        self.clock.begin(rec, self.slot);
         self.record_values(rec);
         let Some(target) = &self.scene_target else {
             return;
         };
+        self.clock.start(rec, self.slot, Span::Deform);
         self.record_deform(rec);
+        self.clock.end(rec, self.slot, Span::Deform);
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
         let entities = wanted.map_or(&[][..], |scene| scene.drawables.entities);
         let figures = shadow::shadow_figures(&self.models, entities);
+        self.clock.start(rec, self.slot, Span::Shadows);
         self.shadows
             .record(rec, self.map.as_ref(), &ranges, &figures, self.slot);
+        self.clock.end(rec, self.slot, Span::Shadows);
         // The scene reads what shadows wrote.
         rec.memory_barrier(
             PipelineStage::ALL_GRAPHICS,
@@ -1175,6 +1200,7 @@ impl Backend {
             AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             AccessFlags::SHADER_READ,
         );
+        self.clock.start(rec, self.slot, Span::Scene);
         rec.begin_render_pass_ext(
             &self.scene_pass,
             &target.framebuffer,
@@ -1190,6 +1216,7 @@ impl Backend {
             recorder.record(rec, scene, view, size);
         }
         rec.end_render_pass();
+        self.clock.end(rec, self.slot, Span::Scene);
         // The final pass reads what this wrote.
         rec.memory_barrier(
             PipelineStage::ALL_GRAPHICS,
@@ -1452,6 +1479,7 @@ impl Backend {
                 );
                 Ok(())
             })?;
+        self.clock.read(self.slot);
         let mut rgba = readback.memory.map()?.as_slice()[..size].to_vec();
         let (pixels, _remainder) = rgba.as_chunks_mut::<4>();
         for pixel in pixels {

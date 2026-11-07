@@ -17,7 +17,7 @@ use super::{
 use crate::alias::POSE_CORNER_BYTES;
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
-use crate::instances::INSTANCE_BYTES;
+use crate::instances::{INSTANCE_BYTES, PLACE_BYTES, UV_BYTES};
 use crate::sprite::PARTICLE_BYTES;
 use crate::world::Vertex;
 
@@ -428,15 +428,20 @@ impl Backend {
 
 /// How world vertices are laid out.
 /// What a copy of a shared mesh reads: its corners, as the world's, and then the copy.
-fn mesh_vertices() -> ([VertexInputBinding; 2], [VertexInputAttribute; 8]) {
+fn mesh_vertices() -> ([VertexInputBinding; 3], [VertexInputAttribute; 8]) {
     let bindings = [
         VertexInputBinding {
             binding: 0,
-            stride: u32::try_from(Vertex::SIZE).unwrap_or(0),
+            stride: u32::try_from(PLACE_BYTES).unwrap_or(0),
             input_rate: InputRate::VERTEX,
         },
         VertexInputBinding {
             binding: 1,
+            stride: u32::try_from(UV_BYTES).unwrap_or(0),
+            input_rate: InputRate::VERTEX,
+        },
+        VertexInputBinding {
+            binding: 2,
             stride: u32::try_from(INSTANCE_BYTES).unwrap_or(0),
             input_rate: InputRate::INSTANCE,
         },
@@ -449,13 +454,13 @@ fn mesh_vertices() -> ([VertexInputBinding; 2], [VertexInputAttribute; 8]) {
     };
     let attributes = [
         attribute(0, 0, Format::R32G32B32_SFLOAT, 0),
-        attribute(1, 0, Format::R32G32_SFLOAT, 12),
-        attribute(5, 0, Format::R8G8B8A8_SNORM, 36),
-        attribute(6, 1, Format::R32G32B32A32_SFLOAT, 0),
-        attribute(7, 1, Format::R32G32B32A32_SFLOAT, 16),
-        attribute(8, 1, Format::R32G32B32A32_SFLOAT, 32),
-        attribute(9, 1, Format::R32G32B32_SFLOAT, 48),
-        attribute(10, 1, Format::R8G8B8A8_UINT, 60),
+        attribute(1, 1, Format::R32G32_SFLOAT, 0),
+        attribute(5, 0, Format::R8G8B8A8_SNORM, 12),
+        attribute(6, 2, Format::R32G32B32A32_SFLOAT, 0),
+        attribute(7, 2, Format::R32G32B32A32_SFLOAT, 16),
+        attribute(8, 2, Format::R32G32B32A32_SFLOAT, 32),
+        attribute(9, 2, Format::R32G32B32_SFLOAT, 48),
+        attribute(10, 2, Format::R8G8B8A8_UINT, 60),
     ];
     (bindings, attributes)
 }

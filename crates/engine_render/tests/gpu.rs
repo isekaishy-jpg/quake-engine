@@ -2571,3 +2571,258 @@ fn a_moving_mesh_has_an_outline_hull() {
     assert_eq!(green(&plain), 0);
     assert!(green(&outlined) > 10, "{}", green(&outlined));
 }
+
+/// Two moving meshes, side by side: one with so many corners that what shows is in its fourth
+/// workgroup, and one with few. The first has UVs in the black half of a texture, and the second
+/// in the white half.
+fn map_with_two_moving_squares() -> Map {
+    let mut map = map(1);
+    let mut rgba = Vec::new();
+    for _row in 0..64 {
+        rgba.extend([0, 0, 0, 255].repeat(32));
+        rgba.extend([255, 255, 255, 255].repeat(32));
+    }
+    // Of its own, as a black floor wouldn't show a black square.
+    let mut halves = map.textures[0].clone();
+    halves.mips[0].rgba = rgba;
+    map.textures.push(halves);
+    let square = |x: f32, u: f32| {
+        [(0.0, 0.0), (12.0, 0.0), (12.0, 12.0), (0.0, 12.0)].map(|(across, up)| MeshCorner {
+            position: [x + across, 58.0 + up, 32.0],
+            uv: [u, 0.5],
+            normal: [0, 0, 127],
+        })
+    };
+    let mesh = |corners: Vec<MeshCorner>| {
+        let last = u32::try_from(corners.len()).expect("few") - 4;
+        SharedMesh {
+            joints: vec![[0, 1, 0, 0]; corners.len()],
+            weights: vec![[255, 0, 0, 0]; corners.len()],
+            indices: [0, 1, 2, 0, 2, 3].map(|at| last + at).to_vec(),
+            levels: vec![vec![SharedPart {
+                texture: 1,
+                first: 0,
+                count: 6,
+            }]],
+            corners,
+            ..SharedMesh::default()
+        }
+    };
+    let mut big = vec![square(0.0, 0.25)[0]; 196];
+    big.extend(square(46.0, 0.25));
+    let meshes = [mesh(big), mesh(square(70.0, 0.75).to_vec())];
+    map.moving_meshes = meshes
+        .into_iter()
+        .map(|mesh| MovingMesh {
+            name: "square".to_owned(),
+            mesh,
+            skeleton: Skeleton::default(),
+        })
+        .collect();
+    map
+}
+
+/// What's drawn of each of the two meshes that's asked for, with its own joints.
+fn draw_squares(renderer: &mut Renderer, first: Option<Rows>, second: Option<Rows>) -> Capture {
+    let mut palette = Vec::new();
+    let mut draws = Vec::new();
+    for (mesh, rows) in (0..).zip([first, second]) {
+        let Some(rows) = rows else {
+            continue;
+        };
+        draws.push(MovingDraw {
+            mesh,
+            rows: NO_MOVE,
+            first_joint: u32::try_from(palette.len()).expect("few"),
+            joint_count: 2,
+            light: [1.0; 3],
+            center: Vec3::new(64.0, 64.0, 32.0),
+            radius: 200.0,
+            ..MovingDraw::default()
+        });
+        palette.extend([rows, NO_MOVE]);
+    }
+    let drawables = Drawables {
+        moving: &draws,
+        palette: &palette,
+        ..Drawables::default()
+    };
+    renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture")
+}
+
+/// One dispatch does every mesh, so each workgroup has to find its own mesh, and its own corners
+/// in it.
+#[test]
+fn meshes_of_different_sizes_each_get_their_own_joints() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_two_moving_squares()))
+        .expect("load");
+    let empty = draw_squares(&mut renderer, None, None);
+    let shift = |renderer: &mut Renderer, first: Rows, second: Rows| {
+        let still = draw_squares(renderer, Some(NO_MOVE), Some(NO_MOVE));
+        let moved = draw_squares(renderer, Some(first), Some(second));
+        let (a, b, still_count) = middle_of_change(&still, &empty);
+        let (c, d, moved_count) = middle_of_change(&moved, &empty);
+        assert!(still_count > 20, "they show: {still_count}");
+        // Not exactly, as a square lands differently on the pixels.
+        let change = still_count.abs_diff(moved_count);
+        assert!(change * 10 < still_count, "{still_count} to {moved_count}");
+        (c - a).hypot(d - b)
+    };
+    let both = shift(&mut renderer, along(4.0), along(4.0));
+    let first = shift(&mut renderer, along(4.0), NO_MOVE);
+    let second = shift(&mut renderer, NO_MOVE, along(4.0));
+    assert!(both > 2.0, "they went: {both}");
+    assert!((first - both / 2.0).abs() < 1.0, "{first} of {both}");
+    assert!((second - both / 2.0).abs() < 1.0, "{second} of {both}");
+}
+
+/// How bright what's different from `empty` is, on average.
+fn brightness_of_change(picture: &Capture, empty: &Capture) -> f32 {
+    let (mut total, mut count) = (0.0, 0.0);
+    let pixels = picture
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(empty.rgba.as_chunks::<4>().0);
+    for (pixel, other) in pixels {
+        if pixel[..3] != other[..3] {
+            total += f32::from(pixel[1]);
+            count += 1.0;
+        }
+    }
+    assert!(count > 20.0, "it shows: {count}");
+    total / count
+}
+
+/// What doesn't move is kept apart from what does, so the two have to stay in step: each mesh
+/// reads its own UVs.
+#[test]
+fn a_moving_mesh_reads_its_own_uvs() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_two_moving_squares()))
+        .expect("load");
+    let empty = draw_squares(&mut renderer, None, None);
+    let black = draw_squares(&mut renderer, Some(NO_MOVE), None);
+    let white = draw_squares(&mut renderer, None, Some(NO_MOVE));
+    let black = brightness_of_change(&black, &empty);
+    let white = brightness_of_change(&white, &empty);
+    assert!(white > black + 40.0, "{white} against {black}");
+}
+
+/// What the two ways of drawing a model cost on the GPU. It says nothing is wrong by passing:
+/// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
+/// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.
+#[test]
+#[ignore = "prints timings, for reading"]
+#[expect(clippy::print_stdout, reason = "the timings are what it's for")]
+fn speed_of_the_two_paths() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let number_from = |name: &str, fallback: usize| {
+        std::env::var(name)
+            .ok()
+            .and_then(|text| text.parse().ok())
+            .unwrap_or(fallback)
+    };
+    let copies = number_from("COPIES", 200);
+    let corners = number_from("CORNERS", 900);
+    let count = u32::try_from(corners).expect("few");
+    let corner = |at: usize| MeshCorner {
+        position: [(at % 30) as f32 * 0.5, (at / 30) as f32 * 0.5, 0.0],
+        uv: [0.0, 0.0],
+        normal: [0, 0, 127],
+    };
+    let mut map = map_with_a_moving_square(false);
+    map.moving_meshes[0].mesh = SharedMesh {
+        joints: vec![[0, 1, 0, 0]; corners],
+        weights: vec![[128, 127, 0, 0]; corners],
+        indices: (0..count).collect(),
+        levels: vec![vec![SharedPart {
+            texture: 0,
+            first: 0,
+            count,
+        }]],
+        corners: (0..corners).map(corner).collect(),
+        ..SharedMesh::default()
+    };
+    renderer.load_map(Arc::new(map)).expect("load");
+    let mut model = triangle();
+    let vertex = |at: usize| AliasVertex {
+        position: [
+            u8::try_from(at % 30).expect("small"),
+            u8::try_from(at / 30 % 256).expect("small"),
+            0,
+        ],
+        normal: [127, 0, 0],
+    };
+    let pose: Vec<AliasVertex> = (0..corners).map(vertex).collect();
+    model.poses = vec![pose.clone(), pose];
+    model.corners = (0..count)
+        .map(|vertex| AliasCorner {
+            vertex,
+            uv: [0.5, 0.5],
+        })
+        .collect();
+    model.frames[0].pose_count = 2;
+    let number = renderer.add_model(Arc::new(model)).expect("add");
+    let aliases: Vec<EntityDraw> = (0..copies)
+        .map(|_| EntityDraw {
+            pose: 0,
+            next_pose: 1,
+            blend: 0.5,
+            ..draw_of(number)
+        })
+        .collect();
+    let palette: Vec<Rows> = vec![NO_MOVE; copies * 2];
+    let draws: Vec<MovingDraw> = (0..copies)
+        .map(|at| MovingDraw {
+            rows: NO_MOVE,
+            first_joint: u32::try_from(at * 2).expect("few"),
+            joint_count: 2,
+            center: Vec3::new(64.0, 64.0, 32.0),
+            radius: 200.0,
+            ..MovingDraw::default()
+        })
+        .collect();
+    assert!(renderer.time_gpu(true), "no clock");
+    let mut run = |drawables: Drawables<'_>| {
+        for _ in 0..200 {
+            let _shot = renderer
+                .capture(&view_from_above(), drawables, 64, 64)
+                .expect("capture");
+        }
+        renderer.take_gpu_times()
+    };
+    let _warm = run(Drawables {
+        moving: &draws,
+        palette: &palette,
+        ..Drawables::default()
+    });
+    let alias = run(with_entity(&aliases));
+    let moving = run(Drawables {
+        moving: &draws,
+        palette: &palette,
+        ..Drawables::default()
+    });
+    println!(
+        "SPEED {copies} x {corners}: alias draw {:.4} / moving draw {:.4} + deform {:.4} = {:.4}, \
+         scene {:.4} / {:.4}",
+        alias.models,
+        moving.moving,
+        moving.deform,
+        moving.moving + moving.deform,
+        alias.scene,
+        moving.scene,
+    );
+}

@@ -20,6 +20,7 @@ use super::upload::device_image;
 use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
 use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix};
 use crate::error::RenderError;
+use crate::instances::PLACE_BYTES;
 use crate::live::{LiveLight, MAX_SHADOW_LIGHTS, cube_face};
 use crate::matrix::multiply;
 use crate::world::Vertex;
@@ -147,6 +148,8 @@ pub(super) struct Shadows {
     pipeline: GraphicsPipeline,
     /// Draws alias models.
     figure_pipeline: GraphicsPipeline,
+    /// The same as `pipeline`, for meshes, whose corners are smaller.
+    mesh_pipeline: GraphicsPipeline,
     /// Empties a tile.
     clear: GraphicsPipeline,
     /// Whether the atlas has been started off.
@@ -236,6 +239,20 @@ impl Shadows {
             .depth_test(true, true)
             .depth_bias(1.5, 2.0, 0.0)
             .build(device)?;
+        let mesh_bindings = [VertexInputBinding {
+            stride: u32::try_from(PLACE_BYTES).unwrap_or(0),
+            ..bindings[0]
+        }];
+        let mesh_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_shadow")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_shadow")
+            .color_attachment_count(0)
+            .vertex_input(&mesh_bindings, &attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .depth_bias(1.5, 2.0, 0.0)
+            .build(device)?;
         let pose_stride = u32::try_from(POSE_CORNER_BYTES).unwrap_or(0);
         let pose_binding = |binding| VertexInputBinding {
             binding,
@@ -278,6 +295,7 @@ impl Shadows {
             layout,
             pipeline,
             figure_pipeline,
+            mesh_pipeline,
             clear,
             ready: Cell::new(false),
             kept: vec![None; MAX_SHADOW_LIGHTS],
@@ -512,6 +530,7 @@ impl Shadows {
             return;
         };
         let matrix = cube_face(light.origin, face, light.radius);
+        rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for job in moving.jobs(frame) {
             if (job.center - light.origin).length() >= light.radius + job.radius {
                 continue;
@@ -540,11 +559,12 @@ impl Shadows {
         let reached = |caster: &&ShadowInstance| {
             (caster.center - light.origin).length() < light.radius + caster.radius
         };
+        rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for caster in map.shadow_instances.iter().filter(reached) {
             let Some(mesh) = map.shared_meshes.get(caster.mesh as usize) else {
                 continue;
             };
-            rec.bind_vertex_buffers(0, &[(&mesh.vertices.buffer, 0)]);
+            rec.bind_vertex_buffers(0, &[(&mesh.places.buffer, 0)]);
             rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
             self.push(rec, &multiply(matrix, &caster.placed), [0.0; 8]);
             for part in &mesh.shadow_parts {

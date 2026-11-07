@@ -4,6 +4,7 @@ use engine_core::math::Vec3;
 use engine_map::{Map, Shading};
 use vulkane::safe::ShaderStageFlags;
 
+use super::clock::{GpuClock, Span};
 use super::deform::bind_moving;
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuSprite, INDEX_TYPE_U32,
@@ -43,6 +44,8 @@ pub(super) struct Recorder<'a> {
     instance_batches: &'a [InstanceBatch],
     /// Which frame in flight this is.
     slot: usize,
+    /// Times what the GPU does.
+    clock: &'a GpuClock,
     /// Whether models get hull outlines.
     outline_hull: bool,
 }
@@ -162,6 +165,7 @@ impl Backend {
             instances: &self.map.as_ref()?.instances[self.slot],
             instance_batches: &self.map.as_ref()?.instance_batches[self.slot],
             slot: self.slot,
+            clock: &self.clock,
             outline_hull: self.post.outline_hull,
         })
     }
@@ -440,7 +444,11 @@ impl Recorder<'_> {
             };
             rec.bind_vertex_buffers(
                 0,
-                &[(&mesh.vertices.buffer, 0), (&self.instances.buffer, 0)],
+                &[
+                    (&mesh.places.buffer, 0),
+                    (&mesh.uvs.buffer, 0),
+                    (&self.instances.buffer, 0),
+                ],
             );
             rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
             let Some(parts) = mesh.levels.get(batch.level as usize) else {
@@ -479,7 +487,13 @@ impl Recorder<'_> {
                 rec.draw_indexed(part.count, batch.count, part.first, 0, batch.first);
             }
         }
+        if !see_through {
+            self.clock.start(rec, self.slot, Span::Moving);
+        }
         self.record_moving(rec, scene, step, see_through);
+        if !see_through {
+            self.clock.end(rec, self.slot, Span::Moving);
+        }
     }
 
     /// Records what moved this frame, which is drawn as any other mesh is from here.
@@ -544,12 +558,14 @@ impl Recorder<'_> {
         if scene.drawables.entities.is_empty() {
             return;
         }
+        self.clock.start(rec, self.slot, Span::Models);
         if self.outline_hull {
             rec.bind_graphics_pipeline(&self.pipelines.alias_hull);
             self.record_model_draws(rec, scene, true);
         }
         rec.bind_graphics_pipeline(&self.pipelines.alias);
         self.record_model_draws(rec, scene, false);
+        self.clock.end(rec, self.slot, Span::Models);
     }
 
     /// Records each model with the pipeline that's bound. A hull leaves out

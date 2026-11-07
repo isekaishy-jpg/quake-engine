@@ -4,10 +4,17 @@
 use engine_core::math::Vec3;
 use engine_map::Map;
 
-use crate::world::{InstanceLight, Vertex};
+use crate::world::InstanceLight;
 
 /// Bytes of one instance: three rows, where its light is, and its styles.
 pub const INSTANCE_BYTES: usize = 64;
+
+/// Bytes in a mesh corner's place and normal: three floats and four bytes. A mesh keeps these apart
+/// from its UVs, as this is what a moving mesh rewrites each frame.
+pub(crate) const PLACE_BYTES: usize = 16;
+
+/// Bytes in a mesh corner's UV.
+pub(crate) const UV_BYTES: usize = 8;
 
 /// How much further in a mesh has to come to go back to a finer level, so that something at
 /// a boundary doesn't flicker between two.
@@ -184,19 +191,26 @@ pub fn instance_batches(
     batches
 }
 
-/// The vertices of a shared mesh, as the world's are, lit by what its instances say.
-#[must_use]
-pub(crate) fn shared_vertices(mesh: &engine_map::SharedMesh) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(mesh.corners.len() * Vertex::SIZE);
+/// A mesh's corners' places and normals, which is all of a corner that moves.
+pub(crate) fn shared_places(mesh: &engine_map::SharedMesh) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(mesh.corners.len() * PLACE_BYTES);
     for corner in &mesh.corners {
-        let [x, y, z] = corner.normal;
-        let vertex = Vertex {
-            position: corner.position,
-            uv: corner.uv,
-            normal: [x, y, z, 127],
-            ..Vertex::default()
-        };
-        vertex.write(&mut bytes);
+        for number in corner.position {
+            bytes.extend_from_slice(&number.to_le_bytes());
+        }
+        bytes.extend(corner.normal.map(i8::to_le_bytes).into_iter().flatten());
+        bytes.push(127);
+    }
+    bytes
+}
+
+/// A mesh's corners' UVs, which is what stays put when it moves.
+pub(crate) fn shared_uvs(mesh: &engine_map::SharedMesh) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(mesh.corners.len() * UV_BYTES);
+    for corner in &mesh.corners {
+        for number in corner.uv {
+            bytes.extend_from_slice(&number.to_le_bytes());
+        }
     }
     bytes
 }

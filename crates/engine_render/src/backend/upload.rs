@@ -24,7 +24,9 @@ use super::{
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
-use crate::instances::{INSTANCE_BYTES, LevelView, instance_batches, shared_vertices, view_planes};
+use crate::instances::{
+    INSTANCE_BYTES, LevelView, instance_batches, shared_places, shared_uvs, view_planes,
+};
 use crate::live::live_bytes;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
@@ -661,8 +663,8 @@ impl Backend {
                 .flat_map(|i| i.to_le_bytes())
                 .collect();
             shared_meshes.push(GpuMesh {
-                vertices: self
-                    .device_buffer(&shared_vertices(shared), BufferUsage::VERTEX_BUFFER)?,
+                places: self.device_buffer(&shared_places(shared), BufferUsage::VERTEX_BUFFER)?,
+                uvs: self.device_buffer(&shared_uvs(shared), BufferUsage::VERTEX_BUFFER)?,
                 indices: self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?,
                 levels: shared.levels.clone(),
                 shadow_parts: shared

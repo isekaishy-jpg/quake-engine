@@ -10,7 +10,7 @@ use engine_core::window::NativeWindow;
 use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sprite, TileLight};
 
 use crate::alias::EntityDraw;
-use crate::backend::{Backend, Scene};
+use crate::backend::{Backend, GpuTimes, Scene};
 use crate::canvas::UiFrame;
 use crate::error::RenderError;
 use crate::instances::MovingDraw;
@@ -423,6 +423,16 @@ impl Renderer {
         let scene = Self::scene(self.loaded.as_mut(), view, drawables);
         self.backend
             .capture(view, scene.as_ref(), drawables.quads, width, height)
+    }
+
+    /// Starts or stops timing what the GPU does. Says if it can.
+    pub fn time_gpu(&mut self, on: bool) -> bool {
+        self.backend.time_gpu(on)
+    }
+
+    /// What the GPU took, on average, since this was last asked.
+    pub fn take_gpu_times(&mut self) -> GpuTimes {
+        self.backend.take_gpu_times()
     }
 
     /// Whether a moving mesh has had to draw at rest for want of room since this was last asked.

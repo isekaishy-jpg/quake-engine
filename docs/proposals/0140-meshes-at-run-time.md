@@ -179,14 +179,7 @@ Limits, as they stand:
 
 The rule was that alias models move if pictures of the fixture come out the same and it's no slower. Neither holds, so they stay on their own path.
 
-**It's slower.** 200 models of 900 corners each, the same both ways, timed on this GTX 1070 over 40 frames in a throwaway test:
-
-| | Over an empty frame |
-|---|---|
-| Alias, two poses blended in the vertex shader | 0.25 ms |
-| Moving mesh, through the compute pass | 0.43 ms |
-
-That's 1.7 times, which is little in itself, but it's built in. Alias blends two poses as it reads them, and the mesh path adds a compute pass, a write to memory, a barrier and a read. It's the right cost for skinning and morphs, which alias models don't have.
+**It's slower.** The numbers first given here were wall-clock times too noisy to mean anything, and the reason given for them was wrong. It said the cost was built in, and most of it was a poor vertex format. [What meshes left undone](../research/mesh-limits.md) has what was measured with a clock on the GPU, and what was done. For 280 copies of 900 corners it's now 0.114 ms against alias's 0.061. Alias blends two poses as it reads them, which is less work than skinning, so it stays ahead, but by a margin that's small next to what pixels cost.
 
 **The pictures wouldn't be the same either.** How the two answer the same light came out closer than expected, within a few percent over most of the range. But alias models are lit once per corner by Quake's rule, from one side, with fullbright pixels in their skins, and a mesh is lit per pixel. Keeping the look means keeping alias's own fragment shader as a special case, and then only the vertex stage is shared, which is the part that's slower.
 

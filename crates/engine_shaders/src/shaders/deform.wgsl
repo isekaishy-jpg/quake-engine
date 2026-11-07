@@ -1,5 +1,5 @@
-// Moving meshes: each corner goes where its joints take it, into plain vertices, so that what
-// draws them needs to know nothing about skeletons (proposal 0140).
+// Moving meshes: each corner goes where its joints take it, so that what draws them needs to know
+// nothing about skeletons (proposal 0140).
 
 struct Job {
     // Where this mesh's corners start, and how many it has.
@@ -15,16 +15,15 @@ struct Job {
     weight_count: u32,
 }
 
-// A vertex is ten words, as the world's: three of place, two of uv, two of light place, one of
-// light step, one of styles, and one of normal.
-const VERTEX_WORDS: u32 = 10u;
-
-@group(0) @binding(0) var<storage, read> source: array<u32>;
+// A corner is four words: three of place, and one of normal. That's all that moves, and all this
+// reads or writes, as what doesn't move has a stream of its own. Copying it along cost more than
+// the skinning did.
+@group(0) @binding(0) var<storage, read> source: array<vec4<u32>>;
 // Each corner's four joints as bytes, then its four weights as bytes.
 @group(0) @binding(1) var<storage, read> skin: array<vec2<u32>>;
 // Three rows to each joint.
 @group(0) @binding(2) var<storage, read> palette: array<vec4<f32>>;
-@group(0) @binding(3) var<storage, read_write> moved: array<u32>;
+@group(0) @binding(3) var<storage, read_write> moved: array<vec4<u32>>;
 // Where each corner's morphs are, and how many it has. Most corners of most targets don't move,
 // so only what does is kept, sorted by corner, and a corner gathers its own with no atomics.
 @group(0) @binding(4) var<storage, read> morph_heads: array<vec2<u32>>;
@@ -32,24 +31,27 @@ const VERTEX_WORDS: u32 = 10u;
 @group(0) @binding(5) var<storage, read> morphs: array<vec4<u32>>;
 @group(0) @binding(6) var<storage, read> morph_weights: array<f32>;
 
-var<immediate> job: Job;
+// Everything to move this frame.
+@group(0) @binding(7) var<storage, read> jobs: array<Job>;
+// Which job each workgroup does, in its low ten bits, and which of that job's groups of corners,
+// in the rest. One dispatch does every mesh, as a mesh alone doesn't fill the GPU.
+@group(0) @binding(8) var<storage, read> groups: array<u32>;
 
 @compute @workgroup_size(64)
-fn cs_deform(@builtin(global_invocation_id) id: vec3<u32>) {
-    if id.x >= job.count {
+fn cs_deform(
+    @builtin(workgroup_id) group: vec3<u32>,
+    @builtin(local_invocation_index) thread: u32,
+) {
+    let what = groups[group.x];
+    let job = jobs[what & 1023u];
+    let within = (what >> 10u) * 64u + thread;
+    if within >= job.count {
         return;
     }
-    let corner = job.first_in + id.x;
-    let from_word = corner * VERTEX_WORDS;
-    let to_word = (job.first_out + id.x) * VERTEX_WORDS;
-    var place = vec4<f32>(
-        bitcast<f32>(source[from_word]),
-        bitcast<f32>(source[from_word + 1u]),
-        bitcast<f32>(source[from_word + 2u]),
-        1.0,
-    );
-    let packed = source[from_word + 9u];
-    var normal = unpack4x8snorm(packed);
+    let corner = job.first_in + within;
+    let rest = source[corner];
+    var place = vec4<f32>(bitcast<vec3<f32>>(rest.xyz), 1.0);
+    var normal = unpack4x8snorm(rest.w);
     let spare = normal.w;
     // Morphs come before skinning, as glTF has it.
     if job.weight_count > 0u {
@@ -78,6 +80,10 @@ fn cs_deform(@builtin(global_invocation_id) id: vec3<u32>) {
         let joint = (carried.x >> (at * 8u)) & 255u;
         let first = (job.first_joint + joint) * 3u;
         let weight = weights[at];
+        // Most corners answer to one or two joints, and what isn't read costs nothing.
+        if weight == 0.0 {
+            continue;
+        }
         row_x += palette[first] * weight;
         row_y += palette[first + 1u] * weight;
         row_z += palette[first + 2u] * weight;
@@ -89,11 +95,10 @@ fn cs_deform(@builtin(global_invocation_id) id: vec3<u32>) {
         dot(row_z.xyz, normal.xyz),
     );
     let facing = turned / max(length(turned), 0.000001);
-    moved[to_word] = bitcast<u32>(dot(row_x, place));
-    moved[to_word + 1u] = bitcast<u32>(dot(row_y, place));
-    moved[to_word + 2u] = bitcast<u32>(dot(row_z, place));
-    for (var word = 3u; word < 9u; word += 1u) {
-        moved[to_word + word] = source[from_word + word];
-    }
-    moved[to_word + 9u] = pack4x8snorm(vec4<f32>(facing, spare));
+    moved[job.first_out + within] = vec4<u32>(
+        bitcast<u32>(dot(row_x, place)),
+        bitcast<u32>(dot(row_y, place)),
+        bitcast<u32>(dot(row_z, place)),
+        pack4x8snorm(vec4<f32>(facing, spare)),
+    );
 }

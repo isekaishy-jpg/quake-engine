@@ -40,6 +40,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("unbind", unbind);
     console.register("unbindall", unbindall);
     console.register("screenshot", screenshot);
+    console.register("gpu_times", gpu_times);
     console.register("setpos", setpos);
     console.register("camera", camera);
     console.register("noclip", noclip);
@@ -704,6 +705,29 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
         Ok(()) => console.print(format!("wrote {path}")),
         Err(error) => console.print(format!("couldn't write {path}: {error}")),
     }
+}
+
+/// `gpu_times`: starts the GPU's clock, and after that says what each part of a frame took on
+/// average since it was last asked. `gpu_times off` stops it.
+fn gpu_times(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let Some(renderer) = &mut world.renderer else {
+        console.print("no renderer");
+        return;
+    };
+    let on = args.get(1) != "off";
+    if !renderer.time_gpu(on) {
+        console.print("this GPU has no clock");
+        return;
+    }
+    let times = renderer.take_gpu_times();
+    if times.frames == 0 {
+        console.print(if on { "timing" } else { "stopped" });
+        return;
+    }
+    console.print(format!(
+        "over {} frames, in ms: scene {:.3}, shadows {:.3}, moving {:.3}, deform {:.3}, models {:.3}",
+        times.frames, times.scene, times.shadows, times.moving, times.deform, times.models
+    ));
 }
 
 /// `setpos x y z [yaw pitch]`: moves the player, through the server.
