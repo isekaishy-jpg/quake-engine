@@ -376,7 +376,7 @@ Added by the human, 2026-11-06. How the usual third person camera works is resea
 | 57 | A way to set up cameras: make one, place it and choose which is in use | 56 |
 | 58 | A core third person camera, with a spring boom, pushing in at walls, snapping in, and the rest of what makes one usable | 56 |
 | 59 | Scene cameras: a fixed one like the intermission's, or a set play that moves along a path | 57 |
-| 60 | The intermission camera has less movement than the original. Quake sways the view there, and we've no sway | 56 |
+| 60 | The intermission camera: static, by the human's choice, after checking videos | 56 |
 
 Third person is likely to be the more usable camera in the editor, so items 40 and 54 lean on 58.
 
@@ -411,3 +411,4 @@ Newest last. One line for each thing finished, with its commit.
 - Items 26 and 133, and item 77 mapped: 70646ee
 - Items 31 to 38: f65b7c8
 - Item 124 begun: 4881c8d
+- Items 56 to 60: 71b1a6a

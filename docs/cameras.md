@@ -7,7 +7,7 @@ The engine does the work of a camera, every drawn frame. What's wanted is said i
 | `first` | From the player's own eyes |
 | `third` | Behind the player, on a boom |
 | `third 96 8 16` | A boom 96 long, 8 over the eye and 16 to the side |
-| `fixed x y z yaw pitch idle` | In one place. `idle` is how much it sways, with 1 what Quake's intermission does |
+| `fixed x y z yaw pitch idle` | In one place. `idle` is how much it sways, with 1 what `V_AddIdle` does |
 | `scene name` | A `camera` in the level, by its name |
 
 ## Saying which
