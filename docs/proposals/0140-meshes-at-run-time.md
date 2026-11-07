@@ -125,3 +125,16 @@ Tried in the proving ground with a real `func_door`, a mesh of a ball with a pla
 - **An effect isn't an entity,** so it can't be held as one. `EffectPoint::model` had been there unused, and it follows the model's offset on the client. That means an effect on a model that also turns won't turn with it, but brush models don't turn in the renderer either.
 - **A place follows by the model's offset,** so a brush model that turns doesn't carry its places round. Models don't turn when drawn yet, so nothing shows this. It changes with skeletons, where a place goes by its joint.
 - **Something held to something held** can lag a tick, by the order they're in.
+
+### Found on the way: levels that blew up
+
+The barrels added to the proving ground for item 7 took its kept geometry from 150 KB to 670 MB, and compiling from under a second to 19. Nothing failed, and it only showed when a load seemed to hang. Bisecting by placement found that one barrel turned 45 degrees did it alone, at 564 MB. Three causes came out, each measured, after four wrong guesses:
+
+- **Cells copied a graph as a tree.** A tree shares what's identical, so it's really a graph. `Cutter::copy` had no memory of what it had copied, so a shared node was copied once for each way to reach it, which doubles at every plane crossing a cell. Axis-aligned planes fall to one side of a cell, which is why only something turned showed it. It now remembers, within a cell. That one barrel went to 1.6 MB, and `vesper_deep`'s kept geometry from 14 MB to 7 MB.
+- **A cut that doesn't divide anything.** What a cut crosses goes down both sides, so one that leaves nearly everything on each side doubles the work. A cut now has to leave either side at most three quarters. It's a small gain, but it stops a real doubling.
+- **Collision was finer than can be felt.** Pieces were fitted to a voxel of 1 unit, and what collides with them is a box 32 wide. A barrel had about 36 pieces, and neighbours' pieces overlap once they're grown by that box, which multiplies. The smallest voxel is 4 units now, an eighth of a player, and half of a step's 8. At 8 units collision tests fail. The map's geometry is 454 KB.
+
+Tried and dropped: fewer brushes to a part made no difference, and cutting along the way turned planes face made it slightly worse. Neither was the cause.
+
+Other levels keep what they've baked until their next compile. `wide_world`'s 167 MB should shrink then.
+

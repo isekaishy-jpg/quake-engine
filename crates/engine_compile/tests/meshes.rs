@@ -735,3 +735,30 @@ fn attaching_to_nothing_is_refused() {
     let error = error.expect_err("refused").to_string();
     assert!(error.contains("nowhere"), "{error}");
 }
+
+/// Levels share what's identical in their trees, which makes them graphs. Something turned
+/// crosses the cells that visibility cuts space into, and if those are copied as trees, each
+/// shared part is copied once for every way to reach it. One barrel at 45 degrees took 560 MB
+/// of this very level. A level made up for a test has too little in it to show that.
+#[test]
+fn something_turned_does_not_blow_up_a_real_level() {
+    let text = include_str!("../../../content/maps/proving_ground.emap");
+    let barrel = include_bytes!("../../../content/meshes/barrel.emesh");
+    let mut barrel = read_mesh(&document_of(barrel).expect("reads")).expect("is a mesh");
+    barrel.convex = fit_convex(&barrel);
+    let barrel = Arc::new(barrel);
+    let mut working = read_map_text(text).expect("reads");
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&barrel),
+            occluders: Vec::new(),
+        })
+    })
+    .expect("places");
+    let map = compile(&working, &mut Plain).expect("compiles");
+    let (nodes, clip) = (map.tree.nodes.len(), map.tree.clip_nodes.len());
+    // About 4,000 and 11,000. Copying cells as trees makes the first 30,000, and fitting pieces
+    // finer than can be felt makes the second 2,600,000.
+    assert!(nodes < 10_000, "{nodes} nodes");
+    assert!(clip < 50_000, "{clip} clip nodes");
+}

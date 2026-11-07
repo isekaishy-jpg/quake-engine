@@ -38,6 +38,9 @@ pub(crate) struct BuildNode {
 /// How many brushes a part of space holds before it's halved again.
 const BRUSHES_PER_PART: usize = 8;
 
+/// The most of what's there that either side of a cut can keep, as a fraction.
+const MOST_KEPT_BY_A_CUT: (usize, usize) = (3, 4);
+
 /// How many times space is halved, at most.
 const MOST_HALVINGS: u32 = 28;
 
@@ -131,7 +134,10 @@ fn halve(items: &[Item], chosen: &[usize]) -> Option<(usize, f64, Vec<usize>, Ve
             .filter(|at| reaches(at).1 > place + ON_PLANE)
             .copied()
             .collect();
-        if low.len() >= chosen.len() || high.len() >= chosen.len() {
+        // What a cut crosses goes down both sides. A cut that leaves either side nearly as much
+        // as it had does no good, and doubles the work at every step.
+        let most = chosen.len() * MOST_KEPT_BY_A_CUT.0 / MOST_KEPT_BY_A_CUT.1;
+        if low.len() > most || high.len() > most {
             continue;
         }
         let cost = low.len().max(high.len()) * 2 + low.len() + high.len();

@@ -41,6 +41,10 @@ struct Cutter<'a> {
     boxes: Vec<(Vec3, Vec3)>,
     /// Each cell's leaf for each contents.
     made: HashMap<(usize, Contents), u32>,
+    /// What each old node became in the cell being made. The old tree shares what's identical,
+    /// so it's a graph: copied as a tree, each shared node is copied once for every way there
+    /// is to reach it, which doubles at every plane that crosses the cell.
+    copied: HashMap<u32, NodeChild>,
     /// How many cells so far.
     cells: usize,
     /// Each cell's box and leaves.
@@ -111,24 +115,30 @@ impl Cutter<'_> {
             }
             NodeChild::Node(index) => index,
         };
+        if let Some(known) = self.copied.get(&index) {
+            return *known;
+        }
         let Some(node) = self.tree.nodes.get(index as usize).copied() else {
             return NodeChild::Leaf(0);
         };
         let Some(plane) = self.planes.planes.get(node.plane as usize).copied() else {
             return NodeChild::Leaf(0);
         };
-        match side_of(&plane, cell) {
+        let made = match side_of(&plane, cell) {
             Side::Front => self.copy(node.children[0], cell),
             Side::Back => self.copy(node.children[1], cell),
             Side::Both => {
                 let front = self.copy(node.children[0], cell);
                 let back = self.copy(node.children[1], cell);
                 if front == back {
-                    return front;
+                    front
+                } else {
+                    self.push(node.plane, front, back)
                 }
-                self.push(node.plane, front, back)
             }
-        }
+        };
+        self.copied.insert(index, made);
+        made
     }
 
     /// Adds a node.
@@ -151,6 +161,7 @@ impl Cutter<'_> {
         // The first cut always happens, as the tree starts at node 0.
         if sizes[axis] <= self.size * 1.001 && !first {
             let before = self.made.len();
+            self.copied.clear();
             let child = self.copy(root, &area);
             let leaves: Vec<u32> = self
                 .made
@@ -215,6 +226,7 @@ pub(crate) fn cut_cells(map: &mut Map, planes: &mut PlaneSet, size: f64) {
         leaves: map.tree.leaves.clone(),
         boxes: vec![(Vec3::ZERO, Vec3::ZERO); map.tree.leaves.len()],
         made: HashMap::new(),
+        copied: HashMap::new(),
         cells: 0,
         found: Vec::new(),
     };

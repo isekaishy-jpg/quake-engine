@@ -13,7 +13,7 @@ Status: accepted and implemented, 2026-11-06, the sprint through the list.
 
 ## Design
 
-- **Voxels.** A mesh's longest side gets 48 voxels, down to a smallest of 1 unit. Triangles mark what they touch.
+- **Voxels.** A mesh's longest side gets 48 voxels, down to a smallest of 4 units, which was 1 at first ([0140](0140-meshes-at-run-time.md) has why). Triangles mark what they touch.
 - **Filling.** What can't be reached from outside the grid is solid.
 - **Cutting.** Each joined-up piece gets planes in 34 directions: the axes, the diagonals, and eight more round the upright axis, for what's round. If more than 12% of what they hold is empty, it's cut where the boxes round its halves hold least, and the halves go round again, up to seven times.
 - **Planes that do nothing go,** as most only touch a corner, and each costs the trees. Those along the axes stay, to keep a piece closed. A level with three statues and a well took 6.3 s to compile with all of them.

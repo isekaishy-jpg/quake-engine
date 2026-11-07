@@ -15,8 +15,10 @@ pub type ConvexPiece = Vec<(Point, f64)>;
 /// The fewest voxels across a mesh's longest side.
 const VOXELS_ACROSS: f64 = 48.0;
 
-/// The smallest a voxel gets, in world units: well under what a player notices.
-const SMALLEST_VOXEL: f64 = 1.0;
+/// The smallest a voxel gets, in world units. What collides with a piece is a box 32 units
+/// wide, so finer detail can't be felt, and it only makes pieces. Those multiply wherever
+/// neighbours overlap once they're grown by that box: at 1 unit, six barrels took 53 MB.
+const SMALLEST_VOXEL: f64 = 4.0;
 
 /// How much of what a piece's planes hold can be empty.
 const MOST_EMPTY: f64 = 0.12;
