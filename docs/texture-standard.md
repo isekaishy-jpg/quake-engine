@@ -99,10 +99,10 @@ That writes `compiled/<picture>.etex`: colour as BC7 in sRGB, measures as BC7, a
 To make one file of all content, with what only making content needs left out:
 
 ```bash
-target/release/engine-compile content --pack game.pkt
+target/release/engine-compile content --pack common.pkt
 ```
 
-Run the game on it with `-content game.pkt`. See [proposal 0106](proposals/0106-packing.md).
+Put `common.pkt` beside the program and it loads by itself, or run the game on it with `-content common.pkt`. See [proposal 0106](proposals/0106-packing.md).
 
 ## Decals
 

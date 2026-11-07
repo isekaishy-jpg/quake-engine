@@ -1,7 +1,7 @@
 //! The command line, following Quake's conventions.
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use fixture_quake::BASE_GAME;
 
@@ -16,6 +16,16 @@ impl fmt::Display for OptionsError {
 }
 
 impl std::error::Error for OptionsError {}
+
+/// The container that comes with the game, beside the program.
+const COMMON_PACK: &str = "common.pkt";
+
+/// The content that comes with the game, beside `program`, if it's there. It goes first, so
+/// that `-content` can override it.
+pub(crate) fn common_pack(program: &Path) -> Option<PathBuf> {
+    let pack = program.parent()?.join(COMMON_PACK);
+    pack.is_file().then_some(pack)
+}
 
 /// What the command line asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -133,7 +133,7 @@ pub fn play_map(
 /// content stays behind, as does a text map with its binary form beside it,
 /// and a picture that's compiled and that no level reads as pixels.
 fn shipped(path: &str, all: &BTreeSet<String>, pixels: &BTreeSet<String>) -> bool {
-    if path.ends_with(".py") || path.ends_with(".json") {
+    if path.ends_with(".py") || path.ends_with(".json") || path == FILE_ID_TABLE {
         return false;
     }
     if let Some(stem) = path.strip_suffix(".emap") {

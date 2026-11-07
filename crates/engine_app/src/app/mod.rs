@@ -52,7 +52,7 @@ use view::DEFAULT_FOV;
 use crate::keys::Keys;
 use crate::look::{load_theme, load_ui_script};
 use crate::models::ModelBank;
-use crate::options::Options;
+use crate::options::{Options, common_pack};
 use crate::screen::{MENU_SETTINGS, MenuSettings, PictureBank};
 use crate::sounds::SoundBank;
 use crate::{commands, saves};
@@ -544,7 +544,10 @@ impl Engine {
         }
         let user_directory = saves::user_directory(&options);
         let _created = std::fs::create_dir_all(&user_directory);
-        for content in &options.content_directories {
+        let common = std::env::current_exe()
+            .ok()
+            .and_then(|program| common_pack(&program));
+        for content in common.iter().chain(&options.content_directories) {
             if content.is_file() {
                 filesystem.mount(Box::new(PackArchive::open(content)?));
             } else {
