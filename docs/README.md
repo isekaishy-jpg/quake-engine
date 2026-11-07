@@ -180,6 +180,7 @@
     - [0137: tools an agent can trust](proposals/0137-mcp-you-can-trust.md)
     - [0138: cameras](proposals/0138-cameras.md)
     - [0139: all of the UI as a script](proposals/0139-the-ui-as-scripts.md)
+    - [0140: meshes at run time](proposals/0140-meshes-at-run-time.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
