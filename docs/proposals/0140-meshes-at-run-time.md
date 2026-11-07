@@ -32,8 +32,8 @@ No compute pass culls instances for now, as visibility by leaf comes first and a
 **Level of detail.**
 
 - **Choosing** is by share of the view's height, so that it holds at any resolution and field of view. By default a level changes at 0.25, 0.1 and 0.03, and a mesh can say otherwise with `lod_sizes`. Coming back needs 10% more, so that nothing flickers at a boundary.
-- **Making them:** `import_gltf` takes `<name>_lod1` and so on if the file has them, as an author's hand beats a tool. If not, `compile` simplifies with `meshopt`, each from the last. That's a new dependency, for the tools only, and it's here to be approved.
-- **Changing** crossfades over half a second, by complementary dither masks, on the opaque path. It's tried on a real mesh against a plain switch. The fades are capped, and past that a change is plain. If it isn't worth what it costs, it goes.
+- **Making them:** `import_gltf` takes `<name>_lod1` and so on if the file has them, as an author's hand beats a tool. If not, it simplifies with `meshopt`, each from the last, and `make_levels` does the same for a mesh already in the content. Levels are kept in the `.emesh`, as extra triangles on the same corners. That's a new dependency, for the tools only, as levels compile when a level loads and a finished game mustn't carry it.
+- **Changing** is a plain switch. A crossfade was designed and built, and the review has what it found.
 
 ### Moving things (items 10 and 11)
 
@@ -69,11 +69,12 @@ An alias model is two poses blended, which is a morph with one weight, lit by it
   - A level has to know what it can spawn, as Quake's did.
   - Instances have one light each, so a large mesh that wants real shadows on it stays baked.
   - Compute scratch memory goes with what's on screen.
-  - `meshopt` is a C++ library behind a Rust crate, in the tools only, and the finished game doesn't carry it. `meshopt-rs` is a pure Rust port, which would keep C++ out of the build. It's young, at 0.1, so item 8 tries it first and takes whichever simplifies well.
+  - `meshopt` is a C++ library behind a Rust crate, in the tools only, and the finished game doesn't carry it. `meshopt-rs`, a pure Rust port, has no simplifier and was last updated in 2022. The engine needs a C++ compiler for Luau already.
   - Linear skinning loses volume at a twist unless a model has a twist bone. The mesh standard will say so.
 - **Acceptance criteria:**
   - A prop placed many times costs its triangles once in memory, and one draw a part.
   - Levels of detail change with no flicker, at any resolution.
+  - A real model loses triangles, and not just a clean generated one.
   - A skinned, morphing model from Blender moves in the game as it did there, lit, with an outline where it should have one, and casts into shadow maps.
   - A thing attached to a joint stays on it.
   - Old levels and the fixture look as they did.
@@ -94,3 +95,22 @@ Limits, as they stand:
 - **The GPU keeps a mesh once, but the map on the CPU doesn't.** Each copy's triangles stay in `Map::faces`, for the bake and for leaves. That's the cost of finding copies by leaf, about 150 bytes a triangle. It matters at many copies of a heavy mesh, and it hasn't been measured on a level like that yet.
 - **See-through copies aren't sorted** against each other or the world's see-through faces. An opaque prop is what this is for, but a glass one in a row could draw wrongly.
 - **Copies skip the depth pass,** so they pay for what's behind them in the same draw.
+
+### Item 8: level of detail
+
+Built, with two changes from the design.
+
+**Levels are made at import, not when compiling.** Levels compile when a level loads, so making them there would have put `meshopt` in the finished game.
+
+**The crossfade was built, measured and taken out.** It was two draws with complementary dither masks. A copy can show either level at one spot, by which way it came from, because of the margin. That gave the exact size of a change with the camera still, on a ball of 6,016 triangles, over the ball's pixels:
+
+| Change | Changed by more than 2 of 255 | More than 24 of 255 |
+|---|---|---|
+| Finest to next, large | 0.53% | 0.01% |
+| Next to third, small | 0.18% | 0.00% |
+
+So a change is a few pixels at the edge. A third test, finest to next on the small ball, read exactly zero, and probably never crossed the boundary, so it isn't counted. Against that, the fade cost every mesh pixel the early depth test, as a shader that can discard loses it, and each change drew twice. It wasn't worth it, which is what the design said to do then. The margin stays, as that's what stops flicker. These are still pictures, so **how a change feels in motion needs a person.** The fade was never seen working part way: the test harness couldn't catch it, and it went on the measure of the change alone.
+
+**The first version did nothing on real models,** and its test passed. Working out normals before simplifying split corners wherever smoothing differed, so `vesper_fall`, of 5,558 triangles, got no levels. A clean generated well simplified fine, which is why the test didn't see it. Now it simplifies the mesh as it's joined, and each level works out its own normals from its own shape. `vesper_fall` goes 5,558, 2,690, 1,302, 644. The first test written for this also passed with the bug put back, so it was replaced by one using that real file, which fails with the bug.
+
+A mesh that can't lose much without changing shape keeps most of its triangles: the statue goes 288, 264, 238, 204. A barrel of 120 gets no levels, which is under the budget anyway.

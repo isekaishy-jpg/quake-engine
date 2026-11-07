@@ -10,7 +10,7 @@ publish.workspace = true
 [features]
 default = ["packing"]
 # Compiling shaders and packing content. A game only reads what that made.
-packing = ["dep:engine_shaders", "engine_shaders/compiler"]
+packing = ["dep:engine_shaders", "dep:meshopt", "engine_shaders/compiler"]
 
 [[bin]]
 name = "engine-compile"
@@ -24,6 +24,7 @@ engine_format.workspace = true
 engine_map.workspace = true
 engine_shaders = { workspace = true, optional = true }
 gltf.workspace = true
+meshopt = { workspace = true, optional = true }
 png.workspace = true
 rusty_dds.workspace = true
 

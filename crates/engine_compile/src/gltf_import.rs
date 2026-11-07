@@ -308,6 +308,7 @@ impl Importer<'_> {
             points,
             uvs,
             triangles,
+            levels: Vec::new(),
         });
         Ok(())
     }
@@ -335,6 +336,56 @@ impl Importer<'_> {
         }
         Ok(())
     }
+}
+
+/// What a part named as a level of detail is a level of, and which level, from `<name>_lod<n>`.
+fn level_of_name(name: &str) -> Option<(&str, usize)> {
+    let (base, level) = name.rsplit_once("_lod")?;
+    let level = level.parse().ok().filter(|level| *level > 0)?;
+    Some((base, level))
+}
+
+/// Moves parts named as levels into the parts they're levels of, as an author's own levels
+/// are better than made ones. Corners are added to that part, so a level costs nothing at
+/// finer levels.
+fn fold_levels(mesh: &mut Mesh) {
+    let (levels, mut finest): (Vec<MeshPart>, Vec<MeshPart>) = std::mem::take(&mut mesh.parts)
+        .into_iter()
+        .partition(|part| level_of_name(&part.name).is_some());
+    let mut levels = levels;
+    levels.sort_by_key(|part| level_of_name(&part.name).map_or(0, |(_, level)| level));
+    for mut part in levels {
+        let Some((base, level)) = level_of_name(&part.name) else {
+            continue;
+        };
+        let material = part.material.clone();
+        let named = finest
+            .iter_mut()
+            .find(|other| other.name == base && other.material == material);
+        let Some(target) = named else {
+            continue;
+        };
+        // Normals are for every corner of a part or none of them.
+        if target.normals.is_empty() != part.normals.is_empty() {
+            target.give_normals();
+            part.give_normals();
+        }
+        let first = u32::try_from(target.points.len()).unwrap_or(u32::MAX);
+        target.points.append(&mut part.points);
+        target.uvs.append(&mut part.uvs);
+        target.normals.append(&mut part.normals);
+        // A level skipped in the file is the one before it.
+        while target.levels.len() + 1 < level {
+            let last = target.levels.last().unwrap_or(&target.triangles).clone();
+            target.levels.push(last);
+        }
+        let moved = part
+            .triangles
+            .iter()
+            .map(|triangle| triangle.map(|corner| corner + first));
+        target.levels.push(moved.collect());
+    }
+    mesh.parts = finest;
 }
 
 /// Reads the glTF file at `path`, naming what's made after `name`. `scale` is how
@@ -369,6 +420,7 @@ pub fn import_gltf(path: &Path, name: &str, scale: f64) -> Result<ImportedModel,
     if importer.model.mesh.parts.is_empty() {
         return Err(CompileError::Bad(format!("{name}: nothing in it draws")));
     }
+    fold_levels(&mut importer.model.mesh);
     importer.model.mesh.convex = fit_convex(&importer.model.mesh);
     Ok(importer.model)
 }
@@ -390,6 +442,18 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
         }
         let corners = part.triangles.iter().flatten().map(|c| f64::from(*c));
         block.set("triangles", flat(&mut corners.into_iter()));
+        for (level, triangles) in (1_usize..).zip(&part.levels) {
+            let corners = triangles.iter().flatten().map(|c| f64::from(*c));
+            block.set(&format!("level_{level}"), flat(&mut corners.into_iter()));
+        }
+        document.blocks.push(block);
+    }
+    if !mesh.level_sizes.is_empty() {
+        let mut block = Block::new("levels");
+        block.set(
+            "sizes",
+            flat(&mut mesh.level_sizes.iter().map(|size| f64::from(*size))),
+        );
         document.blocks.push(block);
     }
     for piece in &mesh.convex {

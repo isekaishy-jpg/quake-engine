@@ -31,6 +31,44 @@ pub struct MeshPart {
     pub normals: Vec<Point>,
     /// Its triangles, as corners.
     pub triangles: Vec<[u32; 3]>,
+    /// Its triangles at each coarser level of detail, on the same corners.
+    pub levels: Vec<Vec<[u32; 3]>>,
+}
+
+impl MeshPart {
+    /// Works out its normals if it has none, so that each corner has its own, for joining it
+    /// to something that has them.
+    pub(crate) fn give_normals(&mut self) {
+        if !self.normals.is_empty() {
+            return;
+        }
+        let worked_out = smooth_normals(self, &self.triangles);
+        let (mut points, mut uvs, mut normals) = (Vec::new(), Vec::new(), Vec::new());
+        let mut known = HashMap::new();
+        let mut triangles = Vec::with_capacity(self.triangles.len());
+        for (triangle, facing) in self.triangles.iter().zip(&worked_out) {
+            let mut made = [0; 3];
+            for at in 0..3 {
+                let corner = triangle[at] as usize;
+                let key = (
+                    self.points[corner].map(f64::to_bits),
+                    self.uvs[corner].map(f64::to_bits),
+                    facing[at].map(f64::to_bits),
+                );
+                made[at] = *known.entry(key).or_insert_with(|| {
+                    points.push(self.points[corner]);
+                    uvs.push(self.uvs[corner]);
+                    normals.push(facing[at]);
+                    u32::try_from(points.len() - 1).unwrap_or(u32::MAX)
+                });
+            }
+            triangles.push(made);
+        }
+        self.points = points;
+        self.uvs = uvs;
+        self.normals = normals;
+        self.triangles = triangles;
+    }
 }
 
 /// A mesh as it's stored.
@@ -38,6 +76,8 @@ pub struct MeshPart {
 pub struct Mesh {
     /// Its pieces.
     pub parts: Vec<MeshPart>,
+    /// The share of the view's height at which each coarser level takes over, if it's said.
+    pub level_sizes: Vec<f32>,
     /// Boxes for collision, as low and high corners, if an author chose them.
     pub hulls: Vec<[f64; 6]>,
     /// Convex pieces that fit it, for collision where no boxes were chosen. With
@@ -114,6 +154,28 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 "a mesh's triangle has no such corner".to_owned(),
             ));
         }
+        let mut levels = Vec::new();
+        for level in 1.. {
+            let name = format!("level_{level}");
+            if block.get(&name).is_none() {
+                break;
+            }
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "corner numbers are small and checked next"
+            )]
+            let coarser: Vec<[u32; 3]> = groups::<3>(block, &name)
+                .iter()
+                .map(|corners| corners.map(|corner| corner as u32))
+                .collect();
+            if coarser.iter().flatten().any(|c| *c as usize >= known) {
+                return Err(CompileError::Bad(
+                    "a mesh's level has no such corner".to_owned(),
+                ));
+            }
+            levels.push(coarser);
+        }
         if !normals.is_empty() && normals.len() != points.len() {
             return Err(CompileError::Bad(
                 "a mesh's normals aren't one for each corner".to_owned(),
@@ -130,7 +192,16 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
             uvs,
             normals,
             triangles,
+            levels,
         });
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "shares of a screen")]
+    for block in document.blocks_of("levels") {
+        let sizes = block
+            .get("sizes")
+            .and_then(Value::numbers)
+            .unwrap_or_default();
+        mesh.level_sizes = sizes.iter().map(|size| *size as f32).collect();
     }
     for block in document.blocks_of("hull") {
         mesh.hulls.extend(groups::<6>(block, "cuboid"));
@@ -293,12 +364,11 @@ impl Transform {
 /// The cosine of the sharpest turn that's still drawn smooth.
 const SMOOTH_TURN: f64 = 0.766;
 
-/// Which way each corner of each triangle of `part` faces. Triangles meeting at
+/// Which way each corner of each of `triangles` of `part` faces. Triangles meeting at
 /// a corner are smoothed together, unless they turn sharply. It goes by where
 /// corners are, as a mesh often has two at one place for its UVs.
-fn smooth_normals(part: &MeshPart) -> Vec<[Point; 3]> {
-    let facing: Vec<(Point, f64)> = part
-        .triangles
+fn smooth_normals(part: &MeshPart, triangles: &[[u32; 3]]) -> Vec<[Point; 3]> {
+    let facing: Vec<(Point, f64)> = triangles
         .iter()
         .map(|triangle| {
             let [a, b, c] = triangle.map(|corner| part.points[corner as usize]);
@@ -309,12 +379,12 @@ fn smooth_normals(part: &MeshPart) -> Vec<[Point; 3]> {
         .collect();
     let place = |corner: u32| part.points[corner as usize].map(f64::to_bits);
     let mut meeting: HashMap<[u64; 3], Vec<usize>> = HashMap::new();
-    for (number, triangle) in part.triangles.iter().enumerate() {
+    for (number, triangle) in triangles.iter().enumerate() {
         for corner in triangle {
             meeting.entry(place(*corner)).or_default().push(number);
         }
     }
-    part.triangles
+    triangles
         .iter()
         .zip(&facing)
         .map(|(triangle, (own, _))| {
@@ -355,54 +425,95 @@ pub(crate) fn placement_rows(placement: &MeshPlacement) -> [[f32; 4]; 3] {
     })
 }
 
+/// When a mesh goes to each coarser level, as a share of the view's height, unless it says.
+const USUAL_LEVEL_SIZES: [f32; 3] = [0.25, 0.1, 0.03];
+
+/// The triangles of `part` at `level`, or its coarsest if it has no such level.
+fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
+    match level {
+        0 => &part.triangles,
+        _ => part
+            .levels
+            .get(level - 1)
+            .or(part.levels.last())
+            .unwrap_or(&part.triangles),
+    }
+}
+
 /// `mesh` as it's kept for placements to share, with `material` giving a part's texture and
-/// what its places on the material are multiplied by.
+/// what its places on the material are multiplied by. Levels share corners, so a coarser one
+/// only costs its indices.
 #[must_use]
 pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f32)) -> SharedMesh {
     let mut shared = SharedMesh::default();
     let mut known = HashMap::new();
     let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
-    for part in &mesh.parts {
-        let (texture, across) = material(&part.material);
-        let first = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
-        let worked_out = part.normals.is_empty().then(|| smooth_normals(part));
-        for (number, triangle) in part.triangles.iter().enumerate() {
-            for (at, corner) in triangle.iter().enumerate() {
-                let corner = *corner as usize;
-                let normal = worked_out
-                    .as_ref()
-                    .map_or_else(|| part.normals[corner], |normals| normals[number][at]);
-                #[expect(clippy::cast_possible_truncation, reason = "meshes store f32")]
-                let made = MeshCorner {
-                    position: part.points[corner].map(|part| part as f32),
-                    uv: part.uvs[corner].map(|part| part as f32 * across),
-                    normal: packed_normal(normal),
-                };
-                let key = (
-                    made.position.map(f32::to_bits),
-                    made.uv.map(f32::to_bits),
-                    made.normal,
-                );
-                let index = *known.entry(key).or_insert_with(|| {
-                    for axis in 0..3 {
-                        low[axis] = low[axis].min(made.position[axis]);
-                        high[axis] = high[axis].max(made.position[axis]);
-                    }
-                    shared.corners.push(made);
-                    u32::try_from(shared.corners.len() - 1).unwrap_or(u32::MAX)
+    let level_count = 1 + mesh
+        .parts
+        .iter()
+        .map(|part| part.levels.len())
+        .max()
+        .unwrap_or(0);
+    let textures: Vec<_> = mesh
+        .parts
+        .iter()
+        .map(|part| material(&part.material))
+        .collect();
+    for level in 0..level_count {
+        let mut parts = Vec::with_capacity(mesh.parts.len());
+        for (number, part) in mesh.parts.iter().enumerate() {
+            let (texture, across) = textures[number];
+            let first = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
+            let triangles = triangles_at(part, level);
+            // Each level's are worked out from its own shape, which is the one that's seen.
+            let worked_out = part
+                .normals
+                .is_empty()
+                .then(|| smooth_normals(part, triangles));
+            for (triangle_at, triangle) in triangles.iter().enumerate() {
+                for (at, corner) in triangle.iter().enumerate() {
+                    let corner = *corner as usize;
+                    let normal = worked_out
+                        .as_ref()
+                        .map_or_else(|| part.normals[corner], |normals| normals[triangle_at][at]);
+                    #[expect(clippy::cast_possible_truncation, reason = "meshes store f32")]
+                    let made = MeshCorner {
+                        position: part.points[corner].map(|part| part as f32),
+                        uv: part.uvs[corner].map(|part| part as f32 * across),
+                        normal: packed_normal(normal),
+                    };
+                    let key = (
+                        made.position.map(f32::to_bits),
+                        made.uv.map(f32::to_bits),
+                        made.normal,
+                    );
+                    let index = *known.entry(key).or_insert_with(|| {
+                        for axis in 0..3 {
+                            low[axis] = low[axis].min(made.position[axis]);
+                            high[axis] = high[axis].max(made.position[axis]);
+                        }
+                        shared.corners.push(made);
+                        u32::try_from(shared.corners.len() - 1).unwrap_or(u32::MAX)
+                    });
+                    shared.indices.push(index);
+                }
+            }
+            let last = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
+            if last > first {
+                parts.push(SharedPart {
+                    texture,
+                    first,
+                    count: last - first,
                 });
-                shared.indices.push(index);
             }
         }
-        let last = u32::try_from(shared.indices.len()).unwrap_or(u32::MAX);
-        if last > first {
-            shared.parts.push(SharedPart {
-                texture,
-                first,
-                count: last - first,
-            });
-        }
+        shared.levels.push(parts);
     }
+    shared.level_sizes = if mesh.level_sizes.is_empty() {
+        USUAL_LEVEL_SIZES.to_vec()
+    } else {
+        mesh.level_sizes.clone()
+    };
     if !shared.corners.is_empty() {
         let [low, high] = [low, high].map(|[x, y, z]| Vec3::new(x, y, z));
         shared.center = (low + high) * 0.5;
@@ -421,7 +532,10 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
         ..PlacedMesh::default()
     };
     for part in &mesh.parts {
-        let worked_out = part.normals.is_empty().then(|| smooth_normals(part));
+        let worked_out = part
+            .normals
+            .is_empty()
+            .then(|| smooth_normals(part, &part.triangles));
         for (number, triangle) in part.triangles.iter().enumerate() {
             let mut corners = triangle.map(|corner| corner as usize);
             let mut normals = worked_out.as_ref().map_or_else(

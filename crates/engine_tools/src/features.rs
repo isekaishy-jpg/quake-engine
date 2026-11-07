@@ -414,6 +414,43 @@ pub(crate) fn check_textures(session: &Session, args: &Json) -> Result<Json, Str
     Ok(Json::Object(found))
 }
 
+/// `make_levels`: gives a mesh already in the content its coarser levels.
+pub(crate) fn make_levels(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("make_levels needs a name")?;
+    let file = session.content.join("meshes").join(format!("{name}.emesh"));
+    let bytes = std::fs::read(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+    let document = engine_compile::document_of(&bytes).map_err(|error| error.to_string())?;
+    let mut mesh = engine_compile::read_mesh(&document).map_err(|error| error.to_string())?;
+    let levels = engine_compile::add_levels(&mut mesh);
+    std::fs::write(&file, engine_compile::write_mesh(&mesh))
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    let count = |level: usize| -> usize {
+        let at = |part: &engine_compile::MeshPart| match level {
+            0 => part.triangles.len(),
+            _ => part
+                .levels
+                .get(level - 1)
+                .or(part.levels.last())
+                .map_or(part.triangles.len(), Vec::len),
+        };
+        mesh.parts.iter().map(at).sum()
+    };
+    let triangles: Vec<usize> = (0..=levels).map(count).collect();
+    let points = mesh.parts.iter().flat_map(|part| &part.points);
+    let (mut low, mut high) = ([f64::MAX; 3], [f64::MIN; 3]);
+    for point in points {
+        for axis in 0..3 {
+            low[axis] = low[axis].min(point[axis]);
+            high[axis] = high[axis].max(point[axis]);
+        }
+    }
+    let size = [high[0] - low[0], high[1] - low[1], high[2] - low[2]];
+    Ok(json!({ "mesh": name, "levels": levels, "triangles": triangles, "size": size }))
+}
+
 /// `import_gltf`: brings a model in: its mesh, materials and pictures.
 pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String> {
     let path = args
@@ -425,8 +462,9 @@ pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String
         .and_then(Json::as_str)
         .ok_or("import_gltf needs a name")?;
     let scale = args.get("scale").and_then(Json::as_f64).unwrap_or(32.0);
-    let model = engine_compile::import_gltf(Path::new(path), name, scale)
+    let mut model = engine_compile::import_gltf(Path::new(path), name, scale)
         .map_err(|error| error.to_string())?;
+    let levels = engine_compile::add_levels(&mut model.mesh);
     let write = |file: PathBuf, bytes: &[u8]| -> Result<(), String> {
         if let Some(folder) = file.parent() {
             std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
@@ -448,6 +486,7 @@ pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String
     let triangles: usize = model.mesh.parts.iter().map(|p| p.triangles.len()).sum();
     Ok(json!({
         "mesh": name,
+        "levels": levels,
         "parts": model.mesh.parts.len(),
         "triangles": triangles,
         "materials": model.materials.iter().map(|(name, _)| name).collect::<Vec<_>>(),

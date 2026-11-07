@@ -4,13 +4,16 @@ use std::fs;
 use std::path::PathBuf;
 
 use engine_compile::{
-    ConvexPiece, LoadedMesh, Mesh, MeshPart, MeshPlacement, TextureSource, compile, compile_known,
-    document_of, fit_convex, import_gltf, place_mesh, read_geometry, read_map_text, read_mesh,
-    resolve_meshes, write_geometry, write_mesh,
+    ConvexPiece, LoadedMesh, Mesh, MeshPart, MeshPlacement, TextureSource, add_levels, compile,
+    compile_known, document_of, fit_convex, import_gltf, place_mesh, read_geometry, read_map_text,
+    read_mesh, resolve_meshes, write_geometry, write_mesh,
 };
 use engine_format::from_text;
 use engine_map::{Map, Texture};
 use std::sync::Arc;
+
+/// A level with nothing but a floor.
+const FLOOR: &str = "format 1 map\nentity world { type = worldspawn }\nbrush { material = wall cuboid = -64 -64 -32 64 64 -16 }\n\n";
 
 /// A placement that leaves a mesh as it is.
 fn in_place() -> MeshPlacement {
@@ -131,6 +134,14 @@ fn a_map_keeps_which_way_its_meshes_face() {
 
 /// One triangle, in glTF's axes, with a normal, as a `.glb`.
 fn triangle_glb() -> Vec<u8> {
+    glb_of(
+        r#"[{"mesh":0,"name":"Thing","translation":[0,0,2]}]"#,
+        "[0]",
+    )
+}
+
+/// A `.glb` with `nodes`, each of them that triangle, and `shown` in its scene.
+fn glb_of(nodes: &str, shown: &str) -> Vec<u8> {
     let floats: [f32; 9 + 9 + 6] = [
         0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0, 1.0, 0.0, // Corners.
         0.0, 0.0, 1.0, 0.0, 0.0, 1.0, 0.0, 0.0, 1.0, // Normals.
@@ -138,8 +149,8 @@ fn triangle_glb() -> Vec<u8> {
     ];
     let blob: Vec<u8> = floats.iter().flat_map(|f| f.to_le_bytes()).collect();
     let json = format!(
-        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":[0]}}],
-        "nodes":[{{"mesh":0,"name":"Thing","translation":[0,0,2]}}],
+        r#"{{"asset":{{"version":"2.0"}},"scene":0,"scenes":[{{"nodes":{shown}}}],
+        "nodes":{nodes},
         "meshes":[{{"primitives":[{{"attributes":{{"POSITION":0,"NORMAL":1,"TEXCOORD_0":2}},"material":0}}]}}],
         "materials":[{{"name":"Dull Gold","alphaMode":"MASK","pbrMetallicRoughness":{{"baseColorFactor":[1,0.5,0,1],"metallicFactor":1,"roughnessFactor":0.25}}}}],
         "accessors":[{{"bufferView":0,"componentType":5126,"count":3,"type":"VEC3","min":[0,0,0],"max":[1,1,0]}},
@@ -362,18 +373,14 @@ fn pieces_survive_a_mesh_being_written() {
     assert_eq!(again.convex, mesh.convex);
 }
 
-/// A level with `placements`, all of the mesh `test`, compiled with it placed.
-fn level_of(placements: &[&str]) -> (engine_compile::WorkingMap, Map) {
-    let mut text = String::from("format 1 map\nentity world { type = worldspawn }\nbrush { material = wall cuboid = -64 -64 -32 64 64 -16 }\n
-");
+/// A level with `placements`, all of `mesh`, compiled with it placed.
+fn level_with(mesh: Mesh, placements: &[&str]) -> (engine_compile::WorkingMap, Map) {
+    let mut text = String::from(FLOOR);
     for placement in placements {
-        text.push_str(&format!(
-            "mesh {{ source = test {placement} }}
-"
-        ));
+        text.push_str(&format!("mesh {{ source = test {placement} }}\n"));
     }
     let mut working = read_map_text(&text).expect("reads");
-    let mesh = Arc::new(folded(10.0));
+    let mesh = Arc::new(mesh);
     resolve_meshes(&mut working, &mut |_| {
         Ok(LoadedMesh {
             mesh: Arc::clone(&mesh),
@@ -383,6 +390,11 @@ fn level_of(placements: &[&str]) -> (engine_compile::WorkingMap, Map) {
     .expect("places");
     let map = compile(&working, &mut Plain).expect("compiles");
     (working, map)
+}
+
+/// A level with `placements`, all of a folded square.
+fn level_of(placements: &[&str]) -> (engine_compile::WorkingMap, Map) {
+    level_with(folded(10.0), placements)
 }
 
 /// Copies lit from one place share one mesh, however many there are, and each keeps its own
@@ -439,4 +451,120 @@ fn kept_geometry_keeps_its_instances() {
     let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
     assert_eq!(again.mesh_instances, map.mesh_instances);
     assert_eq!(again.shared_meshes, map.shared_meshes);
+}
+
+/// An author's own levels, by name, are used, and are kept apart from the finest. A level that
+/// was skipped is the one before it, and one with no finest part to go to is left out.
+#[test]
+fn an_authors_levels_join_the_part_they_are_levels_of() {
+    let nodes = r#"[{"mesh":0,"name":"Thing"},
+        {"mesh":0,"name":"Thing_lod2","translation":[5,0,0]},
+        {"mesh":0,"name":"Lost_lod1","translation":[9,0,0]}]"#;
+    let path = file("levels.glb", &glb_of(nodes, "[0,1,2]"));
+    let model = import_gltf(&path, "thing", 1.0).expect("imports");
+    fs::remove_file(&path).expect("clean up");
+    let parts = &model.mesh.parts;
+    assert_eq!(parts.len(), 1, "{parts:?}");
+    let part = &parts[0];
+    assert_eq!(part.triangles, [[0, 1, 2]], "the finest is as it was");
+    assert_eq!(part.levels.len(), 2);
+    assert_eq!(part.levels[0], part.triangles, "level 1 was skipped");
+    assert_eq!(part.levels[1], [[3, 4, 5]], "level 2 has its own corners");
+    assert_eq!(part.points.len(), 6);
+    assert_eq!(part.normals.len(), 6);
+    assert_eq!(part.points[3][0], 5.0, "and they're where it put them");
+}
+
+/// Coarser levels are fewer triangles on the same corners, and survive being written.
+#[test]
+fn coarser_levels_share_corners_and_survive_a_file() {
+    let mut mesh = well(128);
+    let levels = add_levels(&mut mesh);
+    assert!(levels >= 1, "made none");
+    let part = &mesh.parts[0];
+    let mut last = part.triangles.len();
+    for level in &part.levels {
+        assert!(level.len() < last, "{} then {last}", level.len());
+        last = level.len();
+        assert!(
+            level
+                .iter()
+                .flatten()
+                .all(|c| (*c as usize) < part.points.len())
+        );
+    }
+    let back = read_mesh(&document_of(&write_mesh(&mesh)).expect("reads")).expect("is a mesh");
+    assert_eq!(back.parts[0].levels, part.levels);
+}
+
+/// What's already small isn't made smaller.
+#[test]
+fn a_small_mesh_gets_no_levels() {
+    let mut mesh = folded(20.0);
+    assert_eq!(add_levels(&mut mesh), 0);
+    assert!(mesh.parts[0].normals.is_empty());
+}
+
+/// Simplifying goes by the mesh as it's joined. Going by normals first splits corners wherever
+/// smoothing differs and leaves nothing to simplify. A real model shows that, where a clean
+/// generated one doesn't, so this is a real one.
+#[test]
+fn a_real_model_with_no_normals_simplifies() {
+    let bytes = include_bytes!("../../../content/meshes/vesper_fall.emesh");
+    let mut mesh = read_mesh(&document_of(bytes).expect("reads")).expect("is a mesh");
+    let count = |mesh: &Mesh, level: usize| -> usize {
+        let at = |part: &MeshPart| match level {
+            0 => part.triangles.len(),
+            _ => part.levels.get(level - 1).map_or(0, Vec::len),
+        };
+        mesh.parts.iter().map(at).sum()
+    };
+    assert_eq!(add_levels(&mut mesh), 3);
+    let finest = count(&mesh, 0);
+    assert!(
+        count(&mesh, 1) * 10 < finest * 6,
+        "{finest} to {}",
+        count(&mesh, 1)
+    );
+    assert!(
+        count(&mesh, 3) * 10 < finest * 2,
+        "{finest} to {}",
+        count(&mesh, 3)
+    );
+}
+
+/// With no normals in the file, a level's are worked out from its own triangles, so a coarser
+/// level doesn't take the shape of a finer one's.
+#[test]
+fn a_level_works_out_normals_from_its_own_shape() {
+    let text = "format 1 mesh\npart { material = a points = [0 0 0 1 0 0 0 1 0 1 1 1] uvs = [0 0 1 0 0 1 1 1] triangles = [0 1 2 1 3 2] level_1 = [0 1 2] }\n";
+    let mesh = read_mesh(&from_text(text).expect("reads")).expect("is a mesh");
+    assert_eq!(mesh.parts[0].levels.len(), 1);
+    let (_, map) = level_with(mesh, &["origin = [0 0 0] light = probe"]);
+    let shared = &map.shared_meshes[0];
+    let flat = shared.levels[1][0];
+    let corner = shared.indices[flat.first as usize] as usize;
+    assert_eq!(
+        shared.corners[corner].normal,
+        [0, 0, 127],
+        "flat on its own"
+    );
+}
+
+/// A shared mesh's levels share one set of corners, each with its own parts.
+#[test]
+fn a_shared_mesh_keeps_its_levels() {
+    let mut mesh = well(128);
+    let levels = add_levels(&mut mesh);
+    let (_, map) = level_with(mesh, &["origin = [0 0 0] light = probe"]);
+    let shared = &map.shared_meshes[0];
+    assert_eq!(shared.levels.len(), levels + 1);
+    assert_eq!(shared.level_sizes, [0.25, 0.1, 0.03]);
+    let triangles =
+        |parts: &Vec<engine_map::SharedPart>| -> u32 { parts.iter().map(|part| part.count).sum() };
+    let counts: Vec<u32> = shared.levels.iter().map(triangles).collect();
+    assert!(
+        counts.windows(2).all(|pair| pair[1] < pair[0]),
+        "{counts:?}"
+    );
 }

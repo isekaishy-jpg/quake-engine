@@ -24,7 +24,7 @@ use super::{
 use crate::alias::{pose_bytes, uv_bytes};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
-use crate::instances::{INSTANCE_BYTES, instance_batches, shared_vertices, view_planes};
+use crate::instances::{INSTANCE_BYTES, LevelView, instance_batches, shared_vertices, view_planes};
 use crate::live::live_bytes;
 use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
@@ -664,10 +664,12 @@ impl Backend {
                 vertices: self
                     .device_buffer(&shared_vertices(shared), BufferUsage::VERTEX_BUFFER)?,
                 indices: self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?,
-                parts: shared.parts.clone(),
+                levels: shared.levels.clone(),
                 shadow_parts: shared
-                    .parts
-                    .iter()
+                    .levels
+                    .first()
+                    .into_iter()
+                    .flatten()
                     .filter(|part| casts_shadow(map, part.texture))
                     .copied()
                     .collect(),
@@ -913,6 +915,7 @@ impl Backend {
             shared_meshes,
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
+            instance_levels: vec![0; map.mesh_instances.len()],
             shadow_instances,
             sky_set,
             texture_shaders,
@@ -1248,12 +1251,17 @@ impl Backend {
                 let angles = [view.yaw, view.pitch, view.roll];
                 let seen = view_projection(view.origin, angles, view.fov, aspect);
                 let planes = view_planes(&seen);
+                let levels = LevelView {
+                    eye: view.origin,
+                    height_scale: Vec3::new(seen[1], seen[5], seen[9]).length(),
+                };
                 let mut mapped = map.instances[slot].memory.map()?;
                 map.instance_batches[slot] = instance_batches(
                     scene.map,
                     &scene.mesh.instance_lights,
                     &scene.visible.instances,
                     &planes,
+                    (&levels, &mut map.instance_levels),
                     mapped.as_slice_mut(),
                 );
             }

@@ -196,8 +196,10 @@ pub struct SharedMesh {
     pub corners: Vec<MeshCorner>,
     /// Its triangles, three to each.
     pub indices: Vec<u32>,
-    /// Its parts, by material.
-    pub parts: Vec<SharedPart>,
+    /// Its parts by material, for each level of detail, the finest first.
+    pub levels: Vec<Vec<SharedPart>>,
+    /// The share of the view's height it has to fall below to go to each coarser level.
+    pub level_sizes: Vec<f32>,
     /// The middle of what it covers.
     pub center: Vec3,
     /// How far it reaches from there.

@@ -27,7 +27,8 @@ pub use atlas::{Atlas, AtlasSpace};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
 pub use error::RenderError;
 pub use instances::{
-    INSTANCE_BYTES, InstanceBatch, ball_in_view, instance_batches, view_planes, write_instance,
+    INSTANCE_BYTES, InstanceBatch, LevelView, ball_in_view, choose_level, height_share,
+    instance_batches, view_planes, write_instance,
 };
 pub use live::{
     CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, MAX_LIVE_LIGHTS, MAX_SHADOW_LIGHTS,

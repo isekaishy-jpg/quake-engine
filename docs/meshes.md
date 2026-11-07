@@ -30,6 +30,16 @@ mesh { source = barrel origin = 40 12 0 light = probe }
 
 A placement with `light = probe` is an instance. The mesh is on the GPU once, and each part is one draw for all the copies you can see, so a yard of a hundred barrels costs what one does, plus their places. A copy keeps everything else: it casts shadows, takes moving lights, and is collided with. Use a light map of its own for something large, where light has to fall across it. See [proposal 0140](proposals/0140-meshes-at-run-time.md).
 
+## Levels of detail
+
+`import_gltf` makes coarser levels for a model, each with about half the triangles of the last, if it can do that without changing its shape much. Nodes named `<name>_lod1`, `<name>_lod2` and so on are used instead, if a model has them. For a mesh that's already in, `make_levels` does the same:
+
+```bash
+target/release/engine-tool content - make_levels "{\"name\":\"well\"}"
+```
+
+A copy goes to a coarser level when it fills less of the view's height: a quarter, a tenth and 3%, or what a `levels { sizes = [...] }` block in the file says. That's the same at any resolution. Only copies have levels, so a mesh with its own light map draws its finest.
+
 ## What's in a `.emesh`
 
 A document, binary from import, and text if a script writes it. Each `part` has a `material`, `points`, `uvs` and `triangles`, and can have `normals`, one to a corner. With none, they're worked out from the shape: smooth, except where two triangles turn by more than 40 degrees. Each `hull` is a box for collision.

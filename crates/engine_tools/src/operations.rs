@@ -414,6 +414,11 @@ pub const OPERATIONS: &[OperationInfo] = &[
         args: &[],
     },
     OperationInfo {
+        name: "make_levels",
+        help: "Gives a mesh in the content its coarser levels of detail.",
+        args: &[needs("name", ArgKind::Text, "The mesh, by name")],
+    },
+    OperationInfo {
         name: "import_gltf",
         help: "Brings a glTF model in, as a mesh with its materials and pictures.",
         args: &[
@@ -613,6 +618,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "check_textures" => features::check_textures(session, args),
         "check_shaders" => features::check_shaders(session, args),
         "import_gltf" => features::import_gltf(session, args),
+        "make_levels" => features::make_levels(session, args),
         "check_effects" => features::check_effects(session, args),
         "plan_read" => Ok(plan::plan_read(session)),
         "plan_paint" => plan::plan_paint(session, args),

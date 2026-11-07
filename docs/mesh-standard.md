@@ -45,6 +45,7 @@ A player is 56 units tall and 32 wide, and steps up 18. Things are made for that
 - **Normals are given,** smoothed by hard edges where edges are meant to be hard. With none, they're worked out, smooth except at sharp turns.
 - **Closed where it can be.** No stray faces, flipped faces or faces inside others. A piece that's a shell is fine if nothing ever sees its back.
 - **No hidden detail.** What can't be seen isn't modelled.
+- **Levels of detail** are made for you. To make your own, add nodes named `<name>_lod1`, `<name>_lod2` and so on, with the same materials.
 
 ## Texturing
 

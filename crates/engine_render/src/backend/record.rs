@@ -439,7 +439,10 @@ impl Recorder<'_> {
                 &[(&mesh.vertices.buffer, 0), (&self.instances.buffer, 0)],
             );
             rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
-            for part in &mesh.parts {
+            let Some(parts) = mesh.levels.get(batch.level as usize) else {
+                continue;
+            };
+            for part in parts {
                 let Some(kind) = scene
                     .map
                     .textures

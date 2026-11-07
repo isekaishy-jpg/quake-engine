@@ -123,9 +123,9 @@ struct GpuMesh {
     vertices: GpuBuffer,
     /// Its triangles.
     indices: GpuBuffer,
-    /// Its parts, by material.
-    parts: Vec<SharedPart>,
-    /// Those that cast shadows.
+    /// Its parts by material, for each level of detail.
+    levels: Vec<Vec<SharedPart>>,
+    /// Those of the finest that cast shadows.
     shadow_parts: Vec<SharedPart>,
 }
 
@@ -229,6 +229,8 @@ struct GpuMap {
     instance_batches: [Vec<InstanceBatch>; FRAMES],
     /// All the copies, for shadow maps.
     shadow_instances: Vec<ShadowInstance>,
+    /// Which level of detail each copy is at.
+    instance_levels: Vec<usize>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between

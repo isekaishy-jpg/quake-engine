@@ -24,6 +24,8 @@ mod nav;
 #[cfg(feature = "packing")]
 mod packing;
 mod ray_grid;
+#[cfg(feature = "packing")]
+mod simplify;
 mod source;
 mod stamp;
 mod texture;
@@ -54,6 +56,8 @@ pub use mesh::{
 #[cfg(feature = "packing")]
 pub use packing::{compile_shaders, pack_content};
 pub use ray_grid::RayGrid;
+#[cfg(feature = "packing")]
+pub use simplify::add_levels;
 pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,
     StampSource, TileSource, WaterSource, WorkingMap, read_map,
