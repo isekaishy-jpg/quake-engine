@@ -514,3 +514,12 @@ fn fs_masked(in: VertexOut) -> MaskedOut {
 fn fs_material(in: VertexOut) -> @location(0) vec4<f32> {
     return shader_whole(in);
 }
+
+// Land, with its holes left out.
+@fragment
+fn fs_land(in: VertexOut) -> @location(0) vec4<f32> {
+    if in_land_hole(in.land - 1u, in.world) {
+        discard;
+    }
+    return shader_whole(in);
+}

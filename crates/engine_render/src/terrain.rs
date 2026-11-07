@@ -80,7 +80,7 @@ fn distance_to(eye: Vec3, low: Vec3, high: Vec3) -> f32 {
 }
 
 /// The range of a part of a chunk: its low and high corners.
-fn bounds(sheet: &TerrainSheet, first: [u32; 2], cells: u32, heights: [f32; 2]) -> (Vec3, Vec3) {
+fn bounds_of(sheet: &TerrainSheet, first: [u32; 2], cells: u32, heights: [f32; 2]) -> (Vec3, Vec3) {
     let low = sheet.sample(first[0], first[1]);
     let high = sheet.sample(first[0] + cells, first[1] + cells);
     (
@@ -116,7 +116,7 @@ fn node_at(level: usize, first: [u32; 2], cells: u32) -> TerrainNode {
 fn chunk_nodes(sheet: &TerrainSheet, (x, y): (u32, u32), eye: Vec3, out: &mut Vec<TerrainNode>) {
     let heights = sheet.chunk_heights(x, y);
     let first = [x * CHUNK_CELLS, y * CHUNK_CELLS];
-    let (low, high) = bounds(sheet, first, CHUNK_CELLS, heights);
+    let (low, high) = bounds_of(sheet, first, CHUNK_CELLS, heights);
     let level = level_at(distance_to(eye, low, high));
     if level > 0 {
         out.push(node_at(level, first, CHUNK_CELLS));
@@ -125,7 +125,7 @@ fn chunk_nodes(sheet: &TerrainSheet, (x, y): (u32, u32), eye: Vec3, out: &mut Ve
     let half = CHUNK_CELLS / 2;
     for corner in [[0, 0], [half, 0], [0, half], [half, half]] {
         let first = [first[0] + corner[0], first[1] + corner[1]];
-        let (low, high) = bounds(sheet, first, half, heights);
+        let (low, high) = bounds_of(sheet, first, half, heights);
         let level = level_at(distance_to(eye, low, high)).min(1);
         out.push(node_at(level, first, half));
     }
@@ -154,7 +154,7 @@ pub fn terrain_nodes(
             let (x, y) = (at % across, at / across);
             let heights = sheet.chunk_heights(x, y);
             let first = [x * CHUNK_CELLS, y * CHUNK_CELLS];
-            let (low, high) = bounds(sheet, first, CHUNK_CELLS, heights);
+            let (low, high) = bounds_of(sheet, first, CHUNK_CELLS, heights);
             let middle = (low + high) * 0.5;
             if !ball_in_view(planes, middle, (high - low).length() * 0.5) {
                 continue;
@@ -226,6 +226,40 @@ fn write_node(node: &TerrainNode, light: &ChunkLight, out: &mut [u8; NODE_BYTES]
     }
 }
 
+/// The level of the land that shadow maps draw, by its stride.
+const SHADOW_STRIDE: u32 = 4;
+
+/// Every chunk of the land as a part to draw at the level shadows use, and the middle and reach of
+/// each, as what's drawn into a shadow map is what a light reaches and not what the view sees.
+pub(crate) fn chunk_list(map: &Map) -> (Vec<u8>, Vec<(Vec3, f32)>) {
+    let mut bytes = Vec::new();
+    let mut bounds = Vec::new();
+    let mut chunk = 0;
+    for (number, sheet) in (0_u32..).zip(&map.terrain) {
+        let [across, down] = sheet.data.chunks();
+        for y in 0..down {
+            for x in 0..across {
+                let first = [x * CHUNK_CELLS, y * CHUNK_CELLS];
+                let node = TerrainNode {
+                    sheet: number,
+                    first,
+                    stride: SHADOW_STRIDE,
+                    grid: CHUNK_CELLS / SHADOW_STRIDE,
+                    slide: [f32::MAX, f32::MAX],
+                    chunk,
+                };
+                let mut slot = [0; NODE_BYTES];
+                write_node(&node, &ChunkLight::default(), &mut slot);
+                bytes.extend_from_slice(&slot);
+                let (low, high) = bounds_of(sheet, first, CHUNK_CELLS, sheet.chunk_heights(x, y));
+                bounds.push(((low + high) * 0.5, (high - low).length() * 0.5));
+                chunk += 1;
+            }
+        }
+    }
+    (bytes, bounds)
+}
+
 /// A grid of `size` cells each way, as indices, split as collision splits a cell.
 #[must_use]
 pub fn grid_indices(size: u32) -> Vec<u32> {
@@ -245,6 +279,7 @@ pub fn grid_indices(size: u32) -> Vec<u32> {
 pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
     let mut bytes = Vec::with_capacity(map.terrain.len() * 48);
     let mut first_sample = 0_u32;
+    let mut first_hole = 0_u32;
     for sheet in &map.terrain {
         let origin = [
             sheet.origin.x,
@@ -253,11 +288,12 @@ pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
             sheet.data.cell,
         ];
         bytes.extend(origin.iter().flat_map(|part| part.to_le_bytes()));
+        let has_holes = sheet.data.holes.iter().any(|byte| *byte != 0);
         let shape = [
             sheet.data.across(),
             first_sample,
             u32::from(sheet.facing_down),
-            0,
+            if has_holes { first_hole + 1 } else { 0 },
         ];
         bytes.extend(shape.iter().flat_map(|part| part.to_le_bytes()));
         let texture = map.textures.get(sheet.texture as usize);
@@ -265,7 +301,20 @@ pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
         let uv = [1.0 / size[0], 1.0 / size[1], 0.0, 0.0];
         bytes.extend(uv.iter().flat_map(|part: &f32| part.to_le_bytes()));
         first_sample += u32::try_from(sheet.data.heights.len()).unwrap_or(0);
+        first_hole += u32::try_from(sheet.data.holes.len().div_ceil(4)).unwrap_or(0);
     }
+    bytes
+}
+
+/// Every sheet's holes, each from a whole word.
+pub(crate) fn hole_bytes(map: &Map) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    for sheet in &map.terrain {
+        bytes.extend_from_slice(&sheet.data.holes);
+        bytes.resize(bytes.len().next_multiple_of(4), 0);
+    }
+    // A buffer can't be empty.
+    bytes.resize(bytes.len().max(4), 0);
     bytes
 }
 

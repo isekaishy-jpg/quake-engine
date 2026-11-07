@@ -3237,6 +3237,121 @@ fn land_has_no_cracks_between_its_levels() {
     assert_eq!(holes, 0, "{holes} pixels show through");
 }
 
+/// What shows straight down onto the middle of `built`, from high up.
+fn land_from_above(built: Map, live: &[LiveLight], shadows: bool) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: shadows,
+        ..PostSettings::default()
+    });
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, 400.0),
+        ..view_from_above()
+    };
+    let drawables = Drawables {
+        live_lights: live,
+        ..Drawables::default()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    Some(centre(&capture))
+}
+
+/// A hole in the land shows what's under it, in the picture as in collision.
+#[test]
+fn a_hole_in_land_shows_through() {
+    let Some(whole) = land_from_above(map_with_land(), &[], false) else {
+        return;
+    };
+    let mut built = map_with_land();
+    let sheet = &mut built.terrain[0];
+    for y in 60..68 {
+        for x in 60..68 {
+            sheet.data.set_hole(x, y, true);
+        }
+    }
+    let holed = land_from_above(built, &[], false).expect("it drew");
+    assert!(whole[0] > 200, "land shows: {whole:?}");
+    assert!(holed[0] < 50, "and through it, nothing: {holed:?}");
+}
+
+/// Land's found through the leaves it's in, so what can't be seen from here isn't drawn.
+#[test]
+fn land_in_no_leaf_that_can_be_seen_is_not_drawn() {
+    let mut built = map_with_land();
+    built.tree.leaf_faces = vec![0];
+    built.tree.leaves[1].face_count = 1;
+    let Some(hidden) = land_from_above(built, &[], false) else {
+        return;
+    };
+    assert!(hidden[0] < 50, "{hidden:?}");
+}
+
+/// A sheet high up shades what's under it from a moving light.
+#[test]
+fn land_casts_a_live_shadow() {
+    // Lit land, as the other tests' is unlit, under a roof that a lamp is above.
+    let lit = |roof: bool, hole: bool| {
+        let mut built = map_with_land();
+        built.textures[0].material = Some(Arc::new(Material::default()));
+        if roof {
+            let mut data = TerrainData::flat([2, 2], 32.0);
+            if hole {
+                for y in 56..72 {
+                    for x in 56..72 {
+                        data.set_hole(x, y, true);
+                    }
+                }
+            }
+            let first_face = u32::try_from(built.faces.len()).expect("few");
+            let stand_in = built.faces[0].clone();
+            built.faces.extend(vec![stand_in; 4]);
+            built.tree.leaf_faces = (0..9).collect();
+            built.tree.leaves[1].face_count = 9;
+            built.models[0].face_count = 9;
+            built.terrain.push(TerrainSheet {
+                data,
+                origin: Vec3::new(-2048.0, -2048.0, 300.0),
+                first_face,
+                ..TerrainSheet::default()
+            });
+        }
+        let lamp = [LiveLight {
+            origin: Vec3::new(0.0, 0.0, 330.0),
+            radius: 800.0,
+            color: [0.0, 0.0, 0.8],
+            shadows: true,
+            ..LiveLight::default()
+        }];
+        let view = View {
+            origin: Vec3::new(0.0, 0.0, 200.0),
+            ..view_from_above()
+        };
+        let mut renderer = renderer()?;
+        renderer.load_map(Arc::new(built)).expect("load");
+        renderer.set_post(PostSettings {
+            live_shadows: true,
+            ..PostSettings::default()
+        });
+        let drawables = Drawables {
+            live_lights: &lamp,
+            ..Drawables::default()
+        };
+        let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+        Some(centre(&capture)[2])
+    };
+    let Some(open) = lit(false, false) else {
+        return;
+    };
+    let under = lit(true, false).expect("it drew");
+    let through_a_hole = lit(true, true).expect("it drew");
+    assert!(under + 30 < open, "the roof shades it: {under} of {open}");
+    assert!(
+        through_a_hole + 5 > open,
+        "unless there's a hole: {through_a_hole} of {open}"
+    );
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

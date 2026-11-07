@@ -6,7 +6,9 @@ use engine_compile::{
     BakeInput, Mesh, MeshPart, MeshPlacement, TextureSource, apply_bake, bake_light, compile,
     place_mesh, read_map_text, write_bake,
 };
-use engine_map::{AlphaMode, Face, Map, Material, MipLevel, PixelForm, Texture, TextureKind};
+use engine_map::{
+    AlphaMode, Face, Map, Material, MipLevel, PixelForm, TerrainData, Texture, TextureKind,
+};
 
 /// A room open to a sun.
 const ROOM: &str = "format 1 map
@@ -24,6 +26,25 @@ sky {
     sun_color = 1 1 1
 }
 brush { material = floor cuboid = -512 -512 -32 512 512 0 }
+";
+
+/// A room with land in it, and a sun low in the east.
+const LAND_ROOM: &str = "format 1 map
+entity world {
+    type = worldspawn
+    sun_intensity = 200
+    ambient = 2
+    light_spacing = 64
+}
+sky {
+    zenith = 0.2 0.3 0.6
+    horizon = 0.5 0.5 0.6
+    ground = 0.2 0.2 0.2
+    sun_direction = 1 0 0.35
+    sun_color = 1 1 1
+}
+brush { material = floor cuboid = -512 -512 -300 2600 2600 -200 }
+terrain { source = ridge material = floor }
 ";
 
 /// Plain grey textures.
@@ -321,4 +342,92 @@ fn a_mesh_of_glass_casts_no_shadow() {
     let glass = light_under(Some("glass"));
     assert!(solid < open, "{solid} of {open}");
     assert_eq!(glass, open);
+}
+
+/// Land's lit by its slopes, and shades itself: the far side of a ridge from the sun gets less.
+#[test]
+fn land_is_lit_by_its_slopes_and_shades_itself() {
+    let mut working = read_map_text(LAND_ROOM).expect("reads");
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    let across = data.across();
+    for y in 0..=64 {
+        for x in 0..=64 {
+            // A long ridge running along Y, at x = 32 cells, 600 high.
+            let from = (i32::try_from(x).expect("small") - 32).unsigned_abs();
+            let rise = (600.0 - f64::from(from) * 100.0).max(0.0);
+            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+            let rise = rise as f32;
+            data.heights[(y * across + x) as usize] = rise;
+        }
+    }
+    working.terrain[0].data = data;
+    let mut map = compile(&working, &mut WithGlass).expect("compiles");
+    let mut images = |path: &str| Err(engine_compile::CompileError::Bad(path.to_owned()));
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    let sheet = &map.terrain[0];
+    let face = &map.faces[sheet.first_face as usize];
+    let light = face.light.expect("it's lit");
+    let at = |x: u32, y: u32| {
+        let first = light.first_sample as usize;
+        let color = map.light[first + (y * light.width + x) as usize];
+        u32::from(color[0]) + u32::from(color[1]) + u32::from(color[2])
+    };
+    let middle = light.height / 2;
+    let quarter = light.width / 4;
+    let (sunny, shaded) = (
+        at(light.width - 1 - quarter / 2, middle),
+        at(quarter / 2 + quarter, middle),
+    );
+    assert!(shaded + 40 < sunny, "{shaded} and {sunny}");
+}
+
+/// Paths find land by themselves: someone can stand on a hill, at its height, and there's nowhere
+/// to stand in a cliff.
+#[test]
+fn paths_go_over_land() {
+    let mut working = read_map_text(LAND_ROOM).expect("reads");
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    let across = data.across();
+    for y in 0..=64 {
+        for x in 0..=64 {
+            let height = if x >= 40 { 500.0 } else { f64::from(x) * 4.0 };
+            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+            let height = height as f32;
+            data.heights[(y * across + x) as usize] = height;
+        }
+    }
+    working.terrain[0].data = data;
+    let mut map = compile(&working, &mut WithGlass).expect("compiles");
+    let mut images = |path: &str| Err(engine_compile::CompileError::Bad(path.to_owned()));
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    let nav = map.nav.as_ref().expect("it has paths");
+    let near = |x: f32, y: f32| {
+        nav.places
+            .iter()
+            .filter(|place| (place.point.x - x).abs() < 9.0 && (place.point.y - y).abs() < 9.0)
+            .map(|place| place.point.z)
+            .collect::<Vec<f32>>()
+    };
+    // 640 along the slope, at 1 in 8.
+    let on_slope = near(640.0, 1000.0);
+    assert!(
+        on_slope.iter().any(|z| (z - 104.0).abs() < 8.0),
+        "someone stands at 80 and a bit: {on_slope:?}"
+    );
+    let at_the_top = near(1600.0, 1000.0);
+    assert!(
+        at_the_top.iter().any(|z| (z - 524.0).abs() < 8.0),
+        "and on top: {at_the_top:?}"
+    );
+    let in_the_cliff = near(1270.0, 1000.0);
+    let hanging = in_the_cliff.iter().filter(|z| **z > 170.0 && **z < 500.0);
+    assert_eq!(hanging.count(), 0, "not half way up it: {in_the_cliff:?}");
 }

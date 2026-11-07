@@ -269,8 +269,8 @@ impl Backend {
                 .alpha_blending(true)
                 .build(device)?,
             mesh_opaque: mesh("fs_material").depth_test(true, true).build(device)?,
-            land: land("fs_material").depth_test(true, true).build(device)?,
-            land_after_depth: land("fs_material").depth_test(true, false).build(device)?,
+            land: land("fs_land").depth_test(true, true).build(device)?,
+            land_after_depth: land("fs_land").depth_test(true, false).build(device)?,
             mesh_after_depth: mesh("fs_material").depth_test(true, false).build(device)?,
             mesh_masked: mesh("fs_masked").depth_test(true, true).build(device)?,
             mesh_blended: mesh("fs_material")
@@ -335,7 +335,7 @@ impl Backend {
         let (land_bindings, land_attributes) = land_vertices();
         let land_depth = GraphicsPipelineBuilder::new(&layouts.terrain, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_terrain")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_depth")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_land_depth")
             .vertex_input(&land_bindings, &land_attributes)
             .dynamic_viewport_scissor()
             .cull_mode(CullMode::NONE)
@@ -460,7 +460,7 @@ fn mesh_vertices() -> ([VertexInputBinding; 3], [VertexInputAttribute; 9]) {
 }
 
 /// What a part of the land reads: only its node, as its corners come from the heights.
-fn land_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 4]) {
+pub(super) fn land_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 4]) {
     let bindings = [VertexInputBinding {
         binding: 0,
         stride: u32::try_from(NODE_BYTES).unwrap_or(0),

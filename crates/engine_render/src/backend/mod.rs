@@ -771,9 +771,10 @@ impl Backend {
             binding,
             descriptor_type: DescriptorType::STORAGE_BUFFER,
             descriptor_count: 1,
-            stage_flags: ShaderStageFlags::VERTEX,
+            stage_flags: ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
         };
-        let terrain_set_layout = DescriptorSetLayout::new(&device, &[0, 1, 2].map(land_binding))?;
+        let terrain_set_layout =
+            DescriptorSetLayout::new(&device, &[0, 1, 2, 3].map(land_binding))?;
         let layouts = Layouts {
             world: textured_layout(MODEL_OFFSET_SIZE)?,
             material: PipelineLayout::with_push_constants(
@@ -842,7 +843,7 @@ impl Backend {
             FrameValues::new(&device, &physical)?,
             FrameValues::new(&device, &physical)?,
         ];
-        let shadows = shadow::Shadows::new(&device, &physical)?;
+        let shadows = shadow::Shadows::new(&device, &physical, &terrain_set_layout)?;
         let shadow_sampler = Sampler::new(
             &device,
             SamplerCreateInfo {

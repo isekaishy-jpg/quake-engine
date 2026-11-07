@@ -53,18 +53,31 @@ const NO_LINK: u32 = u32::MAX;
 /// edge could drop, and a path only needs to find one nearby.
 const LEAP_SPREAD: i32 = 4;
 
+/// The boxes that clipping hulls are grown by, as the hulls have them.
+const HULL_SIZES: [(Vec3, Vec3); 2] = [
+    (Vec3::new(-16.0, -16.0, -24.0), Vec3::new(16.0, 16.0, 32.0)),
+    (Vec3::new(-32.0, -32.0, -24.0), Vec3::new(32.0, 32.0, 64.0)),
+];
+
 /// What's needed to ask about a clipping hull.
 struct Hull<'a> {
     /// The map.
     map: &'a Map,
     /// Its root.
     root: ClipChild,
+    /// The box it's grown by, for land, which isn't in hulls.
+    size: (Vec3, Vec3),
 }
 
 impl Hull<'_> {
     /// Whether a player's centre can't be at `point`.
     fn solid(&self, point: Vec3) -> bool {
         self.map.tree.clip_solid(self.root, point)
+            || self
+                .map
+                .terrain
+                .iter()
+                .any(|sheet| sheet.holds_box(point, self.size))
     }
 
     /// Where a player stands, going down from `open` to `solid`, to within a
@@ -212,7 +225,11 @@ pub(crate) fn build_nav(map: &Map, size: usize) -> NavGrid {
         return NavGrid::default();
     };
     let root = world.hulls[size];
-    let hull = Hull { map, root };
+    let hull = Hull {
+        map,
+        root,
+        size: HULL_SIZES[size],
+    };
     let (low, high) = (world.mins, world.maxs);
     #[expect(
         clippy::cast_possible_truncation,

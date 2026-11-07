@@ -86,4 +86,13 @@ Built as designed, and tried in the game on a land of 4 by 4 chunks.
 - **The crack test took five tries, and they're worth writing down.** From straight above a crack can't be seen, as it's an upright slit. At a low angle what's behind a crack is more land. Then it failed on nothing but the sky, and on the corner of the sheet. It looks down at a slant now, across a change of level, at white land: 0 pixels show through, and with sliding turned off, 959.
 - **A small land's file can be valid text,** so it's read as binary and not guessed at. The test for that found it.
 
+### Holes, shadows and paths (126, 129)
+
+- **Holes** are left out of the picture and depth by a bit for each cell, and light goes through them in the bake and in shadow maps, as a roof with a hole in it shows.
+- **Shadow maps** draw every chunk a light reaches, at a fixed level, since what a light reaches has nothing to do with where the view is.
+- **Paths** needed one change: the walkable grid asks if a box fits, and that now looks at land too, by the corners of its feet, or of its head under a roof.
+- **Leaves:** land in no leaf that can be seen isn't drawn.
+
+Five bugs were put back, and each fails a test: light ignoring holes, land left out of shadow maps, holes left in the picture, land casting nothing in the bake, and paths not knowing it's there.
+
 Filled in as each part lands.

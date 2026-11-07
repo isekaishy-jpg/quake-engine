@@ -8,15 +8,16 @@ use engine_core::math::Vec3;
 use engine_map::Map;
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
-    AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CompareOp, CullMode, Device,
-    Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, Image,
-    Image2dCreateInfo, ImageLayout, ImageUsage, InputRate, PhysicalDevice, PipelineLayout,
-    PushConstantRange, RenderPass, RenderPassCreateInfo, ShaderModule, ShaderStageFlags,
-    VertexInputAttribute, VertexInputBinding,
+    AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CompareOp, CullMode,
+    DescriptorSetLayout, Device, Format, Framebuffer, GraphicsPipeline, GraphicsPipelineBuilder,
+    GraphicsShaderStage, Image, Image2dCreateInfo, ImageLayout, ImageUsage, InputRate,
+    PhysicalDevice, PipelineLayout, PushConstantRange, RenderPass, RenderPassCreateInfo,
+    ShaderModule, ShaderStageFlags, VertexInputAttribute, VertexInputBinding,
 };
 
 use super::deform::GpuMoving;
 use super::deform::bind_moving;
+use super::pipelines::land_vertices;
 use super::upload::device_image;
 use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
 use crate::alias::{EntityDraw, model_matrix};
@@ -156,6 +157,8 @@ pub(super) struct Shadows {
     pipeline: GraphicsPipeline,
     /// The same as `pipeline`, for meshes, whose corners are smaller.
     mesh_pipeline: GraphicsPipeline,
+    /// Land.
+    land_pipeline: GraphicsPipeline,
     /// Empties a tile.
     clear: GraphicsPipeline,
     /// Whether the atlas has been started off.
@@ -199,7 +202,11 @@ fn atlas_pass(device: &Device, first: bool) -> Result<RenderPass, RenderError> {
 
 impl Shadows {
     /// Makes the atlas and what draws into it.
-    pub(super) fn new(device: &Device, physical: &PhysicalDevice) -> Result<Self, RenderError> {
+    pub(super) fn new(
+        device: &Device,
+        physical: &PhysicalDevice,
+        land_layout: &DescriptorSetLayout,
+    ) -> Result<Self, RenderError> {
         let image = Image::new_2d(
             device,
             Image2dCreateInfo {
@@ -215,7 +222,7 @@ impl Shadows {
         let framebuffer = Framebuffer::new(device, &pass, &[&atlas.view], ATLAS_SIZE, ATLAS_SIZE)?;
         let layout = PipelineLayout::with_push_constants(
             device,
-            &[],
+            &[land_layout],
             &[PushConstantRange {
                 stage_flags: ShaderStageFlags::VERTEX,
                 offset: 0,
@@ -259,6 +266,17 @@ impl Shadows {
             .depth_test(true, true)
             .depth_bias(1.5, 2.0, 0.0)
             .build(device)?;
+        let (land_bindings, land_attributes) = land_vertices();
+        let land_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_land")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_land")
+            .color_attachment_count(0)
+            .vertex_input(&land_bindings, &land_attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .depth_bias(1.5, 2.0, 0.0)
+            .build(device)?;
         let clear = GraphicsPipelineBuilder::new(&layout, &pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_clear")
             .stage(GraphicsShaderStage::Fragment, &shader, "fs_shadow")
@@ -276,6 +294,7 @@ impl Shadows {
             layout,
             pipeline,
             mesh_pipeline,
+            land_pipeline,
             clear,
             ready: Cell::new(false),
             kept: vec![None; MAX_SHADOW_LIGHTS],
@@ -451,6 +470,7 @@ impl Shadows {
             for face in 0..6 {
                 self.record_tile(rec, map, mesh_ranges, *slot * 6 + face, face, light);
                 self.record_moving(rec, map, frame, face, light);
+                self.record_land(rec, map, face, light);
                 self.record_figures(rec, figures, (&map.moving, frame), face, light);
             }
         }
@@ -567,6 +587,34 @@ impl Shadows {
             *chunk = value.to_le_bytes();
         }
         rec.push_constants(&self.layout, ShaderStageFlags::VERTEX, 0, &bytes);
+    }
+
+    /// Draws the land a light reaches into the tile that's set up.
+    fn record_land(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        face: usize,
+        light: &LiveLight,
+    ) {
+        let Some(land) = &map.terrain else {
+            return;
+        };
+        // A chunk at the level shadows use is the second size of grid.
+        let Some(&(first, count)) = land.grids.get(1) else {
+            return;
+        };
+        rec.bind_graphics_pipeline(&self.land_pipeline);
+        rec.bind_graphics_descriptor_sets(&self.layout, 0, &[&land.set]);
+        rec.bind_vertex_buffers(0, &[(&land.whole.buffer, 0)]);
+        rec.bind_index_buffer(&land.indices.buffer, 0, INDEX_TYPE_U32);
+        let matrix = cube_face(light.origin, face, light.radius);
+        self.push(rec, &matrix, [0.0; 4]);
+        for (chunk, (middle, reach)) in (0_u32..).zip(&land.whole_bounds) {
+            if (*middle - light.origin).length() < light.radius + reach {
+                rec.draw_indexed(count, 1, first, 0, chunk);
+            }
+        }
     }
 
     /// Draws the figures a light reaches into the tile that's set up.

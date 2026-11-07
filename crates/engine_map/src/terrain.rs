@@ -244,6 +244,21 @@ impl TerrainSheet {
         inside > 0.0 && (self.thickness <= 0.0 || inside < self.thickness)
     }
 
+    /// Whether a box at `point` is in the land: a corner of its feet in ground, or of its head in
+    /// a roof.
+    #[must_use]
+    pub fn holds_box(&self, point: Vec3, (mins, maxs): (Vec3, Vec3)) -> bool {
+        let z = if self.facing_down { maxs.z } else { mins.z };
+        [
+            (mins.x, mins.y),
+            (maxs.x, mins.y),
+            (maxs.x, maxs.y),
+            (mins.x, maxs.y),
+        ]
+        .iter()
+        .any(|(x, y)| self.holds(point + Vec3::new(*x, *y, z)))
+    }
+
     /// The low and high height of the chunk at `x`, `y`.
     #[must_use]
     pub fn chunk_heights(&self, x: u32, y: u32) -> [f32; 2] {

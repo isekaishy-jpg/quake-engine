@@ -36,6 +36,8 @@ struct VertexOut {
     @location(5) normal: vec4<f32>,
     // What a mesh's corners' colours multiply the surface by. White on what has none.
     @location(6) color: vec4<f32>,
+    // Which sheet of land this is, plus one, or 0 for anything else.
+    @location(7) @interpolate(flat) land: u32,
 }
 
 // A style saying that what moves has no chart in the atlas, and its light fields are a colour.
@@ -69,6 +71,7 @@ fn placed_mesh(in: MeshIn) -> VertexOut {
     out.world = world;
     out.uv = in.uv;
     out.color = in.color;
+    out.land = 0u;
     out.light_uv = in.light.xy;
     out.light_step = in.light.z;
     out.styles = in.styles;
@@ -90,7 +93,8 @@ fn placed_mesh(in: MeshIn) -> VertexOut {
 struct LandSheet {
     // Its low corner, and how far apart its heights are.
     origin: vec4<f32>,
-    // How many heights across, where its first is, and whether it faces down.
+    // How many heights across, where its first is, whether it faces down, and where its holes
+    // are, plus one, or 0 if it has none.
     shape: vec4<u32>,
     // What makes a place a place on its texture.
     uv: vec4<f32>,
@@ -99,6 +103,18 @@ struct LandSheet {
 @group(2) @binding(0) var<storage, read> land_sheets: array<LandSheet>;
 @group(2) @binding(1) var<storage, read> land_heights: array<f32>;
 @group(2) @binding(2) var<storage, read> land_normals: array<u32>;
+@group(2) @binding(3) var<storage, read> land_holes: array<u32>;
+
+// Whether `world` is over a hole in sheet `sheet`, which is a bit for each cell.
+fn in_land_hole(number: u32, world: vec3<f32>) -> bool {
+    let sheet = land_sheets[number];
+    if sheet.shape.w == 0u {
+        return false;
+    }
+    let cell = vec2<u32>((world.xy - sheet.origin.xy) / sheet.origin.w);
+    let at = cell.y * (sheet.shape.x - 1u) + cell.x;
+    return (land_holes[sheet.shape.w - 1u + at / 32u] >> (at % 32u) & 1u) != 0u;
+}
 
 struct LandIn {
     @builtin(vertex_index) vertex: u32,
@@ -159,7 +175,16 @@ fn vs_terrain(in: LandIn) -> VertexOut {
     let styles = in.sheet.y;
     out.styles = vec4<u32>(styles & 255u, (styles >> 8u) & 255u, (styles >> 16u) & 255u, styles >> 24u);
     out.normal = vec4<f32>(normalize(mix(normal_here, normal_there, share)), 0.0);
+    out.land = in.sheet.x + 1u;
     return out;
+}
+
+// Depth for land, which has holes in it.
+@fragment
+fn fs_land_depth(in: VertexOut) {
+    if in_land_hole(in.land - 1u, in.world) {
+        discard;
+    }
 }
 
 // The same mesh pushed out along its normals, with its front faces culled: what shows round its
@@ -188,6 +213,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.world = world;
     out.uv = in.uv;
     out.color = in.color;
+    out.land = 0u;
     out.light_uv = in.light_uv;
     out.light_step = in.light_step;
     out.styles = in.styles;
