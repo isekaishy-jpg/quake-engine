@@ -414,6 +414,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         let at = base + MAX_POOLS * 12 + index * 4;
         out[at] = pool.look.waves;
         out[at + 1] = pool.look.refraction;
+        out[at + 2] = pool.look.deep;
     }
     let base = base + MAX_POOLS * 16;
     #[expect(clippy::cast_precision_loss, reason = "eight at most")]

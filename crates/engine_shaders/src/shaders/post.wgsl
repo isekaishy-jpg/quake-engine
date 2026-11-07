@@ -626,7 +626,11 @@ fn in_pools(start: vec3<f32>, uv: vec2<f32>, depth: f32) -> vec3<f32> {
             let reach = exp(-below / 320.0);
             color = color * (1.0 + pattern * high.w * 3.0 * reach);
         }
-        color = mix(color, frame.pool_color[index].rgb, 1.0 - exp(-path * low.w));
+        // Depth changes evenly along a ray, so its middle gives the whole of it exactly.
+        let leaving = eye + ray * leave;
+        let depth_in = max(high.z - (entry.z + leaving.z) * 0.5, 0.0);
+        let thick = low.w * (1.0 + surface_look.z * depth_in);
+        color = mix(color, frame.pool_color[index].rgb, 1.0 - exp(-path * thick));
         if high.w > 0.0 {
             var shafts = 0.0;
             for (var step = 0; step < 8; step = step + 1) {

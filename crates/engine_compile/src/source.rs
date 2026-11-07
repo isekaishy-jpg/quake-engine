@@ -35,6 +35,8 @@ pub struct Brush {
     pub faces: Vec<BrushFace>,
     /// What fills it.
     pub contents: Contents,
+    /// Which of a level's waters it is, if it's liquid and says.
+    pub water: Option<String>,
 }
 
 impl Brush {
@@ -202,7 +204,7 @@ pub struct WorkingMap {
     /// The meshes that move, in the order the level names them.
     pub moving: Vec<(String, Arc<Mesh>)>,
     /// What's changed about how liquids look.
-    pub water: Option<WaterSource>,
+    pub water: Vec<WaterSource>,
     /// Fog, if it has any.
     pub fog: Option<Fog>,
     /// Fog in places.
@@ -288,8 +290,10 @@ pub struct DecalSource {
 }
 
 /// A map's own look for its liquids.
-#[derive(Clone, Copy, Debug, Default, PartialEq)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct WaterSource {
+    /// What brushes call it, or nothing for those that don't say.
+    pub name: Option<String>,
     /// The colour depth takes things towards.
     pub color: Option<[f32; 3]>,
     /// How fast depth tints, per unit.
@@ -306,6 +310,10 @@ pub struct WaterSource {
     pub tint: Option<[f32; 3]>,
     /// How strong that is, from 0 to 1.
     pub tint_strength: Option<f32>,
+    /// How much thicker it gets with each unit of depth.
+    pub deep: Option<f32>,
+    /// The effect that goes with the view while the eye's in it.
+    pub view_effect: Option<String>,
 }
 
 /// What `name` is as contents.
@@ -402,7 +410,12 @@ fn read_brush(block: &Block) -> Result<Brush, CompileError> {
             "a brush needs at least four faces".to_owned(),
         ));
     }
-    Ok(Brush { faces, contents })
+    let water = block.get("water").and_then(Value::text).map(str::to_owned);
+    Ok(Brush {
+        faces,
+        contents,
+        water,
+    })
 }
 
 /// Which copy of a prefab `block` came from, if any.
@@ -671,11 +684,12 @@ fn read_sky(block: &Block) -> SkySource {
     }
 }
 
-/// Reads a `fog` block.
+/// Reads a `water` block.
 #[expect(clippy::cast_possible_truncation, reason = "the look stores f32")]
 fn read_water(block: &Block) -> WaterSource {
     let number = |key: &str| block.get(key).and_then(Value::number).map(|v| v as f32);
     WaterSource {
+        name: block.name.clone(),
         color: block
             .get("color")
             .is_some()
@@ -690,6 +704,11 @@ fn read_water(block: &Block) -> WaterSource {
             .is_some()
             .then(|| color_of(block, "tint", [0.0; 3])),
         tint_strength: number("tint_strength"),
+        deep: number("deep"),
+        view_effect: block
+            .get("view_effect")
+            .and_then(Value::text)
+            .map(str::to_owned),
     }
 }
 
@@ -815,6 +834,6 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
         points: document.blocks_of("point").map(read_point).collect(),
         shared: HashMap::new(),
         moving: Vec::new(),
-        water: document.blocks_of("water").next().map(read_water),
+        water: document.blocks_of("water").map(read_water).collect(),
     })
 }

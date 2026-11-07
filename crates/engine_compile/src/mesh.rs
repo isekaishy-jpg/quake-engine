@@ -569,6 +569,7 @@ impl Transform {
         Brush {
             faces,
             contents: Contents::Solid,
+            water: None,
         }
     }
 
@@ -620,6 +621,7 @@ impl Transform {
         Brush {
             faces,
             contents: Contents::Solid,
+            water: None,
         }
     }
 }

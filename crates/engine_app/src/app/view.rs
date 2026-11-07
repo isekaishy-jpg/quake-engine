@@ -6,8 +6,8 @@ use crate::game_screen::Intermission;
 use engine_audio::Listener;
 use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject, followed_model};
 use engine_client::{
-    DrawnEntity, EffectSource, EffectWorld, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob,
-    view_roll,
+    DrawnEntity, EffectSettings, EffectSource, EffectWorld, ScreenEvent, VIEW_HEIGHT, dead_roll,
+    view_bob, view_roll,
 };
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
@@ -62,6 +62,12 @@ pub(crate) struct Picture {
 
 /// How far the eye sits above a dead player's middle.
 pub(super) const DEAD_VIEW_HEIGHT: f32 = -8.0;
+
+/// What an effect that goes with the view goes by, which is out of reach of what scripts get.
+const VIEW_EFFECT_HANDLE: u32 = u32::MAX;
+
+/// How long one takes to go, after leaving what it goes with.
+const VIEW_EFFECT_FADE: f32 = 0.6;
 
 /// How wide the view is with no `fov` set, in degrees.
 pub(super) const DEFAULT_FOV: f32 = 90.0;
@@ -236,6 +242,20 @@ impl World {
         let away = |particle: &ParticleDraw| (particle.origin - eye).length();
         out.sort_by(|a, b| away(b).total_cmp(&away(a)));
         out
+    }
+
+    /// Keeps the effect of what the eye's in going round it, and stops the last one on leaving.
+    fn follow_view_effect(&mut self, wanted: u32, origin: Vec3) {
+        let authored = self.effects.authored_mut();
+        if self.view_effect != wanted {
+            authored.stop(VIEW_EFFECT_HANDLE, VIEW_EFFECT_FADE);
+            self.view_effect = wanted;
+            if wanted != 0 {
+                let own = (VIEW_EFFECT_HANDLE, EffectSettings::default());
+                authored.start_as(wanted, origin, None, true, own);
+            }
+        }
+        authored.move_effect(VIEW_EFFECT_HANDLE, origin);
     }
 
     /// Follows the view from zone to zone, and does what going into one says.
@@ -483,6 +503,7 @@ impl World {
             .and_then(|map| look_around(&map.pools, origin, contents));
         self.view_tint
             .set_surroundings(look.map_or([0.0; 4], |look| look.tint));
+        self.follow_view_effect(look.map_or(0, |look| look.view_effect), origin);
         self.view_tint.pass(fade);
         self.last_eye = origin;
         let view = View {

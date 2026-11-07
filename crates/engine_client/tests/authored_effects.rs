@@ -1169,3 +1169,25 @@ fn a_surface_with_nothing_on_it_starts_at_the_middle() {
     let (draws, _) = effects.draws(&|_| [1.0; 3]);
     assert!(draws.iter().all(|draw| draw.origin == middle), "{draws:?}");
 }
+
+/// What goes round something can be moved along with it, and what it makes starts there.
+#[test]
+fn an_effect_can_be_moved() {
+    let mut effects = system(vec![ParticleEmitter {
+        rate: 100.0,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    }]);
+    let settings = EffectSettings::default();
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (7, settings));
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, true, (8, settings));
+    let there = Vec3::new(500.0, 0.0, 0.0);
+    effects.move_effect(7, there);
+    effects.update(0.1, &quiet());
+    let (draws, _) = effects.draws(&|_| [1.0; 3]);
+    assert!(draws.iter().any(|draw| draw.origin == there), "{draws:?}");
+    assert!(
+        draws.iter().any(|draw| draw.origin == Vec3::ZERO),
+        "the other stayed"
+    );
+}

@@ -1064,6 +1064,8 @@ fn wall_over_a_pool(renderer: &mut Renderer, reflect: f32) -> Capture {
             waves: 0.0,
             refraction: 0.0,
             tint: [0.0; 4],
+            deep: 0.0,
+            view_effect: 0,
         },
     });
     renderer.load_map(Arc::new(built)).expect("load");
@@ -1130,6 +1132,31 @@ fn how_much_a_surface_mirrors_is_up_to_its_pool() {
     );
 }
 
+/// A pool that thickens with depth hides what's under it faster.
+#[test]
+fn water_can_thicken_with_depth() {
+    let look = PoolLook {
+        color: [0.0, 0.0, 1.0],
+        absorption: 0.02,
+        caustics: 0.0,
+        reflect: 0.0,
+        waves: 0.0,
+        refraction: 0.0,
+        tint: [0.0; 4],
+        deep: 0.0,
+        view_effect: 0,
+    };
+    let even = post_centre(pool_map(look), PostSettings::default());
+    let deep = post_centre(
+        pool_map(PoolLook { deep: 0.2, ..look }),
+        PostSettings::default(),
+    );
+    let (Some(even), Some(deep)) = (even, deep) else {
+        return;
+    };
+    assert!(deep[2] > even[2] + 20, "{deep:?} and {even:?}");
+}
+
 /// Depth takes things towards a pool's colour, more the further they are.
 #[test]
 fn depth_tints_towards_a_pools_colour() {
@@ -1141,6 +1168,8 @@ fn depth_tints_towards_a_pools_colour() {
         waves: 0.0,
         refraction: 0.0,
         tint: [0.0; 4],
+        deep: 0.0,
+        view_effect: 0,
     };
     let thick = PoolLook {
         absorption: 0.2,

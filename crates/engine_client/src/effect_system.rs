@@ -295,6 +295,13 @@ impl EffectSystem {
         }
     }
 
+    /// Moves what `handle` started to `place`, and what it makes from then on starts there.
+    pub fn move_effect(&mut self, handle: u32, place: Vec3) {
+        for effect in self.going.iter_mut().filter(|e| e.handle == handle) {
+            effect.origin = place;
+        }
+    }
+
     /// How many particles are alive.
     #[must_use]
     pub const fn count(&self) -> usize {

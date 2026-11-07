@@ -4,6 +4,7 @@ use std::borrow::Cow;
 use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
+use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
@@ -1010,13 +1011,21 @@ fn field_text(value: &Value) -> String {
 
 /// The bodies of liquid among a map's brushes.
 #[expect(clippy::cast_possible_truncation, reason = "pools store f32")]
-fn pools_of(working: &WorkingMap) -> Vec<Pool> {
+fn pools_of(working: &WorkingMap) -> Result<Vec<Pool>, CompileError> {
     let mut pools = Vec::new();
     for brush in &working.brushes {
         let Some(mut look) = PoolLook::of(brush.contents) else {
             continue;
         };
-        if let Some(water) = &working.water {
+        let said = brush.water.as_deref();
+        let water = working
+            .water
+            .iter()
+            .find(|water| water.name.as_deref() == said);
+        if let (Some(name), None) = (said, water) {
+            return Err(CompileError::Bad(format!("no water is called {name}")));
+        }
+        if let Some(water) = water {
             look.color = water.color.unwrap_or(look.color);
             look.absorption = water.absorption.unwrap_or(look.absorption);
             look.caustics = water.caustics.unwrap_or(look.caustics);
@@ -1027,6 +1036,8 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
             look.reflect = water.reflect.unwrap_or(look.reflect);
             look.waves = water.waves.unwrap_or(look.waves);
             look.refraction = water.refraction.unwrap_or(look.refraction);
+            look.deep = water.deep.unwrap_or(look.deep);
+            look.view_effect = water.view_effect.as_deref().map_or(0, effect_id);
         }
         let corners = solid_corners(&brush.planes());
         let Some(first) = corners.first() else {
@@ -1046,7 +1057,7 @@ fn pools_of(working: &WorkingMap) -> Vec<Pool> {
             look,
         });
     }
-    pools
+    Ok(pools)
 }
 
 /// The named places of a level: its `point` blocks, and those of placements with names.
@@ -1236,7 +1247,7 @@ fn compile_with(
         .filter(|entity| entity.kind == "live_light")
         .filter_map(build_live_light)
         .collect();
-    builder.map.pools = pools_of(working);
+    builder.map.pools = pools_of(working)?;
     for entity in working.entities.iter().filter(|e| e.kind == "ray_stencil") {
         let stencil = build_stencil(entity, builder.source)?;
         builder.map.stencils.push(stencil);

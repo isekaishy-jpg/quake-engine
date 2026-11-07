@@ -21,6 +21,10 @@ pub struct PoolLook {
     pub refraction: f32,
     /// The colour over the view with the eye in it: red, green, blue and strength.
     pub tint: [f32; 4],
+    /// How much thicker it gets with each unit of depth.
+    pub deep: f32,
+    /// The effect that goes with the view while the eye's in it, by its id, or 0.
+    pub view_effect: u32,
 }
 
 impl PoolLook {
@@ -36,6 +40,8 @@ impl PoolLook {
                 waves: 1.0,
                 refraction: 1.0,
                 tint: [130.0 / 255.0, 80.0 / 255.0, 50.0 / 255.0, 128.0 / 255.0],
+                deep: 0.0,
+                view_effect: 0,
             }),
             Contents::Slime => Some(Self {
                 color: [0.12, 0.3, 0.05],
@@ -45,6 +51,8 @@ impl PoolLook {
                 waves: 0.5,
                 refraction: 0.4,
                 tint: [0.0, 25.0 / 255.0, 5.0 / 255.0, 150.0 / 255.0],
+                deep: 0.0,
+                view_effect: 0,
             }),
             Contents::Lava => Some(Self {
                 color: [0.75, 0.2, 0.03],
@@ -54,6 +62,8 @@ impl PoolLook {
                 waves: 0.0,
                 refraction: 0.0,
                 tint: [1.0, 80.0 / 255.0, 0.0, 150.0 / 255.0],
+                deep: 0.0,
+                view_effect: 0,
             }),
             _ => None,
         }

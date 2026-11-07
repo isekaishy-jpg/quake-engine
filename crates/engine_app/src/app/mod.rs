@@ -160,6 +160,8 @@ pub(crate) struct World {
     pub(crate) effects_time: f32,
     /// How meshes that are particles stand.
     effect_meshes: RestPoses,
+    /// The effect going round the view, by its id, or 0.
+    view_effect: u32,
     /// Says when the files effects come from have changed.
     effect_changes: Option<Receiver<()>>,
     /// Which zone the view is in.
@@ -395,6 +397,7 @@ impl World {
         self.models.clear_numbers();
         self.effects = Effects::default();
         self.effect_meshes = RestPoses::default();
+        self.view_effect = 0;
         self.effects.set_palette(&|index| palette.color(index));
         self.zones = ZoneTracker::default();
         self.palette = Some(palette);
@@ -689,6 +692,7 @@ impl Engine {
                 effects: Effects::default(),
                 effects_time: 0.0,
                 effect_meshes: RestPoses::default(),
+                view_effect: 0,
                 effect_changes: None,
                 zones: ZoneTracker::default(),
                 ui_script,

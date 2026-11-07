@@ -68,4 +68,10 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **Plain fog stays in the final pass,** as a sum, so it keeps a hard edge against what's in front of it, and it's free.
 - **Rays** were meant to brighten with all the fog in a pixel, and they do, by what's left of the marched fog and the level's own.
 
+### What a level says of water (73 to 76)
+
+- **Tried in the game:** a clear pool and a bog side by side. Under each, the view takes that one's tint and its thickness, and the clear pool's motes go with the view. The tint was already right, so item 74 needed no change.
+- **`deep` is exact,** as depth changes evenly along a ray, so its middle gives the whole of it.
+- **What goes with the view** is started and stopped by the look, and moved each frame, under a handle no script can get.
+
 Filled in as each part lands.
