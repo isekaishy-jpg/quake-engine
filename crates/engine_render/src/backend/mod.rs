@@ -403,6 +403,8 @@ struct Pipelines {
     sky_window: GraphicsPipeline,
     /// Each shader in use, the standard one first.
     surfaces: Vec<SurfacePipelines>,
+    /// The outline of what moves.
+    mesh_hull: GraphicsPipeline,
     /// Alias models.
     alias: GraphicsPipeline,
     /// Outlines of models, as a pushed-out hull.

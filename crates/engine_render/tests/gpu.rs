@@ -2505,3 +2505,69 @@ fn a_morph_comes_before_the_joints() {
         "the morph was turned: {along:?} against {plain:?}"
     );
 }
+
+/// A closed box that moves, as an outline needs a back to show.
+fn map_with_a_moving_box() -> Map {
+    let mut map = map_with_a_moving_square(false);
+    let mut corners = Vec::new();
+    for (x, y, z) in [
+        (-1.0, -1.0, -1.0),
+        (1.0, -1.0, -1.0),
+        (1.0, 1.0, -1.0),
+        (-1.0, 1.0, -1.0),
+        (-1.0, -1.0, 1.0),
+        (1.0, -1.0, 1.0),
+        (1.0, 1.0, 1.0),
+        (-1.0, 1.0, 1.0),
+    ] {
+        #[expect(clippy::cast_possible_truncation, reason = "a normal of 73 either way")]
+        let normal = [x, y, z].map(|part: f32| (part * 73.0) as i8);
+        corners.push(MeshCorner {
+            position: [64.0 + x * 8.0, 64.0 + y * 8.0, 32.0 + z * 8.0],
+            uv: [0.0, 0.0],
+            normal,
+        });
+    }
+    let moving = &mut map.moving_meshes[0];
+    moving.mesh.joints = vec![[0, 1, 0, 0]; corners.len()];
+    moving.mesh.weights = vec![[255, 0, 0, 0]; corners.len()];
+    moving.mesh.corners = corners;
+    moving.mesh.indices = vec![
+        0, 2, 1, 0, 3, 2, 4, 5, 6, 4, 6, 7, 0, 1, 5, 0, 5, 4, 1, 2, 6, 1, 6, 5, 2, 3, 7, 2, 7, 6,
+        3, 0, 4, 3, 4, 7,
+    ];
+    moving.mesh.levels = vec![vec![SharedPart {
+        texture: 0,
+        first: 0,
+        count: 36,
+    }]];
+    map
+}
+
+/// An outline shows round a moving mesh, as it does round an alias model.
+#[test]
+fn a_moving_mesh_has_an_outline_hull() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_box()))
+        .expect("load");
+    let plain = draw_moving(&mut renderer, &[NO_MOVE, NO_MOVE]);
+    renderer.set_post(PostSettings {
+        outline_hull: true,
+        outline_width: 4.0,
+        outline_color: [0.0, 1.0, 0.0],
+        ..PostSettings::default()
+    });
+    let outlined = draw_moving(&mut renderer, &[NO_MOVE, NO_MOVE]);
+    let green = |capture: &Capture| {
+        let pixels = capture.rgba.as_chunks::<4>().0;
+        pixels
+            .iter()
+            .filter(|pixel| pixel[1] > 200 && pixel[0] < 60)
+            .count()
+    };
+    assert_eq!(green(&plain), 0);
+    assert!(green(&outlined) > 10, "{}", green(&outlined));
+}

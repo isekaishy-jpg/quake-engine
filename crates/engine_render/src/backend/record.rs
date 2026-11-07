@@ -501,6 +501,13 @@ impl Recorder<'_> {
             let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
                 continue;
             };
+            if self.outline_hull && !see_through {
+                rec.bind_graphics_pipeline(&self.pipelines.mesh_hull);
+                rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set]);
+                for part in &mesh.shadow_parts {
+                    rec.draw_indexed(part.count, 1, part.first, 0, job.instance);
+                }
+            }
             for part in &mesh.parts {
                 let texture = scene.map.textures.get(part.texture as usize);
                 let Some(kind) = texture.and_then(batch_kind) else {

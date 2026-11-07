@@ -327,7 +327,18 @@ impl Backend {
             .depth_test(true, false)
             .samples(samples)
             .build(device)?;
+        let (mesh_bindings, mesh_attributes) = mesh_vertices();
+        let mesh_hull = GraphicsPipelineBuilder::new(&layouts.material, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_mesh_hull")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_mesh_hull")
+            .vertex_input(&mesh_bindings, &mesh_attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::FRONT)
+            .depth_test(true, true)
+            .samples(samples)
+            .build(device)?;
         Ok(Pipelines {
+            mesh_hull,
             depth_only,
             plain_after_depth,
             sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)

@@ -52,6 +52,11 @@ struct MeshIn {
 
 @vertex
 fn vs_mesh(in: MeshIn) -> VertexOut {
+    return placed_mesh(in);
+}
+
+// What a copy of a mesh is, wherever it's going.
+fn placed_mesh(in: MeshIn) -> VertexOut {
     var out: VertexOut;
     let corner = vec4<f32>(in.position, 1.0);
     let placed = vec3<f32>(dot(in.row_x, corner), dot(in.row_y, corner), dot(in.row_z, corner));
@@ -74,6 +79,24 @@ fn vs_mesh(in: MeshIn) -> VertexOut {
     let facing = turned / max(length(turned), 0.000001);
     out.normal = vec4<f32>(facing * mirrored, 1.0);
     return out;
+}
+
+// The same mesh pushed out along its normals, with its front faces culled: what shows round its
+// edge is an outline, as an alias model has (proposal 0081).
+@vertex
+fn vs_mesh_hull(in: MeshIn) -> VertexOut {
+    var out = placed_mesh(in);
+    // Wider with distance, so a line keeps its width on screen.
+    let away = length(out.world - frame.eye.xyz);
+    let width = max(frame.post_params.y, 1.0) * away * 0.0016;
+    let pushed = out.world + out.normal.xyz * width;
+    out.clip = frame.view_projection * vec4<f32>(pushed, 1.0);
+    return out;
+}
+
+@fragment
+fn fs_mesh_hull() -> @location(0) vec4<f32> {
+    return vec4<f32>(frame.outline.rgb, 1.0);
 }
 
 @vertex

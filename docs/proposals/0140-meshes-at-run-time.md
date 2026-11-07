@@ -1,6 +1,6 @@
 # Proposal 0140: meshes at run time
 
-Status: proposed, 2026-11-06, the [work list](../research/work-list.md), items 7 to 12.
+Status: accepted and implemented, 2026-11-07, the [work list](../research/work-list.md), items 7 to 12.
 
 ## Research
 
@@ -156,7 +156,6 @@ Found in review and in trying it:
 Limits, as they stand:
 
 - **A moving mesh draws its finest level.** Its corners are all moved anyway, so a coarser level would only save drawing.
-- **The outline hull doesn't draw moving meshes.** It's off by default. Item 12 decides how alias models and meshes share that.
 - **A moving mesh has no collision of its own.** It has the box its entity has, as alias models do.
 - **A clip's clock is the map's,** so what a client shows is as good as its clock is. Bad networks haven't been tried.
 
@@ -175,4 +174,23 @@ Limits, as they stand:
 
 - **Only position and normal are morphed.** glTF asks a client for tangents too, and the engine works those out from screen derivatives, so it has none to change. UV and colour targets aren't read.
 - **Static copies don't morph.** They show the mesh as it was made.
+
+### Item 12: the fixture's models stay as they are
+
+The rule was that alias models move if pictures of the fixture come out the same and it's no slower. Neither holds, so they stay on their own path.
+
+**It's slower.** 200 models of 900 corners each, the same both ways, timed on this GTX 1070 over 40 frames in a throwaway test:
+
+| | Over an empty frame |
+|---|---|
+| Alias, two poses blended in the vertex shader | 0.25 ms |
+| Moving mesh, through the compute pass | 0.43 ms |
+
+That's 1.7 times, which is little in itself, but it's built in. Alias blends two poses as it reads them, and the mesh path adds a compute pass, a write to memory, a barrier and a read. It's the right cost for skinning and morphs, which alias models don't have.
+
+**The pictures wouldn't be the same either.** How the two answer the same light came out closer than expected, within a few percent over most of the range. But alias models are lit once per corner by Quake's rule, from one side, with fullbright pixels in their skins, and a mesh is lit per pixel. Keeping the look means keeping alias's own fragment shader as a special case, and then only the vertex stage is shared, which is the part that's slower.
+
+So there are two ways of drawing models: one for the fixture's, and one for everything new. **This goes against "one way of drawing", so it's for the human to say if that's wrong.** The fixture's models are the only ones on the old path, and nothing new should use it.
+
+The outline hull was left for this item to settle. As alias stays, moving meshes have one of their own.
 
