@@ -106,3 +106,13 @@ Filled in as each part lands.
 - **Where a box is** goes in the file, on the emitter. `read_effect` doesn't look at it.
 - **A preview runs the system the game runs,** in the editor, so it can't look different. What the game draws of effects moved to the renderer and the map's crate so that both have it.
 - **A floor stands in for the level** in a preview. Tracing the level would want the collision world the editor doesn't keep.
+
+### Quake's particles (96)
+
+- **Tried in the game:** a rocket fired down the first corridor of a level, in the old build and the new, in pictures at six moments. Its trail, its smoke, the explosion and how it goes look the same.
+- **Each way of moving is an emitter,** made from the palette when a level loads: its ramp is a colour curve of steps, what speeds up has a `drag` below 0, fire has a `gravity` below 0, and half of a blob needed `flat_drag`, which an author can have too. `kind = square` is what the fixture's look is.
+- **Where they start stays code.** Sums like the lava splash's aren't a shape, so `fixture_bursts.rs` places each one, and `EffectSystem` runs them. `particles.rs` has gone, and so has its loop, so nothing else moves particles on the CPU.
+- **How far down its ramp one starts** is how old it starts, which is the same thing.
+- **The most at once** went to 16,384, as the fixture had. What's placed isn't held back by the budget, as the budget is for what an author made. What the fixture has counts towards it.
+- **What it costs:** 16,384 of them take 0.74 ms of a frame on the CPU, where a frame with one explosion takes a twentieth of that.
+- **A bug it found:** `set_gravity` never reached effects, so authored ones fell at the usual rate on a level that changes it.

@@ -389,3 +389,16 @@ fn an_effect_being_changed_goes_with_the_rest() {
     assert_eq!(read.effects.len(), 3);
     let _gone = std::fs::remove_dir_all(&root);
 }
+
+/// What the fixture's particles want can be had from a file too.
+#[test]
+fn an_emitter_can_be_square_and_slow_sideways() {
+    let effect = read(
+        "format 1 effect
+emitter a { kind = square flat_drag = 4 }
+",
+    )
+    .expect("reads");
+    assert_eq!(effect.emitters[0].kind, ParticleKind::Square);
+    assert_eq!(effect.emitters[0].flat_drag, 4.0);
+}

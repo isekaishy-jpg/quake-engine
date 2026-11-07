@@ -28,14 +28,14 @@ emitter flame {
 
 | Field | Means |
 |---|---|
-| `kind` | `sprite`, `ribbon`, `beam`, `light` or `decal` |
+| `kind` | `sprite`, `square`, `ribbon`, `beam`, `light` or `decal` |
 | `blend` | `over`, as smoke, or `add`, as fire |
 | `rate`, `burst` | How many a second, and how many at once when it starts |
 | `duration`, `delay` | How long it runs, 0 for ever, and how long it waits |
 | `shape` | `point`, `ball`, `ring` and `disc` with `radius`, `cone` with `radius` and `height`, `box` and `line` with `half_size` |
 | `life`, `speed` | One number, or the lowest and highest |
 | `direction`, `spread` | Which way they head, and how far from it, in degrees |
-| `gravity`, `drag`, `turbulence` | What moves them |
+| `gravity`, `drag`, `flat_drag`, `turbulence` | What moves them. `flat_drag` is sideways only |
 | `size` | One number, or pairs of when and how big, from 0 to 1 of a life |
 | `color` | Red, green, blue and alpha, or a when before each four. Past 1 glows |
 | `reach` | How far a light reaches, or a beam goes |

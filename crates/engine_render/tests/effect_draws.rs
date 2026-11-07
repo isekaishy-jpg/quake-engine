@@ -47,6 +47,7 @@ fn a_draw_keeps_what_it_says() {
 fn each_kind_has_its_shape() {
     for (kind, shape) in [
         (ParticleKind::Sprite, ParticleShape::Soft),
+        (ParticleKind::Square, ParticleShape::Square),
         (ParticleKind::Light, ParticleShape::Soft),
         (ParticleKind::Ribbon, ParticleShape::Line),
         (ParticleKind::Beam, ParticleShape::Line),

@@ -15,7 +15,7 @@ use engine_core::math::{Vec3, view_axes};
 use engine_map::{Contents, Rows, look_around};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
-    ParticleColor, ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
+    ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
 };
 
 use super::World;
@@ -231,19 +231,8 @@ impl World {
     /// The particles to draw, in their colours, far to near, as what covers has to go over what's
     /// behind it, and one blend does for all of them.
     pub(super) fn particle_draws(&self, eye: Vec3) -> Vec<ParticleDraw> {
-        let mut out = Vec::new();
-        if let Some(palette) = &self.palette {
-            out.extend(self.effects.particles().live().iter().map(|particle| {
-                let [red, green, blue] = palette.color(particle.color);
-                ParticleDraw {
-                    origin: particle.origin,
-                    color: ParticleColor { red, green, blue },
-                    ..ParticleDraw::default()
-                }
-            }));
-        }
         let (authored, _) = self.effects.authored().draws(&|at| self.light_at(at));
-        out.extend(authored.iter().map(ParticleDraw::from));
+        let mut out: Vec<ParticleDraw> = authored.iter().map(ParticleDraw::from).collect();
         let away = |particle: &ParticleDraw| (particle.origin - eye).length();
         out.sort_by(|a, b| away(b).total_cmp(&away(a)));
         out

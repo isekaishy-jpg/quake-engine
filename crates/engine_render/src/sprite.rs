@@ -590,6 +590,7 @@ impl From<&EffectDraw> for ParticleDraw {
                 ParticleKind::Ribbon | ParticleKind::Beam => ParticleShape::Line,
                 ParticleKind::Decal => ParticleShape::Flat,
                 ParticleKind::Sprite | ParticleKind::Light => ParticleShape::Soft,
+                ParticleKind::Square => ParticleShape::Square,
             },
             glow,
             adds: draw.adds,

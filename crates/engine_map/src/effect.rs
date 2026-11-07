@@ -12,6 +12,8 @@ pub enum ParticleKind {
     /// A soft round picture facing the eye.
     #[default]
     Sprite,
+    /// A small hard square that shrinks with distance to a limit.
+    Square,
     /// A strip that follows where it's been, as a trail does.
     Ribbon,
     /// A line from an emitter to where it's aimed.
@@ -135,6 +137,8 @@ pub struct ParticleEmitter {
     pub gravity: f32,
     /// How much they slow, as a share each second.
     pub drag: f32,
+    /// How much they slow sideways alone, as a share a second.
+    pub flat_drag: f32,
     /// How hard they're pushed about.
     pub turbulence: f32,
     /// Their size in world units.
@@ -304,6 +308,7 @@ impl Default for ParticleEmitter {
             spread: 180.0,
             gravity: 0.0,
             drag: 0.0,
+            flat_drag: 0.0,
             turbulence: 0.0,
             size: Curve(vec![(0.0, 4.0)]),
             color: ColorCurve(vec![(0.0, [1.0; 4])]),

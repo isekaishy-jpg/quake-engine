@@ -392,6 +392,7 @@ impl World {
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         self.models.clear_numbers();
         self.effects = Effects::default();
+        self.effects.set_palette(&|index| palette.color(index));
         self.zones = ZoneTracker::default();
         self.palette = Some(palette);
         self.map = Some(Arc::clone(&map));
@@ -810,7 +811,7 @@ impl Engine {
             clippy::cast_sign_loss,
             reason = "clamped to a count of particles"
         )]
-        let effect_budget = self.cvar_number("r_effect_budget").clamp(1.0, 8192.0) as usize;
+        let effect_budget = self.cvar_number("r_effect_budget").clamp(1.0, 16_384.0) as usize;
         self.world.effect_budget = effect_budget;
         if let Some(renderer) = &mut self.world.renderer {
             renderer.set_post(post);

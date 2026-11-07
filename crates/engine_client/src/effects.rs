@@ -2,7 +2,7 @@
 //! lights and beams, from `cl_tent.c` and `CL_RelinkEntities` (proposal 0036).
 //!
 //! Everything that knows the original's numbers and names is in here, so a
-//! game with other effects replaces this file and keeps [`Particles`].
+//! game with other effects replaces this file.
 
 use std::collections::HashMap;
 
@@ -14,7 +14,7 @@ use engine_core::sound::SoundStart;
 use engine_map::EffectSettings;
 
 use crate::effect_system::EffectSystem;
-use crate::particles::{Particles, Trail};
+use crate::fixture_bursts::{Bursts, Trail};
 
 /// The most dynamic lights at once.
 pub const MAX_LIGHTS: usize = 32;
@@ -131,8 +131,8 @@ const SEEN_COLOR: u8 = 56;
 /// Everything the client shows that the server doesn't track.
 #[derive(Clone, Debug, Default)]
 pub struct Effects {
-    /// The particles.
-    particles: Particles,
+    /// What starts the fixture's particles, which go with effects an author described.
+    bursts: Bursts,
     /// The lights, with unused slots among them.
     lights: [DynamicLight; MAX_LIGHTS],
     /// The beams.
@@ -165,15 +165,14 @@ fn beam_angles(direction: Vec3) -> (f32, f32) {
 }
 
 impl Effects {
-    /// The particles to draw.
-    #[must_use]
-    pub fn particles(&self) -> &Particles {
-        &self.particles
+    /// Uses the palette `color` says, for the fixture's particles.
+    pub fn set_palette(&mut self, color: &dyn Fn(u8) -> [u8; 3]) {
+        self.bursts.set_palette(color);
     }
 
     /// Sends a spark up from `origin`.
     pub fn spark(&mut self, origin: Vec3) {
-        self.particles.spark(origin);
+        self.bursts.spark(&mut self.authored, origin);
     }
 
     /// The lights shining now.
@@ -224,10 +223,10 @@ impl Effects {
     /// The sound of something hitting a wall: usually a tink, and sometimes a
     /// ricochet.
     fn ricochet(&mut self, origin: Vec3) {
-        if !self.particles.rand().is_multiple_of(5) {
+        if !self.bursts.rand().is_multiple_of(5) {
             self.sound("weapons/tink1.wav", origin);
         } else {
-            let name = match self.particles.rand() & 3 {
+            let name = match self.bursts.rand() & 3 {
                 1 => "weapons/ric1.wav",
                 2 => "weapons/ric2.wav",
                 _ => "weapons/ric3.wav",
@@ -267,50 +266,57 @@ impl Effects {
     fn temp(&mut self, kind: u8, origin: Vec3, end: Vec3, entity: u64) {
         match kind {
             0 => {
-                self.particles.puff(origin, Vec3::ZERO, 0, 10);
+                self.bursts
+                    .puff(&mut self.authored, origin, Vec3::ZERO, (0, 10));
                 self.ricochet(origin);
             }
             1 => {
-                self.particles.puff(origin, Vec3::ZERO, 0, 20);
+                self.bursts
+                    .puff(&mut self.authored, origin, Vec3::ZERO, (0, 20));
                 self.ricochet(origin);
             }
-            2 => self.particles.puff(origin, Vec3::ZERO, 0, 20),
+            2 => self
+                .bursts
+                .puff(&mut self.authored, origin, Vec3::ZERO, (0, 20)),
             3 => {
-                self.particles.explosion(origin);
+                self.bursts.explosion(&mut self.authored, origin);
                 self.explosion_light(origin);
                 self.sound("weapons/r_exp3.wav", origin);
             }
             4 => {
-                self.particles.blob_explosion(origin);
+                self.bursts.blob_explosion(&mut self.authored, origin);
                 self.sound("weapons/r_exp3.wav", origin);
             }
             5 => self.beam(entity, "progs/bolt.mdl", origin, end),
             6 => self.beam(entity, "progs/bolt2.mdl", origin, end),
             7 => {
-                self.particles.puff(origin, Vec3::ZERO, 20, 30);
+                self.bursts
+                    .puff(&mut self.authored, origin, Vec3::ZERO, (20, 30));
                 self.sound("wizard/hit.wav", origin);
             }
             8 => {
-                self.particles.puff(origin, Vec3::ZERO, 226, 20);
+                self.bursts
+                    .puff(&mut self.authored, origin, Vec3::ZERO, (226, 20));
                 self.sound("hknight/hit.wav", origin);
             }
             9 => self.beam(entity, "progs/bolt3.mdl", origin, end),
-            10 => self.particles.lava_splash(origin),
-            11 => self.particles.teleport_splash(origin),
+            10 => self.bursts.lava_splash(&mut self.authored, origin),
+            11 => self.bursts.teleport_splash(&mut self.authored, origin),
             _ => {}
         }
     }
 
     /// Sets what particles fall by.
     pub fn set_gravity(&mut self, gravity: f32) {
-        self.particles.set_gravity(gravity);
+        self.authored.set_gravity(gravity);
     }
 
     /// Shows the box of a player at `origin`, as this client has them on
     /// screen, to compare with the one the server judged a shot against.
     pub fn show_seen_box(&mut self, origin: Vec3) {
         let (low, high) = (origin + PLAYER_MINS, origin + PLAYER_MAXS);
-        self.particles.outline(low, high, SEEN_COLOR);
+        self.bursts
+            .outline(&mut self.authored, low, high, SEEN_COLOR);
     }
 
     /// Starts something the server sent.
@@ -342,7 +348,10 @@ impl Effects {
                     .start_as(effect, origin, follows, false, (handle, own));
             }
             Effect::NamedStops { handle, seconds } => self.authored.stop(handle, seconds),
-            Effect::Outline { low, high } => self.particles.outline(low, high, REWOUND_COLOR),
+            Effect::Outline { low, high } => {
+                self.bursts
+                    .outline(&mut self.authored, low, high, REWOUND_COLOR);
+            }
             Effect::Particles {
                 origin,
                 direction,
@@ -355,7 +364,8 @@ impl Effects {
                 } else {
                     u32::from(count)
                 };
-                self.particles.puff(origin, direction, color, count);
+                self.bursts
+                    .puff(&mut self.authored, origin, direction, (color, count));
             }
         }
     }
@@ -366,7 +376,7 @@ impl Effects {
         let key = source.id.wrapping_add(1);
         let time = self.time;
         if source.effects & EFFECT_MUZZLE_FLASH != 0 {
-            let radius = 200.0 + (self.particles.rand() & 31) as f32;
+            let radius = 200.0 + (self.bursts.rand() & 31) as f32;
             let origin = source.origin + Vec3::new(0.0, 0.0, 16.0) + forward(source.angles) * 18.0;
             let light = self.light_slot(key);
             light.origin = origin;
@@ -375,14 +385,14 @@ impl Effects {
             light.die = time + 0.1;
         }
         if source.effects & EFFECT_BRIGHT_LIGHT != 0 {
-            let radius = 400.0 + (self.particles.rand() & 31) as f32;
+            let radius = 400.0 + (self.bursts.rand() & 31) as f32;
             let light = self.light_slot(key);
             light.origin = source.origin + Vec3::new(0.0, 0.0, 16.0);
             light.radius = radius;
             light.die = time + 0.001;
         }
         if source.effects & EFFECT_DIM_LIGHT != 0 {
-            let radius = 200.0 + (self.particles.rand() & 31) as f32;
+            let radius = 200.0 + (self.bursts.rand() & 31) as f32;
             let light = self.light_slot(key);
             light.origin = source.origin;
             light.radius = radius;
@@ -424,8 +434,9 @@ impl Effects {
                 last: source.origin,
                 carried: 0.0,
             });
-            self.particles
-                .trail(trail.last, source.origin, kind, &mut trail.carried);
+            let path = (trail.last, source.origin);
+            self.bursts
+                .trail(&mut self.authored, path, kind, &mut trail.carried);
             trail.last = source.origin;
             let _previous = trails.insert(source.id, trail);
         }
@@ -447,7 +458,6 @@ impl Effects {
     pub fn update(&mut self, time: f32) {
         let seconds = (time - self.time).max(0.0);
         self.time = time;
-        self.particles.update(time);
         for light in &mut self.lights {
             if light.die >= time {
                 light.radius = (light.radius - seconds * light.decay).max(0.0);
@@ -473,7 +483,7 @@ impl Effects {
             let mut left = path.length();
             let mut origin = beam.start;
             while left > 0.0 && pieces.len() < MAX_BEAM_PIECES {
-                let roll = (self.particles.rand() % 360) as f32;
+                let roll = (self.bursts.rand() % 360) as f32;
                 pieces.push(BeamPiece {
                     model: beam.model,
                     origin,

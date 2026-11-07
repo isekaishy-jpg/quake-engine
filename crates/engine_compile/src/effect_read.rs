@@ -120,6 +120,7 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
     let text = |key: &str| block.get(key).and_then(Value::text);
     let kind = match text("kind").unwrap_or("sprite") {
         "sprite" => ParticleKind::Sprite,
+        "square" => ParticleKind::Square,
         "ribbon" => ParticleKind::Ribbon,
         "beam" => ParticleKind::Beam,
         "light" => ParticleKind::Light,
@@ -179,6 +180,7 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         spread: number(block, "spread", 180.0),
         gravity: number(block, "gravity", 0.0),
         drag: number(block, "drag", 0.0),
+        flat_drag: number(block, "flat_drag", 0.0),
         turbulence: number(block, "turbulence", 0.0),
         size: curve(block, "size", 4.0),
         color: color_curve(block, "color"),

@@ -177,7 +177,7 @@ fn stats(console: &mut Console<World>, world: &mut World, _args: &Args) {
         "models: {} loaded, {} missing, {} particles, {} lights",
         world.models.len(),
         world.models.missing(),
-        world.effects.particles().live().len(),
+        world.effects.authored().count(),
         world.effects.lights().count()
     ));
     if let Some(renderer) = &world.renderer {

@@ -7,7 +7,7 @@ use crate::graph_view::{ViewEvent, ViewNode, ViewWire};
 
 /// What an emitter can say, in the order the panel shows it, with what each takes.
 pub const EMITTER_SETTINGS: &[(&str, &str)] = &[
-    ("kind", "sprite, ribbon, beam, light or decal"),
+    ("kind", "sprite, square, ribbon, beam, light or decal"),
     ("blend", "over or add"),
     ("rate", "how many a second"),
     ("burst", "how many at once"),
@@ -24,6 +24,7 @@ pub const EMITTER_SETTINGS: &[(&str, &str)] = &[
     ("spread", "degrees"),
     ("gravity", "a share of the world's"),
     ("drag", "how much it slows"),
+    ("flat_drag", "how much it slows sideways"),
     ("turbulence", "how hard it's pushed about"),
     ("size", "a number, or when and how big"),
     ("color", "r g b a, or a when before each four"),

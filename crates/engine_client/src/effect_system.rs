@@ -12,7 +12,7 @@ use engine_map::{
 };
 
 /// The most particles the CPU looks after.
-pub const MAX_EFFECT_PARTICLES: usize = 8192;
+pub const MAX_EFFECT_PARTICLES: usize = 16_384;
 
 /// How much of the budget can go before what's far off starts to make less.
 const BUDGET_EASY: f32 = 0.6;
@@ -40,6 +40,21 @@ pub struct EffectLight {
     pub reach: f32,
     /// Its colour.
     pub color: [f32; 3],
+}
+
+/// A particle started by hand, for what no shape says.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct PlacedParticle {
+    /// Where it starts.
+    pub origin: Vec3,
+    /// How it's moving.
+    pub velocity: Vec3,
+    /// How far into its life it starts.
+    pub age: f32,
+    /// How long it has, or nothing for what its emitter says.
+    pub life: Option<f32>,
+    /// What it's told of itself.
+    pub settings: EffectSettings,
 }
 
 /// One particle.
@@ -326,6 +341,35 @@ impl EffectSystem {
         });
     }
 
+    /// Starts one particle of emitter `number` of `effect`, as `placed` says. It's what's there
+    /// or isn't, so only the most there can be holds it back.
+    pub fn place(&mut self, effect: &Arc<EffectDef>, number: usize, placed: PlacedParticle) {
+        if self.live.len() >= MAX_EFFECT_PARTICLES {
+            return;
+        }
+        let Some(emitter) = effect.emitters.get(number) else {
+            return;
+        };
+        let life = placed.life.unwrap_or(emitter.life[1]);
+        self.live.push(Live {
+            effect: Arc::clone(effect),
+            emitter: number,
+            origin: placed.origin,
+            velocity: placed.velocity,
+            age: placed.age,
+            life: life.max(0.01),
+            trail: Vec::new(),
+            facing: Vec3::new(0.0, 0.0, 1.0),
+            rotation: 0.0,
+            spin: 0.0,
+            owner: 0,
+            middle: placed.origin,
+            settings: placed.settings,
+            fading: None,
+            stuck: false,
+        });
+    }
+
     /// Starts one particle of `emitter`, for an instance with this `owner` and these settings.
     fn spawn(
         &mut self,
@@ -498,6 +542,9 @@ impl EffectSystem {
             }
             particle.velocity.z -= gravity * emitter.gravity * seconds;
             particle.velocity = particle.velocity * (1.0 - emitter.drag * seconds).max(0.0);
+            let flat = (1.0 - emitter.flat_drag * seconds).max(0.0);
+            particle.velocity.x *= flat;
+            particle.velocity.y *= flat;
             if emitter.turbulence > 0.0 {
                 let noise = |shift: u32| {
                     hash_unit(time_seed.wrapping_add(shift).wrapping_add(number)) - 0.5
@@ -726,7 +773,7 @@ impl EffectSystem {
                         ..look
                     });
                 }
-                ParticleKind::Sprite => draws.push(look),
+                ParticleKind::Sprite | ParticleKind::Square => draws.push(look),
             }
         }
         (draws, lights)
