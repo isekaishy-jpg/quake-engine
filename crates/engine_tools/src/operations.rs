@@ -12,20 +12,110 @@ use engine_format::{Block, Value, to_binary};
 use engine_map::{Map, MipLevel, Texture};
 use serde_json::{Value as Json, json};
 
-use crate::features;
 use crate::game_run::GameRunner;
 use crate::json::{block_to_json, move_block, numbers, point_from_json, value_from_json};
 use crate::prefab::{build_prefab, prefab_names};
 use crate::session::{ID_FIELD, Session, id_of};
+use crate::{checks, features};
 use crate::{plan, wear};
+
+/// What an argument is.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ArgKind {
+    /// Text.
+    Text,
+    /// A number.
+    Number,
+    /// Yes or no.
+    Flag,
+    /// Three numbers.
+    Point,
+    /// A list of numbers.
+    Numbers,
+    /// A list of anything.
+    List,
+    /// Named values.
+    Object,
+    /// Any value.
+    Any,
+}
+
+/// One argument of an operation.
+#[derive(Clone, Copy, Debug)]
+pub struct Arg {
+    /// Its name.
+    pub name: &'static str,
+    /// What it is.
+    pub kind: ArgKind,
+    /// Whether it has to be there.
+    pub required: bool,
+    /// What it means.
+    pub help: &'static str,
+}
+
+/// An argument that has to be there.
+const fn needs(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
+    Arg {
+        name,
+        kind,
+        required: true,
+        help,
+    }
+}
+
+/// An argument that can be left out.
+const fn may(name: &'static str, kind: ArgKind, help: &'static str) -> Arg {
+    Arg {
+        name,
+        kind,
+        required: false,
+        help,
+    }
+}
 
 /// One operation, for listing.
 #[derive(Clone, Copy, Debug)]
 pub struct OperationInfo {
     /// Its name.
     pub name: &'static str,
-    /// What it does and the arguments it takes.
+    /// What it does.
     pub help: &'static str,
+    /// What it takes.
+    pub args: &'static [Arg],
+}
+
+impl OperationInfo {
+    /// What it takes, as a JSON schema, so that an agent needn't guess.
+    #[must_use]
+    pub fn schema(&self) -> Json {
+        let mut properties = serde_json::Map::new();
+        for arg in self.args {
+            let mut property = match arg.kind {
+                ArgKind::Text => json!({ "type": "string" }),
+                ArgKind::Number => json!({ "type": "number" }),
+                ArgKind::Flag => json!({ "type": "boolean" }),
+                ArgKind::Point => json!({
+                    "type": "array",
+                    "items": { "type": "number" },
+                    "minItems": 3,
+                    "maxItems": 3,
+                }),
+                ArgKind::Numbers => json!({ "type": "array", "items": { "type": "number" } }),
+                ArgKind::List => json!({ "type": "array" }),
+                ArgKind::Object => json!({ "type": "object" }),
+                ArgKind::Any => json!({}),
+            };
+            property["description"] = json!(arg.help);
+            properties.insert(arg.name.to_owned(), property);
+        }
+        let required: Vec<&str> = self
+            .args
+            .iter()
+            .filter(|arg| arg.required)
+            .map(|arg| arg.name)
+            .collect();
+        json!({ "type": "object", "properties": properties, "required": required })
+    }
 }
 
 /// Every operation.
@@ -33,170 +123,426 @@ pub const OPERATIONS: &[OperationInfo] = &[
     OperationInfo {
         name: "new",
         help: "Starts an empty map.",
+        args: &[],
     },
     OperationInfo {
         name: "open",
-        help: "Opens a map. path.",
+        help: "Opens a map.",
+        args: &[needs(
+            "path",
+            ArgKind::Text,
+            "The map, from the content, such as maps/hall.emap",
+        )],
     },
     OperationInfo {
         name: "save",
-        help: "Saves the map. Optional path.",
+        help: "Saves the map.",
+        args: &[may(
+            "path",
+            ArgKind::Text,
+            "Where, from the content. Where it was last saved if left out",
+        )],
     },
     OperationInfo {
         name: "describe",
         help: "Lists what's in the map, with IDs.",
+        args: &[
+            may("id", ArgKind::Number, "Only this thing"),
+            may(
+                "kind",
+                ArgKind::Text,
+                "Only blocks of this kind: brush, entity, mesh and so on",
+            ),
+            may("type", ArgKind::Text, "Only entities of this type"),
+            may("prefab", ArgKind::Text, "Only what came from this prefab"),
+            may("near", ArgKind::Point, "Only what has an origin near here"),
+            may(
+                "radius",
+                ArgKind::Number,
+                "How near, in units. 512 if left out",
+            ),
+            may(
+                "limit",
+                ArgKind::Number,
+                "The most to return. 200 if left out, and 0 for all",
+            ),
+            may("skip", ArgKind::Number, "How many to pass over first"),
+        ],
     },
     OperationInfo {
         name: "add_brush",
-        help: "Adds a box. cuboid: six numbers. Optional material, contents.",
+        help: "Adds a box.",
+        args: &[
+            needs(
+                "cuboid",
+                ArgKind::Numbers,
+                "Six numbers: the low corner then the high",
+            ),
+            may("material", ArgKind::Text, "A material, by name"),
+            may(
+                "contents",
+                ArgKind::Text,
+                "solid, water, slime, lava or sky",
+            ),
+        ],
     },
     OperationInfo {
         name: "add_entity",
-        help: "Adds an entity. type, optional name, origin, fields: an object.",
+        help: "Adds an entity.",
+        args: &[
+            needs(
+                "type",
+                ArgKind::Text,
+                "What it is, such as light or info_player_start",
+            ),
+            may("name", ArgKind::Text, "A label for it"),
+            may("origin", ArgKind::Point, "Where it is"),
+            may("fields", ArgKind::Object, "The entity's other fields"),
+        ],
     },
     OperationInfo {
         name: "place_prefab",
-        help: "Places a prefab. prefab, at: three numbers, optional params.",
+        help: "Places a prefab.",
+        args: &[
+            needs("prefab", ArgKind::Text, "A prefab, by name"),
+            needs("at", ArgKind::Point, "Where it goes"),
+            may("params", ArgKind::Object, "The prefab's own settings"),
+        ],
     },
     OperationInfo {
         name: "set_field",
-        help: "Sets a field on a thing. id, key, value.",
+        help: "Sets a field on a thing.",
+        args: &[
+            needs("id", ArgKind::Number, "The thing"),
+            needs("key", ArgKind::Text, "The field"),
+            needs("value", ArgKind::Any, "What it becomes"),
+        ],
     },
     OperationInfo {
         name: "move",
-        help: "Moves a thing. id, by: three numbers.",
+        help: "Moves a thing.",
+        args: &[
+            needs("id", ArgKind::Number, "The thing"),
+            needs("by", ArgKind::Point, "How far, each way"),
+        ],
     },
     OperationInfo {
         name: "delete",
-        help: "Removes a thing. id.",
+        help: "Removes a thing.",
+        args: &[needs("id", ArgKind::Number, "The thing")],
     },
     OperationInfo {
         name: "undo",
         help: "Goes back a step.",
+        args: &[],
     },
     OperationInfo {
         name: "redo",
         help: "Goes forward a step.",
+        args: &[],
     },
     OperationInfo {
         name: "prefabs",
         help: "Lists the prefabs.",
+        args: &[],
     },
     OperationInfo {
         name: "add_block",
-        help: "Adds any block. kind, fields.",
+        help: "Adds any block.",
+        args: &[
+            needs("kind", ArgKind::Text, "A kind of block a map can have"),
+            may("fields", ArgKind::Object, "Its fields"),
+        ],
     },
     OperationInfo {
         name: "set_block",
-        help: "Makes or changes a block a map has one of, such as sky, fog or water. kind, fields.",
+        help: "Makes or changes a block a map has one of, such as sky, fog or water.",
+        args: &[
+            needs("kind", ArgKind::Text, "sky, fog, water or tile_grid"),
+            may("fields", ArgKind::Object, "Its fields"),
+        ],
     },
     OperationInfo {
         name: "place_mesh",
-        help: "Places a mesh. source, optional origin, angles, scale.",
+        help: "Places a mesh.",
+        args: &[
+            needs(
+                "source",
+                ArgKind::Text,
+                "A mesh, by name, as list gives them",
+            ),
+            may("origin", ArgKind::Point, "Where it goes"),
+            may("angles", ArgKind::Point, "How it turns"),
+            may("scale", ArgKind::Number, "How big"),
+        ],
     },
     OperationInfo {
         name: "add_decal",
-        help: "Presses an image on surfaces. material, origin, normal, optional size, angle, depth.",
+        help: "Presses an image on surfaces.",
+        args: &[
+            needs("material", ArgKind::Text, "A decal material"),
+            needs("origin", ArgKind::Point, "Where"),
+            needs("normal", ArgKind::Point, "Which way it faces"),
+            may("size", ArgKind::Numbers, "Width and height"),
+            may("angle", ArgKind::Number, "How far it turns, in degrees"),
+            may(
+                "depth",
+                ArgKind::Number,
+                "How far in front and behind it reaches",
+            ),
+        ],
     },
     OperationInfo {
         name: "add_stamp",
-        help: "Carves or raises surfaces. image, origin, normal, optional size, depth, detail, inner.",
+        help: "Carves or raises surfaces.",
+        args: &[
+            needs("image", ArgKind::Text, "A picture"),
+            needs("origin", ArgKind::Point, "Where"),
+            needs("normal", ArgKind::Point, "Which way it faces"),
+            may("size", ArgKind::Numbers, "Width and height"),
+            may("depth", ArgKind::Number, "How deep"),
+            may("detail", ArgKind::Number, "How fine"),
+            may("inner", ArgKind::Text, "What shows inside"),
+        ],
     },
     OperationInfo {
         name: "paint",
-        help: "Adds a stroke of a layer. points, optional layer, radius, strength.",
+        help: "Adds a stroke of a layer.",
+        args: &[
+            needs("points", ArgKind::List, "The points of the stroke"),
+            may("layer", ArgKind::Number, "Which layer"),
+            may("radius", ArgKind::Number, "How wide"),
+            may("strength", ArgKind::Number, "How strong"),
+        ],
     },
     OperationInfo {
         name: "wear",
-        help: "Makes the level look used, with paint and decals where its real surfaces meet. Run again to replace it. Optional amount, seed.",
+        help: "Makes the level look used, with paint and decals where its real surfaces meet.",
+        args: &[
+            may("amount", ArgKind::Number, "How much, from 0 to 1"),
+            may("seed", ArgKind::Number, "Which of its variations"),
+        ],
     },
     OperationInfo {
         name: "add_spline",
-        help: "Adds a line for movement. name, points, optional closed.",
+        help: "Adds a line for movement.",
+        args: &[
+            needs("name", ArgKind::Text, "What to call it"),
+            needs("points", ArgKind::List, "Its points"),
+            may("closed", ArgKind::Flag, "Whether it joins up"),
+        ],
     },
     OperationInfo {
         name: "append_point",
-        help: "Adds a point to a stroke or spline. id, point.",
+        help: "Adds a point to a stroke or spline.",
+        args: &[
+            needs("id", ArgKind::Number, "The stroke or spline"),
+            needs("point", ArgKind::Point, "The point"),
+        ],
     },
     OperationInfo {
         name: "set_material",
-        help: "Sets the material of a thing, on all of a brush's faces. id, material.",
+        help: "Sets the material of a thing, on all of a brush's faces.",
+        args: &[
+            needs("id", ArgKind::Number, "The thing"),
+            needs("material", ArgKind::Text, "A material, by name"),
+        ],
     },
     OperationInfo {
         name: "list",
         help: "Lists the content's materials, meshes and prefabs.",
+        args: &[],
     },
     OperationInfo {
         name: "read_script",
         help: "Reads the map's own script.",
+        args: &[],
     },
     OperationInfo {
         name: "write_script",
-        help: "Writes the map's own script. text.",
+        help: "Writes the map's own script.",
+        args: &[needs("text", ArgKind::Text, "The whole script")],
     },
     OperationInfo {
         name: "read_material",
-        help: "Reads a material's text. name.",
+        help: "Reads a material's text.",
+        args: &[needs("name", ArgKind::Text, "A material, by name")],
     },
     OperationInfo {
         name: "write_material",
-        help: "Writes a material's text, which must parse. name, text.",
+        help: "Writes a material's text, which must parse.",
+        args: &[
+            needs("name", ArgKind::Text, "A material, by name"),
+            needs("text", ArgKind::Text, "Its whole text, which must parse"),
+        ],
     },
     OperationInfo {
         name: "derive_maps",
-        help: "Works out normal and specular maps from a material's picture, and adds them to it. material: a name, or prefix: the start of several. Optional strength.",
+        help: "Works out normal and specular maps from a material's picture, and adds them to it.",
+        args: &[
+            may("material", ArgKind::Text, "A material, by name"),
+            may(
+                "prefix",
+                ArgKind::Text,
+                "Or every material starting with this",
+            ),
+            may("strength", ArgKind::Number, "How strong the normals are"),
+        ],
     },
     OperationInfo {
         name: "check_textures",
-        help: "Checks materials and their pictures against the texture standard. prefix: which, or all.",
+        help: "Checks materials and their pictures against the texture standard.",
+        args: &[may(
+            "prefix",
+            ArgKind::Text,
+            "Only materials starting with this",
+        )],
     },
     OperationInfo {
         name: "check_shaders",
         help: "Compiles every shader in the content, and says what's wrong with any that don't.",
+        args: &[],
     },
     OperationInfo {
         name: "check_effects",
         help: "Reads every effect in the content, and says what's wrong with any that don't make sense.",
+        args: &[],
     },
     OperationInfo {
         name: "import_gltf",
-        help: "Brings a glTF model in, as a mesh with its materials and pictures. path: the .gltf or .glb. name: what to call it. Optional scale: world units to a metre, 32 if not given.",
+        help: "Brings a glTF model in, as a mesh with its materials and pictures.",
+        args: &[
+            needs("path", ArgKind::Text, "The .gltf or .glb"),
+            needs("name", ArgKind::Text, "What to call it"),
+            may(
+                "scale",
+                ArgKind::Number,
+                "World units to a metre. 32 if left out",
+            ),
+        ],
     },
     OperationInfo {
         name: "plan_read",
         help: "What the level's floor plan is, and what's still missing, in plain words.",
+        args: &[],
     },
     OperationInfo {
         name: "plan_paint",
-        help: "Paints squares of the floor plan. cells: a list of column and row pairs. kind: floor, water or none.",
+        help: "Paints squares of the floor plan.",
+        args: &[
+            needs("cells", ArgKind::List, "A list of column and row pairs"),
+            needs("kind", ArgKind::Text, "floor, water or none"),
+        ],
     },
     OperationInfo {
         name: "plan_thing",
-        help: "Puts a thing on squares of the floor plan. cells: a list of column and row pairs. thing: start, light, door, health, ammo, enemy, fire or none.",
+        help: "Puts a thing on squares of the floor plan.",
+        args: &[
+            needs("cells", ArgKind::List, "A list of column and row pairs"),
+            needs(
+                "thing",
+                ArgKind::Text,
+                "start, light, door, health, ammo, enemy, fire or none",
+            ),
+        ],
     },
     OperationInfo {
         name: "plan_look",
-        help: "Changes what the floor plan's level is made of. look: the start of its materials' names.",
+        help: "Changes what the floor plan's level is made of.",
+        args: &[needs(
+            "look",
+            ArgKind::Text,
+            "The start of its materials' names",
+        )],
     },
     OperationInfo {
         name: "validate",
         help: "Compiles the map in memory and reports problems.",
+        args: &[],
     },
     OperationInfo {
         name: "compile",
         help: "Bakes the saved map's light into a .ebake file.",
+        args: &[],
     },
     OperationInfo {
         name: "shot",
-        help: "Runs the game on the saved map and takes a screenshot. path, optional commands: a list of console lines.",
+        help: "Runs the game on the saved map and takes a screenshot.",
+        args: &[
+            needs("path", ArgKind::Text, "Where the picture goes"),
+            may("from", ArgKind::Point, "Where to look from"),
+            may("yaw", ArgKind::Number, "Which way, in degrees"),
+            may("pitch", ArgKind::Number, "How far up or down, in degrees"),
+            may("commands", ArgKind::List, "Console lines to run first"),
+        ],
     },
     OperationInfo {
         name: "play",
         help: "Opens the game on the saved map for someone to play, and leaves it open.",
+        args: &[],
     },
     OperationInfo {
         name: "playtest",
-        help: "Runs a real server on the saved map for some seconds, and reports. Optional seconds.",
+        help: "Runs a real server on the saved map for some seconds, and reports.",
+        args: &[may("seconds", ArgKind::Number, "How long. 5 if left out")],
+    },
+    OperationInfo {
+        name: "read_shader",
+        help: "Reads a shader's text.",
+        args: &[needs("name", ArgKind::Text, "A shader, by name")],
+    },
+    OperationInfo {
+        name: "write_shader",
+        help: "Writes a shader, refusing one that doesn't compile.",
+        args: &[
+            needs("name", ArgKind::Text, "A shader, by name"),
+            needs("text", ArgKind::Text, "Its whole text, which must compile"),
+        ],
+    },
+    OperationInfo {
+        name: "read_effect",
+        help: "Reads an effect's text.",
+        args: &[needs("name", ArgKind::Text, "An effect, by name")],
+    },
+    OperationInfo {
+        name: "write_effect",
+        help: "Writes an effect, refusing one that doesn't make sense.",
+        args: &[
+            needs("name", ArgKind::Text, "An effect, by name"),
+            needs(
+                "text",
+                ArgKind::Text,
+                "Its whole text, which must make sense",
+            ),
+        ],
+    },
+    OperationInfo {
+        name: "read_prefab",
+        help: "Reads a prefab's script.",
+        args: &[needs("name", ArgKind::Text, "A prefab, by name")],
+    },
+    OperationInfo {
+        name: "write_prefab",
+        help: "Writes a prefab, refusing one that doesn't build.",
+        args: &[
+            needs("name", ArgKind::Text, "A prefab, by name"),
+            needs("text", ArgKind::Text, "Its whole script, which must build"),
+        ],
+    },
+    OperationInfo {
+        name: "compile_textures",
+        help: "Compiles the pictures materials use.",
+        args: &[],
+    },
+    OperationInfo {
+        name: "compile_shaders",
+        help: "Compiles every shader a game could want.",
+        args: &[],
+    },
+    OperationInfo {
+        name: "pack",
+        help: "Writes all of the content to one container.",
+        args: &[needs("path", ArgKind::Text, "Where the container goes")],
     },
 ];
 
@@ -235,15 +581,20 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         }
         "open" => {
             let content = session.content.clone();
-            *session = Session::open(Path::new(text_arg(args, "path")?), &content)?;
-            Ok(describe(session))
+            let path = session.in_content(Path::new(text_arg(args, "path")?))?;
+            *session = Session::open(&path, &content)?;
+            Ok(summary(session))
         }
         "save" => {
-            let path = args.get("path").and_then(Json::as_str).map(Path::new);
-            let saved = session.save(path)?;
+            let path = args
+                .get("path")
+                .and_then(Json::as_str)
+                .map(|path| session.in_content(Path::new(path)))
+                .transpose()?;
+            let saved = session.save(path.as_deref())?;
             Ok(json!({ "path": saved.display().to_string() }))
         }
-        "describe" => Ok(describe(session)),
+        "describe" => Ok(describe(session, args)),
         "add_brush" => add_brush(session, args),
         "add_entity" => add_entity(session, args),
         "place_prefab" => place_prefab(session, args),
@@ -277,6 +628,15 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "write_script" => features::write_script(session, args),
         "read_material" => features::read_material(session, args),
         "write_material" => features::write_material(session, args),
+        "read_shader" => features::read_text(session, "shaders", ".wgsl", args),
+        "write_shader" => features::write_shader(session, args),
+        "read_effect" => features::read_text(session, "effects", ".eeffect", args),
+        "write_effect" => features::write_effect(session, args),
+        "read_prefab" => features::read_text(session, "prefabs", ".luau", args),
+        "write_prefab" => features::write_prefab(session, args),
+        "compile_textures" => features::compile_textures(session),
+        "compile_shaders" => features::compile_all_shaders(session),
+        "pack" => features::pack(session, args),
         "validate" => validate(session),
         "compile" => bake(session),
         "shot" => GameRunner::from_environment(session)?.shot(args),
@@ -286,14 +646,89 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
     }
 }
 
-/// A summary of the map.
-fn describe(session: &Session) -> Json {
-    let things: Vec<Json> = session.document.blocks.iter().map(block_to_json).collect();
+/// How many things a description holds, unless it's asked for more.
+const DESCRIBED: u64 = 200;
+
+/// How near counts as near, unless it's said.
+const NEAR: f64 = 512.0;
+
+/// Where `block` is, if it says.
+fn origin_of(block: &Block) -> Option<[f64; 3]> {
+    let found = block.get("origin").or_else(|| block.get("at"))?;
+    let numbers = found.list()?;
+    match numbers {
+        [x, y, z] => Some([x.number()?, y.number()?, z.number()?]),
+        _ => None,
+    }
+}
+
+/// Whether `block` is what `args` asks for.
+fn wanted(block: &Block, args: &Json) -> bool {
+    let text = |key: &str| args.get(key).and_then(Json::as_str);
+    let says = |key: &str, value: &str| block.get(key).and_then(Value::text) == Some(value);
+    if let Some(id) = args.get("id").and_then(Json::as_u64)
+        && id_of(block) != Some(id)
+    {
+        return false;
+    }
+    if text("kind").is_some_and(|kind| block.kind != kind)
+        || text("type").is_some_and(|kind| !says("type", kind))
+        || text("prefab").is_some_and(|prefab| !says("prefab", prefab))
+    {
+        return false;
+    }
+    let Some(near) = args.get("near").and_then(point_from_json) else {
+        return true;
+    };
+    let radius = args.get("radius").and_then(Json::as_f64).unwrap_or(NEAR);
+    origin_of(block).is_some_and(|place| {
+        let [x, y, z] = [place[0] - near[0], place[1] - near[1], place[2] - near[2]];
+        x * x + y * y + z * z <= radius * radius
+    })
+}
+
+/// How many of each kind of thing the map holds, and where it's saved.
+fn summary(session: &Session) -> Json {
+    let mut counts = serde_json::Map::new();
+    for block in &session.document.blocks {
+        let count = counts.get(&block.kind).and_then(Json::as_u64).unwrap_or(0);
+        counts.insert(block.kind.clone(), json!(count + 1));
+    }
     json!({
         "path": session.path.as_ref().map(|path| path.display().to_string()),
         "dirty": session.dirty,
-        "things": things,
+        "counts": counts,
     })
+}
+
+/// What's in the map, as far as `args` asks. A real level is far too much to take at once.
+fn describe(session: &Session, args: &Json) -> Json {
+    let skip = args.get("skip").and_then(Json::as_u64).unwrap_or(0);
+    let limit = args
+        .get("limit")
+        .and_then(Json::as_u64)
+        .unwrap_or(DESCRIBED);
+    let matching: Vec<&Block> = session
+        .document
+        .blocks
+        .iter()
+        .filter(|block| wanted(block, args))
+        .collect();
+    let skip = usize::try_from(skip).unwrap_or(usize::MAX);
+    let take = match usize::try_from(limit) {
+        Ok(0) | Err(_) => usize::MAX,
+        Ok(limit) => limit,
+    };
+    let things: Vec<Json> = matching
+        .iter()
+        .skip(skip)
+        .take(take)
+        .map(|block| block_to_json(block))
+        .collect();
+    let mut answer = summary(session);
+    answer["matching"] = json!(matching.len());
+    answer["things"] = Json::Array(things);
+    answer
 }
 
 /// Adds `block`, with an ID.
@@ -312,6 +747,9 @@ fn add_brush(session: &mut Session, args: &Json) -> Result<Json, String> {
         .ok_or("cuboid needs six numbers")?;
     let values: Option<Vec<f64>> = cuboid.iter().map(Json::as_f64).collect();
     let values = values.ok_or("cuboid needs six numbers")?;
+    if (0..3).any(|axis| values[axis] >= values[axis + 3]) {
+        return Err("a cuboid's low corner has to be under its high one".to_owned());
+    }
     let mut block = Block::new("brush");
     if let Some(material) = args.get("material").and_then(Json::as_str) {
         block.set("material", Value::Text(material.to_owned()));
@@ -428,37 +866,35 @@ fn content_files(session: &Session) -> FileSystem {
     filesystem
 }
 
-/// `validate`.
+/// `validate`: what's wrong with the map. Anything in `problems` has to be put right.
 fn validate(session: &Session) -> Result<Json, String> {
-    let mut working = read_map(&session.document).map_err(|error| error.to_string())?;
-    let filesystem = content_files(session);
-    let mut library = MaterialLibrary::new(&filesystem);
-    library
-        .prepare(&mut working)
-        .map_err(|error| error.to_string())?;
-    let mut failure = None;
-    let mut missing = Vec::new();
-    let mut textures = |material: &str| {
-        library.load(material).unwrap_or_else(|error| {
-            failure = Some(error.to_string());
-            Texture::default()
-        })
-    };
-    let map = compile(&working, &mut textures).map_err(|error| error.to_string())?;
-    if let Some(error) = failure {
-        return Err(error);
-    }
-    for texture in &map.textures {
-        if texture.material.is_none() {
-            missing.push(texture.name.clone());
+    let mut problems = checks::problems_in(session);
+    let built = built_map(session);
+    let (map, _, _) = match built {
+        Ok(built) => built,
+        Err(error) => {
+            problems.push(error);
+            return Ok(json!({ "ok": false, "problems": problems }));
         }
-    }
+    };
+    let missing: Vec<String> = map
+        .textures
+        .iter()
+        .filter(|texture| texture.material.is_none())
+        .map(|texture| texture.name.clone())
+        .collect();
+    problems.extend(missing.iter().map(|name| format!("no material {name}")));
     let starts = map
         .entities
         .iter()
         .filter(|entity| entity.get("classname") == Some("info_player_start"))
         .count();
+    if starts == 0 {
+        problems.push("nowhere to start: no info_player_start".to_owned());
+    }
     Ok(json!({
+        "ok": problems.is_empty(),
+        "problems": problems,
         "faces": map.faces.len(),
         "models": map.models.len(),
         "entities": map.entities.len(),
@@ -494,6 +930,10 @@ pub(crate) fn built_map(session: &Session) -> Result<(Map, WorkingMap, String), 
 /// `compile`: bakes the saved map's light, and writes what the game loads.
 fn bake(session: &Session) -> Result<Json, String> {
     let path = session.path.as_ref().ok_or("save the map first")?;
+    let problems = checks::problems_in(session);
+    if !problems.is_empty() {
+        return Err(problems.join("; "));
+    }
     let (mut map, working, used) = built_map(session)?;
     let filesystem = content_files(session);
     let mut images_library = MaterialLibrary::new(&filesystem);

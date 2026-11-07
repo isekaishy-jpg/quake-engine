@@ -18,6 +18,9 @@ use engine_sim::{
 use mlua::chunk::Compiler;
 use mlua::{Function, Lua, Table, Value, Vector, VmState};
 
+/// Entity types the engine looks after itself, which have nothing to spawn in a script.
+const ENGINE_TYPES: [&str; 5] = ["effect", "flame", "live_light", "ray_stencil", "zone"];
+
 /// What a game tells the engine about itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct GameRules {
@@ -1115,6 +1118,15 @@ impl Game {
             let class = entity.get("classname").unwrap_or("");
             let function: mlua::Result<Option<Function>> = self.lua.globals().get(class);
             match function {
+                Ok(None) => {
+                    if !ENGINE_TYPES.contains(&class) {
+                        self.outbox
+                            .borrow_mut()
+                            .prints
+                            .push((None, format!("no spawn function for {class}")));
+                    }
+                    self.report(spawner.call::<()>((fields, None::<Function>)));
+                }
                 Ok(function) => self.report(spawner.call::<()>((fields, function))),
                 Err(error) => self.report(Err(error)),
             }

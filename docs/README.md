@@ -174,6 +174,7 @@
     - [0134: the colour over the view](proposals/0134-the-view-tint.md)
     - [0135: the engine and the game](proposals/0135-the-engine-and-the-game.md)
     - [0136: standards for art and meshes](proposals/0136-art-standards.md)
+    - [0137: tools an agent can trust](proposals/0137-mcp-you-can-trust.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

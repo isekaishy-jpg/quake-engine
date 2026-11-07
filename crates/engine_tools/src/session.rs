@@ -1,6 +1,6 @@
 //! A map being edited, with its history.
 
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 use engine_format::{Block, Document, Value, from_text, to_text};
 
@@ -9,6 +9,62 @@ pub(crate) const ID_FIELD: &str = "id";
 
 /// How many steps undo remembers.
 const HISTORY_LIMIT: usize = 256;
+
+/// One step of history: a run of blocks that became another run. A map can be large and a
+/// step is usually one thing, so whole maps aren't kept.
+#[derive(Clone, Debug, PartialEq)]
+struct Change {
+    /// Where the run starts.
+    at: usize,
+    /// What was there.
+    before: Vec<Block>,
+    /// What's there now.
+    after: Vec<Block>,
+}
+
+impl Change {
+    /// What changed from `old` to `new`, if anything, as the part that differs.
+    fn between(old: &[Block], new: &[Block]) -> Option<Self> {
+        let first = old
+            .iter()
+            .zip(new)
+            .position(|(old, new)| old != new)
+            .unwrap_or_else(|| old.len().min(new.len()));
+        if old.len() == new.len() && first == old.len() {
+            return None;
+        }
+        let most = old.len().min(new.len()) - first;
+        let last = old
+            .iter()
+            .rev()
+            .zip(new.iter().rev())
+            .take(most)
+            .take_while(|(old, new)| old == new)
+            .count();
+        Some(Self {
+            at: first,
+            before: old[first..old.len() - last].to_vec(),
+            after: new[first..new.len() - last].to_vec(),
+        })
+    }
+
+    /// Makes it happen to `blocks`.
+    fn apply(&self, blocks: &mut Vec<Block>) {
+        let end = self.at + self.before.len();
+        let _gone: Vec<Block> = blocks
+            .splice(self.at..end, self.after.iter().cloned())
+            .collect();
+    }
+
+    /// The same step the other way.
+    fn reversed(self) -> Self {
+        Self {
+            at: self.at,
+            before: self.after,
+            after: self.before,
+        }
+    }
+}
 
 /// A map being edited.
 #[derive(Clone, Debug)]
@@ -19,14 +75,36 @@ pub struct Session {
     pub(crate) path: Option<PathBuf>,
     /// The content directory, for prefabs, materials and compiling.
     pub(crate) content: PathBuf,
-    /// What undo goes back to, oldest first.
-    undo: Vec<Document>,
-    /// What redo goes forward to.
-    redo: Vec<Document>,
+    /// The map as of the last change that was noted.
+    settled: Document,
+    /// What undo reverses, oldest first.
+    undo: Vec<Change>,
+    /// What redo goes forward by.
+    redo: Vec<Change>,
     /// The next ID to give out.
     next_id: u64,
     /// Whether it's changed since saving.
     pub(crate) dirty: bool,
+}
+
+/// `path` from the working folder, if it's relative.
+fn absolute(path: &Path) -> PathBuf {
+    std::path::absolute(path).unwrap_or_else(|_| path.to_owned())
+}
+
+/// `path` with `.` and `..` worked out.
+fn plain_path(path: &Path) -> PathBuf {
+    let mut plain = PathBuf::new();
+    for part in path.components() {
+        match part {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                let _went_up = plain.pop();
+            }
+            other => plain.push(other),
+        }
+    }
+    plain
 }
 
 /// A block's ID.
@@ -50,10 +128,31 @@ impl Session {
             document: Document::new("map"),
             path: None,
             content: content.to_owned(),
+            settled: Document::new("map"),
             undo: Vec::new(),
             redo: Vec::new(),
             next_id: 1,
             dirty: false,
+        }
+    }
+
+    /// `path` as it stands: from the content, and inside it.
+    ///
+    /// # Errors
+    ///
+    /// Returns a message if it goes outside the content.
+    pub fn in_content(&self, path: &Path) -> Result<PathBuf, String> {
+        let root = plain_path(&absolute(&self.content));
+        let joined = if path.is_absolute() {
+            path.to_owned()
+        } else {
+            root.join(path)
+        };
+        let plain = plain_path(&joined);
+        if plain.starts_with(&root) {
+            Ok(plain)
+        } else {
+            Err(format!("{} isn't in the content", path.display()))
         }
     }
 
@@ -82,6 +181,7 @@ impl Session {
             }
         }
         session.document.blocks = blocks;
+        session.settled = session.document.clone();
         Ok(session)
     }
 
@@ -125,33 +225,47 @@ impl Session {
         id
     }
 
-    /// Remembers the map before a change.
-    pub(crate) fn checkpoint(&mut self) {
-        self.undo.push(self.document.clone());
-        if self.undo.len() > HISTORY_LIMIT {
-            self.undo.remove(0);
+    /// Notes whatever changed since the last time.
+    fn settle(&mut self) {
+        if let Some(change) = Change::between(&self.settled.blocks, &self.document.blocks) {
+            change.apply(&mut self.settled.blocks);
+            self.undo.push(change);
+            if self.undo.len() > HISTORY_LIMIT {
+                self.undo.remove(0);
+            }
+            self.redo.clear();
         }
-        self.redo.clear();
+    }
+
+    /// Says a change is coming, so that what came before stands as a step of its own.
+    pub(crate) fn checkpoint(&mut self) {
+        self.settle();
         self.dirty = true;
     }
 
     /// Goes back a step. Returns whether there was one.
     pub(crate) fn undo(&mut self) -> bool {
-        let Some(previous) = self.undo.pop() else {
+        self.settle();
+        let Some(change) = self.undo.pop() else {
             return false;
         };
-        self.redo
-            .push(std::mem::replace(&mut self.document, previous));
+        let change = change.reversed();
+        change.apply(&mut self.document.blocks);
+        change.apply(&mut self.settled.blocks);
+        self.redo.push(change.reversed());
         self.dirty = true;
         true
     }
 
     /// Goes forward a step. Returns whether there was one.
     pub(crate) fn redo(&mut self) -> bool {
-        let Some(next) = self.redo.pop() else {
+        self.settle();
+        let Some(change) = self.redo.pop() else {
             return false;
         };
-        self.undo.push(std::mem::replace(&mut self.document, next));
+        change.apply(&mut self.document.blocks);
+        change.apply(&mut self.settled.blocks);
+        self.undo.push(change);
         self.dirty = true;
         true
     }

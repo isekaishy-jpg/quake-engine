@@ -29,7 +29,7 @@ fn answer(session: &mut Session, method: &str, params: &Value) -> Result<Value, 
                     json!({
                         "name": operation.name,
                         "description": operation.help,
-                        "inputSchema": { "type": "object" },
+                        "inputSchema": operation.schema(),
                     })
                 })
                 .collect();
@@ -69,6 +69,11 @@ fn main() {
             break;
         };
         let Ok(request) = serde_json::from_str::<Value>(&line) else {
+            let error = json!({ "code": -32700, "message": "that isn't JSON" });
+            println!(
+                "{}",
+                json!({ "jsonrpc": "2.0", "id": null, "error": error })
+            );
             continue;
         };
         let Some(id) = request.get("id").cloned() else {

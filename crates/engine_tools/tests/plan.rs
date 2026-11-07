@@ -200,15 +200,14 @@ fn a_door_is_a_model_of_its_own() {
 #[test]
 fn a_plan_comes_back_from_the_map() {
     let mut session = small_level();
-    let dir = std::env::temp_dir().join(format!("engine-plan-{}", std::process::id()));
-    let path = dir.join("level.emap");
-    let args = json!({ "path": path.display().to_string() });
-    let _saved = run(&mut session, "save", &args).expect("saves");
+    let name = format!("plan_comes_back_{}.emap", std::process::id());
+    let args = json!({ "path": name });
+    let saved = run(&mut session, "save", &args).expect("saves");
     let _opened = run(&mut session, "open", &args).expect("opens");
     let plan = run(&mut session, "plan_read", &json!({})).expect("reads");
     assert_eq!(plan["floor"], json!([[0, 0], [1, 0]]));
     assert_eq!(plan["missing"], json!([]));
-    std::fs::remove_dir_all(&dir).expect("clean up");
+    std::fs::remove_file(saved["path"].as_str().expect("a path")).expect("clean up");
 }
 
 #[test]

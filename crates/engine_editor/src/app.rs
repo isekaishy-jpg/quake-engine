@@ -437,7 +437,7 @@ impl Editor {
 
     /// Rereads what's in the map.
     fn refresh_things(&mut self) {
-        let Ok(described) = run(&mut self.session, "describe", &json!({})) else {
+        let Ok(described) = run(&mut self.session, "describe", &json!({ "limit": 0 })) else {
             return;
         };
         self.things = described

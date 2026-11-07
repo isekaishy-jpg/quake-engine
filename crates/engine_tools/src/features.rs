@@ -9,7 +9,9 @@ use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_m
 use engine_format::{Block, Value};
 use serde_json::{Value as Json, json};
 
+use crate::checks::{is_block_kind, mesh_name};
 use crate::json::{numbers, value_from_json};
+use crate::prefab::build_prefab;
 use crate::session::Session;
 
 /// A block's fields from `args`, all of them but what's named in `skip`.
@@ -29,6 +31,9 @@ fn set_fields(block: &mut Block, args: &Json, skip: &[&str]) -> Result<(), Strin
 
 /// Adds a block of `kind`, with the fields in `args`.
 fn add_kind(session: &mut Session, kind: &str, args: &Json) -> Result<Json, String> {
+    if !is_block_kind(kind) {
+        return Err(format!("a map has no block called {kind}"));
+    }
     let name = args.get("name").and_then(Json::as_str);
     let mut block = name.map_or_else(|| Block::new(kind), |name| Block::named(kind, name));
     set_fields(&mut block, args, &["name"])?;
@@ -79,10 +84,18 @@ pub(crate) fn set_block(session: &mut Session, args: &Json) -> Result<Json, Stri
 
 /// `place_mesh`.
 pub(crate) fn place_mesh(session: &mut Session, args: &Json) -> Result<Json, String> {
-    args.get("source")
+    let source = args
+        .get("source")
         .and_then(Json::as_str)
         .ok_or("source is required")?;
-    add_kind(session, "mesh", args)
+    let name = mesh_name(source);
+    let file = session.content.join("meshes").join(format!("{name}.emesh"));
+    if !file.is_file() {
+        return Err(format!("no mesh called {name}"));
+    }
+    let mut args = args.clone();
+    args["source"] = json!(name);
+    add_kind(session, "mesh", &args)
 }
 
 /// `add_decal`.
@@ -494,4 +507,115 @@ pub(crate) fn write_material(session: &Session, args: &Json) -> Result<Json, Str
         .join(format!("{}.emat", checked(name)?));
     std::fs::write(&path, text).map_err(|error| error.to_string())?;
     Ok(json!({ "ok": true }))
+}
+
+/// A required text argument called `key`.
+fn text_of<'a>(args: &'a Json, key: &str) -> Result<&'a str, String> {
+    args.get(key)
+        .and_then(Json::as_str)
+        .ok_or_else(|| format!("{key} is required"))
+}
+
+/// Where the file of `name` goes, in `folder` of the content.
+fn file_of(
+    session: &Session,
+    folder: &str,
+    extension: &str,
+    name: &str,
+) -> Result<PathBuf, String> {
+    let name = checked(name)?;
+    Ok(session
+        .content
+        .join(folder)
+        .join(format!("{name}{extension}")))
+}
+
+/// Writes `text` to `file`, making its folder.
+fn write_text(file: &Path, text: &str) -> Result<Json, String> {
+    if let Some(folder) = file.parent() {
+        std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
+    }
+    std::fs::write(file, text).map_err(|error| format!("{}: {error}", file.display()))?;
+    Ok(json!({ "path": file.display().to_string() }))
+}
+
+/// `read_shader`, `read_effect` and `read_prefab`.
+pub(crate) fn read_text(
+    session: &Session,
+    folder: &str,
+    extension: &str,
+    args: &Json,
+) -> Result<Json, String> {
+    let name = text_of(args, "name")?;
+    let file = file_of(session, folder, extension, name)?;
+    let text = std::fs::read_to_string(&file).map_err(|_| format!("no {name} in {folder}"))?;
+    Ok(json!({ "text": text }))
+}
+
+/// `write_shader`: a shader that doesn't compile is refused, with what the compiler said.
+pub(crate) fn write_shader(session: &Session, args: &Json) -> Result<Json, String> {
+    let text = text_of(args, "text")?;
+    let file = file_of(session, "shaders", ".wgsl", text_of(args, "name")?)?;
+    if text.contains("fn shader_post") {
+        check_post_code(text)?;
+    } else {
+        check_surface_code(text)?;
+    }
+    write_text(&file, text)
+}
+
+/// `write_effect`: an effect that doesn't make sense is refused.
+pub(crate) fn write_effect(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = text_of(args, "name")?;
+    let text = text_of(args, "text")?;
+    let file = file_of(session, "effects", ".eeffect", name)?;
+    engine_compile::document_of(text.as_bytes())
+        .and_then(|document| engine_compile::read_effect(name, &document))
+        .map_err(|error| error.to_string())?;
+    write_text(&file, text)
+}
+
+/// `write_prefab`: a prefab that doesn't build with no parameters is refused, and the old one
+/// stays.
+pub(crate) fn write_prefab(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = text_of(args, "name")?;
+    let text = text_of(args, "text")?;
+    let file = file_of(session, "prefabs", ".luau", name)?;
+    let before = std::fs::read_to_string(&file).ok();
+    write_text(&file, text)?;
+    if let Err(problem) = build_prefab(&session.content, name, &json!({}), [0.0; 3]) {
+        let _put_back = match before {
+            Some(old) => std::fs::write(&file, old),
+            None => std::fs::remove_file(&file),
+        };
+        return Err(problem);
+    }
+    Ok(json!({ "path": file.display().to_string() }))
+}
+
+/// `compile_textures`.
+pub(crate) fn compile_textures(session: &Session) -> Result<Json, String> {
+    let (compiled, skipped) =
+        engine_compile::pack_textures(&session.content).map_err(|error| error.to_string())?;
+    Ok(json!({ "compiled": compiled, "up_to_date": skipped }))
+}
+
+/// `compile_shaders`.
+pub(crate) fn compile_all_shaders(session: &Session) -> Result<Json, String> {
+    let modules =
+        engine_compile::compile_shaders(&session.content).map_err(|error| error.to_string())?;
+    Ok(json!({ "modules": modules }))
+}
+
+/// `pack`.
+pub(crate) fn pack(session: &Session, args: &Json) -> Result<Json, String> {
+    let path = Path::new(text_of(args, "path")?);
+    let summary =
+        engine_compile::pack_content(&session.content, path).map_err(|error| error.to_string())?;
+    Ok(json!({
+        "files": summary.files,
+        "shared": summary.shared,
+        "bytes": summary.bytes,
+        "stored": summary.stored,
+    }))
 }

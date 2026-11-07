@@ -6,6 +6,7 @@
 //! May depend on `engine_assets`, `engine_compile`, `engine_format`,
 //! `engine_map`. See proposal 0008.
 
+mod checks;
 mod features;
 mod game_run;
 mod json;
@@ -16,7 +17,7 @@ mod session;
 mod wear;
 
 pub use game_run::{GameRunner, data_in};
-pub use operations::{OPERATIONS, OperationInfo, run};
+pub use operations::{Arg, ArgKind, OPERATIONS, OperationInfo, run};
 pub use plan::{CELL, Plan, Square, is_plan_map};
 pub use prefab::{PrefabOutput, build_prefab, prefab_names};
 pub use session::Session;

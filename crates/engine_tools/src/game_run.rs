@@ -1,8 +1,9 @@
 //! Running the real game from the tools, so a map can be seen and played.
 
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde_json::{Value as Json, json};
@@ -14,6 +15,51 @@ const START_WAIT: Duration = Duration::from_millis(2500);
 
 /// How long a map gets to load.
 const LOAD_WAIT: Duration = Duration::from_millis(2500);
+
+/// What the game has said so far.
+type Said = Arc<Mutex<Vec<String>>>;
+
+/// Lines of the game's that mean something went wrong.
+const TROUBLE: [&str; 5] = [
+    "error",
+    "couldn't",
+    "no spawn function",
+    "unknown",
+    "out of date",
+];
+
+/// A game that's running, and what it's said.
+struct Running {
+    /// The game.
+    child: Child,
+    /// Its console.
+    said: Said,
+}
+
+impl Running {
+    /// Everything it's said.
+    fn lines(&self) -> Vec<String> {
+        self.said
+            .lock()
+            .map_or_else(|_| Vec::new(), |lines| lines.clone())
+    }
+
+    /// What went wrong, of what it said. A game that didn't load a level is the worst of it.
+    fn report(&self, map: &str) -> (bool, Vec<String>) {
+        let lines = self.lines();
+        let loaded = lines
+            .iter()
+            .any(|line| line.trim() == format!("loaded {map}"));
+        let trouble = lines
+            .into_iter()
+            .filter(|line| {
+                let line = line.to_lowercase();
+                !line.contains("autoexec") && TROUBLE.iter().any(|word| line.contains(word))
+            })
+            .collect();
+        (loaded, trouble)
+    }
+}
 
 /// The game's program, which is built beside the tools.
 const GAME: &str = if cfg!(windows) {
@@ -86,6 +132,9 @@ impl GameRunner {
             .or_else(|| data_in(&USUAL_DATA))
             .ok_or("Can't find the game's data. Install it, or set ENGINE_BASEDIR.")?;
         let path = session.path.as_ref().ok_or("save the map first")?;
+        session
+            .in_content(path)
+            .map_err(|_| format!("{} has to be saved in the content to run", path.display()))?;
         let map = path
             .file_stem()
             .and_then(|stem| stem.to_str())
@@ -126,8 +175,8 @@ impl GameRunner {
         Ok(json!({ "map": self.map }))
     }
 
-    /// Starts the game, windowed and silent, loaded on the map.
-    fn start(&self) -> Result<Child, String> {
+    /// Starts the game, windowed and silent, loaded on the map, listening to what it says.
+    fn start(&self) -> Result<Running, String> {
         let mut child = Command::new(&self.program)
             .arg("-basedir")
             .arg(&self.base)
@@ -135,17 +184,28 @@ impl GameRunner {
             .arg(&self.content)
             .args(["-window", "-nosound"])
             .stdin(Stdio::piped())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .spawn()
             .map_err(|error| format!("couldn't start the game: {error}"))?;
+        let said = Said::default();
+        if let Some(out) = child.stdout.take() {
+            let lines = Arc::clone(&said);
+            let _reader = std::thread::spawn(move || {
+                for line in BufReader::new(out).lines().map_while(Result::ok) {
+                    if let Ok(mut lines) = lines.lock() {
+                        lines.push(line);
+                    }
+                }
+            });
+        }
         std::thread::sleep(START_WAIT);
         Self::say(&mut child, &format!("map {}", self.map))?;
         std::thread::sleep(LOAD_WAIT);
-        Ok(child)
+        Ok(Running { child, said })
     }
 
-    /// Types a console line.
+    /// Says `line` to the game's console.
     fn say(child: &mut Child, line: &str) -> Result<(), String> {
         let stdin = child.stdin.as_mut().ok_or("the game has no input")?;
         writeln!(stdin, "{line}").map_err(|error| format!("the game went away: {error}"))?;
@@ -160,44 +220,73 @@ impl GameRunner {
         let _waited = child.wait();
     }
 
-    /// `shot`: a screenshot of the map, after any console lines.
+    /// `shot`: a screenshot of the map, from a place if it's given, after any console lines.
+    /// If the map didn't load it says so: a picture of a menu isn't a picture of a level.
     ///
     /// # Errors
     ///
-    /// Returns a message if the game can't run.
+    /// Returns a message if the game can't run, or the map didn't load.
     pub fn shot(&self, args: &Json) -> Result<Json, String> {
         let path = args
             .get("path")
             .and_then(Json::as_str)
             .ok_or("path is required")?;
-        let mut child = self.start()?;
-        if let Some(lines) = args.get("commands").and_then(Json::as_array) {
-            for line in lines.iter().filter_map(Json::as_str) {
-                Self::say(&mut child, line)?;
-                std::thread::sleep(Duration::from_millis(300));
-            }
+        let mut game = self.start()?;
+        let mut lines: Vec<String> = Vec::new();
+        if let Some(from) = args.get("from").and_then(Json::as_array) {
+            let place: Vec<String> = from.iter().map(ToString::to_string).collect();
+            let number = |key: &str| args.get(key).and_then(Json::as_f64).unwrap_or(0.0);
+            lines.push("noclip".to_owned());
+            lines.push(format!(
+                "setpos {} {} {}",
+                place.join(" "),
+                number("yaw"),
+                number("pitch")
+            ));
+        }
+        if let Some(commands) = args.get("commands").and_then(Json::as_array) {
+            lines.extend(commands.iter().filter_map(Json::as_str).map(str::to_owned));
+        }
+        for line in &lines {
+            Self::say(&mut game.child, line)?;
+            std::thread::sleep(Duration::from_millis(300));
         }
         Self::say(
-            &mut child,
+            &mut game.child,
             &format!("screenshot {}", path.replace('\\', "/")),
         )?;
         std::thread::sleep(Duration::from_secs(1));
-        Self::finish(child);
-        Ok(json!({ "path": path }))
+        let (loaded, trouble) = game.report(&self.map);
+        Self::finish(game.child);
+        if !loaded {
+            return Err(format!(
+                "{} didn't load, so that's no picture of it: {trouble:?}",
+                self.map
+            ));
+        }
+        Ok(json!({ "path": path, "trouble": trouble }))
     }
 
-    /// `playtest`: runs the map for a while and reports whether it stayed up.
+    /// `playtest`: runs the map for a while, and says whether it loaded and stayed up, and
+    /// what went wrong.
     ///
     /// # Errors
     ///
     /// Returns a message if the game can't run.
     pub fn playtest(&self, args: &Json) -> Result<Json, String> {
         let seconds = args.get("seconds").and_then(Json::as_f64).unwrap_or(5.0);
-        let mut child = self.start()?;
+        let mut game = self.start()?;
         std::thread::sleep(Duration::from_secs_f64(seconds.clamp(0.0, 600.0)));
-        let exited = child.try_wait().map_err(|error| error.to_string())?;
+        let exited = game.child.try_wait().map_err(|error| error.to_string())?;
+        let (loaded, trouble) = game.report(&self.map);
         let running = exited.is_none();
-        Self::finish(child);
-        Ok(json!({ "stayed_up": running, "seconds": seconds }))
+        Self::finish(game.child);
+        Ok(json!({
+            "ok": loaded && running && trouble.is_empty(),
+            "loaded": loaded,
+            "stayed_up": running,
+            "seconds": seconds,
+            "trouble": trouble,
+        }))
     }
 }

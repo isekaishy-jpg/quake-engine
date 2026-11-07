@@ -194,7 +194,10 @@ fn block_of(session: &Session, kind: &str) -> String {
 /// Each feature's operation adds its block, and undo takes it away.
 #[test]
 fn features_have_operations_that_undo() {
-    let mut session = Session::new(&content("features"));
+    let root = content("features");
+    fs::create_dir_all(root.join("meshes")).expect("directory");
+    fs::write(root.join("meshes").join("statue.emesh"), "").expect("write");
+    let mut session = Session::new(&root);
     let before = session.text();
     ok(
         &mut session,
@@ -540,4 +543,179 @@ fn the_effects_that_come_with_the_engine_make_sense() {
     let mut session = Session::new(&root);
     let answer = run(&mut session, "check_effects", &json!({})).expect("runs");
     assert_eq!(answer, json!({}));
+}
+
+/// An empty map in a temporary content folder.
+fn fresh(name: &str) -> Session {
+    let folder = std::env::temp_dir().join(format!("checks_{name}_{}", std::process::id()));
+    fs::create_dir_all(&folder).expect("a folder");
+    Session::new(&folder)
+}
+
+/// What `validate` finds, as text.
+fn problems(session: &mut Session) -> String {
+    let answer = run(session, "validate", &json!({})).expect("it answers");
+    answer["problems"].to_string()
+}
+
+#[test]
+fn validating_finds_what_compiling_lets_through() {
+    let mut session = fresh("problems");
+    ok(
+        &mut session,
+        "add_entity",
+        json!({ "type": "effect", "effect": "none", "fields": { "effect": "none" } }),
+    );
+    ok(
+        &mut session,
+        "add_entity",
+        json!({ "type": "zone", "fields": { "title": "Hall", "music": "music/none.ogg" } }),
+    );
+    ok(
+        &mut session,
+        "set_block",
+        json!({ "kind": "fog", "fields": { "densty": 0.01 } }),
+    );
+    let found = problems(&mut session);
+    assert!(found.contains("no effect called none"), "{found}");
+    assert!(found.contains("no shape"), "{found}");
+    assert!(found.contains("no music"), "{found}");
+    assert!(found.contains("no field densty"), "{found}");
+    assert!(found.contains("nowhere to start"), "{found}");
+}
+
+#[test]
+fn what_a_map_cant_hold_is_refused_at_once() {
+    let mut session = fresh("refused");
+    assert!(run(&mut session, "set_block", &json!({ "kind": "nonsense" })).is_err());
+    assert!(run(&mut session, "place_mesh", &json!({ "source": "none" })).is_err());
+    assert!(
+        run(
+            &mut session,
+            "add_brush",
+            &json!({ "cuboid": [8, 8, 8, 0, 0, 0] })
+        )
+        .is_err()
+    );
+}
+
+#[test]
+fn undo_goes_back_through_changes_of_every_kind() {
+    let mut session = fresh("undo");
+    let first = session.text();
+    ok(
+        &mut session,
+        "add_brush",
+        json!({ "cuboid": [0, 0, 0, 8, 8, 8] }),
+    );
+    let one = session.text();
+    ok(
+        &mut session,
+        "add_brush",
+        json!({ "cuboid": [16, 0, 0, 24, 8, 8] }),
+    );
+    let two = session.text();
+    ok(
+        &mut session,
+        "set_field",
+        json!({ "id": 1, "key": "material", "value": "stone" }),
+    );
+    let three = session.text();
+    ok(&mut session, "delete", json!({ "id": 1 }));
+    let four = session.text();
+    for expected in [&three, &two, &one, &first] {
+        assert_eq!(ok(&mut session, "undo", json!({}))["changed"], true);
+        assert_eq!(&session.text(), expected);
+    }
+    assert_eq!(ok(&mut session, "undo", json!({}))["changed"], false);
+    for expected in [&one, &two, &three, &four] {
+        assert_eq!(ok(&mut session, "redo", json!({}))["changed"], true);
+        assert_eq!(&session.text(), expected);
+    }
+}
+
+#[test]
+fn a_change_after_undoing_ends_what_could_be_redone() {
+    let mut session = fresh("redo");
+    ok(
+        &mut session,
+        "add_brush",
+        json!({ "cuboid": [0, 0, 0, 8, 8, 8] }),
+    );
+    ok(&mut session, "undo", json!({}));
+    ok(
+        &mut session,
+        "add_brush",
+        json!({ "cuboid": [16, 0, 0, 24, 8, 8] }),
+    );
+    ok(&mut session, "undo", json!({}));
+    ok(&mut session, "redo", json!({}));
+    assert_eq!(ok(&mut session, "redo", json!({}))["changed"], false);
+}
+
+#[test]
+fn describing_can_be_narrowed() {
+    let mut session = fresh("describe");
+    for index in 0..250 {
+        let x = f64::from(index) * 32.0;
+        ok(
+            &mut session,
+            "add_entity",
+            json!({ "type": "light", "origin": [x, 0, 0] }),
+        );
+    }
+    ok(
+        &mut session,
+        "add_entity",
+        json!({ "type": "info_player_start", "origin": [0, 0, 0] }),
+    );
+    let all = ok(&mut session, "describe", json!({}));
+    assert_eq!(all["matching"], 251);
+    assert_eq!(all["things"].as_array().expect("things").len(), 200);
+    let start = ok(
+        &mut session,
+        "describe",
+        json!({ "type": "info_player_start" }),
+    );
+    assert_eq!(start["matching"], 1);
+    let near = ok(
+        &mut session,
+        "describe",
+        json!({ "near": [0, 0, 0], "radius": 40 }),
+    );
+    assert_eq!(near["matching"], 3);
+    let everything = ok(&mut session, "describe", json!({ "limit": 0 }));
+    assert_eq!(everything["things"].as_array().expect("things").len(), 251);
+}
+
+#[test]
+fn a_broken_shader_or_effect_is_refused_and_a_good_one_written() {
+    let mut session = fresh("writes");
+    assert!(
+        run(
+            &mut session,
+            "write_shader",
+            &json!({ "name": "bad", "text": "nonsense" })
+        )
+        .is_err()
+    );
+    let code = "fn shader_uv(uv: vec2<f32>, world: vec3<f32>) -> vec2<f32> { return uv; }";
+    ok(
+        &mut session,
+        "write_shader",
+        json!({ "name": "good", "text": code }),
+    );
+    assert_eq!(
+        ok(&mut session, "read_shader", json!({ "name": "good" }))["text"],
+        code
+    );
+    assert!(
+        run(
+            &mut session,
+            "write_effect",
+            &json!({ "name": "bad", "text": "{" })
+        )
+        .is_err()
+    );
+    assert!(run(&mut session, "read_effect", &json!({ "name": "bad" })).is_err());
 }
