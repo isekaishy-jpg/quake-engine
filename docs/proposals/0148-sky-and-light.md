@@ -55,7 +55,7 @@ Keys go round through a day, with what's between blended. They can say sky, clou
 
 ### Final bake (69)
 
-`engine-compile --final` runs what's too slow for each build, today the heat map and more samples. Its results go in a side file, and an everyday build leaves that file alone, so a level keeps its last final bake. `--final-area low high` only redoes what's in a box. The editor gets a button for it in stage 15, and a tool op now.
+`engine-compile --bake final` runs what's too slow for each build, today finer samples and more of what bounces, and the heat map once there is one. Its results go in a file of their own, and an everyday build leaves that file alone, so a level keeps its last final bake. `--area` with two corners only takes that care over what's in a box. `--bake quick` and `--bake none` are for seeing a level soon. The editor gets a button for it in stage 15, and the `compile` tool takes the same now.
 
 ## What it doesn't do
 
@@ -95,5 +95,15 @@ Each of those comes from the research, and none needs more for what the items as
 - **A grid can't go down from the sky.** Outside a level is solid, so looking from up there finds nothing. Each cell looks both ways from the height of the view: up to see if the sun gets there, and down to see where it lands. Under a roof it's the roof.
 - **What it costs:** about 1 ms at 1280 by 720, looking towards the sun with the sky filling the view, and nothing looking away. It's taken half the steps a window's rays take to get there. That's a lot for what it is, and it's for the performance sweep to look at again.
 - **Light bleeds a little over edges.** Rays are worked out in big pixels, so bright sky shows a short way over what's in front of it. It looks like glare, so it stays.
+
+### Final bake (69)
+
+- **Tried in the game, on one small level:** a quick bake took 0.5 s and is blocky and dark, as nothing bounces. A build took 0.7 s, and a final bake 4.4 s, with 3.6 times the samples and sharper shadows. A build after it left the final bake alone, and the game still used it. `--bake none` took 0.1 s, and the level plays flat and unlit.
+- **A build is what it was.** `usual` is the same bake, to the byte, and a test holds it to that.
+- **A part goes by whole faces.** Anything touching the box counts, so a floor that runs under a whole level brings all of it. That level's one big floor made a part cost 3.7 s, and a box clear of it took 1.4 s. Levels are made of smaller faces, and land has a grid of its own, which only a whole level changes.
+- **What's outside the part doesn't look at more of what bounces.** At first it did, which cost nearly what all of it did.
+- **A stale final bake is passed over,** and the compiler says so. A level is never shown with light from an older version of itself.
+- **It ships.** A pack takes what's in the folder, so `.efinal` goes with a level.
+- **What isn't there yet:** the heat map, which is item 68, and the editor's button, in stage 15.
 
 Filled in as each part lands.

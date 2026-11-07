@@ -41,7 +41,8 @@ mod tree;
 mod visibility;
 
 pub use bake::{
-    apply_bake, attach_side_files, bake_folder, map_hash, side_files, source_hash, write_bake,
+    apply_bake, apply_saved_bake, attach_side_files, bake_files, bake_folder, bake_is_for,
+    final_folder, map_hash, side_files, source_hash, write_bake,
 };
 pub use build::{
     TextureSource, compile, compile_known, compile_text, read_map_text, water_picture_paths,
@@ -59,7 +60,9 @@ pub use field::FieldSource;
 pub use geometry::{Plane3, Point};
 pub use gltf_import::{ImportedModel, import_gltf, write_mesh};
 pub use land_pictures::pack_land;
-pub use light::{BakeInput, ImageReader, bake_light, light_tracks};
+pub use light::{
+    BakeInput, BakeLevel, BakeQuality, ImageReader, bake_light, bake_light_as, light_tracks,
+};
 pub use material::{MaterialLibrary, decode_png, document_of};
 pub use mesh::{
     LoadedMesh, Mesh, MeshAttach, MeshPart, MorphMove, PlacedMesh, PlacedTriangle, angles_of,

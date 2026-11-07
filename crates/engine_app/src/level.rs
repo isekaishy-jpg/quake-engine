@@ -4,7 +4,7 @@ use std::error::Error;
 use std::sync::Arc;
 
 use engine_assets::FileSystem;
-use engine_compile::{PlayMap, apply_bake, attach_side_files, document_of, play_map};
+use engine_compile::{PlayMap, apply_saved_bake, document_of, play_map};
 use engine_map::SideFiles;
 use fixture_quake::{LoadedLevel, load_palette, spawn_point};
 
@@ -40,12 +40,9 @@ pub(crate) fn load_level(
     };
     let document = document_of(&bytes)?;
     let PlayMap { mut map, hash, .. } = play_map(filesystem, name, &document)?;
-    if let Ok(baked) = filesystem.read(&format!("maps/{name}.ebake")) {
-        apply_bake(&mut map, &baked, hash)?;
-        let source = Arc::clone(filesystem);
-        let files: SideFiles = Arc::new(move |path| source.read(path).ok());
-        attach_side_files(&mut map, name, &files);
-    }
+    let source = Arc::clone(filesystem);
+    let files: SideFiles = Arc::new(move |path| source.read(path).ok());
+    apply_saved_bake(&mut map, name, hash, &files)?;
     map.drop_copy_faces();
     let map = Arc::new(map);
     let palette = load_palette(filesystem)?;

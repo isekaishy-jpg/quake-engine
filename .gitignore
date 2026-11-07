@@ -5,6 +5,7 @@
 
 # Compiled output.
 *.ebake
+*.efinal
 *.ebin
 *.egeo
 /content/compiled/

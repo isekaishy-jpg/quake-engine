@@ -17,8 +17,9 @@ use std::time::Instant;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, MaterialLibrary, bake_folder, bake_light, compile, map_hash, occluders_of,
-    pack_content, pack_textures, read_map, side_files, write_bake, write_geometry, write_occlusion,
+    BakeInput, BakeLevel, BakeQuality, MaterialLibrary, bake_files, bake_is_for, bake_light_as,
+    compile, map_hash, occluders_of, pack_content, pack_textures, read_map, write_geometry,
+    write_occlusion,
 };
 use engine_format::{from_text, to_binary};
 use engine_map::{MipLevel, Texture};
@@ -38,8 +39,46 @@ fn write_sidecar(
     Ok(())
 }
 
+/// What the arguments say of a bake, which is `None` for no bake at all.
+fn bake_wanted(
+    arguments: &mut std::iter::Peekable<impl Iterator<Item = String>>,
+) -> Result<Option<BakeQuality>, String> {
+    let mut quality = BakeQuality::default();
+    if arguments.next_if(|first| first == "--bake").is_some() {
+        match arguments.next().as_deref() {
+            Some("quick") => quality.level = BakeLevel::Quick,
+            Some("usual") => quality.level = BakeLevel::Usual,
+            Some("final") => quality.level = BakeLevel::Final,
+            Some("none") => return Ok(None),
+            other => {
+                return Err(format!(
+                    "--bake is quick, usual, final or none, not {other:?}"
+                ));
+            }
+        }
+    }
+    if arguments.next_if(|first| first == "--area").is_some() {
+        if quality.level != BakeLevel::Final {
+            return Err("--area is for a final bake".to_owned());
+        }
+        let mut number = || -> Result<f64, String> {
+            let text = arguments.next().ok_or("--area needs six numbers")?;
+            text.parse().map_err(|_| format!("{text} isn't a number"))
+        };
+        let low = [number()?, number()?, number()?];
+        let high = [number()?, number()?, number()?];
+        quality.area = Some([low, high]);
+    }
+    Ok(Some(quality))
+}
+
 /// Compiles one map.
-fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<(), Box<dyn Error>> {
+fn compile_map(
+    content: &Path,
+    filesystem: &FileSystem,
+    name: &str,
+    bake: Option<BakeQuality>,
+) -> Result<(), Box<dyn Error>> {
     let started = Instant::now();
     let path = format!("maps/{name}.emap");
     let bytes = filesystem.read(&path)?;
@@ -75,20 +114,31 @@ fn compile_map(content: &Path, filesystem: &FileSystem, name: &str) -> Result<()
         working: &working,
         images: &mut images,
     };
-    bake_light(&mut map, &mut input)?;
+    if let Some(quality) = bake {
+        bake_light_as(&mut map, &mut input, quality)?;
+    }
     // The bake was all that needed a copy's triangles.
     map.drop_copy_faces();
     let kept = content.join("maps").join(format!("{name}.egeo"));
     std::fs::write(&kept, write_geometry(&map, hash))?;
-    let out = content.join("maps").join(format!("{name}.ebake"));
-    std::fs::write(&out, write_bake(&map, hash))?;
-    let beside = side_files(&map);
-    if !beside.is_empty() {
-        let folder = content.join(bake_folder(name));
-        std::fs::create_dir_all(&folder)?;
-        for (file, bytes) in beside {
-            std::fs::write(folder.join(file), bytes)?;
+    match bake {
+        Some(quality) => {
+            for (file, bytes) in bake_files(&map, name, hash, quality.level) {
+                let out = content.join(file);
+                if let Some(folder) = out.parent() {
+                    std::fs::create_dir_all(folder)?;
+                }
+                std::fs::write(&out, bytes)?;
+            }
         }
+        // An old bake would only say that it's out of date.
+        None => {
+            let _gone = std::fs::remove_file(content.join("maps").join(format!("{name}.ebake")));
+        }
+    }
+    let finished = content.join("maps").join(format!("{name}.efinal"));
+    if std::fs::read(finished).is_ok_and(|bytes| !bake_is_for(&bytes, hash)) {
+        println!("{name}: its final bake is out of date, and a build's is used");
     }
     // What ships: the same document, in binary, which plays with no text.
     let binary = content.join("maps").join(format!("{name}.ebin"));
@@ -106,6 +156,11 @@ fn main() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
     let Some(content) = arguments.next() else {
         eprintln!("usage: engine-compile <content directory> [--occlusion] <name> ...");
+        eprintln!("       engine-compile <content directory> --bake <how> <name> ...");
+        eprintln!("         how is quick, usual, final or none");
+        eprintln!(
+            "       engine-compile <content directory> --bake final --area <low> <high> <name>"
+        );
         eprintln!("       engine-compile <content directory> --textures");
         eprintln!("       engine-compile <content directory> --pack <file>");
         return ExitCode::FAILURE;
@@ -147,11 +202,18 @@ fn main() -> ExitCode {
     filesystem.mount(Box::new(DirectoryArchive::new(content)));
     let mut failed = false;
     let sidecars = arguments.next_if(|first| first == "--occlusion").is_some();
+    let bake = match bake_wanted(&mut arguments) {
+        Ok(bake) => bake,
+        Err(error) => {
+            eprintln!("{error}");
+            return ExitCode::FAILURE;
+        }
+    };
     for name in arguments {
         let done = if sidecars {
             write_sidecar(content, &filesystem, &name)
         } else {
-            compile_map(content, &filesystem, &name)
+            compile_map(content, &filesystem, &name, bake)
         };
         if let Err(error) = done {
             eprintln!("{name}: {error}");

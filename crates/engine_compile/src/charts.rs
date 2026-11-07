@@ -61,6 +61,8 @@ pub(crate) struct Spot {
 /// Triangles sharing a light map.
 #[derive(Clone, Debug, PartialEq)]
 pub(crate) struct Chart {
+    /// How far apart its samples are.
+    pub(crate) spacing: f64,
     /// Its faces. The first holds its light.
     pub(crate) faces: Vec<u32>,
     /// How a place becomes a place on its light map.
@@ -368,6 +370,7 @@ fn finished(growing: &Growing, triangles: &[Triangle], spacing: f64) -> Chart {
         faces.push(triangle.face);
     }
     Chart {
+        spacing,
         faces,
         axes: [map_axis(growing.axes.0), map_axis(growing.axes.1)],
         width,
@@ -410,7 +413,7 @@ fn charts_of(map: &Map, group: &MeshGroup, spacing: f64) -> Vec<Chart> {
 
 /// The one chart of a mesh lit by a probe: a single sample in the middle of it,
 /// with axes that hold every corner to that sample.
-fn probe_chart(map: &Map, group: &MeshGroup) -> Option<Chart> {
+fn probe_chart(map: &Map, group: &MeshGroup, spacing: f64) -> Option<Chart> {
     let triangles = triangles_of(map, group);
     let mut sum = [0.0; 3];
     let mut area = 0.0;
@@ -435,6 +438,7 @@ fn probe_chart(map: &Map, group: &MeshGroup) -> Option<Chart> {
         offset: 0.0,
     };
     Some(Chart {
+        spacing,
         faces: triangles.iter().map(|triangle| triangle.face).collect(),
         axes: [none, none],
         width: 1,
@@ -487,6 +491,7 @@ fn chunk_chart(sheet: &TerrainSheet, (x, y): (u32, u32), spacing: f64) -> Chart 
     #[expect(clippy::cast_possible_truncation, reason = "a world place")]
     let origin = [low.x as i32, low.y as i32];
     Chart {
+        spacing,
         faces: vec![sheet.first_face + y * across + x],
         axes: [
             axis(Vec3::new(1.0, 0.0, 0.0)),
@@ -503,17 +508,19 @@ fn chunk_chart(sheet: &TerrainSheet, (x, y): (u32, u32), spacing: f64) -> Chart 
 }
 
 /// Every chart in `map`.
-pub(crate) fn map_charts(map: &Map, spacing: f64) -> Vec<Chart> {
+pub(crate) fn map_charts(map: &Map, spacing: &dyn Fn(u32) -> f64, land: f64) -> Vec<Chart> {
     let meshes = map.mesh_groups.iter().flat_map(|group| {
         if group.by_probe {
-            probe_chart(map, group).into_iter().collect()
+            probe_chart(map, group, spacing(group.first_face))
+                .into_iter()
+                .collect()
         } else {
-            charts_of(map, group, spacing)
+            charts_of(map, group, spacing(group.first_face))
         }
     });
     let land = map.terrain.iter().flat_map(|sheet| {
         let [across, down] = sheet.data.chunks();
-        (0..down).flat_map(move |y| (0..across).map(move |x| chunk_chart(sheet, (x, y), spacing)))
+        (0..down).flat_map(move |y| (0..across).map(move |x| chunk_chart(sheet, (x, y), land)))
     });
     meshes.chain(land).collect()
 }

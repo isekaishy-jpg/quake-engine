@@ -737,6 +737,8 @@ fn face_space(map: &Map, face: &Face) -> Option<FaceSpace> {
 
 /// One face's samples before they're laid out.
 struct FaceBake {
+    /// Whether it has a final bake's care.
+    fine: bool,
     /// Its layers: a style and each sample's colour.
     layers: Vec<(u8, Vec<[f64; 3]>)>,
     /// Where its strongest light comes from, per sample.
@@ -1366,6 +1368,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         .map(|(style, source)| (*style, std::ptr::from_ref(*source).addr()))
         .collect();
     Some(FaceBake {
+        fine: false,
         layers,
         directions,
         light,
@@ -1403,13 +1406,7 @@ fn all_round(scene: &Scene<'_>, source: &BakeLight, point: Point, reach: f64) ->
 /// Lights one chart of a mesh, which is `number` of them. Each sample takes the
 /// light that falls on the surface there, by its own normal, so the mesh looks
 /// smooth, and no light is sharp, as one sample has to serve a curve.
-fn bake_chart(
-    scene: &Scene<'_>,
-    map: &Map,
-    chart: &Chart,
-    number: usize,
-    spacing: f64,
-) -> Option<FaceBake> {
+fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Option<FaceBake> {
     let first = map.faces.get(*chart.faces.first()? as usize)?;
     let count = chart.spots.len();
     let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
@@ -1443,10 +1440,11 @@ fn bake_chart(
         clippy::cast_sign_loss,
         reason = "small"
     )]
-    let texels_per_sample = spacing as u32;
+    let texels_per_sample = chart.spacing as u32;
     #[expect(clippy::cast_possible_wrap, reason = "there aren't that many charts")]
     let own_grid = number as i64;
     Some(FaceBake {
+        fine: false,
         layers,
         directions,
         light: FaceLight {
@@ -1896,7 +1894,12 @@ fn thinned(sources: Vec<BounceSource>, most: usize) -> Vec<BounceSource> {
 }
 
 /// Picks evenly from what's lit, tile by tile.
-fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64, tile_size: f64) -> BounceField {
+fn bounce_sources(
+    bakes: &[Option<FaceBake>],
+    spacing: f64,
+    tile_size: f64,
+    wider: usize,
+) -> BounceField {
     let mut field = BounceField {
         tile_size,
         tiles: HashMap::new(),
@@ -1948,7 +1951,7 @@ fn bounce_sources(bakes: &[Option<FaceBake>], spacing: f64, tile_size: f64) -> B
     };
     field.tiles = tiles
         .into_iter()
-        .map(|(tile, sources)| (tile, thinned(sources, most)))
+        .map(|(tile, sources)| (tile, thinned(sources, most * wider)))
         .collect();
     field
 }
@@ -1993,11 +1996,9 @@ fn bounced_at(
 /// The places along a row of `count` samples where bounced light is worked out:
 /// every so often, and the two at each end. A row's end hangs off its face and
 /// is often in a wall, and drawing the next one from that would darken corners.
-fn bounce_stops(count: usize) -> Vec<usize> {
+fn bounce_stops(count: usize, stride: usize) -> Vec<usize> {
     let inside = 1..count.saturating_sub(1);
-    let mut stops: Vec<usize> = std::iter::once(0)
-        .chain(inside.step_by(BOUNCE_STRIDE))
-        .collect();
+    let mut stops: Vec<usize> = std::iter::once(0).chain(inside.step_by(stride)).collect();
     for end in [count.saturating_sub(2), count.saturating_sub(1)] {
         if stops.last().is_some_and(|last| *last < end) {
             stops.push(end);
@@ -2026,8 +2027,9 @@ fn bounced_face(
     gain: f64,
 ) -> Vec<[f64; 3]> {
     let (width, height) = (bake.light.width as usize, bake.light.height as usize);
-    let columns = bounce_stops(width);
-    let rows = bounce_stops(height);
+    let stride = if bake.fine { 1 } else { BOUNCE_STRIDE };
+    let columns = bounce_stops(width, stride);
+    let rows = bounce_stops(height, stride);
     let mut known = Vec::with_capacity(columns.len() * rows.len());
     for row in &rows {
         for column in &columns {
@@ -2206,6 +2208,96 @@ fn bake_probes(
     })
 }
 
+/// How much work a bake does.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BakeLevel {
+    /// Coarse, with nothing bounced, to see a level soon.
+    Quick,
+    /// What a build does.
+    #[default]
+    Usual,
+    /// Fine, for a level that's done. It's kept apart from what a build makes.
+    Final,
+}
+
+/// How a bake goes.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct BakeQuality {
+    /// How much work it does.
+    pub level: BakeLevel,
+    /// The low and high corners of the part of a level that gets a final bake's care, if it's
+    /// not all of it. Land has one grid for all of it, so only a whole level changes that.
+    pub area: Option<[[f64; 3]; 2]>,
+}
+
+/// How much coarser a quick bake's samples are.
+const QUICK_SPACING: f64 = 4.0;
+
+/// How much finer a final bake's samples are.
+const FINAL_SPACING: f64 = 2.0;
+
+/// The closest a final bake's samples get.
+const FINEST_SPACING: f64 = 2.0;
+
+/// How many more bouncing samples a final bake looks at.
+const FINAL_BOUNCE_SOURCES: usize = 4;
+
+impl BakeQuality {
+    /// Whether a final bake's care goes on a face with these corners.
+    fn is_fine(&self, low: [f32; 3], high: [f32; 3]) -> bool {
+        self.level == BakeLevel::Final
+            && self.area.is_none_or(|[from, to]| {
+                (0..3).all(|axis| {
+                    f64::from(high[axis]) >= from[axis] && f64::from(low[axis]) <= to[axis]
+                })
+            })
+    }
+
+    /// How far apart samples are on land, where a build would have `spacing`.
+    fn land_spacing(&self, spacing: f64) -> f64 {
+        match self.level {
+            BakeLevel::Quick => spacing * QUICK_SPACING,
+            BakeLevel::Final if self.area.is_none() => fine_spacing(spacing),
+            _ => spacing,
+        }
+    }
+
+    /// How far apart samples are on `face`, where a build would have `spacing`.
+    fn spacing_of(&self, map: &Map, face: &Face, spacing: f64) -> f64 {
+        if self.level == BakeLevel::Quick {
+            return spacing * QUICK_SPACING;
+        }
+        let [low, high] = face_corners(map, face);
+        if self.is_fine(low, high) {
+            fine_spacing(spacing)
+        } else {
+            spacing
+        }
+    }
+}
+
+/// How far apart a final bake's samples are, where a build would have `spacing`.
+fn fine_spacing(spacing: f64) -> f64 {
+    (spacing / FINAL_SPACING)
+        .floor()
+        .max(FINEST_SPACING)
+        .min(spacing)
+}
+
+/// The low and high corners of `face`.
+fn face_corners(map: &Map, face: &Face) -> [[f32; 3]; 2] {
+    let first = face.first_point as usize;
+    let points = map.points.get(first..first + face.point_count as usize);
+    let (mut low, mut high) = ([f32::MAX; 3], [f32::MIN; 3]);
+    for point in points.unwrap_or_default() {
+        for (axis, part) in [point.x, point.y, point.z].into_iter().enumerate() {
+            low[axis] = low[axis].min(part);
+            high[axis] = high[axis].max(part);
+        }
+    }
+    [low, high]
+}
+
 /// What a bake needs beyond the map.
 pub struct BakeInput<'a> {
     /// The map as written.
@@ -2225,6 +2317,19 @@ fn material_of<'a>(map: &'a Map, face: &Face) -> Option<&'a Material> {
 ///
 /// Returns an error if a light's image can't be read.
 pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), CompileError> {
+    bake_light_as(map, input, BakeQuality::default())
+}
+
+/// Bakes `map`'s light as `quality` says, which is how much work to do on it.
+///
+/// # Errors
+///
+/// Returns an error if a light's picture can't be read.
+pub fn bake_light_as(
+    map: &mut Map,
+    input: &mut BakeInput<'_>,
+    quality: BakeQuality,
+) -> Result<(), CompileError> {
     let working = input.working;
     let mut lights = read_lights(working, input.images)?;
     let world = working
@@ -2356,7 +2461,9 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
 
     let faces: Vec<Face> = map.faces.clone();
     let shared: &Map = map;
-    let charts = map_charts(shared, spacing);
+    let face_spacing = |face: &Face| quality.spacing_of(shared, face, spacing);
+    let spacing_at = |number: u32| faces.get(number as usize).map_or(spacing, face_spacing);
+    let charts = map_charts(shared, &spacing_at, quality.land_spacing(spacing));
     let mut charted = vec![false; faces.len()];
     for face in charts.iter().flat_map(|chart| &chart.faces) {
         charted[*face as usize] = true;
@@ -2364,12 +2471,12 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     let numbered: Vec<(&Face, bool)> = faces.iter().zip(charted.iter().copied()).collect();
     let mut bakes: Vec<Option<FaceBake>> = in_parallel(&numbered, |(face, charted)| {
         (!charted)
-            .then(|| bake_face(&scene, shared, face, spacing))
+            .then(|| bake_face(&scene, shared, face, face_spacing(face)))
             .flatten()
     });
     let numbered_charts: Vec<(usize, &Chart)> = charts.iter().enumerate().collect();
     let chart_bakes = in_parallel(&numbered_charts, |(number, chart)| {
-        bake_chart(&scene, shared, chart, *number, spacing)
+        bake_chart(&scene, shared, chart, *number)
     });
     for (chart, bake) in charts.iter().zip(chart_bakes) {
         if let Some(first) = chart.faces.first() {
@@ -2383,10 +2490,29 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
     } else {
         LAND_BOUNCE_TILE
     };
-    let sources = bounce_sources(&bakes, spacing, bounce_tile);
+    for (bake, face) in bakes.iter_mut().zip(&faces) {
+        if let Some(bake) = bake {
+            let [low, high] = face_corners(shared, face);
+            bake.fine = quality.is_fine(low, high);
+        }
+    }
+    let lit = if quality.level == BakeLevel::Quick {
+        &[][..]
+    } else {
+        &bakes[..]
+    };
+    let sources = bounce_sources(lit, spacing, bounce_tile, 1);
+    // Looking at more of what bounces is most of what a final bake costs, so what's outside the
+    // part it's told to take care over doesn't.
+    let fine_sources = (quality.level == BakeLevel::Final)
+        .then(|| bounce_sources(lit, spacing, bounce_tile, FINAL_BOUNCE_SOURCES));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
-            let mut light = bounced_face(&scene, &sources, bake, bounce_gain);
+            let field = fine_sources
+                .as_ref()
+                .filter(|_| bake.fine)
+                .unwrap_or(&sources);
+            let mut light = bounced_face(&scene, field, bake, bounce_gain);
             for color in &mut light {
                 *color = color.map(|part| part + ambient);
             }

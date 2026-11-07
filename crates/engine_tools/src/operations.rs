@@ -5,8 +5,8 @@ use std::sync::Arc;
 
 use engine_assets::{DirectoryArchive, FileSystem};
 use engine_compile::{
-    BakeInput, CompileError, MaterialLibrary, WorkingMap, bake_light, compile, map_hash, read_map,
-    side_files, write_bake,
+    BakeInput, BakeLevel, BakeQuality, CompileError, MaterialLibrary, WorkingMap, bake_files,
+    bake_light_as, compile, map_hash, read_map,
 };
 use engine_format::{Block, Value, to_binary};
 use engine_map::{Map, MipLevel, Texture};
@@ -627,8 +627,16 @@ pub const OPERATIONS: &[OperationInfo] = &[
     },
     OperationInfo {
         name: "compile",
-        help: "Bakes the saved map's light into a .ebake file.",
-        args: &[],
+        help: "Bakes the saved map's light. A final bake goes in a .efinal file, and a build leaves that alone.",
+        args: &[
+            may("bake", ArgKind::Text, "quick, usual or final"),
+            may(
+                "low",
+                ArgKind::Point,
+                "The low corner of the part a final bake takes care over",
+            ),
+            may("high", ArgKind::Point, "Its high corner"),
+        ],
     },
     OperationInfo {
         name: "shot",
@@ -856,7 +864,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "compile_shaders" => features::compile_all_shaders(session),
         "pack" => features::pack(session, args),
         "validate" => validate(session),
-        "compile" => bake(session),
+        "compile" => bake(session, args),
         "shot" => GameRunner::from_environment(session)?.shot(args),
         "play" => GameRunner::from_environment(session)?.play(),
         "playtest" => GameRunner::from_environment(session)?.playtest(args),
@@ -1161,7 +1169,35 @@ pub(crate) fn built_map(session: &Session) -> Result<(Map, WorkingMap, String), 
 }
 
 /// `compile`: bakes the saved map's light, and writes what the game loads.
-fn bake(session: &Session) -> Result<Json, String> {
+/// How a tool asks for a bake to go.
+fn quality_of(args: &Json) -> Result<BakeQuality, String> {
+    let level = match args.get("bake").and_then(Json::as_str) {
+        None | Some("usual") => BakeLevel::Usual,
+        Some("quick") => BakeLevel::Quick,
+        Some("final") => BakeLevel::Final,
+        Some(other) => return Err(format!("a bake is quick, usual or final, not {other}")),
+    };
+    let point = |name: &str| -> Option<[f64; 3]> {
+        let parts = args.get(name)?.as_array()?;
+        Some([
+            parts.first()?.as_f64()?,
+            parts.get(1)?.as_f64()?,
+            parts.get(2)?.as_f64()?,
+        ])
+    };
+    let area = match (point("low"), point("high")) {
+        (Some(low), Some(high)) => Some([low, high]),
+        (None, None) => None,
+        _ => return Err("a part of a level needs both corners".to_owned()),
+    };
+    if area.is_some() && level != BakeLevel::Final {
+        return Err("a part of a level is for a final bake".to_owned());
+    }
+    Ok(BakeQuality { level, area })
+}
+
+fn bake(session: &Session, args: &Json) -> Result<Json, String> {
+    let quality = quality_of(args)?;
     let path = session.path.as_ref().ok_or("save the map first")?;
     let problems = checks::problems_in(session);
     if !problems.is_empty() {
@@ -1177,17 +1213,23 @@ fn bake(session: &Session) -> Result<Json, String> {
         working: &working,
         images: &mut images,
     };
-    bake_light(&mut map, &mut input).map_err(|error| error.to_string())?;
-    let out = path.with_extension("ebake");
-    std::fs::write(&out, write_bake(&map, map_hash(&session.document, &used)))
-        .map_err(|error| error.to_string())?;
-    let beside = side_files(&map);
-    if !beside.is_empty() {
-        let folder = path.with_extension("").join("bake");
-        std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
-        for (file, bytes) in beside {
-            std::fs::write(folder.join(file), bytes).map_err(|error| error.to_string())?;
+    bake_light_as(&mut map, &mut input, quality).map_err(|error| error.to_string())?;
+    let hash = map_hash(&session.document, &used);
+    let name = path
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap_or("");
+    // Beside the map, wherever it's been saved.
+    let beside = path.parent().ok_or("save the map first")?;
+    let place_of = |file: &str| beside.join(file.strip_prefix("maps/").unwrap_or(file));
+    let files = bake_files(&map, name, hash, quality.level);
+    let out = place_of(files.first().map_or("", |(file, _)| file.as_str()));
+    for (file, bytes) in files {
+        let place = place_of(&file);
+        if let Some(folder) = place.parent() {
+            std::fs::create_dir_all(folder).map_err(|error| error.to_string())?;
         }
+        std::fs::write(place, bytes).map_err(|error| error.to_string())?;
     }
     std::fs::write(path.with_extension("ebin"), to_binary(&session.document))
         .map_err(|error| error.to_string())?;

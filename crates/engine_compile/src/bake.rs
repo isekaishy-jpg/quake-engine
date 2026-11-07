@@ -15,6 +15,7 @@ use engine_map::{
 };
 
 use crate::error::CompileError;
+use crate::light::BakeLevel;
 use crate::mega::{MegaPlace, apply_mega};
 
 /// Changes when bakes from older compilers can't be trusted.
@@ -237,14 +238,79 @@ pub fn bake_folder(name: &str) -> String {
     format!("maps/{name}/bake/")
 }
 
+/// Where what's beside a final bake of the map called `name` goes, apart from a build's.
+#[must_use]
+pub fn final_folder(name: &str) -> String {
+    format!("maps/{name}/final/")
+}
+
+/// The files a bake of the map called `name` makes, by where they go under the content folder.
+/// A final bake has names of its own, so a build leaves it alone.
+#[must_use]
+pub fn bake_files(map: &Map, name: &str, hash: u64, level: BakeLevel) -> Vec<(String, Vec<u8>)> {
+    let (file, folder) = if level == BakeLevel::Final {
+        (format!("maps/{name}.efinal"), final_folder(name))
+    } else {
+        (format!("maps/{name}.ebake"), bake_folder(name))
+    };
+    let mut out = vec![(file, write_bake(map, hash))];
+    for (beside, bytes) in side_files(map) {
+        out.push((format!("{folder}{beside}"), bytes));
+    }
+    out
+}
+
+/// Whether `bytes` is a bake of the map with `hash`.
+#[must_use]
+pub fn bake_is_for(bytes: &[u8], hash: u64) -> bool {
+    let Ok(document) = from_binary(bytes) else {
+        return false;
+    };
+    let source = document.blocks_of("source").next();
+    let known = source
+        .and_then(|block| block.get("hash"))
+        .and_then(Value::text);
+    known.is_some_and(|known| known == hash_text(hash))
+}
+
+/// Puts the best bake there is on `map`: a final one if it's still of this map, or else a
+/// build's. It says whether it found one.
+///
+/// # Errors
+///
+/// Returns an error if a file isn't a bake at all.
+pub fn apply_saved_bake(
+    map: &mut Map,
+    name: &str,
+    hash: u64,
+    read: &SideFiles,
+) -> Result<bool, CompileError> {
+    if let Some(bytes) = read(&format!("maps/{name}.efinal"))
+        && apply_bake(map, &bytes, hash)?
+    {
+        attach_files_in(map, &final_folder(name), read);
+        return Ok(true);
+    }
+    let Some(bytes) = read(&format!("maps/{name}.ebake")) else {
+        return Ok(false);
+    };
+    let applied = apply_bake(map, &bytes, hash)?;
+    attach_side_files(map, name, read);
+    Ok(applied)
+}
+
 /// Says where `map` can read what's beside its bake.
 pub fn attach_side_files(map: &mut Map, name: &str, files: &SideFiles) {
-    let folder = bake_folder(name);
+    attach_files_in(map, &bake_folder(name), files);
+}
+
+/// Says that what's beside `map`'s bake is in `folder`.
+fn attach_files_in(map: &mut Map, folder: &str, files: &SideFiles) {
     for nav in map.nav_chunks.iter_mut().flatten() {
-        nav.attach(&folder, Arc::clone(files));
+        nav.attach(folder, Arc::clone(files));
     }
     if let Some(tiles) = &mut map.light_tiles {
-        tiles.attach(&folder, Arc::clone(files));
+        tiles.attach(folder, Arc::clone(files));
     }
 }
 

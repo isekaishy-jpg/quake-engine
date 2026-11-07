@@ -28,3 +28,22 @@ A new crate needs a proposal and a rule in `xtask/src/crate_graph/rules.rs`. The
 ## Game data
 
 The engine reads your own copy of Quake. Game data is never committed.
+
+## Bakes
+
+`engine-compile content <map>` bakes a level's light the usual way. `--bake` says how much work to do, before the map's name:
+
+| Bake | What it does |
+|---|---|
+| `quick` | Coarse, with nothing bounced, to see a level soon |
+| `usual` | What a build does |
+| `final` | Fine, for a level that's done. It goes in `maps/<map>.efinal`, and a build leaves that alone |
+| `none` | No light, and a level plays flat. It takes away a build's bake |
+
+The game uses a final bake if it's of this version of the level, and a build's if it isn't, and the compiler says when a final bake is out of date. What only a final bake shows has to be checked before a level's done, so one can be run on part of a level, with two corners:
+
+```bash
+target/release/engine-compile content --bake final --area -300 -300 0 300 300 300 yard
+```
+
+That goes by whole faces, so a floor that runs through the box counts all of it. The `compile` tool takes `bake`, `low` and `high`.

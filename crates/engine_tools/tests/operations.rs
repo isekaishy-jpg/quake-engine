@@ -372,6 +372,66 @@ fn materials_edit_safely() {
     assert!(again["text"].as_str().expect("text").contains("surface"));
 }
 
+/// A map with a floor and a light, saved as `name` in `root`.
+fn saved_map(root: &Path, name: &str) -> Session {
+    let mut session = Session::new(root);
+    let floor = json!({ "cuboid": [-64, -64, -32, 64, 64, 0], "material": "stone" });
+    ok(&mut session, "add_brush", floor);
+    let start = json!({ "type": "info_player_start", "origin": [0, 0, 24] });
+    ok(&mut session, "add_entity", start);
+    let path = root.join(name);
+    let path = json!({ "path": path.display().to_string() });
+    ok(&mut session, "save", path);
+    session
+}
+
+/// A build's bake goes beside the map, and a final one has a file of its own.
+#[test]
+fn a_bake_goes_beside_its_map() {
+    let root = content("bakes");
+    let mut session = saved_map(&root, "mine.emap");
+    ok(&mut session, "compile", json!({}));
+    assert!(root.join("mine.ebake").exists());
+    assert!(!root.join("mine.efinal").exists());
+    let answer = ok(&mut session, "compile", json!({ "bake": "final" }));
+    assert!(root.join("mine.efinal").exists());
+    assert!(
+        answer["path"]
+            .as_str()
+            .expect("a path")
+            .ends_with("mine.efinal")
+    );
+}
+
+/// A quick bake is a build's, with less in it.
+#[test]
+fn a_quick_bake_is_kept_as_a_builds() {
+    let root = content("quick_bake");
+    let mut session = saved_map(&root, "mine.emap");
+    ok(&mut session, "compile", json!({ "bake": "quick" }));
+    assert!(root.join("mine.ebake").exists());
+    assert!(!root.join("mine.efinal").exists());
+}
+
+/// A part of a level takes both corners, and only makes sense for a final bake.
+#[test]
+fn a_bake_says_what_is_wrong_with_it() {
+    let root = content("bad_bakes");
+    let mut session = saved_map(&root, "mine.emap");
+    let bad = [
+        json!({ "bake": "slow" }),
+        json!({ "bake": "final", "low": [0, 0, 0] }),
+        json!({ "bake": "final", "high": [0, 0, 0] }),
+        json!({ "low": [0, 0, 0], "high": [1, 1, 1] }),
+    ];
+    for args in bad {
+        assert!(run(&mut session, "compile", &args).is_err(), "{args}");
+    }
+    let part = json!({ "bake": "final", "low": [-8, -8, -8], "high": [8, 8, 8] });
+    ok(&mut session, "compile", part);
+    assert!(root.join("mine.efinal").exists());
+}
+
 /// A map's script sits beside it, and needs a saved map to sit beside.
 #[test]
 fn a_maps_script_sits_beside_it() {
