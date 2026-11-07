@@ -819,7 +819,11 @@ impl Simulation {
     /// Where model point `at` is, on `parent` as it stands.
     fn point_on(&self, parent: &Entity, at: usize) -> Option<(Vec3, Vec3)> {
         let (_, point) = self.map.model_points.get(at)?;
-        Some((parent.origin + point.origin, parent.angles + point.angles))
+        let rows = after(
+            &placed_at(parent.origin, parent.angles),
+            &placed_at(point.origin, point.angles),
+        );
+        Some((moved(&rows, Vec3::ZERO), angles_of_rows(&rows)))
     }
 
     /// The moving mesh `entity` shows, if it shows one.
@@ -939,12 +943,35 @@ impl Simulation {
     /// Puts what's attached where it's held. This is at the end of a tick, once everything's
     /// moved, or it would lag behind what it's on. What's lost its parent lets go.
     fn follow_attachments(&mut self) {
-        let held: Vec<(EntityId, Attachment)> = self
+        let mut waiting: Vec<(EntityId, Attachment)> = self
             .entities
             .iter()
             .filter_map(|(id, entity)| Some((id, entity.attached?)))
             .collect();
-        for (id, attachment) in held {
+        // What holds something goes first, so that what it holds finds it where it is now.
+        while !waiting.is_empty() {
+            let held_now = |attachment: &Attachment| {
+                waiting
+                    .iter()
+                    .any(|(id, _)| Some(*id) == Some(attachment.parent))
+            };
+            let (later, mut ready): (Vec<_>, Vec<_>) = waiting
+                .iter()
+                .copied()
+                .partition(|(_, attachment)| held_now(attachment));
+            // Things holding each other in a ring have nowhere to start, so they lag a tick.
+            let ring = ready.is_empty();
+            if ring {
+                ready.clone_from(&later);
+            }
+            self.follow(&ready);
+            waiting = if ring { Vec::new() } else { later };
+        }
+    }
+
+    /// Puts each of `held` where what holds it says.
+    fn follow(&mut self, held: &[(EntityId, Attachment)]) {
+        for &(id, attachment) in held {
             let parent = self.entities.get(attachment.parent);
             let at = attachment.point as usize;
             let place = parent.and_then(|parent| {

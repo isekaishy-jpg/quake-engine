@@ -388,7 +388,7 @@ The audit found these. The human said to take every item with nothing left out, 
 |---|---|---|
 | 149 | Your own shots aim for half of the gap, as the human said, in place of [proposal 0126](../proposals/0126-own-shots.md)'s all of it | The human, 2026-11-04 |
 | 150 | Tighten the rewind allowance. [Proposal 0128](../proposals/0128-network-numbers.md) took it from about 42 ms to 114 ms over a compensated ping, which a cheat may be able to use | The fair play rules |
-| 151 | Doors: the revamp to better logic the human asked for, with the uneven closing delay and the pause then snap dealt with | The human, 2026-11-04 |
+| 151 | Doors: the revamp to better logic the human asked for, with the uneven closing delay and the pause then snap dealt with. Brush models don't turn when drawn or collided with, which a door that swings needs, so research that here, and an effect on a model turns with it then: places already do (proposal 0143) | The human, 2026-11-04 |
 | 152 | Finish the review: items 1 to 17 of the sprint were held to their tests, not reread | The sprint's final rounds |
 
 ## Not on the list

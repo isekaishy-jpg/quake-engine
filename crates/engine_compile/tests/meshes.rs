@@ -985,3 +985,33 @@ fn a_morph_with_no_such_corner_is_refused() {
     let text = "format 1 mesh\npart { material = a points = [0 0 0] uvs = [0 0] triangles = [] morph_0 = [5 1 0 0 0 0 0] }\n";
     assert!(read_mesh(&from_text(text).expect("reads")).is_err());
 }
+
+/// A file's morph weights are part of how it looks, so a copy that doesn't move shows them too.
+#[test]
+fn what_is_placed_shows_its_rest_weights() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("it has one");
+    assert_eq!(
+        skeleton.rest_weights,
+        [1.0],
+        "the test file's shape key is on"
+    );
+    let part = &mesh.parts[0];
+    let change = part.morphs[0]
+        .iter()
+        .max_by(|a, b| a.position[0].abs().total_cmp(&b.position[0].abs()))
+        .expect("it moves something");
+    assert!(change.position[0].abs() > 1.0, "{change:?}");
+    let was = part.points[change.corner as usize];
+    let shown = [0, 1, 2].map(|axis| was[axis] + change.position[axis]);
+    let (_, map) = level_with(mesh.clone(), &["origin = [0 0 0] light = probe"]);
+    let shared = &map.shared_meshes[0];
+    assert!(shared.morphs.is_empty(), "there's nothing to morph it");
+    let near = |place: [f64; 3]| {
+        shared.corners.iter().any(|corner| {
+            (0..3).all(|axis| (f64::from(corner.position[axis]) - place[axis]).abs() < 0.01)
+        })
+    };
+    assert!(near(shown), "it's where the shape key puts it");
+    assert!(!near(was), "and not where it was");
+}

@@ -21,7 +21,7 @@ use crate::geometry::{
     solid_corners, split,
 };
 use crate::light::light_tracks;
-use crate::mesh::{PlacedMesh, PlacedTriangle, placement_rows, shared_mesh};
+use crate::mesh::{PlacedMesh, PlacedTriangle, at_rest, placement_rows, shared_mesh};
 use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
 };
@@ -687,7 +687,7 @@ impl Builder<'_> {
                 number
             } else {
                 let number = u32::try_from(self.map.shared_meshes.len()).unwrap_or(u32::MAX);
-                let shared = shared_mesh(mesh, &mut |name| self.mesh_material(name));
+                let shared = shared_mesh(&at_rest(mesh), &mut |name| self.mesh_material(name));
                 self.map.shared_meshes.push(shared);
                 numbers.insert(placement.source.as_str(), number);
                 number

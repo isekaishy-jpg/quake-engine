@@ -55,7 +55,7 @@ pub struct EntityState {
 }
 
 /// How many morph targets a script can set on an entity at once. A clip can move any of them.
-pub const MOST_SET_MORPHS: usize = 4;
+pub const MOST_SET_MORPHS: usize = 8;
 
 /// Something launched, whose path is fixed from here on (proposal 0052).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]

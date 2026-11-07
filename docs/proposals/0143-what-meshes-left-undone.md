@@ -49,3 +49,13 @@ Built as designed. 24 of the test arm overlapping in the proving ground, against
 | The whole scene | 1.293 ms | 0.736 ms |
 
 So it nearly halves the scene, depth pass included. Pictures of the arms are as they were. `a_moving_mesh_hides_what_is_drawn_after_it` fails if a mesh is left out of the depth pass but still doesn't write depth, with the model behind showing through.
+
+### Fixes with no open question
+
+- **Static copies show their rest weights.** A baked placement and a copy both do, and with that done they carry no morphs. A collision shape that an import fitted stays fitted to the mesh as made.
+- **What's held to what's held no longer lags.** What holds something goes first. A ring of things holding each other has nowhere to start, so it stays a tick behind and doesn't hang.
+- **A place turns with its model,** by the same sums as a place on a joint.
+- **Eight morphs,** and only what's set goes over the network, as a count and pairs. So this costs a thing with none one byte less than before. The protocol's number goes up.
+
+**One part of this can't land yet.** An effect on a brush model can't turn with it, as a client doesn't know how it's turned: `ModelInstance` has only an offset, as brush models don't turn when drawn or collided with at all. That's what a door that swings would need. It's written into item 151, on this same list, with the rest of what turning needs, and places are ready for it. It isn't research to skip: nothing can show the fault until then.
+

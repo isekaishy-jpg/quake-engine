@@ -1,6 +1,7 @@
 //! Meshes: reading them, placing them, and the volume they shade (proposal
 //! 0078).
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -695,6 +696,41 @@ fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
     }
 }
 
+/// `mesh` as its rest weights show it, for what's placed and doesn't move: a file's morph weights
+/// are part of how it looks. What's left has no morphs to carry.
+pub(crate) fn at_rest(mesh: &Mesh) -> Cow<'_, Mesh> {
+    if mesh.parts.iter().all(|part| part.morphs.is_empty()) {
+        return Cow::Borrowed(mesh);
+    }
+    let weights = mesh
+        .skeleton
+        .as_ref()
+        .map_or(&[][..], |skeleton| &skeleton.rest_weights);
+    let mut rested = mesh.clone();
+    for part in &mut rested.parts {
+        for (moves, weight) in part.morphs.iter().zip(weights) {
+            let weight = f64::from(*weight);
+            for change in moves {
+                let corner = change.corner as usize;
+                for axis in 0..3 {
+                    part.points[corner][axis] += change.position[axis] * weight;
+                    if let Some(normal) = part.normals.get_mut(corner) {
+                        normal[axis] += change.normal[axis] * weight;
+                    }
+                }
+            }
+        }
+        for normal in &mut part.normals {
+            let length = normal.iter().map(|axis| axis * axis).sum::<f64>().sqrt();
+            if length > 0.0 {
+                *normal = normal.map(|axis| axis / length);
+            }
+        }
+        part.morphs.clear();
+    }
+    Cow::Owned(rested)
+}
+
 /// Lays out `mesh`'s morphs by the corners of `shared`, as what moves a corner is read from it.
 fn keep_morphs(shared: &mut SharedMesh, mesh: &Mesh, became: &HashMap<(usize, u32), Vec<u32>>) {
     if mesh.parts.iter().all(|part| part.morphs.is_empty()) {
@@ -827,6 +863,7 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
 /// `mesh` where `placement` puts it.
 #[must_use]
 pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
+    let mesh = &*at_rest(mesh);
     let transform = Transform::of(placement);
     let mut placed = PlacedMesh {
         only_seen: placement.only_seen,

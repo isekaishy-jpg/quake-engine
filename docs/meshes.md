@@ -92,7 +92,7 @@ A shape key comes in as a morph target, by its name. A clip can move it, and a s
 engine.set_morph(id, "smile", 0.5)
 ```
 
-That's over what a clip says. A weight of 0 gives it back to the clip. Four can be set on a thing at once, and it says if there's no room.
+That's over what a clip says. A weight of 0 gives it back to the clip. Eight can be set on a thing at once, and it says if there's no room. A mesh placed in a level, which doesn't move, shows the weights its file gave it.
 
 An empty under a bone is an attach point that goes with the bone. It's the server that works out where it is, so what's held to it is right for everyone.
 

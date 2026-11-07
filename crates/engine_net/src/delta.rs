@@ -78,7 +78,10 @@ fn put_entity(out: &mut Vec<u8>, old: Option<&EntityState>, new: &EntityState) -
     if mask & CLIP != 0 {
         out.extend_from_slice(&new.clip.to_le_bytes());
         out.extend_from_slice(&new.clip_start.to_le_bytes());
-        out.extend(new.morphs.iter().flatten());
+        // Most things set none, so only what's set goes.
+        let set = new.morphs.iter().filter(|morph| morph[1] != 0);
+        out.push(u8::try_from(set.clone().count()).unwrap_or(0));
+        out.extend(set.flatten());
     }
     true
 }
@@ -250,7 +253,12 @@ fn read_entity(reader: &mut Reader<'_>, old: &HashMap<u64, EntityState>) -> Opti
     if mask & CLIP != 0 {
         entity.clip = reader.u16()?;
         entity.clip_start = reader.f32()?;
-        for morph in &mut entity.morphs {
+        let count = usize::from(reader.byte()?);
+        if count > entity.morphs.len() {
+            return None;
+        }
+        entity.morphs = Default::default();
+        for morph in &mut entity.morphs[..count] {
             *morph = [reader.byte()?, reader.byte()?];
         }
     }

@@ -277,7 +277,9 @@ fn a_client_is_told_the_clip_and_when_it_began() {
 /// A figure that has morph targets.
 fn morphing_figure() -> (Simulation, EntityId) {
     let mut skeleton = turning_skeleton();
-    skeleton.morph_names = ["a", "b", "c", "d", "e"].map(str::to_owned).to_vec();
+    skeleton.morph_names = ["a", "b", "c", "d", "e", "f", "g", "h", "i"]
+        .map(str::to_owned)
+        .to_vec();
     let mut map = Map::clone(&room());
     map.moving_meshes.push(MovingMesh {
         name: "arm".to_owned(),
@@ -318,14 +320,67 @@ fn setting_a_morph_again_changes_it() {
 #[test]
 fn only_so_many_morphs_can_be_set_at_once() {
     let (mut simulation, figure) = morphing_figure();
-    for name in ["a", "b", "c", "d"] {
+    for name in ["a", "b", "c", "d", "e", "f", "g", "h"] {
         assert!(simulation.set_morph(figure, name, 1.0), "{name}");
     }
-    assert!(!simulation.set_morph(figure, "e", 1.0), "no room");
+    assert!(!simulation.set_morph(figure, "i", 1.0), "no room");
     assert!(
-        simulation.set_morph(figure, "e", 0.0),
+        simulation.set_morph(figure, "i", 0.0),
         "letting go of nothing is fine"
     );
     assert!(simulation.set_morph(figure, "b", 0.0));
-    assert!(simulation.set_morph(figure, "e", 1.0), "room again");
+    assert!(simulation.set_morph(figure, "i", 1.0), "room again");
+}
+
+/// Three figures, each held to the tip of the next, made so that what's held comes first in the
+/// list, which is the order that used to lag.
+fn chain_of_figures() -> (Simulation, [EntityId; 3]) {
+    let (mut simulation, _, _) = figure_and_thing();
+    let [last, middle, first] = [(); 3].map(|()| {
+        let figure = simulation.spawn();
+        simulation.set_shape(figure, "mesh:arm");
+        figure
+    });
+    assert!(simulation.attach(last, middle, "tip"));
+    assert!(simulation.attach(middle, first, "tip"));
+    (simulation, [first, middle, last])
+}
+
+/// What's held to what's held is there the same tick, whatever order they're in.
+#[test]
+fn what_is_held_to_what_is_held_does_not_lag() {
+    let (mut simulation, [first, _, last]) = chain_of_figures();
+    simulation.entity_mut(first).expect("there").origin = Vec3::new(50.0, 0.0, 0.0);
+    simulation.end_tick(TICK);
+    let held = origin_of(&simulation, last);
+    assert!(
+        (held - Vec3::new(70.0, 0.0, 0.0)).length() < 0.001,
+        "{held:?}"
+    );
+}
+
+/// Things holding each other in a ring have nothing to start from, and mustn't hang.
+#[test]
+fn things_holding_each_other_do_not_hang() {
+    let (mut simulation, [first, _, last]) = chain_of_figures();
+    assert!(simulation.attach(first, last, "tip"));
+    simulation.end_tick(TICK);
+    assert!(simulation.entity(first).is_some());
+}
+
+/// A place turns with what it's on, so it swings round and doesn't stay on one side.
+#[test]
+fn a_place_turns_with_its_model() {
+    let (mut simulation, world, lift, thing) = lift_and_thing();
+    assert!(simulation.attach(thing, lift, "spout"));
+    simulation.entity_mut(lift).expect("there").angles = Vec3::new(0.0, 90.0, 0.0);
+    tick(&mut simulation, &world, lift);
+    let from_lift = origin_of(&simulation, thing) - origin_of(&simulation, lift);
+    assert!((from_lift.x).abs() < 0.01, "{from_lift:?}");
+    assert!((from_lift.y - SPOUT.x).abs() < 0.01, "{from_lift:?}");
+    let turned = simulation.entity(thing).expect("there").angles;
+    assert!(
+        (turned.y.rem_euclid(360.0) - 180.0).abs() < 0.01,
+        "{turned:?}"
+    );
 }
