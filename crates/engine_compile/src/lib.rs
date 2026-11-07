@@ -29,6 +29,7 @@ mod ray_grid;
 mod simplify;
 mod source;
 mod stamp;
+mod terrain;
 mod texture;
 mod texture_check;
 mod texture_pack;
@@ -63,6 +64,7 @@ pub use source::{
     Brush, BrushFace, DecalSource, EntitySource, MeshPlacement, PaintStroke, SkySource,
     StampSource, TileSource, WaterSource, WorkingMap, read_map,
 };
+pub use terrain::{TerrainSource, read_terrain_data, write_terrain};
 pub use texture::placeholder_texture;
 pub use texture_check::{Repeat, check_picture};
 pub use texture_pack::{

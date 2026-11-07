@@ -20,6 +20,8 @@ pub struct VisibleSet {
     pub ranges: Vec<(u32, u32)>,
     /// The copies of shared meshes that could be seen.
     pub instances: Vec<u32>,
+    /// The chunks of land that can be seen, among all of them.
+    pub chunks: Vec<u32>,
 }
 
 impl VisibleSet {
@@ -59,6 +61,8 @@ impl VisibleSet {
         let mut seen = vec![false; map.mesh_instances.len()];
         let instances = &mut self.instances;
         instances.clear();
+        let chunks = &mut self.chunks;
+        chunks.clear();
         let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
         let mut add = |face: u32| {
             let at = face as usize;
@@ -66,7 +70,9 @@ impl VisibleSet {
                 && !*flag
             {
                 *flag = true;
-                if let Some(instance) = mesh.face_instance.get(at).copied().flatten() {
+                if let Some(chunk) = mesh.face_chunk.get(at).copied().flatten() {
+                    chunks.push(chunk);
+                } else if let Some(instance) = mesh.face_instance.get(at).copied().flatten() {
                     if !std::mem::replace(&mut seen[instance as usize], true) {
                         instances.push(instance);
                     }

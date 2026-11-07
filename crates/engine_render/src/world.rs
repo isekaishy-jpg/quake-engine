@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use engine_map::{AlphaMode, Face, FaceLight, Map, RESIDENT, Texture, TextureKind, TileLight};
 
 use crate::atlas::{Atlas, AtlasSpace};
+use crate::terrain::ChunkLight;
 
 /// The largest atlas side, which every Vulkan device of interest can sample.
 const ATLAS_LIMIT: u32 = 8192;
@@ -147,6 +148,10 @@ pub struct WorldMesh {
     pub face_instance: Vec<Option<u32>>,
     /// Where each instance's light is.
     pub(crate) instance_lights: Vec<InstanceLight>,
+    /// Which chunk of land each face stands in for, if any.
+    pub face_chunk: Vec<Option<u32>>,
+    /// Where each chunk's light is.
+    pub(crate) chunk_lights: Vec<ChunkLight>,
 }
 
 /// The light of a tile as a square of the atlas.
@@ -622,6 +627,39 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             styles: vertex.styles,
         });
     }
+    mesh.face_chunk = vec![None; map.faces.len()];
+    let mut chunk = 0_u32;
+    for sheet in &map.terrain {
+        for at in 0..sheet.chunk_count() {
+            let face_at = (sheet.first_face + at) as usize;
+            if let Some(slot) = mesh.face_chunk.get_mut(face_at) {
+                *slot = Some(chunk);
+            }
+            let corner = |index: usize| {
+                let face = map.faces.get(face_at)?;
+                let point = *map.face_points(face).get(index)?;
+                let number = face.first_point as usize + index;
+                let place = places.get(face_at).copied().flatten();
+                Some(make_vertex(
+                    map,
+                    face,
+                    (number, point),
+                    place,
+                    neutral,
+                    atlas_size,
+                    false,
+                ))
+            };
+            let (low, high) = (corner(0).unwrap_or_default(), corner(2).unwrap_or_default());
+            mesh.chunk_lights.push(ChunkLight {
+                low: low.light_uv,
+                high: high.light_uv,
+                step: low.light_step,
+                styles: low.styles,
+            });
+            chunk += 1;
+        }
+    }
     for (number, model) in map.models.iter().enumerate() {
         let mut per_batch: Vec<Vec<u32>> = vec![Vec::new(); mesh.batches.len()];
         for index in model.first_face..model.first_face.saturating_add(model.face_count) {
@@ -629,8 +667,8 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
             let Some(face) = map.faces.get(at) else {
                 continue;
             };
-            // An instance draws these from its mesh.
-            if mesh.face_instance[at].is_some() {
+            // An instance draws these from its mesh, and land from its heights.
+            if mesh.face_instance[at].is_some() || mesh.face_chunk[at].is_some() {
                 continue;
             }
             let Some(mut batch) = batch_of_texture

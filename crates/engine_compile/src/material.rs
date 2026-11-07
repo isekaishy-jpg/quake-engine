@@ -14,6 +14,7 @@ use crate::convex::fit_convex;
 use crate::error::CompileError;
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
 use crate::source::{WorkingMap, read_map};
+use crate::terrain::read_terrain_data;
 use crate::texture::placeholder_texture;
 use crate::texture_pack::{bytes_hash, packed_path, read_packed};
 use crate::tiles::{check_tiles, merge_tile};
@@ -380,6 +381,15 @@ impl<'a> MaterialLibrary<'a> {
             if let Ok(bytes) = self.filesystem.read(&path) {
                 read.push_str(&String::from_utf8_lossy(&bytes));
             }
+        }
+        for sheet in &mut working.terrain {
+            let path = format!("terrain/{}.eterrain", sheet.source);
+            let bytes = self
+                .filesystem
+                .read(&path)
+                .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
+            sheet.data = read_terrain_data(&bytes)?;
+            read.push_str(&String::from_utf8_lossy(&bytes));
         }
         resolve_meshes(working, &mut |name| self.mesh(name))?;
         Ok(read)

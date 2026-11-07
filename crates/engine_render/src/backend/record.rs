@@ -281,6 +281,7 @@ impl Recorder<'_> {
         self.record_depth(rec, scene, size);
         self.record_world(rec, scene, view, size, false);
         self.record_meshes(rec, scene, view);
+        self.record_land(rec, scene, false);
         self.record_models(rec);
         self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
@@ -361,6 +362,54 @@ impl Recorder<'_> {
             }
         }
         self.record_mesh_depth(rec, scene);
+        self.record_land(rec, scene, true);
+    }
+
+    /// Records the land, or its depth.
+    fn record_land(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        depth: bool,
+    ) {
+        let map = self.map;
+        let Some(land) = &map.terrain else {
+            return;
+        };
+        let layout = &self.layouts.terrain;
+        rec.bind_vertex_buffers(0, &[(&land.nodes[self.slot].buffer, 0)]);
+        rec.bind_index_buffer(&land.indices.buffer, 0, INDEX_TYPE_U32);
+        if depth {
+            rec.bind_graphics_pipeline(&self.pipelines.land_depth);
+            rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set]);
+        }
+        rec.bind_graphics_descriptor_sets(layout, 2, &[&land.set]);
+        for batch in &land.batches[self.slot] {
+            let Some(sheet) = scene.map.terrain.get(batch.sheet as usize) else {
+                continue;
+            };
+            let Some(&(first, count)) = land.grids.get(batch.grid as usize) else {
+                continue;
+            };
+            if !depth {
+                let texture = sheet.texture as usize;
+                let Some(Some(set)) = map.texture_sets.get(texture) else {
+                    continue;
+                };
+                let shader = map.texture_shaders.get(texture).copied().unwrap_or(0);
+                let Some(surface) = self.pipelines.surfaces.get(shader) else {
+                    continue;
+                };
+                rec.bind_graphics_pipeline(if surface.after_depth_safe {
+                    &surface.land_after_depth
+                } else {
+                    &surface.land
+                });
+                rec.bind_graphics_descriptor_sets(layout, 0, &[&map.frame_set, set]);
+                rec.bind_graphics_descriptor_sets(layout, 2, &[&land.set]);
+            }
+            rec.draw_indexed(count, batch.count, first, 0, batch.first);
+        }
     }
 
     /// Records the world and brush models: what's see-through, or the rest.

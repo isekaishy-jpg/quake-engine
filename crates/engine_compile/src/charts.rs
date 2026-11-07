@@ -10,7 +10,7 @@
 use std::collections::HashMap;
 
 use engine_core::math::Vec3;
-use engine_map::{Face, Map, MeshGroup, TexelAxis, TextureKind};
+use engine_map::{CHUNK_CELLS, Face, Map, MeshGroup, TerrainSheet, TexelAxis, TextureKind};
 
 use crate::geometry::{Point, add_scaled, cross, dot, normalized};
 
@@ -450,16 +450,70 @@ fn probe_chart(map: &Map, group: &MeshGroup) -> Option<Chart> {
     })
 }
 
+/// How far off the land a chunk's samples are, so that they aren't under it.
+const OFF_THE_LAND: f64 = 2.0;
+
+/// The chart of the chunk at `x`, `y` of `sheet`, with its samples lifted onto the land, each
+/// facing the way the land does there.
+fn chunk_chart(sheet: &TerrainSheet, (x, y): (u32, u32), spacing: f64) -> Chart {
+    let [across, _] = sheet.data.chunks();
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let step = spacing as f32;
+    let cell = sheet.data.cell;
+    #[expect(clippy::cast_precision_loss, reason = "a land's size")]
+    let side = CHUNK_CELLS as f32 * cell;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a count of samples"
+    )]
+    let samples = (side / step).ceil() as u32 + 1;
+    let low = sheet.sample(x * CHUNK_CELLS, y * CHUNK_CELLS);
+    let mut spots = Vec::with_capacity((samples * samples) as usize);
+    for down in 0..samples {
+        for along in 0..samples {
+            #[expect(clippy::cast_precision_loss, reason = "a count of samples")]
+            let place = (low.x + along as f32 * step, low.y + down as f32 * step);
+            let (height, normal) = sheet.surface_at(place.0, place.1);
+            let normal = wide(normal);
+            let point = wide(Vec3::new(place.0, place.1, height));
+            spots.push(Spot {
+                point: [0, 1, 2].map(|axis| point[axis] + normal[axis] * OFF_THE_LAND),
+                normal,
+            });
+        }
+    }
+    let axis = |axis: Vec3| TexelAxis { axis, offset: 0.0 };
+    #[expect(clippy::cast_possible_truncation, reason = "a world place")]
+    let origin = [low.x as i32, low.y as i32];
+    Chart {
+        faces: vec![sheet.first_face + y * across + x],
+        axes: [
+            axis(Vec3::new(1.0, 0.0, 0.0)),
+            axis(Vec3::new(0.0, 1.0, 0.0)),
+        ],
+        width: samples,
+        height: samples,
+        origin,
+        spots,
+        normal: [0.0, 0.0, if sheet.facing_down { -1.0 } else { 1.0 }],
+        area: f64::from(side) * f64::from(side),
+        probe_reach: None,
+    }
+}
+
 /// Every chart in `map`.
 pub(crate) fn map_charts(map: &Map, spacing: f64) -> Vec<Chart> {
-    map.mesh_groups
-        .iter()
-        .flat_map(|group| {
-            if group.by_probe {
-                probe_chart(map, group).into_iter().collect()
-            } else {
-                charts_of(map, group, spacing)
-            }
-        })
-        .collect()
+    let meshes = map.mesh_groups.iter().flat_map(|group| {
+        if group.by_probe {
+            probe_chart(map, group).into_iter().collect()
+        } else {
+            charts_of(map, group, spacing)
+        }
+    });
+    let land = map.terrain.iter().flat_map(|sheet| {
+        let [across, down] = sheet.data.chunks();
+        (0..down).flat_map(move |y| (0..across).map(move |x| chunk_chart(sheet, (x, y), spacing)))
+    });
+    meshes.chain(land).collect()
 }

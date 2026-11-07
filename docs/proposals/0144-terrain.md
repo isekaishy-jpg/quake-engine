@@ -77,4 +77,13 @@ At stage 11, after item 17, which it waits on.
 
 ## Review
 
+### A sheet, walked on and lit (125, 129)
+
+Built as designed, and tried in the game on a land of 4 by 4 chunks.
+
+- **Each chunk is one chart.** The bake already had charts, a light map for a mesh with a sample on the surface and facing as it does. A chunk's samples are lifted onto the land, so it needed no new way of lighting. Land blocks light by stepping along a ray and asking if each place is in it.
+- **Collision** sweeps a box against the triangles of the cells it crosses, by when each separating axis stops separating them. The real movement code walks it: a gentle slope is climbed, a cliff stops someone, and rough land never gets them stuck in it.
+- **The crack test took five tries, and they're worth writing down.** From straight above a crack can't be seen, as it's an upright slit. At a low angle what's behind a crack is more land. Then it failed on nothing but the sky, and on the corner of the sheet. It looks down at a slant now, across a change of level, at white land: 0 pixels show through, and with sliding turned off, 959.
+- **A small land's file can be valid text,** so it's read as binary and not guessed at. The test for that found it.
+
 Filled in as each part lands.

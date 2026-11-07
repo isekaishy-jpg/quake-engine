@@ -35,6 +35,7 @@ use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::surface::built_in_for;
+use crate::terrain::terrain_nodes;
 use crate::world::{BatchKind, batch_kind, uses_material};
 use crate::world::{TileImage, VertexPatch, shadow_groups};
 use crate::world::{Vertex, WorldMesh};
@@ -696,6 +697,7 @@ impl Backend {
             });
         }
         let moving = self.upload_moving(map)?;
+        let terrain = self.upload_terrain(map, mesh.chunk_lights.clone())?;
         let shadow_instances = map
             .mesh_instances
             .iter()
@@ -937,6 +939,7 @@ impl Backend {
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
             instance_centers: std::array::from_fn(|_| Vec::new()),
+            terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
             moving,
             shadow_instances,
@@ -1307,6 +1310,15 @@ impl Backend {
             self.moving_overflow |=
                 map.moving
                     .prepare_figures(slot, drawables.entities, &self.models, &planes)?;
+            if let Some(land) = &mut map.terrain {
+                let mut mapped = land.nodes[slot].memory.map()?;
+                land.batches[slot] = terrain_nodes(
+                    scene.map,
+                    (&scene.visible.chunks, &land.lights),
+                    (view.origin, &planes),
+                    mapped.as_slice_mut(),
+                );
+            }
             if !scene.map.mesh_instances.is_empty() {
                 let levels = LevelView {
                     eye: view.origin,

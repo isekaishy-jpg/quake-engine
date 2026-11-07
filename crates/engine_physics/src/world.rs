@@ -2,6 +2,7 @@
 
 use std::sync::Arc;
 
+use crate::land::{in_land, sweep_land};
 use box3d_rust::body::create_body;
 use box3d_rust::hull::{HullData, create_hull};
 use box3d_rust::shape::create_hull_shape;
@@ -366,6 +367,9 @@ impl CollisionWorld {
     /// What the map holds at `point`, with sky told apart from open air.
     #[must_use]
     pub fn map_contents(&self, point: Vec3) -> Contents {
+        if in_land(&self.map, point) {
+            return Contents::Solid;
+        }
         let tree = &self.map.tree;
         tree.leaf(tree.leaf_at(point))
             .map_or(Contents::Solid, |leaf| leaf.contents)
@@ -447,6 +451,17 @@ impl<'a> Collision<'a> {
                 };
             }
         }
+        if let Some((fraction, normal)) = sweep_land(map, start, (mins, maxs), end)
+            && fraction < best.fraction
+        {
+            best = Trace {
+                fraction,
+                end: start.lerp(end, fraction),
+                normal,
+                model: None,
+                ..best
+            };
+        }
         best
     }
 
@@ -481,7 +496,7 @@ impl<'a> Collision<'a> {
                 && point.y <= high.y
                 && point.z <= high.z
         });
-        if in_box {
+        if in_box || in_land(&self.world.map, point) {
             return true;
         }
         let in_world = self
@@ -506,6 +521,9 @@ impl<'a> Collision<'a> {
     /// What fills `point`.
     #[must_use]
     pub fn contents(&self, point: Vec3) -> PointContents {
+        if in_land(&self.world.map, point) {
+            return PointContents::Solid;
+        }
         let tree = &self.world.map.tree;
         let leaf = tree.leaf(tree.leaf_at(point));
         match leaf.map_or(Contents::Solid, |leaf| leaf.contents) {
@@ -563,6 +581,22 @@ impl<'a> Collision<'a> {
     /// answer that first.
     #[must_use]
     pub fn trace(&self, start: Vec3, end: Vec3) -> Trace {
+        let trace = self.trace_world(start, end);
+        let map = &self.world.map;
+        match sweep_land(map, start, (PLAYER_MINS, PLAYER_MAXS), end) {
+            Some((fraction, normal)) if fraction < trace.fraction => Trace {
+                fraction,
+                end: start.lerp(end, fraction),
+                normal,
+                model: None,
+                ..trace
+            },
+            _ => trace,
+        }
+    }
+
+    /// [`Self::trace`], through everything but land.
+    fn trace_world(&self, start: Vec3, end: Vec3) -> Trace {
         if self.in_solid(start) {
             return Trace {
                 fraction: 0.0,

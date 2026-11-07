@@ -13,7 +13,7 @@ use engine_map::{
     Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE,
     PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
     Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
-    SpriteFrame, SpriteImage, Texture, TextureKind, TileLight,
+    SpriteFrame, SpriteImage, TerrainData, TerrainSheet, Texture, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -3175,6 +3175,66 @@ fn see_through_copies_sort_with_what_moves() {
     let below = through_glass(&mut renderer, &[square_at(1, 20.0)]);
     let above = through_glass(&mut renderer, &[square_at(1, 50.0)]);
     assert!(above[1] > below[1] + 20, "{below:?} and {above:?}");
+}
+
+/// A map with rough land under a view from high up, where its parts are at different levels. Its
+/// one face is a stand-in, as the land's own chunk.
+fn map_with_land() -> Map {
+    let mut built = map(1);
+    // With no light in it, what's land is plainly land, and what's dark isn't.
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    let mut data = TerrainData::flat([2, 2], 32.0);
+    let across = data.across();
+    for (at, height) in (0_u32..).zip(&mut data.heights) {
+        let (x, y) = (at % across, at / across);
+        *height = ((x as f32 * 0.7).sin() + (y as f32 * 0.9).cos()) * 60.0;
+    }
+    let first_face = u32::try_from(built.faces.len()).expect("few");
+    let stand_in = built.faces[0].clone();
+    built.faces.extend(vec![stand_in; 4]);
+    built.tree.leaf_faces = (0..5).collect();
+    built.tree.leaves[1].face_count = 5;
+    built.models[0].face_count = 5;
+    built.models[0].first_face = 0;
+    built.terrain.push(TerrainSheet {
+        data,
+        origin: Vec3::new(-2048.0, -2048.0, 0.0),
+        first_face,
+        ..TerrainSheet::default()
+    });
+    built
+}
+
+/// Land draws, and where its parts of different levels meet there are no gaps to see through. A
+/// gap is an upright slit, so this looks down into them at a slant, across the distance where one
+/// level meets the next. Land's white, and anything else in the picture is showing through.
+#[test]
+fn land_has_no_cracks_between_its_levels() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_land())).expect("load");
+    let view = View {
+        origin: Vec3::new(-1700.0, -1700.0, 900.0),
+        yaw: 45.0,
+        pitch: 25.0,
+        fov: 40.0,
+        ..view_from_above()
+    };
+    let capture = renderer
+        .capture(&view, Drawables::default(), 1024, 1024)
+        .expect("capture");
+    // The middle of the picture, as its sides can see past the land, and below its skyline.
+    let land = |x: u32, y: u32| pixel(&capture, x, y)[0] > 128;
+    let mut holes = 0;
+    for x in 256..768 {
+        let top = (0..1024).find(|y| land(x, *y)).expect("it shows");
+        holes += (top..1024).filter(|y| !land(x, *y)).count();
+    }
+    assert_eq!(holes, 0, "{holes} pixels show through");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use engine_core::math::Vec3;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material, MegaImage,
-    MipLevel, ProbeGrid, RESIDENT, TextureKind,
+    MipLevel, ProbeGrid, RESIDENT, TerrainSheet, TextureKind,
 };
 
 use crate::charts::{Chart, map_charts};
@@ -143,6 +143,8 @@ struct Scene<'a> {
     meshes: Vec<MeshShadow>,
     /// Where the meshes are.
     mesh_grid: RayGrid,
+    /// Land, which blocks light where it's solid.
+    land: &'a [TerrainSheet],
     /// How high the world goes. Nothing above can stop the sun.
     top: f64,
     /// How far stamped faces lift their samples, by their first point.
@@ -234,9 +236,32 @@ impl MeshShadow {
     }
 }
 
+/// Whether land is between `a` and `b`, which goes by stepping along the line a cell at a time,
+/// and asking if each place is in it.
+fn land_between(scene: &Scene<'_>, a: Point, b: Point) -> bool {
+    let length = dot(add_scaled(b, a, -1.0), add_scaled(b, a, -1.0)).sqrt();
+    scene.land.iter().any(|sheet| {
+        let step = f64::from(sheet.data.cell) * 0.5;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a count of steps"
+        )]
+        let steps = (length / step).ceil() as u32;
+        (1..steps).any(|at| {
+            let share = f64::from(at) / f64::from(steps);
+            let place = add_scaled(a, add_scaled(b, a, -1.0), share);
+            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+            let place = Vec3::new(place[0] as f32, place[1] as f32, place[2] as f32);
+            sheet.holds(place)
+        })
+    })
+}
+
 /// Whether anything solid is between `a` and `b`: brushes or meshes.
 fn shadowed(scene: &Scene<'_>, a: Point, b: Point) -> bool {
     blocked(scene, scene.root, a, b)
+        || land_between(scene, a, b)
         || scene
             .mesh_grid
             .any_near(a, b, |index| scene.meshes[index].hit(a, b))
@@ -2205,6 +2230,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
             image,
         });
     }
+    let land = map.terrain.clone();
     let meshes: Vec<MeshShadow> = working
         .placed
         .iter()
@@ -2218,6 +2244,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         glass_grid: RayGrid::new(glass.iter().map(Glass::bounds)),
         glass,
         mesh_grid: RayGrid::new(meshes.iter().map(|mesh| (mesh.low, mesh.high))),
+        land: &land,
         meshes,
         top: map
             .models

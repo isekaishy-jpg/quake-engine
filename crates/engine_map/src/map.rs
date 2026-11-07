@@ -321,6 +321,12 @@ impl Map {
         for instance in &mut self.mesh_instances {
             range(&mut instance.first_face, &mut instance.face_count);
         }
+        for sheet in &mut self.terrain {
+            sheet.first_face = landing
+                .get(sheet.first_face as usize)
+                .copied()
+                .unwrap_or(sheet.first_face);
+        }
         for (first, length) in &mut self.tree.node_faces {
             range(first, length);
         }
@@ -558,6 +564,8 @@ pub struct Map {
     pub faces: Vec<Face>,
     /// Each placed mesh's faces.
     pub mesh_groups: Vec<MeshGroup>,
+    /// Land.
+    pub terrain: Vec<crate::TerrainSheet>,
     /// Named places in the level, from `point` blocks and what placed meshes have.
     pub places: Vec<AttachPoint>,
     /// Named places on models that can move, with which model each is on, where each is when

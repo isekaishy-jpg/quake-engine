@@ -10,6 +10,7 @@ use engine_map::{Clouds, Contents, Fog, Sky, Spline};
 use crate::error::CompileError;
 use crate::geometry::{Plane3, Point, normalized};
 use crate::mesh::{Mesh, PlacedMesh};
+use crate::terrain::{TerrainSource, read_terrain};
 
 /// One side of a brush.
 #[derive(Clone, Debug, PartialEq)]
@@ -185,6 +186,8 @@ pub struct WorkingMap {
     pub paint: Vec<PaintStroke>,
     /// Images laid over the world's surfaces.
     pub decals: Vec<DecalSource>,
+    /// Land.
+    pub terrain: Vec<TerrainSource>,
     /// Meshes in the world.
     pub meshes: Vec<MeshPlacement>,
     /// Those meshes, once placed.
@@ -738,6 +741,10 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .map(read_stamp)
             .collect::<Result<Vec<_>, _>>()?,
         paint: document.blocks_of("paint").map(read_paint).collect(),
+        terrain: document
+            .blocks_of("terrain")
+            .map(read_terrain)
+            .collect::<Result<Vec<_>, _>>()?,
         decals: document
             .blocks_of("decal")
             .map(read_decal)

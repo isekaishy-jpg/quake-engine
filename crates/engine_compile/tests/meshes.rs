@@ -6,10 +6,11 @@ use std::path::PathBuf;
 use engine_compile::{
     ConvexPiece, LoadedMesh, Mesh, MeshAttach, MeshPart, MeshPlacement, TextureSource, add_levels,
     compile, compile_known, document_of, fit_convex, import_gltf, place_mesh, read_geometry,
-    read_map_text, read_mesh, resolve_meshes, write_geometry, write_mesh,
+    read_map_text, read_mesh, read_terrain_data, resolve_meshes, write_geometry, write_mesh,
+    write_terrain,
 };
 use engine_format::from_text;
-use engine_map::{Map, SharedMesh, Texture, moved};
+use engine_map::{Map, SharedMesh, TerrainData, Texture, moved};
 use std::sync::Arc;
 
 /// A level with nothing but a floor.
@@ -1340,4 +1341,81 @@ fn corners_painted_differently_stay_apart() {
     assert_eq!(shared.corners.len(), 6);
     assert!(shared.colors.contains(&[255, 0, 0, 255]));
     assert!(shared.colors.contains(&[0, 255, 0, 255]));
+}
+
+/// A level with `source` land of a chunk each way, from its file.
+fn level_with_land(blocks: &str) -> (engine_compile::WorkingMap, Map) {
+    let text = format!("{FLOOR}\n{blocks}\n");
+    let mut working = read_map_text(&text).expect("reads");
+    for sheet in &mut working.terrain {
+        sheet.data = TerrainData::flat([2, 1], 32.0);
+    }
+    let map = compile(&working, &mut Plain).expect("compiles");
+    (working, map)
+}
+
+/// Land's a sheet of heights, with a face for each chunk that stands in for it.
+#[test]
+fn land_has_a_face_for_each_chunk() {
+    let (_, map) = level_with_land("terrain { source = hills origin = [0 0 8] material = grass }");
+    assert_eq!(map.terrain.len(), 1);
+    let sheet = &map.terrain[0];
+    assert_eq!(sheet.chunk_count(), 2);
+    assert_eq!(sheet.origin.z, 8.0);
+    let first = sheet.first_face as usize;
+    assert_eq!(map.faces[first].point_count, 4);
+    assert_eq!(map.faces.len(), first + 2, "they're all there is after it");
+    let world = &map.models[0];
+    let last = world.first_face + world.face_count;
+    assert!(last as usize >= first + 2, "and they're in the world");
+}
+
+/// What's kept on disk finds its land again.
+#[test]
+fn land_comes_back_from_kept_geometry() {
+    let (working, map) =
+        level_with_land("terrain { source = hills material = grass facing = down thickness = 40 }");
+    let geometry = read_geometry(&write_geometry(&map, 7), 7).expect("it reads");
+    let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
+    assert_eq!(again.terrain, map.terrain);
+    assert!(again.terrain[0].facing_down);
+    assert_eq!(again.terrain[0].thickness, 40.0);
+}
+
+/// A sheet's file gives back what went in.
+#[test]
+fn land_survives_a_file() {
+    let mut data = TerrainData::flat([1, 1], 16.0);
+    data.heights[5] = 12.5;
+    data.set_hole(3, 4, true);
+    let back = read_terrain_data(&write_terrain(&data)).expect("reads");
+    assert_eq!(back, data);
+    assert!(back.is_hole(3, 4));
+    assert!(!back.is_hole(4, 3));
+}
+
+/// A chunk's stand-in stays where it should when copies lose their faces round it.
+#[test]
+fn land_keeps_its_faces_when_copies_lose_theirs() {
+    let text = format!(
+        "{FLOOR}\nmesh {{ source = test origin = [0 0 0] light = probe }}\nterrain {{ source = hills material = grass }}\n"
+    );
+    let mut working = read_map_text(&text).expect("reads");
+    working.terrain[0].data = TerrainData::flat([1, 1], 32.0);
+    let mesh = Arc::new(folded(10.0));
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&mesh),
+            occluders: Vec::new(),
+        })
+    })
+    .expect("places");
+    let mut map = compile(&working, &mut Plain).expect("compiles");
+    let chunk_place = |map: &Map| {
+        let face = &map.faces[map.terrain[0].first_face as usize];
+        map.face_points(face).to_vec()
+    };
+    let was = chunk_place(&map);
+    map.drop_copy_faces();
+    assert_eq!(chunk_place(&map), was);
 }

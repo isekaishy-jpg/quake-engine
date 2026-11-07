@@ -86,6 +86,82 @@ fn placed_mesh(in: MeshIn) -> VertexOut {
     return out;
 }
 
+// What's told of a sheet of land.
+struct LandSheet {
+    // Its low corner, and how far apart its heights are.
+    origin: vec4<f32>,
+    // How many heights across, where its first is, and whether it faces down.
+    shape: vec4<u32>,
+    // What makes a place a place on its texture.
+    uv: vec4<f32>,
+}
+
+@group(2) @binding(0) var<storage, read> land_sheets: array<LandSheet>;
+@group(2) @binding(1) var<storage, read> land_heights: array<f32>;
+@group(2) @binding(2) var<storage, read> land_normals: array<u32>;
+
+struct LandIn {
+    @builtin(vertex_index) vertex: u32,
+    // Its low corner's sample, how many cells between vertices, and its grid's size.
+    @location(0) node: vec4<u32>,
+    // Where vertices begin to slide and where they've arrived, then its light's low corner.
+    @location(1) slide: vec4<f32>,
+    // Its light's high corner, and the step to the next style.
+    @location(2) light: vec4<f32>,
+    // Which sheet, its styles, and its chunk.
+    @location(3) sheet: vec4<u32>,
+}
+
+// The sample `x`, `y` of the sheet whose first height is `first`, `across` to a row.
+fn land_at(first: u32, across: u32, x: u32, y: u32) -> u32 {
+    return first + y * across + x;
+}
+
+// Land is a grid drawn again and again, and each vertex finds its height. Near the end of its
+// reach, a vertex that isn't on the next coarser lattice slides onto one that is, so that where a
+// part of the land meets a coarser part they already agree, and nothing has to be stitched.
+@vertex
+fn vs_terrain(in: LandIn) -> VertexOut {
+    let sheet = land_sheets[in.sheet.x];
+    let side = in.node.w + 1u;
+    let grid = vec2<u32>(in.vertex % side, in.vertex / side);
+    let stride = in.node.z;
+    let cell = sheet.origin.w;
+    let first = sheet.shape.y;
+    let across = sheet.shape.x;
+    let at = in.node.xy + grid * stride;
+    let here = land_at(first, across, at.x, at.y);
+    let height = land_heights[here];
+    let flat_place = vec2<f32>(at) * cell + sheet.origin.xy;
+    let place = vec3<f32>(flat_place, height + sheet.origin.z);
+    let away = length(place - frame.eye.xyz);
+    let share = clamp((away - in.slide.x) / max(in.slide.y - in.slide.x, 1.0), 0.0, 1.0);
+    let odd = grid % vec2<u32>(2u);
+    let goes = in.node.xy + (grid - odd) * stride;
+    let there = land_at(first, across, goes.x, goes.y);
+    let moved_flat = vec2<f32>(goes) * cell + sheet.origin.xy;
+    let flat_now = mix(flat_place, moved_flat, share);
+    let height_now = mix(height, land_heights[there], share);
+    let normal_here = unpack4x8snorm(land_normals[here]).xyz;
+    let normal_there = unpack4x8snorm(land_normals[there]).xyz;
+
+    var out: VertexOut;
+    let world = shader_vertex(vec3<f32>(flat_now, height_now + sheet.origin.z));
+    out.clip = frame.view_projection * vec4<f32>(world, 1.0);
+    out.world = world;
+    out.uv = flat_now * sheet.uv.xy;
+    out.color = vec4<f32>(1.0);
+    // Light's laid over the chunk, which a part may be a quarter of.
+    let chunk_first = (in.node.xy / 64u) * 64u;
+    let through = (vec2<f32>(at) - vec2<f32>(chunk_first)) / 64.0;
+    out.light_uv = mix(in.slide.zw, in.light.xy, through);
+    out.light_step = in.light.z;
+    let styles = in.sheet.y;
+    out.styles = vec4<u32>(styles & 255u, (styles >> 8u) & 255u, (styles >> 16u) & 255u, styles >> 24u);
+    out.normal = vec4<f32>(normalize(mix(normal_here, normal_there, share)), 0.0);
+    return out;
+}
+
 // The same mesh pushed out along its normals, with its front faces culled: what shows round its
 // edge is an outline, as an alias model has (proposal 0081).
 @vertex

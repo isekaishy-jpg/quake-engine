@@ -19,6 +19,7 @@ mod renderer;
 mod sprite;
 mod streamer;
 mod surface;
+mod terrain;
 mod visible;
 mod world;
 
@@ -47,6 +48,7 @@ pub use sprite::{
     sprite_push_bytes,
 };
 pub use streamer::TileStreamer;
+pub use terrain::{GRIDS, LEVEL_REACH, TerrainBatch, grid_indices, terrain_nodes};
 pub use visible::VisibleSet;
 pub use world::InstanceLight;
 pub use world::{

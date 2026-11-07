@@ -415,6 +415,42 @@ pub(crate) fn check_textures(session: &Session, args: &Json) -> Result<Json, Str
 }
 
 /// `make_levels`: gives a mesh already in the content its coarser levels.
+pub(crate) fn make_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("make_terrain needs a name")?;
+    let chunks = args
+        .get("chunks")
+        .and_then(Json::as_f64)
+        .ok_or("make_terrain needs a number of chunks")?;
+    let hills = args.get("hills").and_then(Json::as_f64).unwrap_or(0.0);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a small count"
+    )]
+    let chunks = chunks.clamp(1.0, 64.0) as u32;
+    let mut data = engine_map::TerrainData::flat([chunks, chunks], engine_map::USUAL_CELL);
+    let across = data.across() as usize;
+    #[expect(clippy::cast_precision_loss, reason = "a land's size")]
+    for (at, height) in data.heights.iter_mut().enumerate() {
+        let (x, y) = ((at % across) as f64, (at / across) as f64);
+        let wave = (x * 0.05).sin() * (y * 0.043).cos()
+            + (x * 0.017 + y * 0.011).sin() * 1.5
+            + (x * 0.13 - y * 0.11).sin() * 0.2;
+        #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+        let rise = (wave * hills * 0.4) as f32;
+        *height = rise;
+    }
+    let folder = session.content.join("terrain");
+    std::fs::create_dir_all(&folder).map_err(|error| error.to_string())?;
+    let file = folder.join(format!("{name}.eterrain"));
+    std::fs::write(&file, engine_compile::write_terrain(&data))
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    Ok(json!({ "file": file.display().to_string(), "cells": data.cells[0] }))
+}
+
 pub(crate) fn make_levels(session: &Session, args: &Json) -> Result<Json, String> {
     let name = args
         .get("name")

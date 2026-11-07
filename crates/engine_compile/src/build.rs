@@ -9,7 +9,7 @@ use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup,
     MeshInstance, Model, ModelOccluder, MovingMesh, Node, NodeChild, OccluderSphere, Plane, Pool,
-    PoolLook, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
+    PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -29,6 +29,7 @@ use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
 };
 use crate::stamp::stamp_piece;
+use crate::terrain::{chunk_face, chunk_points};
 use crate::tree::{BuildNode, Child, Item, PlaneSet, TreeBuilder};
 
 /// A direction, as a map keeps it.
@@ -674,6 +675,56 @@ impl Builder<'_> {
         }
     }
 
+    /// Adds each sheet of land, and a face for each of its chunks to the world, or finds them
+    /// where `known` says they are.
+    fn add_terrain(&mut self, working: &WorkingMap, known: Option<&[u32]>) {
+        for (at, source) in working.terrain.iter().enumerate() {
+            let texture = self.texture_of(&source.material);
+            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+            let [x, y, z] = source.origin.map(|part| part as f32);
+            let mut sheet = TerrainSheet {
+                data: source.data.clone(),
+                origin: Vec3::new(x, y, z),
+                facing_down: source.facing_down,
+                #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+                thickness: source.thickness as f32,
+                texture,
+                first_face: u32::try_from(self.map.faces.len()).unwrap_or(0),
+            };
+            if let Some(known) = known {
+                sheet.first_face = known.get(at).copied().unwrap_or(0);
+            } else {
+                self.add_chunk_faces(&sheet);
+            }
+            self.map.terrain.push(sheet);
+        }
+    }
+
+    /// Adds a face for each chunk of `sheet` to the world.
+    fn add_chunk_faces(&mut self, sheet: &TerrainSheet) {
+        let [across, down] = sheet.data.chunks();
+        for y in 0..down {
+            for x in 0..across {
+                let points = chunk_points(sheet, x, y);
+                let first_point = u32::try_from(self.map.points.len()).unwrap_or(0);
+                self.map.points.extend(points);
+                self.map.faces.push(chunk_face(first_point, sheet.texture));
+                if let Some(world) = self.map.models.first_mut() {
+                    world.face_count += 1;
+                    for point in points {
+                        world.mins.x = world.mins.x.min(point.x);
+                        world.mins.y = world.mins.y.min(point.y);
+                        world.maxs.x = world.maxs.x.max(point.x);
+                        world.maxs.y = world.maxs.y.max(point.y);
+                    }
+                    let [low, high] = sheet.chunk_heights(x, y);
+                    world.mins.z = world.mins.z.min(low);
+                    world.maxs.z = world.maxs.z.max(high);
+                }
+            }
+        }
+    }
+
     /// Makes an instance of each placement that shares its mesh, keeping each mesh once. A
     /// placement's faces stay, for its light and for finding it by leaves.
     fn share_meshes(&mut self, working: &WorkingMap) {
@@ -1033,6 +1084,7 @@ fn compile_with(
     };
     let flames = working.entities.iter().filter(|e| e.kind == "flame");
     let (flame_faces, emitters) = build_flames(flames);
+    let mut terrain_faces = None;
     let known = known.map(|geometry| {
         // Faces go by a texture's number, so they come in the same order.
         for name in &geometry.textures {
@@ -1043,6 +1095,7 @@ fn compile_with(
         builder.map.points = geometry.points;
         builder.map.normals = geometry.normals;
         builder.map.point_colors = geometry.point_colors;
+        terrain_faces = Some(geometry.terrain_faces);
         builder.map.mesh_groups = geometry.mesh_groups;
         builder.map.faces = geometry.faces;
         builder.map.models = geometry.models;
@@ -1066,6 +1119,7 @@ fn compile_with(
     world_meshes.push(&flame_faces);
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
+    builder.add_terrain(working, terrain_faces.as_deref());
     builder.share_meshes(working);
     builder.keep_moving_meshes(working);
     builder.map.places = level_places(working);

@@ -11,7 +11,7 @@ use engine_map::{
 
 /// Changes when what's kept changes, so that a file from before it's kept differently reads as
 /// out of date, and isn't misread.
-const GEOMETRY_FORMAT: u64 = 3;
+const GEOMETRY_FORMAT: u64 = 4;
 
 /// What takes a compile its time.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -22,6 +22,8 @@ pub struct Geometry {
     pub(crate) points: Vec<Vec3>,
     /// Which way corners face.
     pub(crate) normals: Vec<[i8; 3]>,
+    /// The first face of each sheet of land.
+    pub(crate) terrain_faces: Vec<u32>,
     /// Each point's colour, as far as the last that has one.
     pub(crate) point_colors: Vec<[u8; 4]>,
     /// Each placed mesh's faces.
@@ -351,6 +353,10 @@ pub fn write_geometry(map: &Map, hash: u64) -> Vec<u8> {
         out.0
             .extend(normal.map(i8::to_ne_bytes).into_iter().flatten());
     }
+    out.count(map.terrain.len());
+    for sheet in &map.terrain {
+        out.number(sheet.first_face);
+    }
     out.count(map.point_colors.len());
     out.0.extend(map.point_colors.iter().flatten());
     out.count(map.mesh_groups.len());
@@ -409,6 +415,9 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
     geometry.tree = read_tree(&mut input)?;
     for _ in 0..input.count(3)? {
         geometry.normals.push(input.normal()?);
+    }
+    for _ in 0..input.count(4)? {
+        geometry.terrain_faces.push(input.number()?);
     }
     for _ in 0..input.count(4)? {
         geometry.point_colors.push(input.color()?);

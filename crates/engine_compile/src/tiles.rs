@@ -64,6 +64,9 @@ pub(crate) fn merge_tile(map: &mut WorkingMap, mut tile: WorkingMap, offset: Poi
     for entity in &mut tile.entities {
         move_entity(entity, offset);
     }
+    for sheet in &mut tile.terrain {
+        sheet.origin = add_scaled(sheet.origin, offset, 1.0);
+    }
     for mesh in &mut tile.meshes {
         mesh.origin = add_scaled(mesh.origin, offset, 1.0);
     }
@@ -87,6 +90,7 @@ pub(crate) fn merge_tile(map: &mut WorkingMap, mut tile: WorkingMap, offset: Poi
     map.brushes.append(&mut tile.brushes);
     map.entities.append(&mut tile.entities);
     map.meshes.append(&mut tile.meshes);
+    map.terrain.append(&mut tile.terrain);
     map.decals.append(&mut tile.decals);
     map.stamps.append(&mut tile.stamps);
     map.paint.append(&mut tile.paint);

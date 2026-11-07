@@ -8,6 +8,7 @@ mod post;
 mod record;
 mod shadow;
 mod smaa;
+mod terrain;
 mod upload;
 
 use std::cell::RefCell;
@@ -38,6 +39,7 @@ pub use self::clock::GpuTimes;
 use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
+use self::terrain::GpuTerrain;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
 use crate::instances::InstanceBatch;
@@ -242,6 +244,8 @@ struct GpuMap {
     instance_levels: Vec<usize>,
     /// Meshes that move, if it has any.
     moving: GpuMoving,
+    /// Land.
+    terrain: Option<GpuTerrain>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -359,6 +363,8 @@ struct Layouts {
     material: PipelineLayout,
     /// Models'.
     alias: PipelineLayout,
+    /// Land: what a material has, and its heights.
+    terrain: PipelineLayout,
     /// Sprites'.
     sprite: PipelineLayout,
     /// Particles'.
@@ -387,6 +393,10 @@ struct SurfacePipelines {
     mesh_after_depth: GraphicsPipeline,
     /// Copies of a shared mesh with holes.
     mesh_masked: GraphicsPipeline,
+    /// Land.
+    land: GraphicsPipeline,
+    /// Land, with its depth already drawn.
+    land_after_depth: GraphicsPipeline,
     /// Copies of a shared mesh that are see-through.
     mesh_blended: GraphicsPipeline,
 }
@@ -427,6 +437,8 @@ struct Pipelines {
     mesh_hull: GraphicsPipeline,
     /// The depth of meshes.
     mesh_depth: GraphicsPipeline,
+    /// The depth of land.
+    land_depth: GraphicsPipeline,
     /// The fixture's models.
     alias: GraphicsPipeline,
     /// Sprites.
@@ -561,6 +573,8 @@ pub(crate) struct Backend {
     queue_family: u32,
     /// What moves meshes.
     deform: Deform,
+    /// The layout of what land reads.
+    terrain_set_layout: DescriptorSetLayout,
     /// Times what the GPU does.
     clock: GpuClock,
     /// Whether a moving mesh has had to draw at rest.
@@ -753,6 +767,13 @@ impl Backend {
                 }],
             )
         };
+        let land_binding = |binding| DescriptorSetLayoutBinding {
+            binding,
+            descriptor_type: DescriptorType::STORAGE_BUFFER,
+            descriptor_count: 1,
+            stage_flags: ShaderStageFlags::VERTEX,
+        };
+        let terrain_set_layout = DescriptorSetLayout::new(&device, &[0, 1, 2].map(land_binding))?;
         let layouts = Layouts {
             world: textured_layout(MODEL_OFFSET_SIZE)?,
             material: PipelineLayout::with_push_constants(
@@ -765,6 +786,15 @@ impl Backend {
                 }],
             )?,
             alias: PipelineLayout::new(&device, &[&frame_layout, &texture_layout])?,
+            terrain: PipelineLayout::with_push_constants(
+                &device,
+                &[&frame_layout, &material_layout, &terrain_set_layout],
+                &[PushConstantRange {
+                    stage_flags: ShaderStageFlags::VERTEX,
+                    offset: 0,
+                    size: MODEL_OFFSET_SIZE,
+                }],
+            )?,
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
             particle: PipelineLayout::new(&device, &[&frame_layout])?,
             gpu_particle: PipelineLayout::with_push_constants(
@@ -900,6 +930,7 @@ impl Backend {
             queue_family,
             deform,
             clock,
+            terrain_set_layout,
             moving_overflow: false,
             device_name,
             physical,

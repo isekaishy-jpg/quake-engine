@@ -18,6 +18,7 @@ use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
 use crate::instances::{INSTANCE_BYTES, LOOK_BYTES, PLACE_BYTES};
 use crate::sprite::PARTICLE_BYTES;
+use crate::terrain::NODE_BYTES;
 use crate::world::Vertex;
 
 /// A render pass with one colour and one depth attachment.
@@ -222,11 +223,21 @@ impl Backend {
         let shader = ShaderModule::from_spirv(device, &spirv)?;
         let (bindings, attributes) = world_vertices();
         let (mesh_bindings, mesh_attributes) = mesh_vertices();
+        let (land_bindings, land_attributes) = land_vertices();
         let mesh = |entry: &'static str| {
             GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_mesh")
                 .stage(GraphicsShaderStage::Fragment, &shader, entry)
                 .vertex_input(&mesh_bindings, &mesh_attributes)
+                .dynamic_viewport_scissor()
+                .cull_mode(CullMode::NONE)
+                .samples(samples)
+        };
+        let land = |entry: &'static str| {
+            GraphicsPipelineBuilder::new(&layouts.terrain, pass)
+                .stage(GraphicsShaderStage::Vertex, &shader, "vs_terrain")
+                .stage(GraphicsShaderStage::Fragment, &shader, entry)
+                .vertex_input(&land_bindings, &land_attributes)
                 .dynamic_viewport_scissor()
                 .cull_mode(CullMode::NONE)
                 .samples(samples)
@@ -258,6 +269,8 @@ impl Backend {
                 .alpha_blending(true)
                 .build(device)?,
             mesh_opaque: mesh("fs_material").depth_test(true, true).build(device)?,
+            land: land("fs_material").depth_test(true, true).build(device)?,
+            land_after_depth: land("fs_material").depth_test(true, false).build(device)?,
             mesh_after_depth: mesh("fs_material").depth_test(true, false).build(device)?,
             mesh_masked: mesh("fs_masked").depth_test(true, true).build(device)?,
             mesh_blended: mesh("fs_material")
@@ -319,9 +332,21 @@ impl Backend {
             .color_writes(false)
             .samples(samples)
             .build(device)?;
+        let (land_bindings, land_attributes) = land_vertices();
+        let land_depth = GraphicsPipelineBuilder::new(&layouts.terrain, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_terrain")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_depth")
+            .vertex_input(&land_bindings, &land_attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .color_writes(false)
+            .samples(samples)
+            .build(device)?;
         Ok(Pipelines {
             mesh_hull,
             mesh_depth,
+            land_depth,
             depth_only,
             plain_after_depth,
             sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)
@@ -430,6 +455,28 @@ fn mesh_vertices() -> ([VertexInputBinding; 3], [VertexInputAttribute; 9]) {
         attribute(8, 2, Format::R32G32B32A32_SFLOAT, 32),
         attribute(9, 2, Format::R32G32B32_SFLOAT, 48),
         attribute(10, 2, Format::R8G8B8A8_UINT, 60),
+    ];
+    (bindings, attributes)
+}
+
+/// What a part of the land reads: only its node, as its corners come from the heights.
+fn land_vertices() -> ([VertexInputBinding; 1], [VertexInputAttribute; 4]) {
+    let bindings = [VertexInputBinding {
+        binding: 0,
+        stride: u32::try_from(NODE_BYTES).unwrap_or(0),
+        input_rate: InputRate::INSTANCE,
+    }];
+    let attribute = |location, format, offset| VertexInputAttribute {
+        location,
+        binding: 0,
+        format,
+        offset,
+    };
+    let attributes = [
+        attribute(0, Format::R32G32B32A32_UINT, 0),
+        attribute(1, Format::R32G32B32A32_SFLOAT, 16),
+        attribute(2, Format::R32G32B32A32_SFLOAT, 32),
+        attribute(3, Format::R32G32B32A32_UINT, 48),
     ];
     (bindings, attributes)
 }
