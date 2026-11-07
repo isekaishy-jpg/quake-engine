@@ -325,7 +325,7 @@ impl Recorder<'_> {
         rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
         rec.set_scissor(0, 0, size.0, size.1);
         rec.bind_graphics_pipeline(&self.pipelines.sky_sphere);
-        rec.bind_graphics_descriptor_sets(&self.layouts.world, 0, &[&self.map.frame_set, set]);
+        rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&self.map.frame_set, set]);
         rec.draw(SKY_SPHERE_CORNERS, 1, 0, 0);
     }
 
@@ -488,16 +488,11 @@ impl Recorder<'_> {
                 }
                 bound.set(Some((batch.kind, after_depth, plain, shader)));
             }
-            let set_layout = if window {
-                layout
-            } else {
-                &self.layouts.material
-            };
             let set = match (&map.sky_set, batch.kind) {
                 (Some(sky), BatchKind::Sky) => sky,
                 _ => set,
             };
-            rec.bind_graphics_descriptor_sets(set_layout, 0, &[&map.frame_set, set]);
+            rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set, set]);
             rec.draw_indexed(count, 1, first, 0, 0);
         };
         if see_through {

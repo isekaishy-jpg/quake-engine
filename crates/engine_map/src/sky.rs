@@ -5,6 +5,12 @@ use engine_core::math::Vec3;
 
 use crate::material::SlotImage;
 
+/// The most layers of clouds a sky has.
+pub const MOST_CLOUDS: usize = 4;
+
+/// How curved clouds are unless told, which is nearly flat overhead and comes down to the horizon.
+pub const USUAL_CLOUD_CURVE: f32 = 0.03;
+
 /// A layer of clouds on the sky, either an image or made up in the shader. The
 /// author chooses.
 #[derive(Clone, Debug, PartialEq)]
@@ -17,8 +23,30 @@ pub struct Clouds {
     pub speed: [f32; 2],
     /// How large they are.
     pub scale: f32,
+    /// How high they are in the world, which says how they go by as the view moves. At 0 they
+    /// stay with the view.
+    pub height: f32,
+    /// How curved they are, from 0 for a flat plane to 1 for a dome.
+    pub curve: f32,
+    /// How much they take the sun's colour, and go dark where they're thick, from 0 to 1.
+    pub lit: f32,
     /// A premade layer, or `None` to make them up.
     pub image: Option<SlotImage>,
+}
+
+impl Default for Clouds {
+    fn default() -> Self {
+        Self {
+            color: [1.0, 1.0, 1.0],
+            coverage: 0.5,
+            speed: [0.01, 0.003],
+            scale: 1.0,
+            height: 0.0,
+            curve: USUAL_CLOUD_CURVE,
+            lit: 0.0,
+            image: None,
+        }
+    }
 }
 
 /// Fog through a map, thinning with height.
@@ -82,8 +110,8 @@ pub struct Sky {
     pub sun_color: [f32; 3],
     /// How large the sun looks, as a cosine distance.
     pub sun_size: f32,
-    /// The cloud layer, if there is one.
-    pub clouds: Option<Clouds>,
+    /// The layers of cloud, up to `MOST_CLOUDS`. The first is the lowest, so it's in front.
+    pub clouds: Vec<Clouds>,
 }
 
 impl Default for Sky {
@@ -96,7 +124,7 @@ impl Default for Sky {
             sun_direction: Vec3::new(0.4, 0.3, 0.8).normalized(),
             sun_color: [1.0, 0.95, 0.8],
             sun_size: 0.002,
-            clouds: None,
+            clouds: Vec::new(),
         }
     }
 }

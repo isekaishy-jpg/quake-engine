@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Fog, FogVolume, Sky, Spline};
+use engine_map::{Clouds, Contents, Fog, FogVolume, MOST_CLOUDS, Sky, Spline};
 
 use crate::error::CompileError;
 use crate::field::{FieldSource, read_field};
@@ -218,8 +218,8 @@ pub struct WorkingMap {
 pub struct SkySource {
     /// The sky itself.
     pub sky: Sky,
-    /// An image for the clouds, if it isn't procedural.
-    pub cloud_image: Option<String>,
+    /// An image for each layer of clouds that isn't procedural.
+    pub cloud_images: Vec<Option<String>>,
 }
 
 /// A field's three numbers.
@@ -672,9 +672,17 @@ fn color_of(block: &Block, key: &str, default: [f32; 3]) -> [f32; 3] {
         .map_or(default, |value| value.map(|part| part as f32))
 }
 
-/// Reads a `sky` block. The cloud layer is optional, and is an image or
+/// A field's first two numbers, as `f32`, which it may have more of.
+fn two_of(block: &Block, key: &str, default: [f32; 2]) -> [f32; 2] {
+    let numbers = block.get(key).and_then(Value::numbers);
+    let numbers = numbers.filter(|numbers| numbers.len() >= 2);
+    #[expect(clippy::cast_possible_truncation, reason = "skies store f32")]
+    numbers.map_or(default, |numbers| [numbers[0] as f32, numbers[1] as f32])
+}
+
+/// Reads a `sky` block. Layers of cloud are optional, and each is an image or
 /// procedural, as the author chooses.
-fn read_sky(block: &Block) -> SkySource {
+fn read_sky(block: &Block) -> Result<SkySource, CompileError> {
     #[expect(clippy::cast_possible_truncation, reason = "skies store f32")]
     let number = |block: &Block, key: &str, default: f32| {
         block
@@ -683,19 +691,27 @@ fn read_sky(block: &Block) -> SkySource {
             .map_or(default, |value| value as f32)
     };
     let defaults = Sky::default();
-    let clouds_block = block.children_of("clouds").next();
-    let clouds = clouds_block.map(|clouds| Clouds {
-        color: color_of(clouds, "color", [1.0, 1.0, 1.0]),
-        coverage: number(clouds, "coverage", 0.5),
-        speed: {
-            let [x, y, _] = color_of(clouds, "speed", [0.01, 0.003, 0.0]);
-            [x, y]
-        },
-        scale: number(clouds, "scale", 1.0),
+    let cloud_blocks: Vec<&Block> = block.children_of("clouds").collect();
+    if cloud_blocks.len() > MOST_CLOUDS {
+        return Err(CompileError::Bad(format!(
+            "a sky has {} layers of clouds, and {MOST_CLOUDS} is the most",
+            cloud_blocks.len()
+        )));
+    }
+    let usual = Clouds::default();
+    let clouds = cloud_blocks.iter().map(|clouds| Clouds {
+        color: color_of(clouds, "color", usual.color),
+        coverage: number(clouds, "coverage", usual.coverage),
+        speed: two_of(clouds, "speed", usual.speed),
+        scale: number(clouds, "scale", usual.scale),
+        height: number(clouds, "height", usual.height).max(0.0),
+        curve: number(clouds, "curve", usual.curve).clamp(0.0, 1.0),
+        lit: number(clouds, "lit", usual.lit).clamp(0.0, 1.0),
         image: None,
     });
+    let clouds = clouds.collect();
     let [x, y, z] = color_of(block, "sun_direction", [0.4, 0.3, 0.8]);
-    SkySource {
+    Ok(SkySource {
         sky: Sky {
             zenith: color_of(block, "zenith", defaults.zenith),
             horizon: color_of(block, "horizon", defaults.horizon),
@@ -706,11 +722,11 @@ fn read_sky(block: &Block) -> SkySource {
             sun_size: number(block, "sun_size", defaults.sun_size),
             clouds,
         },
-        cloud_image: clouds_block
-            .and_then(|clouds| clouds.get("image"))
-            .and_then(Value::text)
-            .map(str::to_owned),
-    }
+        cloud_images: cloud_blocks
+            .iter()
+            .map(|clouds| clouds.get("image").and_then(Value::text).map(str::to_owned))
+            .collect(),
+    })
 }
 
 /// A picture over a surface, from its block.
@@ -854,7 +870,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
             .blocks_of("entity")
             .map(read_entity)
             .collect::<Result<_, _>>()?,
-        sky: document.blocks_of("sky").next().map(read_sky),
+        sky: document.blocks_of("sky").next().map(read_sky).transpose()?,
         fog: document.blocks_of("fog").next().map(read_fog),
         fog_volumes: document
             .blocks_of("fog_volume")

@@ -1730,6 +1730,248 @@ fn bright_light_keeps_its_colour() {
     assert!(green > blue, "{red} {green} {blue}");
 }
 
+/// A plain picture of one colour, for a layer of cloud.
+fn cloud_picture(value: u8) -> Arc<Vec<MipLevel>> {
+    Arc::new(vec![MipLevel {
+        width: 2,
+        height: 2,
+        rgba: vec![value; 16],
+        form: PixelForm::Rgba,
+    }])
+}
+
+/// A layer of cloud that's a solid colour wherever it's over the view, from its picture.
+fn solid_cloud(color: [f32; 3]) -> Clouds {
+    Clouds {
+        color,
+        coverage: 1.0,
+        speed: [0.0, 0.0],
+        image: Some(cloud_picture(255)),
+        ..Clouds::default()
+    }
+}
+
+/// What's straight up, in a sky with `clouds`, from `origin`.
+fn sky_overhead(clouds: Vec<Clouds>, origin: Vec3, pitch: f32) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 0.0],
+        horizon: [0.0, 0.0, 0.0],
+        sun_size: 0.0,
+        sun_color: [0.0, 0.0, 0.0],
+        clouds,
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin,
+        pitch,
+        ..view_from_above()
+    };
+    let capture = renderer
+        .capture(&view, Drawables::default(), 32, 32)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// Where there's nothing else, you see the sky go up.
+const UNDER: Vec3 = Vec3::new(0.0, 0.0, -2000.0);
+
+/// The lowest layer is in front of the others.
+#[test]
+fn the_lowest_clouds_are_in_front() {
+    let red = solid_cloud([1.0, 0.0, 0.0]);
+    let green = solid_cloud([0.0, 1.0, 0.0]);
+    if let Some(shown) = sky_overhead(vec![red.clone(), green.clone()], UNDER, -89.0) {
+        assert!(shown[0] > 200 && shown[1] < 20, "{shown:?}");
+    }
+    if let Some(shown) = sky_overhead(vec![green, red], UNDER, -89.0) {
+        assert!(shown[1] > 200 && shown[0] < 20, "{shown:?}");
+    }
+}
+
+/// A thin layer shows the one above it.
+#[test]
+fn clouds_show_through_gaps_in_each_other() {
+    let gap = Clouds {
+        image: Some(cloud_picture(0)),
+        ..solid_cloud([1.0, 0.0, 0.0])
+    };
+    let green = solid_cloud([0.0, 1.0, 0.0]);
+    if let Some(shown) = sky_overhead(vec![gap, green], UNDER, -89.0) {
+        assert!(shown[1] > 200 && shown[0] < 20, "{shown:?}");
+    }
+}
+
+/// Each layer reads its own picture, however many there are.
+#[test]
+fn each_layer_has_its_own_picture() {
+    for layer in 0..4 {
+        let mut layers = vec![
+            Clouds {
+                image: Some(cloud_picture(0)),
+                ..solid_cloud([1.0, 0.0, 0.0])
+            };
+            4
+        ];
+        layers[layer].image = Some(cloud_picture(255));
+        if let Some(shown) = sky_overhead(layers, UNDER, -89.0) {
+            assert!(shown[0] > 200, "layer {layer}: {shown:?}");
+        }
+    }
+}
+
+/// A layer with no picture among those with one doesn't take up one of theirs.
+#[test]
+fn a_made_up_layer_leaves_the_pictures_in_order() {
+    let none = Clouds {
+        coverage: 0.0,
+        image: None,
+        ..solid_cloud([0.0, 0.0, 1.0])
+    };
+    // A picture with nothing in it, where the slot after it has something.
+    let gap = Clouds {
+        image: Some(cloud_picture(0)),
+        ..solid_cloud([1.0, 0.0, 0.0])
+    };
+    if let Some(shown) = sky_overhead(vec![none, gap], UNDER, -89.0) {
+        assert!(shown[0] < 20, "{shown:?}");
+    }
+}
+
+/// A picture with half of it on either side, to see where a layer's looked at.
+fn half_cloud_picture() -> Arc<Vec<MipLevel>> {
+    let mut rgba = Vec::new();
+    for _ in 0..64 {
+        for x in 0..64 {
+            rgba.extend_from_slice(if x < 32 { &[255; 4] } else { &[0; 4] });
+        }
+    }
+    Arc::new(vec![MipLevel {
+        width: 64,
+        height: 64,
+        rgba,
+        form: PixelForm::Rgba,
+    }])
+}
+
+/// Clouds with a height go by as the view moves, and ones with none stay with it.
+#[test]
+fn high_clouds_go_by_the_view() {
+    let cloud = |height| Clouds {
+        height,
+        image: Some(half_cloud_picture()),
+        ..solid_cloud([1.0, 0.0, 0.0])
+    };
+    let shown = |height, x| sky_overhead(vec![cloud(height)], Vec3::new(x, 0.0, -2000.0), -89.9);
+    let (Some(here), Some(there)) = (shown(1000.0, 250.0), shown(1000.0, 750.0)) else {
+        return;
+    };
+    assert_ne!(here[0] > 128, there[0] > 128, "{here:?} {there:?}");
+    let (Some(here), Some(there)) = (shown(0.0, 250.0), shown(0.0, 750.0)) else {
+        return;
+    };
+    assert_eq!(here, there);
+}
+
+/// A flat plane goes on for ever, and a dome comes round, so low down they're far apart.
+#[test]
+fn a_dome_keeps_clouds_big_low_down() {
+    let cloud = |curve| Clouds {
+        curve,
+        scale: 0.15,
+        image: Some(half_cloud_picture()),
+        ..solid_cloud([1.0, 0.0, 0.0])
+    };
+    // Looking 12 degrees up, a dome is a sixth of a repeat away, and a plane is well past half.
+    let look = |curve| sky_overhead(vec![cloud(curve)], UNDER, -12.0);
+    if let (Some(flat), Some(dome)) = (look(0.0), look(1.0)) {
+        assert!(flat[0] < 40 && dome[0] > 40, "{flat:?} {dome:?}");
+    }
+}
+
+/// Lit clouds take the sun's colour, and others keep their own.
+#[test]
+fn lit_clouds_take_the_sun() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let with_lit = |lit| Sky {
+        zenith: [0.0, 0.0, 0.0],
+        horizon: [0.0, 0.0, 0.0],
+        sun_color: [1.0, 0.0, 0.0],
+        sun_size: 0.0,
+        sun_direction: Vec3::new(1.0, 0.0, 0.0),
+        clouds: vec![Clouds {
+            lit,
+            ..solid_cloud([1.0, 1.0, 1.0])
+        }],
+        ..Sky::default()
+    };
+    let view = View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    };
+    let mut shot = |lit| {
+        let mut built = map(1);
+        built.sky = Some(with_lit(lit));
+        renderer.load_map(Arc::new(built)).expect("load");
+        let capture = renderer
+            .capture(&view, Drawables::default(), 32, 32)
+            .expect("capture");
+        centre(&capture)
+    };
+    let plain = shot(0.0);
+    let lit = shot(1.0);
+    assert!(plain[1] > 200, "{plain:?}");
+    assert!(lit[0] > 80 && lit[1] < 20, "{lit:?}");
+    assert!(
+        lit[0] < plain[0],
+        "thick cloud is darker: {lit:?} {plain:?}"
+    );
+}
+
+/// Thin cloud lights up near the sun, if it's lit at all.
+#[test]
+fn only_lit_clouds_shine_round_the_sun() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let view = View {
+        origin: UNDER,
+        pitch: -80.0,
+        ..view_from_above()
+    };
+    let mut shot = |clouds: Vec<Clouds>| {
+        let mut built = map(1);
+        built.sky = Some(Sky {
+            zenith: [0.0, 0.0, 0.0],
+            horizon: [0.0, 0.0, 0.0],
+            sun_color: [1.0, 0.0, 0.0],
+            sun_size: 0.0,
+            sun_direction: Vec3::new(0.0, 0.0, 1.0),
+            clouds,
+            ..Sky::default()
+        });
+        renderer.load_map(Arc::new(built)).expect("load");
+        let capture = renderer
+            .capture(&view, Drawables::default(), 32, 32)
+            .expect("capture");
+        centre(&capture)
+    };
+    // About half as thick as it can be, and black, so that all it shows is what shines.
+    let thin = |lit| Clouds {
+        lit,
+        image: Some(cloud_picture(59)),
+        ..solid_cloud([0.0, 0.0, 0.0])
+    };
+    let plain = shot(vec![thin(0.0)]);
+    let lit = shot(vec![thin(1.0)]);
+    assert!(lit[0] > plain[0] + 20, "{lit:?} {plain:?}");
+}
+
 /// Clouds drift smoothly. A hash of `sin` broke them into blocks with hard edges,
 /// so neighbouring pixels of open sky jumped.
 #[test]
@@ -1741,13 +1983,10 @@ fn clouds_have_no_hard_edges() {
     built.sky = Some(Sky {
         zenith: [0.1, 0.2, 0.5],
         horizon: [0.1, 0.2, 0.5],
-        clouds: Some(Clouds {
-            color: [1.0, 1.0, 1.0],
-            coverage: 0.5,
+        clouds: vec![Clouds {
             speed: [0.0, 0.0],
-            scale: 1.0,
-            image: None,
-        }),
+            ..Clouds::default()
+        }],
         ..Sky::default()
     });
     renderer.load_map(Arc::new(built)).expect("load");

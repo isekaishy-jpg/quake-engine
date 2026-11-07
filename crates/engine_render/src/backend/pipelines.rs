@@ -372,7 +372,7 @@ impl Backend {
             land_depth,
             depth_only,
             plain_after_depth,
-            sky_sphere: GraphicsPipelineBuilder::new(&layouts.world, pass)
+            sky_sphere: GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_sky_sphere")
                 .stage(GraphicsShaderStage::Fragment, &shader, "fs_sky_sphere")
                 .dynamic_viewport_scissor()
@@ -380,7 +380,7 @@ impl Backend {
                 .depth_test(false, false)
                 .samples(samples)
                 .build(device)?,
-            sky_window: GraphicsPipelineBuilder::new(&layouts.world, pass)
+            sky_window: GraphicsPipelineBuilder::new(&layouts.material, pass)
                 .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
                 .stage(GraphicsShaderStage::Fragment, &shader, "fs_sky_window")
                 .vertex_input(&bindings, &attributes)

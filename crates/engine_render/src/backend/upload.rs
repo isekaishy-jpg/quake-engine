@@ -5,8 +5,9 @@ use std::sync::Arc;
 use engine_core::canvas::Quad;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasModel, BOUNCE_STYLE, Fog, FogVolume, Look, Map, Material, MipLevel, PixelForm, Pool,
-    ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind, WaterSheet,
+    AliasModel, BOUNCE_STYLE, Fog, FogVolume, Look, MOST_CLOUDS, Map, Material, MipLevel,
+    PixelForm, Pool, ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
+    WaterSheet,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -605,12 +606,20 @@ fn sky_values(sky: Option<&Sky>) -> [f32; SKY_BYTES / 4] {
     ]);
     out[15] = sky.sun_size;
     out[16..19].copy_from_slice(&sky.sun_color);
-    if let Some(clouds) = &sky.clouds {
-        out[20..23].copy_from_slice(&clouds.color);
-        out[23] = clouds.coverage;
-        out[24..26].copy_from_slice(&clouds.speed);
-        out[26] = clouds.scale;
-        out[27] = if clouds.image.is_some() { 2.0 } else { 1.0 };
+    let mut picture = 0.0;
+    for (index, clouds) in sky.clouds.iter().take(MOST_CLOUDS).enumerate() {
+        let at = 20 + index * 4;
+        out[at..at + 3].copy_from_slice(&clouds.color);
+        out[at + 3] = clouds.coverage;
+        let at = 20 + MOST_CLOUDS * 4 + index * 4;
+        out[at..at + 2].copy_from_slice(&clouds.speed);
+        out[at + 2] = clouds.scale;
+        out[at + 3] = if clouds.image.is_some() { 2.0 } else { 1.0 };
+        let at = 20 + MOST_CLOUDS * 8 + index * 4;
+        out[at..at + 4].copy_from_slice(&[clouds.height, clouds.curve, clouds.lit, picture]);
+        if clouds.image.is_some() {
+            picture += 1.0;
+        }
     }
     out
 }
@@ -1057,21 +1066,23 @@ impl Backend {
         }
         let sky_set = match &map.sky {
             Some(sky) => {
-                let cloud = sky.clouds.as_ref().and_then(|clouds| clouds.image.as_ref());
-                let view = if let Some(cloud) = cloud {
+                let set = pool.allocate(&self.material_layout)?;
+                let images = sky.clouds.iter().filter_map(|clouds| clouds.image.as_ref());
+                let mut pictures = Vec::new();
+                for cloud in images.take(MOST_CLOUDS) {
                     let levels: Vec<(u32, u32, &[u8])> = cloud
                         .iter()
                         .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
                         .collect();
-                    textures.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
-                    textures.last().map(|image| &image.view)
-                } else {
-                    Some(&blank.view)
-                };
-                let set = pool.allocate(&self.texture_layout)?;
-                if let Some(view) = view {
-                    set.write_sampled_image(0, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                    pictures.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
                 }
+                // The set's first picture, then its first three slots, which are the same for
+                // every sky, so that one with fewer has something there.
+                for (index, binding) in [0, 2, 3, 4].into_iter().enumerate() {
+                    let view = pictures.get(index).map_or(&blank.view, |image| &image.view);
+                    set.write_sampled_image(binding, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                }
+                textures.extend(pictures);
                 set.write_sampler(1, &self.material_sampler);
                 Some(set)
             }

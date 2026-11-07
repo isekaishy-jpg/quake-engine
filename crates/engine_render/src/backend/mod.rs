@@ -122,7 +122,7 @@ const FOG_LIGHTS: usize = 4;
 const POST_BYTES: usize = 128;
 
 /// Bytes of sky values in the frame uniforms.
-const SKY_BYTES: usize = 112;
+const SKY_BYTES: usize = 80 + engine_map::MOST_CLOUDS * 48;
 
 /// Texture frames per second, from `R_TextureAnimation`.
 const ANIMATION_RATE: f32 = 5.0;

@@ -78,6 +78,59 @@ fn sky_fractal(at_start: vec2<f32>, detail: f32) -> f32 {
     return total;
 }
 
+// Where a view ray meets a layer of cloud, as a shell one unit up round a world. A big world makes
+// it a flat plane, and one of no size makes it a dome.
+fn cloud_plane(direction: vec3<f32>, curve: f32) -> vec2<f32> {
+    let radius = 1.0 / max(curve, 0.0001) - 1.0;
+    let along = radius * direction.z;
+    return direction.xy * (2.0 * radius + 1.0) / (along + sqrt(along * along + 2.0 * radius + 1.0));
+}
+
+// How much of a layer's own picture is at `at`.
+fn cloud_picture(picture: i32, at: vec2<f32>) -> f32 {
+    switch picture {
+        case 0: { return textureSampleLevel(surface, surface_sampler, at, 0.0).r; }
+        case 1: { return textureSampleLevel(slot1, surface_sampler, at, 0.0).r; }
+        case 2: { return textureSampleLevel(slot2, surface_sampler, at, 0.0).r; }
+        default: { return textureSampleLevel(slot3, surface_sampler, at, 0.0).r; }
+    }
+}
+
+// How much cloud a layer has along `direction`, once it's thinned out at the horizon.
+fn cloud_amount(direction: vec3<f32>, layer: i32) -> f32 {
+    let params = frame.sky_cloud_params[layer];
+    let shape = frame.sky_cloud_shape[layer];
+    var plane = cloud_plane(direction, shape.y);
+    if shape.x > 0.0 {
+        plane = plane + frame.eye.xy / shape.x;
+    }
+    let at = plane * params.z + params.xy * frame.params.x;
+    var density = 0.0;
+    if params.w > 1.5 {
+        density = cloud_picture(i32(shape.w), at);
+    } else {
+        density = sky_fractal(at * 3.0, direction.z * 2.2);
+    }
+    let cover = frame.sky_cloud[layer].w;
+    let amount = smoothstep(0.92 - cover * 0.84, 1.22 - cover * 0.84, density);
+    return amount * clamp(direction.z * 6.0, 0.0, 1.0);
+}
+
+// A sky, with a layer of cloud over it.
+fn with_clouds(color: vec3<f32>, direction: vec3<f32>, layer: i32, toward: f32) -> vec3<f32> {
+    if frame.sky_cloud_params[layer].w < 0.5 {
+        return color;
+    }
+    let amount = cloud_amount(direction, layer);
+    let lit = frame.sky_cloud_shape[layer].z;
+    let sun = frame.sky_sun_color.rgb;
+    // Thick cloud lets less through, and thin cloud near the sun lights up.
+    let thick = 1.0 - lit * 0.5 * amount * amount;
+    let rim = sun * lit * (1.0 - amount) * pow(max(toward, 0.0), 8.0);
+    let shade = frame.sky_cloud[layer].rgb * mix(vec3<f32>(1.0), sun, lit) * thick + rim;
+    return mix(color, shade, amount);
+}
+
 fn sky_color(direction_in: vec3<f32>) -> vec3<f32> {
     let direction = normalize(direction_in);
     let height = direction.z;
@@ -96,22 +149,11 @@ fn sky_color(direction_in: vec3<f32>) -> vec3<f32> {
     let glow = pow(max(toward, 0.0), 64.0) * 0.35;
     color = color + frame.sky_sun_color.rgb * (disc + glow);
 
-    let mode = frame.sky_cloud_params.w;
-    if mode > 0.5 && height > 0.0 {
-        // A flat layer overhead, seen in perspective, thinning at the horizon.
-        let plane = direction.xy / (height + 0.12);
-        let drift = frame.sky_cloud_params.xy * frame.params.x;
-        let at = plane * frame.sky_cloud_params.z + drift;
-        var density = 0.0;
-        if mode > 1.5 {
-            density = textureSampleLevel(surface, surface_sampler, at, 0.0).r;
-        } else {
-            density = sky_fractal(at * 3.0, height * 2.2);
+    if height > 0.0 {
+        // The highest first, so what's lower is in front of it.
+        for (var layer = 3; layer >= 0; layer = layer - 1) {
+            color = with_clouds(color, direction, layer, toward);
         }
-        let cover = frame.sky_cloud.w;
-        let amount = smoothstep(0.92 - cover * 0.84, 1.22 - cover * 0.84, density);
-        let fade = clamp(height * 6.0, 0.0, 1.0);
-        color = mix(color, frame.sky_cloud.rgb, amount * fade);
     }
     return color;
 }

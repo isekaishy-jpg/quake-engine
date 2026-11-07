@@ -19,10 +19,12 @@ struct Frame {
     // xyz towards the sun, w its size.
     sky_sun: vec4<f32>,
     sky_sun_color: vec4<f32>,
-    // Colour, then w is the coverage.
-    sky_cloud: vec4<f32>,
+    // Per layer of cloud, lowest first: a colour with w its coverage.
+    sky_cloud: array<vec4<f32>, 4>,
     // xy speed, z scale, w 0 for none, 1 procedural, 2 from an image.
-    sky_cloud_params: vec4<f32>,
+    sky_cloud_params: array<vec4<f32>, 4>,
+    // x how high in the world, y how curved, z how lit, w which picture.
+    sky_cloud_shape: array<vec4<f32>, 4>,
     // Back from clip space to the world.
     inverse_view_projection: mat4x4<f32>,
     // Colour, then w is the density.

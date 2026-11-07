@@ -30,6 +30,7 @@
   - [Effects](effects.md): writing one
   - [Fog](fog.md): how a level sets it
   - [Water](water.md): how a level sets it
+  - [Sky](sky.md): how a level sets it
   - [Making a level](editor.md): the floor plan, and how to use it without a mouse
   - [Doors and lifts](doors.md): what they do, and how to open one from somewhere else
   - [Zones](zones.md): named parts of a map

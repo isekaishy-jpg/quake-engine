@@ -14,7 +14,7 @@ Each stencil gets a grid of how far light gets past each of its cells, by the sa
 
 ### Cloud planes (63)
 
-A sky has up to four `clouds` blocks, drawn lowest first. New fields:
+A sky has up to four `clouds` blocks, and the first, the lowest, is in front. New fields:
 
 | Field | Means |
 |---|---|
@@ -22,7 +22,7 @@ A sky has up to four `clouds` blocks, drawn lowest first. New fields:
 | `curve` | 0 for a flat plane, up to 1 for a dome |
 | `lit` | How much the sun's colour falls on it, and how dark its middle is |
 
-One block with no new fields looks as it did.
+One block with no new fields looks much as it did.
 
 ### Rays from the sky (64)
 
@@ -77,5 +77,14 @@ Each of those comes from the research, and none needs more for what the items as
 - **What it costs:** too little to tell from noise. The pass with rays took 0.18 to 0.25 ms before and about 0.25 ms after, at 1280 by 720, with a beam filling much of the view. There are 32 traces a frame.
 - **Light starts inside glass.** A stained window's glass is solid and its stencil is in the middle of it, so a trace starting there never got anywhere. It now looks for the way out, for up to 48 units.
 - **Characters don't stop a beam,** though they do close a box. A beam's cells are too coarse for one to show.
+
+### Cloud planes (63)
+
+- **Tried in the game:** a high, slow, broad layer behind a low, small, lit one, in a yard with the sun low. They go by at different rates and come down to the horizon.
+- **What it costs:** one layer costs what it did. With the sky filling the view, a frame's scene took about 0.5 to 1 ms with one layer made up, and 1.2 to 1.4 ms with four. The numbers move about from run to run, so that's rough.
+- **A level's `speed` was being ignored.** It's two numbers, but it was read as three, so anything that gave two got the default, with no word about it. `outdoors` did. It takes two or three now.
+- **A shell does both shapes.** Where a ray meets a shell round a world gives a plane for a big world and a dome for none, with one number between them. It's arranged so a flat plane doesn't lose its precision.
+- **Pictures go in material slots,** so a sky uses the layout materials do, and has room for four of them.
+- **A fifth layer is an error,** and doesn't vanish.
 
 Filled in as each part lands.
