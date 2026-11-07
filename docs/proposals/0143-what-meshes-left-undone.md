@@ -121,3 +121,14 @@ Five bugs were put back, each failing a test: materials ignoring it, classic sha
 
 Not built: nothing here could make one, as [the research](../research/mesh-limits.md) sets out.
 
+### What's see-through
+
+The limit said see-through copies weren't sorted. **It was worse than that: they had never drawn.** `record_meshes` was only ever called for what's solid, so a mesh's see-through parts went nowhere, in copies and moving meshes alike, and nothing tested them.
+
+They're in the world's far to near list now, one thing to a place in it: faces, a part of one copy, a part of something that moves. A copy of something see-through draws by itself, which gives up instancing for those parts, as a batch can't go in several places in a list. What's see-through is a small share of what's drawn. Sorting goes by the middle of each, so things that pass through each other can still come out in the wrong order, as [sources warn](https://github.com/shimakaze09/Engine/issues/985).
+
+- **The tests** fail on the code as it was, with the floor showing through unchanged. Unsorted, the test of a copy and something moving reads 210 and 211, where sorted they're well apart. It needed that margin: first it passed unsorted. Its first assertions were wrong too, as this test floor is so red that red always leads.
+- **Tried in the game** with two panes of the Blender plane, one in front of the other, with barrels showing through both.
+- **That trial found another bug.** The panes cast a solid shadow in the bake. Light passed see-through brushes, but a mesh's triangles all blocked it, whatever they were made of. They go by the same test now, and `a_mesh_of_glass_casts_no_shadow` fails on the old bake.
+- **Glass in a mesh doesn't tint what it lets through** as a brush's stained glass does. Light just passes.
+

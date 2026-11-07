@@ -46,7 +46,15 @@ fn batches_of(map: &Map, planes: &[[f32; 4]; 6], levels: &mut [usize]) -> Vec<In
     let lights = vec![InstanceLight::default(); count];
     let visible: Vec<u32> = (0..u32::try_from(count).expect("few")).collect();
     let mut out = vec![0; count * INSTANCE_BYTES];
-    instance_batches(map, &lights, &visible, planes, (&VIEW, levels), &mut out)
+    let mut centers = Vec::new();
+    instance_batches(
+        map,
+        &lights,
+        &visible,
+        planes,
+        (&VIEW, levels),
+        (&mut out, &mut centers),
+    )
 }
 
 #[test]

@@ -1,14 +1,16 @@
 //! Recording a frame's draw calls.
 
+use std::cell::Cell;
+
 use engine_core::math::Vec3;
-use engine_map::{Map, Shading};
+use engine_map::{Map, Shading, SharedPart};
 use vulkane::safe::{GraphicsPipeline, ShaderStageFlags};
 
 use super::clock::{GpuClock, Span};
-use super::deform::{bind_figure, bind_moving};
+use super::deform::{MovingJob, bind_figure, bind_moving};
 use super::{
-    ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuSprite, INDEX_TYPE_U32,
-    Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene, SurfacePipelines,
+    ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuMesh, GpuSprite,
+    INDEX_TYPE_U32, Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene, SurfacePipelines,
 };
 use crate::instances::InstanceBatch;
 use crate::renderer::View;
@@ -41,12 +43,35 @@ pub(super) struct Recorder<'a> {
     instances: &'a GpuBuffer,
     /// Where each mesh's copies are.
     instance_batches: &'a [InstanceBatch],
+    /// The middle of each copy.
+    instance_centers: &'a [Vec3],
     /// Which frame in flight this is.
     slot: usize,
     /// Times what the GPU does.
     clock: &'a GpuClock,
     /// Whether models get hull outlines.
     outline_hull: bool,
+}
+
+/// Something see-through, to be drawn far to near with everything else that is.
+enum SeeThrough<'a> {
+    /// Faces of the world, or of a brush model at `origin`.
+    Faces {
+        /// Where the model has moved to.
+        origin: Vec3,
+        /// Which batch.
+        batch: u32,
+        /// The first index.
+        first: u32,
+        /// How many.
+        count: u32,
+        /// The model's frame.
+        frame: u16,
+    },
+    /// A part of one copy of a shared mesh.
+    Copy(&'a GpuMesh, SharedPart, u32),
+    /// A part of something that moves.
+    Moving(&'a MovingJob, SharedPart),
 }
 
 /// Whether `batch`'s material does nothing the plain shader leaves out.
@@ -163,6 +188,7 @@ impl Backend {
             indices: &self.map.as_ref()?.indices[self.slot],
             instances: &self.map.as_ref()?.instances[self.slot],
             instance_batches: &self.map.as_ref()?.instance_batches[self.slot],
+            instance_centers: &self.map.as_ref()?.instance_centers[self.slot],
             slot: self.slot,
             clock: &self.clock,
             outline_hull: self.post.outline_hull,
@@ -254,7 +280,7 @@ impl Recorder<'_> {
         self.record_sky(rec, scene, size);
         self.record_depth(rec, scene, size);
         self.record_world(rec, scene, view, size, false);
-        self.record_meshes(rec, scene, view, false);
+        self.record_meshes(rec, scene, view);
         self.record_models(rec);
         self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
@@ -362,12 +388,12 @@ impl Recorder<'_> {
             reason = "time is never negative, and the frame count wraps by design"
         )]
         let step = (view.time * ANIMATION_RATE) as u32;
-        let mut bound = None;
-        let mut draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-                        batch: u32,
-                        first: u32,
-                        count: u32,
-                        frame: u16| {
+        let bound = Cell::new(None);
+        let draw = |rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+                    batch: u32,
+                    first: u32,
+                    count: u32,
+                    frame: u16| {
             let Some(batch) = scene.mesh.batches.get(batch as usize) else {
                 return;
             };
@@ -386,7 +412,7 @@ impl Recorder<'_> {
                 return;
             };
             let window = batch.kind == BatchKind::Sky && map.sky_set.is_some();
-            if bound != Some((batch.kind, after_depth, plain, shader)) {
+            if bound.get() != Some((batch.kind, after_depth, plain, shader)) {
                 if window {
                     rec.bind_graphics_pipeline(&self.pipelines.sky_window);
                 } else if plain {
@@ -396,7 +422,7 @@ impl Recorder<'_> {
                 } else {
                     rec.bind_graphics_pipeline(surface.get(batch.kind));
                 }
-                bound = Some((batch.kind, after_depth, plain, shader));
+                bound.set(Some((batch.kind, after_depth, plain, shader)));
             }
             let set_layout = if window {
                 layout
@@ -420,7 +446,14 @@ impl Recorder<'_> {
             for (batch, &(first, count)) in (0_u32..).zip(&scene.visible.ranges) {
                 if count > 0 {
                     let distance = (center(batch) - view.origin).length();
-                    order.push((distance, Vec3::ZERO, batch, first, count, 0));
+                    let faces = SeeThrough::Faces {
+                        origin: Vec3::ZERO,
+                        batch,
+                        first,
+                        count,
+                        frame: 0,
+                    };
+                    order.push((distance, faces));
                 }
             }
             for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
@@ -431,21 +464,51 @@ impl Recorder<'_> {
                     let first = scene.mesh.world_index_count + range.first;
                     let at = center(range.batch) + instance.origin;
                     let distance = (at - view.origin).length();
-                    order.push((
-                        distance,
-                        instance.origin,
-                        range.batch,
+                    let faces = SeeThrough::Faces {
+                        origin: instance.origin,
+                        batch: range.batch,
                         first,
-                        range.count,
-                        instance.frame,
-                    ));
+                        count: range.count,
+                        frame: instance.frame,
+                    };
+                    order.push((distance, faces));
                 }
             }
+            self.see_through_meshes(scene, view, &mut order);
             order.sort_by(|a, b| b.0.total_cmp(&a.0));
-            for (_, origin, batch, first, count, frame) in order {
-                let bytes = offset_bytes(origin);
-                rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
-                draw(rec, batch, first, count, frame);
+            let mut on_faces = true;
+            for (_, item) in order {
+                match item {
+                    SeeThrough::Faces {
+                        origin,
+                        batch,
+                        first,
+                        count,
+                        frame,
+                    } => {
+                        if !on_faces {
+                            rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
+                            rec.bind_index_buffer(&self.indices.buffer, 0, INDEX_TYPE_U32);
+                            bound.set(None);
+                            on_faces = true;
+                        }
+                        let bytes = offset_bytes(origin);
+                        rec.push_constants(layout, ShaderStageFlags::VERTEX, 0, &bytes);
+                        draw(rec, batch, first, count, frame);
+                    }
+                    SeeThrough::Copy(mesh, part, instance) => {
+                        on_faces = false;
+                        self.bind_copies(rec, mesh);
+                        self.draw_part(rec, scene, step, &part, instance);
+                    }
+                    SeeThrough::Moving(job, part) => {
+                        on_faces = false;
+                        let moving = &map.moving;
+                        if bind_moving(rec, moving, job, self.slot, true).is_some() {
+                            self.draw_part(rec, scene, step, &part, job.instance);
+                        }
+                    }
+                }
             }
             return;
         }
@@ -478,14 +541,90 @@ impl Recorder<'_> {
         }
     }
 
-    /// Records the copies of shared meshes: what's see-through, or the rest. Each part of a
-    /// mesh is one draw of all its copies.
+    /// Adds what's see-through in copies and what moves to `order`. A copy's drawn by itself, as
+    /// what's see-through has to go in its place among the rest.
+    fn see_through_meshes<'s>(
+        &'s self,
+        scene: &Scene<'_>,
+        view: &View,
+        order: &mut Vec<(f32, SeeThrough<'s>)>,
+    ) {
+        let map = self.map;
+        let blended = |part: &&SharedPart| {
+            let texture = scene.map.textures.get(part.texture as usize);
+            texture.and_then(batch_kind) == Some(BatchKind::Blended)
+        };
+        for batch in self.instance_batches {
+            let Some(mesh) = map.shared_meshes.get(batch.mesh as usize) else {
+                continue;
+            };
+            let Some(parts) = mesh.levels.get(batch.level as usize) else {
+                continue;
+            };
+            for part in parts.iter().filter(blended) {
+                for instance in batch.first..batch.first + batch.count {
+                    let center = self.instance_centers.get(instance as usize);
+                    let center = center.copied().unwrap_or(Vec3::ZERO);
+                    let distance = (center - view.origin).length();
+                    order.push((distance, SeeThrough::Copy(mesh, *part, instance)));
+                }
+            }
+        }
+        let moving = &map.moving;
+        for job in moving.jobs(self.slot).iter().filter(|job| job.in_view) {
+            let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
+                continue;
+            };
+            let distance = (job.center - view.origin).length();
+            for part in mesh.parts(job.level).iter().filter(blended) {
+                order.push((distance, SeeThrough::Moving(job, *part)));
+            }
+        }
+    }
+
+    /// Binds what a shared mesh's copies draw from.
+    fn bind_copies(&self, rec: &mut vulkane::safe::CommandBufferRecording<'_>, mesh: &GpuMesh) {
+        rec.bind_vertex_buffers(
+            0,
+            &[
+                (&mesh.places.buffer, 0),
+                (&mesh.uvs.buffer, 0),
+                (&self.instances.buffer, 0),
+            ],
+        );
+        rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
+    }
+
+    /// Draws one part of a see-through mesh that's bound.
+    fn draw_part(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        step: u32,
+        part: &SharedPart,
+        instance: u32,
+    ) {
+        let map = self.map;
+        let texture = animated_texture(scene.map, part.texture, step, 0);
+        let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
+            return;
+        };
+        let shader = map.texture_shaders.get(texture as usize).copied();
+        let Some(surface) = self.pipelines.surfaces.get(shader.unwrap_or(0)) else {
+            return;
+        };
+        rec.bind_graphics_pipeline(surface.mesh(BatchKind::Blended));
+        rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set, set]);
+        rec.draw_indexed(part.count, 1, part.first, 0, instance);
+    }
+
+    /// Records what's solid or has holes in the copies of shared meshes. Each part of a mesh is
+    /// one draw of all its copies. What's see-through is sorted with the world's, instead.
     fn record_meshes(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: &Scene<'_>,
         view: &View,
-        see_through: bool,
     ) {
         #[expect(
             clippy::cast_possible_truncation,
@@ -498,15 +637,7 @@ impl Recorder<'_> {
             let Some(mesh) = map.shared_meshes.get(batch.mesh as usize) else {
                 continue;
             };
-            rec.bind_vertex_buffers(
-                0,
-                &[
-                    (&mesh.places.buffer, 0),
-                    (&mesh.uvs.buffer, 0),
-                    (&self.instances.buffer, 0),
-                ],
-            );
-            rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
+            self.bind_copies(rec, mesh);
             let Some(parts) = mesh.levels.get(batch.level as usize) else {
                 continue;
             };
@@ -519,7 +650,7 @@ impl Recorder<'_> {
                 else {
                     continue;
                 };
-                if (kind == BatchKind::Blended) != see_through {
+                if kind == BatchKind::Blended {
                     continue;
                 }
                 let texture = animated_texture(scene.map, part.texture, step, 0);
@@ -543,13 +674,9 @@ impl Recorder<'_> {
                 rec.draw_indexed(part.count, batch.count, part.first, 0, batch.first);
             }
         }
-        if !see_through {
-            self.clock.start(rec, self.slot, Span::Moving);
-        }
-        self.record_moving(rec, scene, step, see_through);
-        if !see_through {
-            self.clock.end(rec, self.slot, Span::Moving);
-        }
+        self.clock.start(rec, self.slot, Span::Moving);
+        self.record_moving(rec, scene, step);
+        self.clock.end(rec, self.slot, Span::Moving);
     }
 
     /// The pipeline for a mesh's part, which needn't write depth if that's been drawn.
@@ -573,7 +700,6 @@ impl Recorder<'_> {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: &Scene<'_>,
         step: u32,
-        see_through: bool,
     ) {
         let map = self.map;
         let moving = &map.moving;
@@ -584,7 +710,7 @@ impl Recorder<'_> {
             let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
                 continue;
             };
-            if self.outline_hull && !see_through {
+            if self.outline_hull {
                 rec.bind_graphics_pipeline(&self.pipelines.mesh_hull);
                 rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set]);
                 for part in mesh.shadow_parts(job.level) {
@@ -596,7 +722,7 @@ impl Recorder<'_> {
                 let Some(kind) = texture.and_then(batch_kind) else {
                     continue;
                 };
-                if (kind == BatchKind::Blended) != see_through {
+                if kind == BatchKind::Blended {
                     continue;
                 }
                 let texture = animated_texture(scene.map, part.texture, step, 0);

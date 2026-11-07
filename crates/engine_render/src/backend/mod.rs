@@ -234,6 +234,8 @@ struct GpuMap {
     instances: [GpuBuffer; FRAMES],
     /// Where each mesh's copies are in those.
     instance_batches: [Vec<InstanceBatch>; FRAMES],
+    /// The middle of each copy, in the order they're written.
+    instance_centers: [Vec<Vec3>; FRAMES],
     /// All the copies, for shadow maps.
     shadow_instances: Vec<ShadowInstance>,
     /// Which level of detail each copy is at.

@@ -128,14 +128,16 @@ pub fn write_instance(rows: &[[f32; 4]; 3], light: &InstanceLight, out: &mut [u8
 
 /// Writes the copies among `visible` that `planes` can see to `out`, mesh by mesh and level by
 /// level, and says where each of those is. `levels` is where each copy is, and is moved on.
+/// `centers` gets the middle of each, in the same order, for what has to be sorted.
 pub fn instance_batches(
     map: &Map,
     lights: &[InstanceLight],
     visible: &[u32],
     planes: &[[f32; 4]; 6],
     (view, levels): (&LevelView, &mut [usize]),
-    out: &mut [u8],
+    (out, centers): (&mut [u8], &mut Vec<Vec3>),
 ) -> Vec<InstanceBatch> {
+    centers.clear();
     let mut first_of = Vec::with_capacity(map.shared_meshes.len());
     let mut groups = 0;
     for mesh in &map.shared_meshes {
@@ -176,6 +178,7 @@ pub fn instance_batches(
                     break;
                 };
                 write_instance(&instance.rows, light, slot.as_mut_slice());
+                centers.push(instance.place(shared.center));
                 count += 1;
             }
             if count > 0 {

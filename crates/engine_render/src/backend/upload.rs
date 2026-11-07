@@ -936,6 +936,7 @@ impl Backend {
             shared_meshes,
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
+            instance_centers: std::array::from_fn(|_| Vec::new()),
             instance_levels: vec![0; map.mesh_instances.len()],
             moving,
             shadow_instances,
@@ -1318,7 +1319,7 @@ impl Backend {
                     &scene.visible.instances,
                     &planes,
                     (&levels, &mut map.instance_levels),
-                    mapped.as_slice_mut(),
+                    (mapped.as_slice_mut(), &mut map.instance_centers[slot]),
                 );
             }
             if scene.changed {

@@ -10,10 +10,10 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
-    Material, MaterialLayer, MeshCorner, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK,
-    PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading,
-    SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
-    SpriteFrame, SpriteImage, TextureKind, TileLight,
+    Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE,
+    PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
+    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
+    SpriteFrame, SpriteImage, Texture, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -3029,6 +3029,152 @@ fn a_points_colour_multiplies_a_face() {
     // its green can be higher than it was.
     let green = centre_with(vec![[0, 255, 0, 255]; 4]);
     assert!(green[1] > 100 && green[0] < 5 && green[2] < 5, "{green:?}");
+}
+
+/// A texture of glass, half see-through, in `color`.
+fn glass(color: [u8; 3]) -> Texture {
+    let [red, green, blue] = color;
+    let mut texture = map(1).textures[0].clone();
+    texture.mips = image_of(2, |_, _| [red, green, blue, 128]);
+    texture.material = Some(Arc::new(Material {
+        alpha: AlphaMode::Blend,
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    texture
+}
+
+/// A square over the floor, of `texture`, as a moving mesh.
+fn square_of(texture: u32) -> MovingMesh {
+    let corner = |x: f32, y: f32| MeshCorner {
+        position: [x, y, 0.0],
+        uv: [0.0, 0.0],
+        normal: [0, 0, 127],
+    };
+    MovingMesh {
+        name: "square".to_owned(),
+        mesh: SharedMesh {
+            corners: vec![
+                corner(48.0, 48.0),
+                corner(80.0, 48.0),
+                corner(80.0, 80.0),
+                corner(48.0, 80.0),
+            ],
+            joints: vec![[0, 0, 0, 0]; 4],
+            weights: vec![[255, 0, 0, 0]; 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            levels: vec![vec![SharedPart {
+                texture,
+                first: 0,
+                count: 6,
+            }]],
+            ..SharedMesh::default()
+        },
+        skeleton: Skeleton::default(),
+    }
+}
+
+/// `mesh` at height `z`.
+fn square_at(mesh: u32, z: f32) -> MovingDraw {
+    let mut rows = NO_MOVE;
+    rows[2][3] = z;
+    MovingDraw {
+        mesh,
+        rows,
+        joint_count: 1,
+        center: Vec3::new(64.0, 64.0, z),
+        radius: 30.0,
+        ..MovingDraw::default()
+    }
+}
+
+/// A red square and a green one, as moving meshes of glass.
+fn map_of_glass() -> Map {
+    let mut map = map(1);
+    map.textures.push(glass([255, 0, 0]));
+    map.textures.push(glass([0, 255, 0]));
+    map.moving_meshes = vec![square_of(1), square_of(2)];
+    map
+}
+
+/// What shows through `draws`, in the order given.
+fn through_glass(renderer: &mut Renderer, draws: &[MovingDraw]) -> [u8; 4] {
+    let palette = [NO_MOVE];
+    let drawables = Drawables {
+        moving: draws,
+        palette: &palette,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    centre(&capture)
+}
+
+/// What's see-through in a mesh draws.
+#[test]
+fn a_see_through_mesh_draws() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_of_glass())).expect("load");
+    let bare = through_glass(&mut renderer, &[]);
+    let red = through_glass(&mut renderer, &[square_at(0, 30.0)]);
+    assert_ne!(red, bare, "it shows");
+}
+
+/// See-through meshes draw far to near, whatever order they're given in, so the nearer is over.
+#[test]
+fn see_through_meshes_draw_far_to_near() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_of_glass())).expect("load");
+    let (red, green) = (square_at(0, 40.0), square_at(1, 20.0));
+    let one_way = through_glass(&mut renderer, &[red, green]);
+    let other_way = through_glass(&mut renderer, &[green, red]);
+    assert_eq!(one_way, other_way, "the order given doesn't matter");
+    let swapped = [square_at(0, 20.0), square_at(1, 40.0)];
+    let turned_round = through_glass(&mut renderer, &swapped);
+    // The floor is so red that red always leads, so this goes by how much green there is.
+    assert!(
+        turned_round[1] > one_way[1],
+        "{one_way:?} and {turned_round:?}"
+    );
+}
+
+/// A see-through copy draws as well, and each by itself, far to near with what moves.
+#[test]
+fn see_through_copies_sort_with_what_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map_of_glass();
+    let mut rows = NO_MOVE;
+    rows[2][3] = 40.0;
+    let copy = square_of(1).mesh;
+    built.shared_meshes.push(SharedMesh {
+        center: Vec3::new(64.0, 64.0, 0.0),
+        radius: 30.0,
+        level_sizes: Vec::new(),
+        ..copy
+    });
+    // A face for it to be found by, which it stands in for.
+    let stand_in = built.faces[0].clone();
+    built.faces.push(stand_in);
+    built.tree.leaf_faces = vec![0, 1];
+    built.tree.leaves[1].face_count = 2;
+    built.models[0].face_count = 2;
+    built.mesh_instances.push(MeshInstance {
+        mesh: 0,
+        rows,
+        first_face: 1,
+        face_count: 1,
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let below = through_glass(&mut renderer, &[square_at(1, 20.0)]);
+    let above = through_glass(&mut renderer, &[square_at(1, 50.0)]);
+    assert!(above[1] > below[1] + 20, "{below:?} and {above:?}");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

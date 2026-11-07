@@ -162,21 +162,22 @@ struct MeshShadow {
 }
 
 impl MeshShadow {
-    /// The shadow of `mesh`, if it has triangles.
-    fn of(mesh: &PlacedMesh) -> Option<Self> {
-        let first = mesh.triangles.first()?.points[0];
+    /// The shadow of `mesh`, if it has triangles that block light.
+    fn of(mesh: &PlacedMesh, see_through: &dyn Fn(&str) -> bool) -> Option<Self> {
+        let blocking = || {
+            mesh.triangles
+                .iter()
+                .filter(|triangle| !see_through(&triangle.material))
+        };
+        let first = blocking().next()?.points[0];
         let (mut low, mut high) = (first, first);
-        for point in mesh.triangles.iter().flat_map(|triangle| &triangle.points) {
+        for point in blocking().flat_map(|triangle| &triangle.points) {
             for axis in 0..3 {
                 low[axis] = low[axis].min(point[axis]);
                 high[axis] = high[axis].max(point[axis]);
             }
         }
-        let triangles = mesh
-            .triangles
-            .iter()
-            .map(|triangle| triangle.points)
-            .collect();
+        let triangles = blocking().map(|triangle| triangle.points).collect();
         Some(Self {
             low,
             high,
@@ -2208,7 +2209,7 @@ pub fn bake_light(map: &mut Map, input: &mut BakeInput<'_>) -> Result<(), Compil
         .placed
         .iter()
         .filter(|mesh| !mesh.only_seen)
-        .filter_map(MeshShadow::of)
+        .filter_map(|mesh| MeshShadow::of(mesh, &see_through))
         .collect();
     let scene = Scene {
         tree,

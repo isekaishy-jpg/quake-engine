@@ -1,10 +1,12 @@
 //! Laying meshes out for light, and lighting them.
 
+use std::sync::Arc;
+
 use engine_compile::{
     BakeInput, Mesh, MeshPart, MeshPlacement, TextureSource, apply_bake, bake_light, compile,
     place_mesh, read_map_text, write_bake,
 };
-use engine_map::{Face, Map, MipLevel, PixelForm, Texture, TextureKind};
+use engine_map::{AlphaMode, Face, Map, Material, MipLevel, PixelForm, Texture, TextureKind};
 
 /// A room open to a sun.
 const ROOM: &str = "format 1 map
@@ -254,4 +256,69 @@ fn a_tiled_maps_chart_keeps_its_samples_together() {
             (first.tile, first.first_sample)
         );
     }
+}
+
+/// Plain textures, with one of glass.
+struct WithGlass;
+
+impl TextureSource for WithGlass {
+    fn texture(&mut self, name: &str) -> Texture {
+        let mut texture = Plain.texture(name);
+        if name == "glass" {
+            texture.material = Some(Arc::new(Material {
+                alpha: AlphaMode::Blend,
+                ..Material::default()
+            }));
+        }
+        texture
+    }
+}
+
+/// All the light on the room's floor, under a sheet of `material`, or none.
+fn light_under(material: Option<&str>) -> u64 {
+    let mut working = read_map_text(ROOM).expect("reads");
+    if let Some(material) = material {
+        let mut mesh = flat_sheet(4);
+        mesh.parts[0].material = material.to_owned();
+        let placement = MeshPlacement {
+            only_seen: false,
+            ..placed(false)
+        };
+        working.placed = vec![place_mesh(&mesh, &placement)];
+    }
+    let mut map = compile(&working, &mut WithGlass).expect("compiles");
+    let mut images = |path: &str| Err(engine_compile::CompileError::Bad(path.to_owned()));
+    let mut input = BakeInput {
+        working: &working,
+        images: &mut images,
+    };
+    bake_light(&mut map, &mut input).expect("bakes");
+    let last = map
+        .mesh_groups
+        .first()
+        .map_or(map.faces.len(), |group| group.first_face as usize);
+    map.faces[..last]
+        .iter()
+        .filter_map(|face| face.light)
+        .map(|light| {
+            let first = light.first_sample as usize;
+            let count = (light.width * light.height) as usize;
+            map.light[first..first + count]
+                .iter()
+                .flatten()
+                .map(|part| u64::from(*part))
+                .sum::<u64>()
+        })
+        .sum()
+}
+
+/// Light passes what's see-through in a mesh, as it does in a brush. A solid sheet shades the
+/// floor, and glass doesn't.
+#[test]
+fn a_mesh_of_glass_casts_no_shadow() {
+    let open = light_under(None);
+    let solid = light_under(Some("solid"));
+    let glass = light_under(Some("glass"));
+    assert!(solid < open, "{solid} of {open}");
+    assert_eq!(glass, open);
 }
