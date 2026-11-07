@@ -15,6 +15,7 @@
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Meshes](meshes.md): bringing models in, and placing them
+  - [Mesh and prefab standard](mesh-standard.md): what a mesh or prefab has to be
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one
   - [Water](water.md): how a level sets it
@@ -171,6 +172,8 @@
     - [0132: common.pkt](proposals/0132-common-pkt.md)
     - [0133: precompiled shaders](proposals/0133-precompiled-shaders.md)
     - [0134: the colour over the view](proposals/0134-the-view-tint.md)
+    - [0135: the engine and the game](proposals/0135-the-engine-and-the-game.md)
+    - [0136: standards for art and meshes](proposals/0136-art-standards.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

@@ -11,9 +11,9 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | Stage | Items |
 |---|---|
 | 1. Going back to what was said | 149, 150 |
-| 2. The base | 77, 3, 5, 4, 29, 30, 124 begun |
+| 2. The base | 77, 3, 5, 4, 29, 30 |
 | 3. Specs | 26, 133 |
-| 4. MCP | 31 to 38 |
+| 4. MCP | 31 to 38, then 124 begun |
 | 5. Cameras | 56 to 60 |
 | 6. UI | 1, 2, 74, 6 |
 | 7. Meshes | 7 to 12 |
@@ -407,3 +407,4 @@ Newest last. One line for each thing finished, with its commit.
 - Items 3 and 5: 9ec5198
 - Item 4: 0605bb7
 - Items 29 and 30: 4bb7867
+- Item 74, and the first step of 77: c9d0c1c
