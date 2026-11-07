@@ -45,8 +45,7 @@ impl World {
         let Some(map) = self.map.clone().filter(|_| changed) else {
             return;
         };
-        let fields: Vec<String> = map.fields.iter().map(|field| field.name.clone()).collect();
-        let read = match read_effects(&self.filesystem, &fields) {
+        let read = match read_effects(&self.filesystem, &map) {
             Ok(read) => read,
             Err(problem) => {
                 self.load_warning = Some(format!("effects stay as they were: {problem}"));
@@ -55,6 +54,9 @@ impl World {
         };
         self.effects.authored_mut().change_effects(&read.effects);
         let mut told = vec!["effects read again".to_owned()];
+        for name in &read.missing_meshes {
+            told.push(format!("{name} shows when the level's loaded again"));
+        }
         if let Some(renderer) = &mut self.renderer {
             let held = Map {
                 effects: read.effects,

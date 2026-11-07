@@ -11,8 +11,8 @@ use engine_assets::{DirectoryArchive, FileSystem};
 use engine_client::{EffectSystem, EffectWorld};
 use engine_compile::{
     GRAPH_KINDS, GraphInput, MaterialLibrary, ShaderGraph, apply_bake, attach_side_files, compile,
-    graph_code, graph_kind, map_hash, read_effect, read_effects_with, read_graph, read_map,
-    write_graph, write_terrain,
+    graph_code, graph_kind, keep_effect_meshes, map_hash, read_effect, read_effects_with,
+    read_graph, read_map, write_graph, write_terrain,
 };
 use engine_core::entity::effect_id;
 use engine_core::math::{Vec3, view_axes};
@@ -30,7 +30,7 @@ use engine_platform::{
 };
 use engine_render::{
     Drawables, GpuParticles, LiveLight, MAX_LIVE_LIGHTS, ParticleDraw, ParticleSim, Renderer,
-    Target, TextureFilter, TileStreamer, View,
+    RestPoses, Target, TextureFilter, TileStreamer, View, height_scale,
 };
 use engine_tools::{CELL, Plan, Session, Square, is_plan_map, prefab_names, run};
 use serde_json::{Value, json};
@@ -347,6 +347,8 @@ pub(crate) struct Editor {
     graph: GraphEditing,
     /// The effect that's open.
     effect: EffectEditing,
+    /// How meshes that are particles stand.
+    effect_meshes: RestPoses,
     /// The name and shader of the next field.
     next_field: (String, String),
     /// The sheet whose layers are shown, which is the one last touched.
@@ -569,6 +571,7 @@ impl Editor {
             land_brush: (0.6, 1.0),
             graph: GraphEditing::default(),
             effect: EffectEditing::default(),
+            effect_meshes: RestPoses::default(),
             next_field: (String::new(), String::new()),
             land_chosen: 0,
             land_layer: 0,
@@ -691,6 +694,9 @@ impl Editor {
                 return;
             }
         };
+        if let Err(problem) = keep_effect_meshes(&filesystem, &mut library, &mut working) {
+            self.log.push(format!("effects: {problem}"));
+        }
         let mut textures = |material: &str| {
             library
                 .load(material)
@@ -1481,12 +1487,8 @@ impl Editor {
         };
         let mut filesystem = FileSystem::new();
         filesystem.mount(Box::new(DirectoryArchive::new(&self.content)));
-        let fields: Vec<engine_map::FieldDef> = self
-            .map
-            .as_ref()
-            .map_or_else(Vec::new, |map| map.fields.clone());
-        let names: Vec<String> = fields.iter().map(|field| field.name.clone()).collect();
-        let read = match read_effects_with(&filesystem, &names, edited) {
+        let level = self.map.clone().unwrap_or_default();
+        let read = match read_effects_with(&filesystem, &level, edited) {
             Ok(read) => read,
             Err(problem) => {
                 self.effect.problem = Some(problem.to_string());
@@ -1494,13 +1496,17 @@ impl Editor {
             }
         };
         self.effect.system.change_effects(&read.effects);
+        if let Some(name) = read.missing_meshes.first() {
+            self.effect.problem = Some(format!("save it to see {name}, as the map's built again"));
+            self.stale = true;
+        }
         if let Some(renderer) = &mut self.renderer {
             let held = Map {
                 effects: read.effects,
                 effect_pictures: read.pictures,
                 effect_shaders: read.shaders,
                 effect_motions: read.motions,
-                fields,
+                fields: level.fields.clone(),
                 ..Map::default()
             };
             if let Err(problem) = renderer.reload_effects(&held) {
@@ -2798,8 +2804,19 @@ impl PlatformApp for Editor {
                 });
             }
         }
+        let (mut palette, mut meshes) = (Vec::new(), Vec::new());
+        if let Some(map) = &self.map {
+            self.effect_meshes.draw(
+                map,
+                &system.mesh_draws(),
+                (eye, height_scale(FOV), &|_| 1.0),
+                (&mut palette, &mut meshes),
+            );
+        }
         let drawables = Drawables {
             live_lights: &moving,
+            moving: &meshes,
+            palette: &palette,
             particles: &particles,
             gpu_particles: &gpu_particles,
             particle_sims: &particle_sims,

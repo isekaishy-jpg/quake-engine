@@ -750,12 +750,18 @@ fn missing_of_effect(session: &Session, effect: &engine_map::EffectDef) -> Optio
         };
         let shader = emitter.shader.as_ref().filter(no_shader);
         let motion = emitter.motion.as_ref().filter(no_shader);
+        let mesh = emitter.surface_of.as_ref().or(emitter.mesh.as_ref());
+        let no_mesh = mesh.filter(|name| {
+            let file = format!("meshes/{name}.emesh");
+            !session.content.join(file).exists()
+        });
         picture
             .map(|path| format!("{}: there's no picture {path}", emitter.name))
             .or_else(|| {
                 let named = shader.or(motion)?;
                 Some(format!("{}: there's no shader {named}", emitter.name))
             })
+            .or_else(|| no_mesh.map(|name| format!("{}: there's no mesh {name}", emitter.name)))
     })
 }
 

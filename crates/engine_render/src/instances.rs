@@ -2,7 +2,7 @@
 //! draw a part (proposal 0140).
 
 use engine_core::math::Vec3;
-use engine_map::Map;
+use engine_map::{EffectMesh, Map, NO_MOVE, Rows, moved};
 
 use crate::world::InstanceLight;
 
@@ -26,7 +26,7 @@ pub struct MovingDraw {
     /// Which of the map's moving meshes.
     pub mesh: u32,
     /// What places it.
-    pub rows: engine_map::Rows,
+    pub rows: Rows,
     /// Where its joints start in the frame's palette.
     pub first_joint: u32,
     /// How many it has.
@@ -220,4 +220,101 @@ pub(crate) fn shared_looks(mesh: &engine_map::SharedMesh) -> Vec<u8> {
         bytes.extend_from_slice(&color);
     }
     bytes
+}
+
+/// How meshes stand when they're particles, worked out once for each.
+#[derive(Clone, Debug, Default)]
+pub struct RestPoses {
+    /// Each one's number, its joints, and its middle and reach.
+    poses: Vec<(u32, Vec<Rows>, Vec3, f32)>,
+}
+
+/// What places `draw`.
+fn rows_of_particle(draw: &EffectMesh) -> Rows {
+    let axis = draw.axis.normalized();
+    let (sine, cosine) = draw.angle.sin_cos();
+    let rest = 1.0 - cosine;
+    let [x, y, z] = [axis.x, axis.y, axis.z];
+    let size = draw.size;
+    [
+        [
+            (cosine + x * x * rest) * size,
+            (x * y * rest - z * sine) * size,
+            (x * z * rest + y * sine) * size,
+            draw.origin.x,
+        ],
+        [
+            (y * x * rest + z * sine) * size,
+            (cosine + y * y * rest) * size,
+            (y * z * rest - x * sine) * size,
+            draw.origin.y,
+        ],
+        [
+            (z * x * rest - y * sine) * size,
+            (z * y * rest + x * sine) * size,
+            (cosine + z * z * rest) * size,
+            draw.origin.z,
+        ],
+    ]
+}
+
+impl RestPoses {
+    /// Adds `draws`, of `map`'s moving meshes, to what's drawn, in `light`. `palette` takes each
+    /// mesh's joints once, for all of its copies.
+    pub fn draw(
+        &mut self,
+        map: &Map,
+        draws: &[EffectMesh],
+        (eye, height_scale, light): (Vec3, f32, &dyn Fn(Vec3) -> f32),
+        (palette, moving): (&mut Vec<Rows>, &mut Vec<MovingDraw>),
+    ) {
+        let mut shown: Vec<(u32, u32, u32)> = Vec::new();
+        for draw in draws {
+            let Some(mesh) = map.moving_meshes.get(draw.mesh as usize) else {
+                continue;
+            };
+            let known = self.poses.iter().position(|pose| pose.0 == draw.mesh);
+            let at = known.unwrap_or_else(|| {
+                let placed = mesh.skeleton.placed(&mesh.skeleton.pose(None, 0.0));
+                let (middle, radius) = mesh.skeleton.bounds(&placed);
+                // A mesh with no joints stays where it is, as a joint that moves nothing.
+                let joints = if placed.is_empty() {
+                    vec![NO_MOVE]
+                } else {
+                    mesh.skeleton.palette(&placed)
+                };
+                self.poses.push((draw.mesh, joints, middle, radius));
+                self.poses.len() - 1
+            });
+            let (_, joints, middle, radius) = &self.poses[at];
+            let (first_joint, joint_count) = match shown.iter().find(|one| one.0 == draw.mesh) {
+                Some(one) => (one.1, one.2),
+                None => {
+                    let first = u32::try_from(palette.len()).unwrap_or(0);
+                    let count = u32::try_from(joints.len()).unwrap_or(0);
+                    palette.extend_from_slice(joints);
+                    shown.push((draw.mesh, first, count));
+                    (first, count)
+                }
+            };
+            let rows = rows_of_particle(draw);
+            let center = moved(&rows, *middle);
+            let reach = radius * draw.size;
+            let share = height_share(reach, (center - eye).length(), height_scale);
+            let shared = &mesh.mesh;
+            let level = choose_level(0, share, &shared.level_sizes, shared.levels.len());
+            let here = light(draw.origin);
+            moving.push(MovingDraw {
+                mesh: draw.mesh,
+                rows,
+                first_joint,
+                joint_count,
+                light: draw.color.map(|part| part * here),
+                level: u32::try_from(level).unwrap_or(0),
+                center,
+                radius: reach,
+                ..MovingDraw::default()
+            });
+        }
+    }
 }

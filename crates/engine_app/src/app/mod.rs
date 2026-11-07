@@ -37,7 +37,7 @@ use engine_physics::CollisionWorld;
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
-use engine_render::{PostSettings, Renderer, Target, TextureFilter, TileStreamer};
+use engine_render::{PostSettings, Renderer, RestPoses, Target, TextureFilter, TileStreamer};
 use engine_script::UiScript;
 use engine_server::{FairSettings, Level, SeatInfo, Server};
 use engine_shaders::built_in_shaders;
@@ -158,6 +158,8 @@ pub(crate) struct World {
     pub(crate) effects: Effects,
     /// The clock of the last update of effects.
     pub(crate) effects_time: f32,
+    /// How meshes that are particles stand.
+    effect_meshes: RestPoses,
     /// Says when the files effects come from have changed.
     effect_changes: Option<Receiver<()>>,
     /// Which zone the view is in.
@@ -392,6 +394,7 @@ impl World {
         self.ambience = Some(AmbientSounds::new(Arc::clone(&map)));
         self.models.clear_numbers();
         self.effects = Effects::default();
+        self.effect_meshes = RestPoses::default();
         self.effects.set_palette(&|index| palette.color(index));
         self.zones = ZoneTracker::default();
         self.palette = Some(palette);
@@ -685,6 +688,7 @@ impl Engine {
                 models: ModelBank::default(),
                 effects: Effects::default(),
                 effects_time: 0.0,
+                effect_meshes: RestPoses::default(),
                 effect_changes: None,
                 zones: ZoneTracker::default(),
                 ui_script,

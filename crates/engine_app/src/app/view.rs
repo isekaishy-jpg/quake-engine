@@ -435,6 +435,14 @@ impl World {
                     }
                     self.models.draw(entity, colors, &lighting, &mut lists);
                 }
+                self.effect_meshes.draw(
+                    &map,
+                    &self.effects.authored().mesh_draws(),
+                    (origin, height_scale(self.fov), &|at| {
+                        (map.light_at(at, &styles) / 255.0).clamp(0.0, 2.0)
+                    }),
+                    (&mut lists.palette, &mut lists.moving),
+                );
                 for piece in self.effects.beam_pieces(player.id, body) {
                     self.models.draw_beam(
                         &piece,

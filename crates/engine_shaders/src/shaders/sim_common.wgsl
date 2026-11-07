@@ -38,9 +38,10 @@ struct SimEmitter {
     extra: vec4<f32>,
     // 1 if its slots are new, 1 if there's a scene's depth to read, what it does when it hits
     // something (0 nothing, 1 bounce, 2 die, 3 stick), and its shape (0 a ball, 1 a ring, 2 a disc,
-    // 3 a cone, 4 a line, 5 a box).
+    // 3 a cone, 4 a line, 5 a box, 6 a mesh).
     flags: vec4<u32>,
-    // Half of a line or box, or a cone's height in z, and w is 1 if they head away from the middle.
+    // Half of a line or box, a cone's height in z, or the first of a mesh's places and how many,
+    // and w is 1 if they head away from the middle.
     extent: vec4<f32>,
     // The least and most it starts turned, and the least and most it turns a second, in radians.
     turn: vec4<f32>,

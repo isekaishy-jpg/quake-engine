@@ -14,6 +14,8 @@ pub enum ParticleKind {
     Sprite,
     /// A small hard square that shrinks with distance to a limit.
     Square,
+    /// A level's moving mesh, turning as it goes.
+    Mesh,
     /// A strip that follows where it's been, as a trail does.
     Ribbon,
     /// A line from an emitter to where it's aimed.
@@ -37,6 +39,8 @@ pub enum ParticleBlend {
 /// Where particles start, round an emitter.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub enum EmitterShape {
+    /// On the surface of a mesh, at the places [`ParticleEmitter::surface`] has.
+    Surface,
     /// At one place.
     #[default]
     Point,
@@ -106,6 +110,15 @@ impl ColorCurve {
     }
 }
 
+/// A place on a mesh, as it stands at rest.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SurfacePoint {
+    /// Where it is.
+    pub place: Vec3,
+    /// Which way it faces.
+    pub facing: Vec3,
+}
+
 /// One emitter of an effect.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ParticleEmitter {
@@ -152,6 +165,16 @@ pub struct ParticleEmitter {
     pub gpu: bool,
     /// The emitter each one starts when it goes.
     pub on_death: Option<String>,
+    /// The mesh each one is, for `kind = mesh`, and the one they start on for `shape = mesh`.
+    pub mesh: Option<String>,
+    /// Another mesh to start on, if that's not the one they are.
+    pub surface_of: Option<String>,
+    /// Which of [`crate::Map::moving_meshes`] each one is, plus one, once a level's read it.
+    pub mesh_number: u32,
+    /// Places on what they start on, once a level's read it.
+    pub surface: Vec<SurfacePoint>,
+    /// Where those are in all that compute has, of every emitter with any.
+    pub surface_first: u32,
     /// The picture each one shows, if it's not a soft dot.
     pub image: Option<String>,
     /// Which of [`crate::Map::effect_pictures`] that is, plus one, once a level's read it.
@@ -315,6 +338,11 @@ impl Default for ParticleEmitter {
             reach: 200.0,
             gpu: false,
             on_death: None,
+            mesh: None,
+            surface_of: None,
+            mesh_number: 0,
+            surface: Vec::new(),
+            surface_first: 0,
             image: None,
             picture: 0,
             flipbook: [1, 1],
@@ -477,4 +505,21 @@ pub struct SimEmitter {
     pub fade: f32,
     /// Which effect it's of, by its place in the list of those going.
     pub emitter: usize,
+}
+
+/// What's drawn of a particle that's a mesh.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct EffectMesh {
+    /// Which of [`crate::Map::moving_meshes`] it is.
+    pub mesh: u32,
+    /// Where it is.
+    pub origin: Vec3,
+    /// What it turns about.
+    pub axis: Vec3,
+    /// How far round it's turned, in radians.
+    pub angle: f32,
+    /// How big it is, with 1 as it was made.
+    pub size: f32,
+    /// What its light's multiplied by.
+    pub color: [f32; 3],
 }

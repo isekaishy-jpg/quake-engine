@@ -10,7 +10,7 @@ use engine_format::{Block, Document, Value, to_text};
 use engine_map::{
     AttachPoint, Channel, ChannelPath, Clip, Contents, HitCapsule, Interpolation, Joint, JointPose,
     MeshCorner, NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedMorph, SharedPart, Skeleton,
-    SkeletonPlace, moved,
+    SkeletonPlace, SurfacePoint, moved,
 };
 
 use crate::build::packed_normal;
@@ -1164,6 +1164,56 @@ pub struct LoadedMesh {
     pub mesh: Arc<Mesh>,
     /// Its sidecar's volume, or nothing with no sidecar.
     pub occluders: Vec<OccluderSphere>,
+}
+
+/// How many places a mesh's surface comes to, for what starts on it.
+const SURFACE_POINTS: usize = 4096;
+
+/// Places spread evenly over `mesh`, which are the same each time.
+#[must_use]
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_precision_loss,
+    reason = "these are sums for how things look"
+)]
+pub(crate) fn surface_points(mesh: &Mesh) -> Vec<SurfacePoint> {
+    let corner = |at: Point| Vec3::new(at[0] as f32, at[1] as f32, at[2] as f32);
+    let mut faces = Vec::new();
+    let mut total = 0.0_f32;
+    for part in &mesh.parts {
+        for triangle in &part.triangles {
+            let [a, b, c] = triangle.map(|at| corner(part.points[at as usize]));
+            let across = (b - a).cross(c - a);
+            total += across.length() * 0.5;
+            faces.push((total, a, b, c, across.normalized()));
+        }
+    }
+    if total <= 0.0 {
+        return Vec::new();
+    }
+    let mut seed = 0x2545_f491_u32;
+    let mut next = || {
+        seed = seed.wrapping_mul(1_664_525).wrapping_add(1_013_904_223);
+        (seed >> 8) as f32 / 16_777_216.0
+    };
+    let mut out = Vec::with_capacity(SURFACE_POINTS);
+    for _ in 0..SURFACE_POINTS {
+        let wanted = next() * total;
+        let found = faces.partition_point(|face| face.0 < wanted);
+        let (_, a, b, c, facing) = faces[found.min(faces.len() - 1)];
+        let (one, two) = (next(), next());
+        // Folded back in, so that it's on the triangle and even across it.
+        let (one, two) = if one + two > 1.0 {
+            (1.0 - one, 1.0 - two)
+        } else {
+            (one, two)
+        };
+        out.push(SurfacePoint {
+            place: a + (b - a) * one + (c - a) * two,
+            facing,
+        });
+    }
+    out
 }
 
 /// Places the meshes of `working`, reading them with `read`.

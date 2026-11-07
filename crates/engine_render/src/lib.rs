@@ -29,8 +29,8 @@ pub use backend::{GpuTimes, half_bits};
 pub use canvas::{QuadBatch, UiBatch, UiFrame, canvas_vertices};
 pub use error::{NEEDED_VULKAN, RenderError, vulkan_is_new_enough};
 pub use instances::{
-    INSTANCE_BYTES, InstanceBatch, LevelView, MovingDraw, ball_in_view, choose_level, height_share,
-    instance_batches, view_planes, write_instance,
+    INSTANCE_BYTES, InstanceBatch, LevelView, MovingDraw, RestPoses, ball_in_view, choose_level,
+    height_share, instance_batches, view_planes, write_instance,
 };
 pub use live::{
     CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, MAX_LIVE_LIGHTS, MAX_SHADOW_LIGHTS,

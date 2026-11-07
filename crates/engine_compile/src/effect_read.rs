@@ -121,6 +121,7 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
     let kind = match text("kind").unwrap_or("sprite") {
         "sprite" => ParticleKind::Sprite,
         "square" => ParticleKind::Square,
+        "mesh" => ParticleKind::Mesh,
         "ribbon" => ParticleKind::Ribbon,
         "beam" => ParticleKind::Beam,
         "light" => ParticleKind::Light,
@@ -140,6 +141,7 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         "disc" => EmitterShape::Disc(number(block, "radius", 16.0)),
         "cone" => EmitterShape::Cone(number(block, "radius", 16.0), number(block, "height", 32.0)),
         "line" => EmitterShape::Line(vector(block, "half_size", Vec3::new(16.0, 0.0, 0.0))),
+        "mesh" => EmitterShape::Surface,
         other => return Err(CompileError::Bad(format!("no shape is called {other}"))),
     };
     let life = range(block, "life", 1.0);
@@ -154,6 +156,19 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         reason = "held to a sensible count"
     )]
     let burst = number(block, "burst", 0.0).clamp(0.0, 65_536.0) as u32;
+    let mesh = text("mesh").map(str::to_owned);
+    let surface_of = text("surface").map(str::to_owned);
+    let named = block.name.as_deref().unwrap_or("emitter");
+    if kind == ParticleKind::Mesh && mesh.is_none() {
+        return Err(CompileError::Bad(format!(
+            "{named} has to say what mesh it is"
+        )));
+    }
+    if shape == EmitterShape::Surface && mesh.is_none() && surface_of.is_none() {
+        return Err(CompileError::Bad(format!(
+            "{named} has to say what mesh it starts on"
+        )));
+    }
     if text("gpu") == Some("sim") {
         let name = block.name.as_deref().unwrap_or("emitter");
         if kind != ParticleKind::Sprite {
@@ -190,6 +205,8 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         motion: text("motion").map(str::to_owned),
         field: text("field").map(str::to_owned),
         on_death: text("on_death").map(str::to_owned),
+        mesh,
+        surface_of,
         image: text("image").map(str::to_owned),
         flipbook: flipbook_of(block),
         flip_rate: number(block, "flip_rate", 0.0),

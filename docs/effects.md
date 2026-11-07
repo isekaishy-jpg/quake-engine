@@ -28,11 +28,12 @@ emitter flame {
 
 | Field | Means |
 |---|---|
-| `kind` | `sprite`, `square`, `ribbon`, `beam`, `light` or `decal` |
+| `kind` | `sprite`, `square`, `ribbon`, `beam`, `light`, `decal` or `mesh` |
 | `blend` | `over`, as smoke, or `add`, as fire |
 | `rate`, `burst` | How many a second, and how many at once when it starts |
 | `duration`, `delay` | How long it runs, 0 for ever, and how long it waits |
 | `shape` | `point`, `ball`, `ring` and `disc` with `radius`, `cone` with `radius` and `height`, `box` and `line` with `half_size` |
+| `mesh`, `surface` | The mesh each one is, with `kind = mesh`. It's what they start on with `shape = mesh`, unless `surface` names another |
 | `life`, `speed` | One number, or the lowest and highest |
 | `direction`, `spread` | Which way they head, and how far from it, in degrees |
 | `gravity`, `drag`, `flat_drag`, `turbulence` | What moves them. `flat_drag` is sideways only |
@@ -99,13 +100,34 @@ fn shader_particle(look: ParticleLook) -> vec4<f32> {
 
 `look` has `color`, with its picture, `uv`, `life` from 0 to 1, and `world`. `shader_time` and `shader_noise` are there. A graph's output `particle` does the same, with `tinted` and `life` to read.
 
+## Meshes
+
+With `kind = mesh`, each particle is a mesh, which is how rocks and bits of wood come off an explosion:
+
+```text
+emitter rubble {
+    kind = mesh
+    mesh = stone_chip
+    burst = 12
+    speed = 200 500
+    gravity = 1
+    spin = 90 400
+    size = 0.8 0.3
+    collide = bounce
+}
+```
+
+`size` is how big it is, with 1 as it was made, and it can go down to nothing, as a mesh has no alpha to fade by. `spin` turns it, each about a way of its own. `color` tints its light. It's drawn as a moving mesh, in its rest pose, so a level can have up to about 4,000 of those and things that move, all told. A level loads what its effects are made of by itself.
+
+With `shape = mesh`, they start on a mesh's surface, evenly over it, as it stands at rest. With `outward`, they go the way the surface faces there. It's for something's whole shape catching fire or dissolving, so start the effect following it.
+
 ## Great numbers
 
 There are two ways.
 
 With `gpu = true`, the GPU works every particle out from its number and the time, so 100,000 cost the CPU nothing. Nothing is kept from frame to frame, so what follows from what came before can't be done: no `drag`, no `on_death`, no curve past its two ends, and only `sprite`. Use it for dust that hangs in the air.
 
-With `gpu = sim`, compute runs them. Each emitter has a ring of slots, and each frame steps all of them, so a particle goes on from where it was. It has everything an emitter says: gravity, drag, turbulence, forces, every shape, `outward`, `image` and its frames, `rotation`, `spin`, `stretch`, `soft`, `shader`, `far`, and what an instance says of itself. `size` and `color` are read at eight steps along a life. Use it for rain, snow, and anything that wants a lot of what moves.
+With `gpu = sim`, compute runs them. Each emitter has a ring of slots, and each frame steps all of them, so a particle goes on from where it was. It has everything an emitter says: gravity, drag, turbulence, forces, every shape, meshes' surfaces among them, `outward`, `image` and its frames, `rotation`, `spin`, `stretch`, `soft`, `shader`, `far`, and what an instance says of itself. `size` and `color` are read at eight steps along a life. Use it for rain, snow, and anything that wants a lot of what moves.
 
 Three things differ.
 

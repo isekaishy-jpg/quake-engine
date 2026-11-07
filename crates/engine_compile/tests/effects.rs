@@ -342,7 +342,8 @@ fn what_effects_come_from_can_be_watched() {
             "textures/dot.png"
         ]
     );
-    let read = engine_compile::read_effects(&filesystem, &[]).expect("reads");
+    let read =
+        engine_compile::read_effects(&filesystem, &engine_map::Map::default()).expect("reads");
     assert_eq!(
         (read.effects.len(), read.pictures.len(), read.shaders.len()),
         (1, 1, 1)
@@ -356,7 +357,8 @@ fn what_effects_come_from_can_be_watched() {
     file.set_modified(later).expect("dates");
     assert_ne!(engine_compile::effect_files(&filesystem), files);
     std::fs::write(&path, "this isn't an effect").expect("write");
-    let told = engine_compile::read_effects(&filesystem, &[]).expect_err("wrong");
+    let told =
+        engine_compile::read_effects(&filesystem, &engine_map::Map::default()).expect_err("wrong");
     assert!(told.to_string().contains("effects/one.eeffect"), "{told}");
     let _gone = std::fs::remove_dir_all(&root);
 }
@@ -381,11 +383,15 @@ fn an_effect_being_changed_goes_with_the_rest() {
     filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
     let new = "format 1 effect\nemitter a { rate = 9 }\n";
     let edited = |name: &str| read_effect(name, &from_text(new).expect("parses")).expect("reads");
-    let read = engine_compile::read_effects_with(&filesystem, &[], edited("one")).expect("reads");
+    let read =
+        engine_compile::read_effects_with(&filesystem, &engine_map::Map::default(), edited("one"))
+            .expect("reads");
     assert_eq!(read.effects.len(), 2);
     let one = read.effects.iter().find(|effect| effect.name == "one");
     assert_eq!(one.expect("there").emitters[0].rate, 9.0);
-    let read = engine_compile::read_effects_with(&filesystem, &[], edited("new")).expect("reads");
+    let read =
+        engine_compile::read_effects_with(&filesystem, &engine_map::Map::default(), edited("new"))
+            .expect("reads");
     assert_eq!(read.effects.len(), 3);
     let _gone = std::fs::remove_dir_all(&root);
 }
@@ -401,4 +407,147 @@ emitter a { kind = square flat_drag = 4 }
     .expect("reads");
     assert_eq!(effect.emitters[0].kind, ParticleKind::Square);
     assert_eq!(effect.emitters[0].flat_drag, 4.0);
+}
+
+/// A mesh is said by name, for what it is and for what it starts on, and has to be said.
+#[test]
+fn an_emitter_says_its_mesh() {
+    let effect = read(
+        "format 1 effect
+emitter a { kind = mesh mesh = rock }
+emitter b { shape = mesh mesh = rock }
+emitter c { kind = mesh mesh = rock shape = mesh surface = wall }
+",
+    )
+    .expect("reads");
+    assert_eq!(effect.emitters[0].kind, ParticleKind::Mesh);
+    assert_eq!(effect.emitters[0].mesh.as_deref(), Some("rock"));
+    assert_eq!(effect.emitters[1].shape, EmitterShape::Surface);
+    assert_eq!(effect.emitters[2].surface_of.as_deref(), Some("wall"));
+    for text in ["kind = mesh", "shape = mesh"] {
+        let told = read(&format!("format 1 effect\nemitter rock {{ {text} }}\n"));
+        let told = told.expect_err("turned down").to_string();
+        assert!(told.contains("rock") && told.contains("mesh"), "{told}");
+    }
+}
+
+/// A flat square, as a mesh file.
+const SQUARE: &str = "format 1 mesh
+part top {
+    material = rock
+    points = 0 0 0 40 0 0 40 40 0 0 40 0
+    uvs = 0 0 1 0 1 1 0 1
+    triangles = 0 1 2 0 2 3
+}
+";
+
+/// What a level with effects made of a mesh has, with `effect` in its one file.
+fn level_with_mesh(effect: &str) -> engine_map::Map {
+    let root = std::env::temp_dir().join(format!(
+        "engine-mesh-fx-{}-{}",
+        std::process::id(),
+        effect.len()
+    ));
+    let _gone = std::fs::remove_dir_all(&root);
+    for folder in ["maps", "effects", "meshes"] {
+        std::fs::create_dir_all(root.join(folder)).expect("folder");
+    }
+    std::fs::write(root.join("meshes/slab.emesh"), SQUARE).expect("write");
+    std::fs::write(root.join("effects/one.eeffect"), effect).expect("write");
+    let level = "format 1 map
+entity world { type = worldspawn }
+brush { material = rock cuboid = -64 -64 -96 64 64 -64 }
+";
+    std::fs::write(root.join("maps/level.emap"), level).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let document = engine_compile::document_of(level.as_bytes()).expect("reads");
+    let played = engine_compile::play_map(&filesystem, "level", &document).expect("loads");
+    let _gone = std::fs::remove_dir_all(&root);
+    played.map
+}
+
+/// A level keeps what its effects are made of, without being told to.
+#[test]
+fn a_level_has_the_meshes_its_effects_are_made_of() {
+    let map = level_with_mesh(
+        "format 1 effect
+emitter a { kind = mesh mesh = slab }
+emitter b { kind = mesh mesh = gone }
+",
+    );
+    assert_eq!(map.moving_meshes.len(), 1);
+    assert_eq!(map.moving_meshes[0].name, "slab");
+    let found = map.effects.iter().find(|e| e.name == "one").expect("there");
+    assert_eq!(found.emitters[0].mesh_number, 1);
+    assert_eq!(
+        found.emitters[1].mesh_number, 0,
+        "a mesh that's gone is nothing"
+    );
+}
+
+/// What starts on a mesh has places on it, and compute's numbers go on from emitter to emitter.
+#[test]
+fn a_level_finds_places_on_what_effects_start_on() {
+    let map = level_with_mesh(
+        "format 1 effect
+emitter a { shape = mesh mesh = slab }
+emitter b { shape = mesh surface = slab }
+emitter c { shape = mesh surface = gone }
+emitter d { shape = mesh mesh = slab }
+",
+    );
+    let found = map.effects.iter().find(|e| e.name == "one").expect("there");
+    let [a, b, c, d] = &found.emitters[..] else {
+        panic!("four of them");
+    };
+    assert!(a.surface.len() >= 256);
+    assert_eq!(a.surface_first, 0);
+    assert_eq!(b.surface_first as usize, a.surface.len());
+    assert!(c.surface.is_empty());
+    assert_eq!(d.surface_first as usize, a.surface.len() + b.surface.len());
+    for point in &a.surface {
+        let on = (0.0..=40.0).contains(&point.place.x) && (0.0..=40.0).contains(&point.place.y);
+        assert!(on && point.place.z == 0.0, "{point:?}");
+        assert_eq!(point.facing, engine_core::math::Vec3::new(0.0, 0.0, 1.0));
+    }
+    let quarter = |x: bool, y: bool| {
+        let places = a
+            .surface
+            .iter()
+            .filter(|point| (point.place.x < 20.0) == x && (point.place.y < 20.0) == y);
+        places.count()
+    };
+    let each = a.surface.len() / 4;
+    for (x, y) in [(true, true), (true, false), (false, true), (false, false)] {
+        let count = quarter(x, y);
+        assert!(
+            count > each * 3 / 4 && count < each * 5 / 4,
+            "{count} of {each}"
+        );
+    }
+    assert_eq!(a.surface, b.surface, "the same each time");
+}
+
+/// Reading effects again says what a level would have to load to show them.
+#[test]
+fn reading_effects_says_what_a_level_has_not_got() {
+    let root = std::env::temp_dir().join(format!("engine-no-mesh-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("effects")).expect("folder");
+    let text = "format 1 effect\nemitter a { kind = mesh mesh = rock }\nemitter b { kind = mesh mesh = slab }\n";
+    std::fs::write(root.join("effects/one.eeffect"), text).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let level = engine_map::Map {
+        moving_meshes: vec![engine_map::MovingMesh {
+            name: "slab".to_owned(),
+            ..engine_map::MovingMesh::default()
+        }],
+        ..engine_map::Map::default()
+    };
+    let read = engine_compile::read_effects(&filesystem, &level).expect("reads");
+    assert_eq!(read.missing_meshes, ["rock"]);
+    assert_eq!(read.effects[0].emitters[1].mesh_number, 1);
+    let _gone = std::fs::remove_dir_all(&root);
 }

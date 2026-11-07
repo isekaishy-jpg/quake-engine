@@ -14,7 +14,8 @@ use engine_map::{
     MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter, ParticleForce, PixelForm, Pool,
     PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading, SharedMesh, SharedMorph,
     SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
-    TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight, mip_chain,
+    SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight,
+    mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -4753,6 +4754,71 @@ fn compute_starts_particles_in_their_shape() {
             .all(|slot| Vec3::new(slot[0], slot[1], slot[2]).length() <= 10.01)
     );
     assert!(in_ball.iter().any(|slot| slot[2] < -5.0), "below as well");
+}
+
+/// What starts on a mesh starts at places the map holds, and those of each emitter are its own.
+#[test]
+fn compute_starts_particles_on_a_surface() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    let side = Vec3::new(1.0, 0.0, 0.0);
+    let point = |x: f32, facing: Vec3| SurfacePoint {
+        place: Vec3::new(x, 0.0, 0.0),
+        facing,
+    };
+    let mut built = map(1);
+    built.effects.push(Arc::new(EffectDef {
+        name: "sim".to_owned(),
+        emitters: vec![
+            ParticleEmitter {
+                sim: true,
+                surface: vec![point(5.0, up), point(6.0, up)],
+                ..ParticleEmitter::default()
+            },
+            ParticleEmitter {
+                sim: true,
+                surface: vec![point(70.0, side)],
+                ..ParticleEmitter::default()
+            },
+        ],
+        timeline: Vec::new(),
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let many = ParticleSim {
+        count: 64,
+        origin: Vec3::ZERO,
+        shape: 6,
+        extent: Vec3::new(0.0, 2.0, 0.0),
+        outward: true,
+        ..one_sim()
+    };
+    let first = started(&mut renderer, many);
+    assert!(first.iter().any(|slot| slot[0] == 5.0), "{first:?}");
+    assert!(first.iter().any(|slot| slot[0] == 6.0), "{first:?}");
+    assert!(
+        first.iter().all(|slot| slot[0] < 7.0 && slot[6] > 59.0),
+        "going up: {first:?}"
+    );
+    let second = ParticleSim {
+        id: 2,
+        extent: Vec3::new(2.0, 1.0, 0.0),
+        ..many
+    };
+    let second = started(&mut renderer, second);
+    assert!(second.iter().all(|slot| slot[0] == 70.0), "{second:?}");
+    assert!(
+        second.iter().all(|slot| slot[4] > 59.0),
+        "going its own way: {second:?}"
+    );
+    let none = ParticleSim {
+        id: 3,
+        extent: Vec3::ZERO,
+        ..many
+    };
+    let none = started(&mut renderer, none);
+    assert!(none.iter().all(|slot| slot[0] == 0.0), "{none:?}");
 }
 
 /// Those told to go outward head away from the middle, whatever way the emitter's facing.

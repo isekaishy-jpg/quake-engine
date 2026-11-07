@@ -11,6 +11,8 @@ var<immediate> sim_step: SimStep;
 
 @group(0) @binding(0) var<storage, read_write> sim_particles: array<SimParticle>;
 @group(0) @binding(1) var<storage, read> sim_emitters: array<SimEmitter>;
+// Places on meshes: where each is, and then which way it faces.
+@group(0) @binding(2) var<storage, read> sim_surfaces: array<vec4<f32>>;
 @group(1) @binding(2) var scene_depth: texture_depth_2d;
 @group(2) @binding(0) var motion_field: texture_2d<f32>;
 
@@ -116,6 +118,7 @@ fn born(number: u32, emitter: SimEmitter) -> SimParticle {
     let up = vec3<f32>(0.0, 0.0, 1.0);
     var offset = vec3<f32>(0.0);
     let radius = emitter.pull.x;
+    var facing = vec3<f32>(0.0);
     let angle = hash_of(pick, 2u) * 6.2831853;
     let round = vec3<f32>(cos(angle), sin(angle), 0.0);
     switch emitter.flags.w {
@@ -138,6 +141,14 @@ fn born(number: u32, emitter: SimEmitter) -> SimParticle {
             let spot = vec3<f32>(hash_of(pick, 3u), hash_of(pick, 4u), hash_of(pick, 5u));
             offset = emitter.extent.xyz * (spot * 2.0 - vec3<f32>(1.0));
         }
+        case 6u: {
+            let count = u32(emitter.extent.y);
+            if count > 0u {
+                let at = u32(emitter.extent.x) + min(u32(hash_of(pick, 3u) * f32(count)), count - 1u);
+                offset = sim_surfaces[at * 2u].xyz;
+                facing = sim_surfaces[at * 2u + 1u].xyz;
+            }
+        }
         default: {
             let way = scatter(up, -1.0, hash_of(pick, 4u), hash_of(pick, 5u));
             offset = way * radius * pow(hash_of(pick, 3u), 0.3333);
@@ -146,6 +157,9 @@ fn born(number: u32, emitter: SimEmitter) -> SimParticle {
     var heading = scatter(emitter.direction.xyz, emitter.direction.w, hash_of(pick, 6u), hash_of(pick, 7u));
     if emitter.extent.w > 0.5 && length(offset) > 0.001 {
         heading = normalize(offset);
+        if emitter.flags.w == 6u {
+            heading = facing;
+        }
     }
     let speed = mix(emitter.motion.x, emitter.motion.y, hash_of(pick, 8u));
     let life = mix(emitter.motion.z, emitter.motion.w, hash_of(pick, 9u));

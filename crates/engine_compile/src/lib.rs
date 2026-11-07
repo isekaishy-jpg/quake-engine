@@ -46,7 +46,8 @@ pub use bake::{
 pub use build::{TextureSource, compile, compile_known, compile_text, read_map_text};
 pub use compiled::{Geometry, read_geometry, write_geometry};
 pub use content_pack::{
-    EffectExtras, PlayMap, effect_files, play_map, read_effects, read_effects_with,
+    EffectExtras, PlayMap, effect_files, keep_effect_meshes, play_map, read_effects,
+    read_effects_with,
 };
 pub use convex::{ConvexPiece, fit_convex};
 pub use derive::{DeriveSettings, DerivedMaps, derive_maps, encode_png};

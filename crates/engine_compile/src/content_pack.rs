@@ -7,7 +7,8 @@ use engine_assets::FileSystem;
 use engine_core::math::Vec3;
 use engine_format::Document;
 use engine_map::{
-    EffectDef, EffectPoint, Entity, LandPicture, Map, ShaderCode, SlotImage, Texture, mip_chain,
+    EffectDef, EffectPoint, EmitterShape, Entity, LandPicture, Map, ParticleKind, ShaderCode,
+    SlotImage, Texture, mip_chain,
 };
 
 use crate::bake::map_hash;
@@ -17,7 +18,8 @@ use crate::effect_read::read_effect;
 use crate::error::CompileError;
 use crate::land_pictures::{plain_pictures, scaled};
 use crate::material::{MaterialLibrary, document_of};
-use crate::source::read_map;
+use crate::mesh::surface_points;
+use crate::source::{WorkingMap, read_map};
 
 /// A level's textures while it loads: compiled for the GPU, and in pixels for
 /// what's read here. The first thing that goes wrong is kept for afterwards.
@@ -92,19 +94,26 @@ pub struct EffectExtras {
     pub shaders: Vec<Arc<ShaderCode>>,
     /// Their shaders for how compute moves them.
     pub motions: Vec<Arc<ShaderCode>>,
+    /// The meshes they're made of that the level hasn't got, as it was read before they were said.
+    pub missing_meshes: Vec<String>,
 }
 
-/// Every effect `filesystem` holds as a level with `fields` has them, read afresh.
+/// What `level` has that effects go by: the names of its fields and its moving meshes.
+fn names_in(level: &Map) -> (Vec<String>, Vec<String>) {
+    let fields = level.fields.iter().map(|field| field.name.clone());
+    let meshes = level.moving_meshes.iter().map(|mesh| mesh.name.clone());
+    (fields.collect(), meshes.collect())
+}
+
+/// Every effect `filesystem` holds as `level` has them, read afresh.
 ///
 /// # Errors
 ///
 /// Returns an error if one is wrong, or something it shows is.
-pub fn read_effects(
-    filesystem: &FileSystem,
-    fields: &[String],
-) -> Result<EffectExtras, CompileError> {
+pub fn read_effects(filesystem: &FileSystem, level: &Map) -> Result<EffectExtras, CompileError> {
     let mut library = MaterialLibrary::for_play(filesystem);
-    effect_extras(&mut library, effects_in(filesystem)?, fields)
+    let (fields, meshes) = names_in(level);
+    effect_extras(&mut library, effects_in(filesystem)?, (&fields, &meshes))
 }
 
 /// The same with `edited` in place of the one of its name, for an effect that's being changed.
@@ -114,14 +123,43 @@ pub fn read_effects(
 /// Returns an error if one is wrong, or something it shows is.
 pub fn read_effects_with(
     filesystem: &FileSystem,
-    fields: &[String],
+    level: &Map,
     edited: EffectDef,
 ) -> Result<EffectExtras, CompileError> {
     let mut library = MaterialLibrary::for_play(filesystem);
     let mut effects = effects_in(filesystem)?;
     effects.retain(|effect| effect.name != edited.name);
     effects.push(Arc::new(edited));
-    effect_extras(&mut library, effects, fields)
+    let (fields, meshes) = names_in(level);
+    effect_extras(&mut library, effects, (&fields, &meshes))
+}
+
+/// Keeps the meshes `filesystem`'s effects are made of, as things in a level can be. It comes after
+/// what a level's bake goes by, so that changing an effect doesn't make a level's light old.
+///
+/// # Errors
+///
+/// Returns an error if an effect is wrong.
+pub fn keep_effect_meshes(
+    filesystem: &FileSystem,
+    library: &mut MaterialLibrary<'_>,
+    working: &mut WorkingMap,
+) -> Result<(), CompileError> {
+    for effect in effects_in(filesystem)? {
+        let wanted = effect
+            .emitters
+            .iter()
+            .filter(|e| e.kind == ParticleKind::Mesh);
+        for name in wanted.filter_map(|emitter| emitter.mesh.as_ref()) {
+            if working.moving.iter().any(|(known, _)| known == name) {
+                continue;
+            }
+            if let Ok(loaded) = library.mesh(name) {
+                working.moving.push((name.clone(), loaded.mesh));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// Every file effects come from and when it changed, which says when to read them again. There's
@@ -158,8 +196,10 @@ pub fn effect_files(filesystem: &FileSystem) -> Vec<(String, SystemTime)> {
 fn effect_extras(
     library: &mut MaterialLibrary<'_>,
     effects: Vec<Arc<EffectDef>>,
-    fields: &[String],
+    (fields, meshes): (&[String], &[String]),
 ) -> Result<EffectExtras, CompileError> {
+    let mut surfaces = 0;
+    let mut missing_meshes: Vec<String> = Vec::new();
     let mut paths: Vec<String> = Vec::new();
     let mut shaders: Vec<String> = Vec::new();
     let mut motions: Vec<String> = Vec::new();
@@ -190,6 +230,26 @@ fn effect_extras(
                     motions.len() - 1
                 });
                 emitter.motion_number = u32::try_from(at + 1).unwrap_or(0);
+            }
+            if let Some(name) = emitter
+                .mesh
+                .as_ref()
+                .filter(|_| emitter.kind == ParticleKind::Mesh)
+            {
+                let at = meshes.iter().position(|known| known == name);
+                emitter.mesh_number = at.map_or(0, |at| u32::try_from(at + 1).unwrap_or(0));
+                if at.is_none() && !missing_meshes.contains(name) {
+                    missing_meshes.push(name.clone());
+                }
+            }
+            if emitter.shape == EmitterShape::Surface {
+                let name = emitter.surface_of.as_ref().or(emitter.mesh.as_ref());
+                // An effect goes with every level, so a mesh that's gone is for `check_effects`.
+                let loaded = name.and_then(|name| library.mesh(name).ok());
+                emitter.surface =
+                    loaded.map_or_else(Vec::new, |loaded| surface_points(&loaded.mesh));
+                emitter.surface_first = surfaces;
+                surfaces += u32::try_from(emitter.surface.len()).unwrap_or(0);
             }
             if let Some(name) = &emitter.field {
                 let at = fields.iter().position(|known| known == name);
@@ -223,6 +283,7 @@ fn effect_extras(
         pictures,
         shaders,
         motions,
+        missing_meshes,
     })
 }
 
@@ -261,6 +322,7 @@ pub fn play_map(
     let mut library = MaterialLibrary::for_play(filesystem);
     let used = library.prepare(&mut working)?;
     let hash = map_hash(document, &used);
+    keep_effect_meshes(filesystem, &mut library, &mut working)?;
     let mut textures = PlayTextures {
         library,
         failure: None,
@@ -278,9 +340,9 @@ pub fn play_map(
     let post = world.and_then(|world| world.text("post_shader"));
     map.post_shader = post.map(|name| textures.library.shader(name));
     map.effects = effects_in(filesystem)?;
-    let fields: Vec<String> = map.fields.iter().map(|field| field.name.clone()).collect();
+    let (fields, meshes) = names_in(&map);
     let effects = std::mem::take(&mut map.effects);
-    let extras = effect_extras(&mut textures.library, effects, &fields)?;
+    let extras = effect_extras(&mut textures.library, effects, (&fields, &meshes))?;
     map.effects = extras.effects;
     map.effect_pictures = extras.pictures;
     map.effect_shaders = extras.shaders;

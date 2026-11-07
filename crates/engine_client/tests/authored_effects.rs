@@ -2,12 +2,12 @@
 
 use std::sync::Arc;
 
-use engine_client::{EffectSettings, EffectSystem, EffectWorld};
+use engine_client::{EffectDraw, EffectSettings, EffectSystem, EffectWorld};
 use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
 use engine_map::{
     ColorCurve, Curve, EffectDef, EmitterShape, ParticleBlend, ParticleCollide, ParticleEmitter,
-    ParticleForce, ParticleKind,
+    ParticleForce, ParticleKind, SurfacePoint,
 };
 
 /// Nothing to follow, and nothing to hit.
@@ -282,7 +282,7 @@ fn one_emitter(set: impl Fn(&mut ParticleEmitter)) -> EffectSystem {
 }
 
 /// The one thing drawn.
-fn the_draw(system: &EffectSystem) -> engine_client::EffectDraw {
+fn the_draw(system: &EffectSystem) -> EffectDraw {
     system.draws(&|_| [1.0; 3]).0[0]
 }
 
@@ -1055,4 +1055,117 @@ fn what_is_placed_by_hand_lives_through_a_change() {
     effects.place(&own, 0, engine_client::PlacedParticle::default());
     effects.change_effects(&[]);
     assert_eq!(effects.count(), 1);
+}
+
+/// A mesh as a particle: drawn as that, and not as a sprite, turning as it goes.
+#[test]
+fn a_mesh_particle_turns_and_is_a_mesh() {
+    let mut effects = system(vec![ParticleEmitter {
+        kind: ParticleKind::Mesh,
+        mesh_number: 3,
+        burst: 2,
+        life: [10.0, 10.0],
+        spin: [90.0, 90.0],
+        size: Curve(vec![(0.0, 2.0)]),
+        color: ColorCurve(vec![(0.0, [0.5, 1.0, 1.0, 1.0])]),
+        ..ParticleEmitter::default()
+    }]);
+    let settings = EffectSettings {
+        color: [0.5, 0.5, 1.0],
+        size: 3.0,
+        strength: 1.0,
+    };
+    effects.start_as(effect_id("test"), Vec3::ZERO, None, false, (0, settings));
+    effects.update(0.01, &quiet());
+    assert!(effects.draws(&|_| [1.0; 3]).0.is_empty(), "not a sprite");
+    let first = effects.mesh_draws();
+    assert_eq!(first.len(), 2);
+    assert_eq!(first[0].mesh, 2, "numbered from 1");
+    assert_eq!(first[0].size, 6.0);
+    assert_eq!(first[0].color, [0.25, 0.5, 1.0]);
+    assert!((first[0].axis.length() - 1.0).abs() < 0.001);
+    assert_ne!(first[0].axis, first[1].axis, "each its own way");
+    effects.update(1.0, &quiet());
+    let later = effects.mesh_draws();
+    let turned = later[0].angle - first[0].angle;
+    assert!(
+        (turned - std::f32::consts::FRAC_PI_2).abs() < 0.01,
+        "{turned}"
+    );
+}
+
+/// A mesh the level hasn't got is nothing.
+#[test]
+fn a_mesh_that_is_not_there_draws_nothing() {
+    let mut effects = system(vec![ParticleEmitter {
+        kind: ParticleKind::Mesh,
+        mesh_number: 0,
+        burst: 2,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    }]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.update(0.01, &quiet());
+    assert!(effects.mesh_draws().is_empty());
+}
+
+/// What starts on a surface is on it, and outward is the way it faces.
+#[test]
+fn particles_start_on_a_surface_and_go_out_from_it() {
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    let side = Vec3::new(1.0, 0.0, 0.0);
+    let surface = vec![
+        SurfacePoint {
+            place: Vec3::new(10.0, 0.0, 0.0),
+            facing: up,
+        },
+        SurfacePoint {
+            place: Vec3::new(0.0, 20.0, 0.0),
+            facing: side,
+        },
+    ];
+    let mut effects = system(vec![ParticleEmitter {
+        shape: EmitterShape::Surface,
+        surface,
+        outward: true,
+        burst: 40,
+        speed: [100.0, 100.0],
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    }]);
+    let middle = Vec3::new(100.0, 0.0, 0.0);
+    effects.start(effect_id("test"), middle, None, false);
+    effects.update(0.0, &quiet());
+    effects.update(0.1, &quiet());
+    let (draws, _) = effects.draws(&|_| [1.0; 3]);
+    assert_eq!(draws.len(), 40);
+    let on_first = Vec3::new(110.0, 0.0, 10.0);
+    let on_second = Vec3::new(110.0, 20.0, 0.0);
+    let near = |a: Vec3, b: Vec3| (a - b).length() < 0.5;
+    assert!(
+        draws.iter().any(|draw| near(draw.origin, on_first)),
+        "{draws:?}"
+    );
+    assert!(
+        draws.iter().any(|draw| near(draw.origin, on_second)),
+        "{draws:?}"
+    );
+    let all = |draw: &EffectDraw| near(draw.origin, on_first) || near(draw.origin, on_second);
+    assert!(draws.iter().all(all), "{draws:?}");
+}
+
+/// With nowhere on it to start, they start at the middle.
+#[test]
+fn a_surface_with_nothing_on_it_starts_at_the_middle() {
+    let mut effects = system(vec![ParticleEmitter {
+        shape: EmitterShape::Surface,
+        burst: 3,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    }]);
+    let middle = Vec3::new(100.0, 0.0, 0.0);
+    effects.start(effect_id("test"), middle, None, false);
+    effects.update(0.0, &quiet());
+    let (draws, _) = effects.draws(&|_| [1.0; 3]);
+    assert!(draws.iter().all(|draw| draw.origin == middle), "{draws:?}");
 }

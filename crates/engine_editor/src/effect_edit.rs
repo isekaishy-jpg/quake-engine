@@ -7,16 +7,18 @@ use crate::graph_view::{ViewEvent, ViewNode, ViewWire};
 
 /// What an emitter can say, in the order the panel shows it, with what each takes.
 pub const EMITTER_SETTINGS: &[(&str, &str)] = &[
-    ("kind", "sprite, square, ribbon, beam, light or decal"),
+    ("kind", "sprite, square, ribbon, beam, light, decal or mesh"),
     ("blend", "over or add"),
     ("rate", "how many a second"),
     ("burst", "how many at once"),
     ("delay", "seconds before it starts"),
     ("duration", "seconds it runs, or 0 for always"),
-    ("shape", "point, ball, box, ring, disc, cone or line"),
+    ("shape", "point, ball, box, ring, disc, cone, line or mesh"),
     ("radius", "for a ball, ring, disc or cone"),
     ("height", "for a cone"),
     ("half_size", "x y z, for a box or line"),
+    ("mesh", "the mesh it is, or starts on"),
+    ("surface", "another mesh to start on"),
     ("outward", "true to head away from the middle"),
     ("life", "seconds, or a low and a high"),
     ("speed", "a number, or a low and a high"),

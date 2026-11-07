@@ -1,6 +1,6 @@
 # Proposal 0146: effects that reach
 
-Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 78 to 97 and 16, from [the research](../research/effects.md). Item 9 was done at stage 7.
+Status: accepted and implemented, 2026-11-07, the [work list](../research/work-list.md), items 78 to 97 and 16, from [the research](../research/effects.md). Item 9 was done at stage 7.
 
 ## Design
 
@@ -79,8 +79,6 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **The budget** starts to bite past 60%. What's within 2048 units keeps most of its rate, and what's further gives way first.
 - **Mesh shapes** come with mesh particles.
 
-Filled in as each part lands.
-
 ### Compute (90)
 
 - **Tried in the game:** 100,000 drops falling from the ceiling of a room and coming off the floor, in a box of their own, drawn out along how they move. It looks like rain. A swirl round a ring, by a vortex and wind, stays the shape the same forces give it on the CPU.
@@ -122,3 +120,12 @@ Filled in as each part lands.
 - **Trying the library found a bug in reloading.** Particles already going kept the emitter they were made by, with its old picture number, and the numbers had changed. They showed as hard squares of the wrong picture. They now take up what their emitter says, by its name, and those of an emitter that's gone go. The review of item 94 said the opposite, and was wrong.
 - **Sixteen new effects,** each tried in the game in a room a moment after it starts, and changed until it looked like what it is. Too many fireballs adding up gave one flat colour, so there are fewer, and fainter, and the smoke's own shape shows in them.
 - **The flame sheet had a hard straight base.** It came from cutting a triangle out of noise. It's now a tongue, round at its foot, and it sways.
+
+### Mesh particles (16, and the rest of 89)
+
+- **Tried in the game:** barrels thrown up and coming off the floor, tumbling, and sparks all over a statue, on the CPU and in compute. The statue can be told by its sparks alone.
+- **A mesh particle is a moving mesh,** which goes down the path that has: levels of detail, its own light, shadows. It stands in its rest pose, so all the copies of a mesh share one set of joints, and nothing's posed per particle.
+- **A level finds what its effects are made of** when it loads, after what its bake goes by, so that changing an effect doesn't make a level's light old. What's named after that shows when the level's loaded again, and the console and the editor say so.
+- **A mesh that's gone** is nothing, in a level, as effects go with every level and one wrong name shouldn't stop them loading. `check_effects` finds it.
+- **A surface is 4,096 places,** spread by area, worked out when a level's read. At 1,024, 20,000 a second showed as streaks from each place. Compute reads them from a buffer of all of a level's. They're where the mesh stands at rest, so on something that's moving a lot they're near it and not on it.
+- **`spin` turns a mesh about a way of its own.** A sprite only turns one way, so this has no field to say it, and each picks one.

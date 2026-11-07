@@ -7,7 +7,7 @@ use std::sync::Arc;
 use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
 use engine_map::{
-    EffectDef, EffectDraw, EffectSettings, EmitterShape, GpuEmitter, ParticleCollide,
+    EffectDef, EffectDraw, EffectMesh, EffectSettings, EmitterShape, GpuEmitter, ParticleCollide,
     ParticleEmitter, ParticleKind, SimEmitter,
 };
 
@@ -80,6 +80,8 @@ struct Live {
     rotation: f32,
     /// How fast it turns, in radians a second.
     spin: f32,
+    /// What it turns about, if it's a mesh.
+    axis: Vec3,
     /// The handle of what started it, or 0.
     owner: u32,
     /// The middle of what started it, when it did, for forces to go by.
@@ -385,6 +387,7 @@ impl EffectSystem {
             facing: Vec3::new(0.0, 0.0, 1.0),
             rotation: 0.0,
             spin: 0.0,
+            axis: Vec3::new(0.0, 0.0, 1.0),
             owner: 0,
             middle: placed.origin,
             settings: placed.settings,
@@ -417,10 +420,23 @@ impl EffectSystem {
         );
         let (rotation, spin) = (emitter.rotation, emitter.spin);
         let outward = emitter.outward;
-        let offset = self.shape_offset(shape);
+        // What's on a surface goes out the way that faces, not from the middle.
+        let on_surface =
+            (shape == EmitterShape::Surface && !emitter.surface.is_empty()).then(|| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    clippy::cast_precision_loss,
+                    reason = "a few places"
+                )]
+                let at = (self.random() * emitter.surface.len() as f32) as usize;
+                emitter.surface[at.min(emitter.surface.len() - 1)]
+            });
+        let offset = on_surface.map_or_else(|| self.shape_offset(shape), |point| point.place);
         let start = origin + offset;
-        let heading = if outward && offset.length() > 0.001 {
-            offset.normalized()
+        let out = on_surface.map_or(offset, |point| point.facing);
+        let heading = if outward && out.length() > 0.001 {
+            out.normalized()
         } else {
             self.heading(direction, spread)
         };
@@ -428,6 +444,7 @@ impl EffectSystem {
         let life = self.between(life);
         let rotation = self.between(rotation).to_radians();
         let spin = self.between(spin).to_radians();
+        let axis = self.heading(Vec3::new(0.0, 0.0, 1.0), 180.0);
         self.live.push(Live {
             effect: Arc::clone(effect),
             emitter: number,
@@ -443,6 +460,7 @@ impl EffectSystem {
             facing: Vec3::new(0.0, 0.0, 1.0),
             rotation,
             spin,
+            axis,
             owner,
             middle: origin,
             settings,
@@ -454,7 +472,7 @@ impl EffectSystem {
     /// How far from its emitter something in `shape` starts.
     fn shape_offset(&mut self, shape: EmitterShape) -> Vec3 {
         match shape {
-            EmitterShape::Point => Vec3::ZERO,
+            EmitterShape::Point | EmitterShape::Surface => Vec3::ZERO,
             EmitterShape::Ball(radius) => {
                 let direction = self.heading(Vec3::new(0.0, 0.0, 1.0), 180.0);
                 direction * (radius * self.random().cbrt())
@@ -797,9 +815,40 @@ impl EffectSystem {
                     });
                 }
                 ParticleKind::Sprite | ParticleKind::Square => draws.push(look),
+                // These go by another way: see `mesh_draws`.
+                ParticleKind::Mesh => {}
             }
         }
         (draws, lights)
+    }
+
+    /// What's drawn of the particles that are meshes.
+    #[must_use]
+    pub fn mesh_draws(&self) -> Vec<EffectMesh> {
+        let mut draws = Vec::new();
+        for particle in &self.live {
+            let Some(emitter) = particle.effect.emitters.get(particle.emitter) else {
+                continue;
+            };
+            let Some(mesh) = emitter.mesh_number.checked_sub(1) else {
+                continue;
+            };
+            if emitter.kind != ParticleKind::Mesh {
+                continue;
+            }
+            let at = particle.age / particle.life;
+            let [red, green, blue, _] = emitter.color.at(at);
+            let [own_red, own_green, own_blue] = particle.settings.color;
+            draws.push(EffectMesh {
+                mesh,
+                origin: particle.origin,
+                axis: particle.axis,
+                angle: particle.rotation,
+                size: emitter.size.at(at) * particle.settings.size,
+                color: [red * own_red, green * own_green, blue * own_blue],
+            });
+        }
+        draws
     }
 
     /// What compute runs this frame, as each emitter with where it is and what's new, and the
@@ -878,7 +927,7 @@ impl EffectSystem {
                     EmitterShape::Box(half) | EmitterShape::Line(half) => {
                         half.x.max(half.y).max(half.z)
                     }
-                    EmitterShape::Point => 0.0,
+                    EmitterShape::Point | EmitterShape::Surface => 0.0,
                 };
                 out.push(GpuEmitter {
                     origin: effect.origin,

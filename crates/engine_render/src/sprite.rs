@@ -258,9 +258,9 @@ pub struct ParticleSim {
     pub bounce: f32,
     /// What they do when they hit something: 0 nothing, 1 bounce, 2 die, 3 stick.
     pub collide: u32,
-    /// Their shape: 0 a ball, 1 a ring, 2 a disc, 3 a cone, 4 a line, 5 a box.
+    /// Their shape: 0 a ball, 1 a ring, 2 a disc, 3 a cone, 4 a line, 5 a box, 6 a mesh.
     pub shape: u32,
-    /// Half of a line or box, or a cone's height in z.
+    /// Half of a line or box, a cone's height in z, or the first of a mesh's places and how many.
     pub extent: Vec3,
     /// Whether they head away from the middle of their shape.
     pub outward: bool,
@@ -589,7 +589,9 @@ impl From<&EffectDraw> for ParticleDraw {
             shape: match draw.kind {
                 ParticleKind::Ribbon | ParticleKind::Beam => ParticleShape::Line,
                 ParticleKind::Decal => ParticleShape::Flat,
-                ParticleKind::Sprite | ParticleKind::Light => ParticleShape::Soft,
+                ParticleKind::Sprite | ParticleKind::Light | ParticleKind::Mesh => {
+                    ParticleShape::Soft
+                }
                 ParticleKind::Square => ParticleShape::Square,
             },
             glow,
@@ -675,6 +677,11 @@ impl ParticleSim {
             EmitterShape::Box(half) => (5, 0.0, half),
             EmitterShape::Ball(radius) => (0, radius, Vec3::ZERO),
             EmitterShape::Point => (0, 0.0, Vec3::ZERO),
+            EmitterShape::Surface => {
+                #[expect(clippy::cast_precision_loss, reason = "well below 2^24")]
+                let from = [emitter.surface_first as f32, emitter.surface.len() as f32];
+                (6, 0.0, Vec3::new(from[0], from[1], 0.0))
+            }
         };
         let own = sim.settings;
         let step = |number: usize| {

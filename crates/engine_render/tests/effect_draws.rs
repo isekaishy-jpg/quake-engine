@@ -2,10 +2,11 @@
 
 use engine_core::math::Vec3;
 use engine_map::{
-    ColorCurve, Curve, EffectDraw, EffectSettings, EmitterShape, GpuEmitter, ParticleBlend,
-    ParticleCollide, ParticleEmitter, ParticleForce, ParticleKind, SimEmitter,
+    ColorCurve, Curve, EffectDraw, EffectMesh, EffectSettings, EmitterShape, GpuEmitter, Map,
+    MovingMesh, ParticleBlend, ParticleCollide, ParticleEmitter, ParticleForce, ParticleKind,
+    SimEmitter, SurfacePoint, moved,
 };
-use engine_render::{GpuParticles, ParticleDraw, ParticleShape, ParticleSim};
+use engine_render::{GpuParticles, ParticleDraw, ParticleShape, ParticleSim, RestPoses};
 
 /// A draw of `kind`, in plain colours.
 fn draw_of(kind: ParticleKind, color: [f32; 4]) -> EffectDraw {
@@ -196,9 +197,12 @@ fn each_shape_says_what_compute_wants() {
         ),
         (EmitterShape::Line(half), 4, 0.0, half),
         (EmitterShape::Box(half), 5, 0.0, half),
+        (EmitterShape::Surface, 6, 0.0, Vec3::new(7.0, 2.0, 0.0)),
     ] {
         let emitter = ParticleEmitter {
             shape,
+            surface: vec![SurfacePoint::default(); 2],
+            surface_first: 7,
             ..ParticleEmitter::default()
         };
         let sim = ParticleSim::of(&step(), &emitter, [1.0; 3]);
@@ -290,4 +294,98 @@ fn a_step_has_its_forces() {
     );
     assert_eq!((three.kind, three.extra, three.at), (3.0, 0.5, spot));
     assert_eq!(none.kind, 0.0);
+}
+
+/// Two meshes, with nothing moving them.
+fn map_with_meshes() -> Map {
+    let mesh = |name: &str| MovingMesh {
+        name: name.to_owned(),
+        ..MovingMesh::default()
+    };
+    Map {
+        moving_meshes: vec![mesh("one"), mesh("two")],
+        ..Map::default()
+    }
+}
+
+/// A mesh as a particle stands where it is, turned and sized, in the light that's there.
+#[test]
+fn a_mesh_particle_is_placed_and_turned() {
+    let draw = EffectMesh {
+        mesh: 1,
+        origin: Vec3::new(100.0, 0.0, 0.0),
+        axis: Vec3::new(0.0, 0.0, 2.0),
+        angle: std::f32::consts::FRAC_PI_2,
+        size: 2.0,
+        color: [1.0, 0.5, 0.25],
+    };
+    let (mut palette, mut moving) = (Vec::new(), Vec::new());
+    let eye = Vec3::ZERO;
+    RestPoses::default().draw(
+        &map_with_meshes(),
+        &[draw],
+        (eye, 600.0, &|_| 0.5),
+        (&mut palette, &mut moving),
+    );
+    let [drawn] = moving[..] else {
+        panic!("one of them");
+    };
+    assert_eq!(drawn.mesh, 1);
+    let turned = moved(&drawn.rows, Vec3::new(1.0, 0.0, 0.0));
+    assert!(
+        (turned - Vec3::new(100.0, 2.0, 0.0)).length() < 0.001,
+        "{turned:?}"
+    );
+    assert_eq!(drawn.light, [0.5, 0.25, 0.125]);
+    assert_eq!(drawn.joint_count, 1, "a joint that moves nothing");
+}
+
+/// With no turn it's only placed and sized.
+#[test]
+fn a_mesh_particle_is_sized_each_way() {
+    let draw = EffectMesh {
+        mesh: 0,
+        origin: Vec3::new(10.0, 20.0, 30.0),
+        axis: Vec3::new(0.0, 0.0, 1.0),
+        size: 3.0,
+        color: [1.0; 3],
+        ..EffectMesh::default()
+    };
+    let (mut palette, mut moving) = (Vec::new(), Vec::new());
+    RestPoses::default().draw(
+        &map_with_meshes(),
+        &[draw],
+        (Vec3::ZERO, 600.0, &|_| 1.0),
+        (&mut palette, &mut moving),
+    );
+    let placed = moved(&moving[0].rows, Vec3::new(1.0, 1.0, 1.0));
+    assert!(
+        (placed - Vec3::new(13.0, 23.0, 33.0)).length() < 0.001,
+        "{placed:?}"
+    );
+}
+
+/// Joints go in once for each mesh, however many copies there are, and an unknown mesh is nothing.
+#[test]
+fn copies_share_their_joints() {
+    let copy = |mesh: u32, x: f32| EffectMesh {
+        mesh,
+        origin: Vec3::new(x, 0.0, 0.0),
+        axis: Vec3::new(0.0, 0.0, 1.0),
+        size: 1.0,
+        color: [1.0; 3],
+        ..EffectMesh::default()
+    };
+    let draws = [copy(0, 1.0), copy(1, 2.0), copy(0, 3.0), copy(9, 4.0)];
+    let (mut palette, mut moving) = (Vec::new(), Vec::new());
+    RestPoses::default().draw(
+        &map_with_meshes(),
+        &draws,
+        (Vec3::ZERO, 600.0, &|_| 1.0),
+        (&mut palette, &mut moving),
+    );
+    assert_eq!(moving.len(), 3);
+    assert_eq!(palette.len(), 2);
+    assert_eq!(moving[0].first_joint, moving[2].first_joint);
+    assert_ne!(moving[0].first_joint, moving[1].first_joint);
 }

@@ -3,12 +3,13 @@
 
 use std::sync::Arc;
 
-use engine_map::{Map, ShaderCode};
+use engine_map::{Map, ShaderCode, SurfacePoint};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags, BufferCopy, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize,
     DescriptorSet, DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device,
-    ImageLayout, PipelineLayout, PipelineStage, PushConstantRange, ShaderModule, ShaderStageFlags,
+    ImageLayout, PhysicalDevice, PipelineLayout, PipelineStage, PushConstantRange, ShaderModule,
+    ShaderStageFlags,
 };
 
 use super::field::GpuField;
@@ -80,7 +81,7 @@ impl SimLayout {
             descriptor_count: 1,
             stage_flags: stages,
         };
-        let set_layout = DescriptorSetLayout::new(device, &[buffer(0), buffer(1)])?;
+        let set_layout = DescriptorSetLayout::new(device, &[buffer(0), buffer(1), buffer(2)])?;
         let field_layout = DescriptorSetLayout::new(
             device,
             &[DescriptorSetLayoutBinding {
@@ -113,6 +114,8 @@ pub(super) struct GpuSims {
     slots: GpuBuffer,
     /// What each frame in flight says of its emitters.
     emitters: Vec<GpuBuffer>,
+    /// Places on meshes, for what starts on them.
+    _surfaces: GpuBuffer,
     /// What steps and draws read, for each frame in flight.
     pub(super) sets: Vec<DescriptorSet>,
     /// Kept alive for the sets.
@@ -133,6 +136,37 @@ pub(super) struct GpuSims {
     ranges: Vec<SimRange>,
     /// What's stepped, for each frame in flight.
     pub(super) runs: [Vec<SimRun>; FRAMES],
+}
+
+/// Bytes of a place on a mesh.
+const SURFACE_BYTES: usize = 32;
+
+/// `places` for compute to read, with room for one so that there's always a buffer.
+fn surface_buffer(
+    device: &Device,
+    physical: &PhysicalDevice,
+    places: &[SurfacePoint],
+) -> Result<GpuBuffer, RenderError> {
+    let size = places.len().max(1) * SURFACE_BYTES;
+    let mut buffer = host_buffer(device, physical, size, BufferUsage::STORAGE_BUFFER)?;
+    let mut mapped = buffer.memory.map()?;
+    let target = mapped.as_slice_mut();
+    for (spot, point) in target
+        .as_chunks_mut::<SURFACE_BYTES>()
+        .0
+        .iter_mut()
+        .zip(places)
+    {
+        let (place, facing) = (point.place, point.facing);
+        let numbers = [
+            place.x, place.y, place.z, 0.0, facing.x, facing.y, facing.z, 0.0,
+        ];
+        for (bytes, number) in spot.as_chunks_mut::<4>().0.iter_mut().zip(numbers) {
+            *bytes = number.to_le_bytes();
+        }
+    }
+    drop(mapped);
+    Ok(buffer)
 }
 
 /// The compute module of `code`, as a pipeline.
@@ -185,9 +219,16 @@ impl Backend {
             frames,
             &[DescriptorPoolSize {
                 descriptor_type: DescriptorType::STORAGE_BUFFER,
-                descriptor_count: frames * 2,
+                descriptor_count: frames * 3,
             }],
         )?;
+        let places: Vec<SurfacePoint> = map
+            .effects
+            .iter()
+            .flat_map(|effect| &effect.emitters)
+            .flat_map(|emitter| emitter.surface.iter().copied())
+            .collect();
+        let surfaces = surface_buffer(&self.device, &self.physical, &places)?;
         let mut sets = Vec::with_capacity(FRAMES);
         let kind = DescriptorType::STORAGE_BUFFER;
         for frame in &emitters {
@@ -206,6 +247,8 @@ impl Backend {
                 0,
                 (MOST_SIMS * SIM_EMITTER_BYTES) as u64,
             );
+            let size = (places.len().max(1) * SURFACE_BYTES) as u64;
+            set.write_buffer(2, kind, &surfaces.buffer, 0, size);
             sets.push(set);
         }
         let field_count = u32::try_from(map.fields.len() + 1).unwrap_or(1);
@@ -243,6 +286,7 @@ impl Backend {
         Ok(Some(GpuSims {
             slots,
             emitters,
+            _surfaces: surfaces,
             sets,
             _pool: pool,
             field_sets,
