@@ -14,6 +14,7 @@
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
   - [Meshes at run time](research/mesh-runtime.md): research for instancing, level of detail, skeletons and morphs
   - [What meshes left undone](research/mesh-limits.md): why moving meshes cost more, and each limit as a target
+  - [Terrain](research/terrain.md): levels of detail, sheets, painting, tiling and collision
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Making the UI and menus usable](research/ui-and-menus.md): what good menus need, and how we measured up
@@ -185,6 +186,7 @@
     - [0141: Vulkan 1.3](proposals/0141-vulkan-1-3.md)
     - [0142: the fixture's models on the mesh path](proposals/0142-the-fixtures-models-on-the-mesh-path.md)
     - [0143: what meshes left undone](proposals/0143-what-meshes-left-undone.md)
+    - [0144: terrain](proposals/0144-terrain.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)
