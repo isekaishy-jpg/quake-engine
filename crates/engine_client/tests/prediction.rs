@@ -5,7 +5,7 @@ mod common;
 use std::rc::Rc;
 
 use common::room;
-use engine_client::{Buttons, Client, LightStyles, StepSmoother, ViewClock};
+use engine_client::{Buttons, Client, LightStyles, ModelGlide, StepSmoother, ViewClock};
 use engine_core::entity::{EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PlayerState, UserCommand};
@@ -449,24 +449,26 @@ fn angles_blend_the_short_way_round() {
 #[test]
 fn a_new_frame_blends_in_over_a_tenth_of_a_second() {
     let (mut client, mut server, _world) = setup();
+    let mut glide = ModelGlide::default();
+    let mut shown = |client: &mut Client, seconds: f32| {
+        let mut drawn = client.draw_entities(0.0);
+        glide.smooth(&mut drawn, seconds);
+        drawn[0]
+    };
     snapshot_of(&mut server, 1, vec![thing(1, 0.0, 3)]);
     client.receive();
     assert!(
-        (client.draw_entities(0.0)[0].blend - 1.0).abs() < 1e-6,
+        (shown(&mut client, 0.0).blend - 1.0).abs() < 1e-6,
         "nothing to blend"
     );
     snapshot_of(&mut server, 2, vec![thing(1, 0.0, 4)]);
     client.receive();
-    let drawn = client.draw_entities(0.0)[0];
+    let drawn = shown(&mut client, 0.0);
     assert_eq!((drawn.from_frame, drawn.state.frame), (3, 4));
     assert!(drawn.blend.abs() < 1e-6);
-    let later = client.draw_entities(0.72)[0];
+    let later = shown(&mut client, 0.01);
     assert!((later.blend - 0.1).abs() < 1e-4);
-    for tick in 3..12 {
-        snapshot_of(&mut server, tick, vec![thing(1, 0.0, 4)]);
-    }
-    client.receive();
-    assert!((client.draw_entities(0.0)[0].blend - 1.0).abs() < 1e-6);
+    assert!((shown(&mut client, 0.09).blend - 1.0).abs() < 1e-6);
 }
 
 #[test]

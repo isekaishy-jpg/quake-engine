@@ -441,11 +441,12 @@ impl World {
                 origin,
                 right: Vec3::new(sin as f32, -cos as f32, 0.0),
             };
-            let drawn = if online {
+            let mut drawn = if online {
                 client.draw_entities_buffered(f64::from(frame_seconds))
             } else {
                 client.draw_entities(fraction)
             };
+            self.glide.smooth(&mut drawn, frame_seconds);
             let wearing: HashMap<u64, u8> = client
                 .scores()
                 .iter()

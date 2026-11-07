@@ -23,7 +23,7 @@ use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
     AmbientSounds, Bindings, Bot, Buttons, Cameras, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
-    LookScale, ShotClock, StepSmoother, ViewKick, ViewTint, WaterPlay, ZoneTracker,
+    LookScale, ModelGlide, ShotClock, StepSmoother, ViewKick, ViewTint, WaterPlay, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
 use engine_core::canvas::TALK_MARK;
@@ -121,6 +121,8 @@ pub(crate) struct World {
     step: StepSmoother,
     /// Which stencil boxes are open.
     gates: StencilGates,
+    /// What moves in steps, shown going evenly.
+    glide: ModelGlide,
     /// What small fires are doing.
     flames: Flames,
     /// How many moving lights a frame can have.
@@ -672,6 +674,7 @@ impl Engine {
                 server: None,
                 step: StepSmoother::default(),
                 gates: StencilGates::default(),
+                glide: ModelGlide::default(),
                 flames: Flames::default(),
                 live_light_budget: 32,
                 effect_budget: 8192,

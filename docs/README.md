@@ -198,6 +198,7 @@
     - [0146: effects that reach](proposals/0146-effects-that-reach.md)
     - [0147: fog in a place, and water of any shape](proposals/0147-fog-and-water.md)
     - [0148: sky and light](proposals/0148-sky-and-light.md)
+    - [0149: models that go evenly](proposals/0149-models-that-go-evenly.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

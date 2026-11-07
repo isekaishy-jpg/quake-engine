@@ -10,7 +10,7 @@ use engine_core::entity::{
 use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
-use engine_core::time::{TICK_HERTZ, TICK_SECONDS};
+use engine_core::time::TICK_SECONDS;
 use engine_map::Contents;
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
@@ -32,12 +32,7 @@ const LIGHT_EMERGES: f32 = 48.0;
 const LIGHT_EMERGE_STEP: f32 = 4.0;
 
 /// Further than this in a tick is a teleport, and isn't blended.
-const MAX_BLENDED_MOVE: f32 = 200.0;
-
-/// How many ticks a model takes to blend to a new frame, which is the original's
-/// 10 frames a second.
-#[expect(clippy::cast_precision_loss, reason = "the tick rate is small")]
-const FRAME_BLEND_TICKS: f32 = TICK_HERTZ as f32 / 10.0;
+pub(crate) const MAX_BLENDED_MOVE: f32 = 200.0;
 
 /// Something the game wants the player to see.
 #[derive(Clone, Debug, PartialEq)]
@@ -77,15 +72,6 @@ pub struct DrawnEntity {
     pub from_frame: u16,
     /// How far to `state`'s frame, from 0 to 1.
     pub blend: f32,
-}
-
-/// An entity's change of frame.
-#[derive(Clone, Copy, Debug, Default)]
-struct FrameChange {
-    /// The frame before.
-    from: u16,
-    /// The tick it changed on.
-    tick: u32,
 }
 
 /// The most commands waiting for the server. Older ones are forgotten.
@@ -134,8 +120,6 @@ pub struct Client {
     entities: Vec<EntityState>,
     /// Entities in the snapshot before it, by id.
     previous_entities: HashMap<u64, EntityState>,
-    /// The last change of frame of each entity.
-    frame_changes: HashMap<u64, FrameChange>,
     /// The latest snapshot's tick.
     tick: u32,
     /// The player's weapon model and frame.
@@ -214,7 +198,6 @@ impl Client {
             boxes: Vec::new(),
             entities: Vec::new(),
             previous_entities: HashMap::new(),
-            frame_changes: HashMap::new(),
             tick: 0,
             weapon: (0, 0),
             player_entity: 0,
@@ -324,15 +307,10 @@ impl Client {
                     state.origin = from.origin.lerp(entity.origin, fraction);
                     state.angles = blend_angles(from.angles, entity.angles, fraction);
                 }
-                let change = self.frame_changes.get(&entity.id).copied();
-                let (from_frame, blend) = change.map_or((entity.frame, 1.0), |change| {
-                    let ticks = self.tick.wrapping_sub(change.tick) as f32 + fraction;
-                    (change.from, (ticks / FRAME_BLEND_TICKS).min(1.0))
-                });
                 DrawnEntity {
+                    from_frame: state.frame,
                     state,
-                    from_frame,
-                    blend,
+                    blend: 1.0,
                 }
             })
             .collect()
@@ -384,9 +362,9 @@ impl Client {
                     state.angles = blend_angles(from.angles, entity.angles, fraction);
                 }
                 DrawnEntity {
+                    from_frame: state.frame,
                     state,
-                    from_frame: old.get(&entity.id).map_or(entity.frame, |from| from.frame),
-                    blend: fraction,
+                    blend: 1.0,
                 }
             })
             .collect();
@@ -955,25 +933,12 @@ impl Client {
             .send(ClientMessage::Console(text.to_owned()).encode());
     }
 
-    /// Takes a new list of entities, noting which changed frame.
+    /// Takes a new list of entities.
     fn note_entities(&mut self, tick: u32, entities: Vec<EntityState>) {
         let previous: HashMap<u64, EntityState> = std::mem::replace(&mut self.entities, entities)
             .into_iter()
             .map(|entity| (entity.id, entity))
             .collect();
-        for entity in &self.entities {
-            if let Some(from) = previous.get(&entity.id)
-                && from.frame != entity.frame
-            {
-                self.frame_changes.insert(
-                    entity.id,
-                    FrameChange {
-                        from: from.frame,
-                        tick,
-                    },
-                );
-            }
-        }
         self.previous_entities = previous;
         self.tick = tick;
     }
@@ -1066,7 +1031,7 @@ impl Client {
 }
 
 /// Angles `fraction` of the way from `from` to `to`, the short way round.
-fn blend_angles(from: Vec3, to: Vec3, fraction: f32) -> Vec3 {
+pub(crate) fn blend_angles(from: Vec3, to: Vec3, fraction: f32) -> Vec3 {
     let blend = |from: f32, to: f32| {
         let turn = (to - from + 180.0).rem_euclid(360.0) - 180.0;
         from + turn * fraction
