@@ -75,15 +75,18 @@ def sheet(frames, side, make):
 
 
 def flame(number, count, side):
-    """Flame that licks up and thins out."""
+    """A tongue of flame, round at its foot and licking at its tip, that thins out as it goes."""
     at = number / count
     x = (np.arange(side) + 0.5) / side * 2 - 1
     y = (np.arange(side) + 0.5) / side
     body = clouds(side, 40 + number, 4, 3)
-    width = (1 - y[:, None]) * (0.9 - at * 0.4) + 0.05
-    upright = 1 - smooth(0.2, 1.0, np.abs(x)[None, :] / np.maximum(y[:, None] * 0.9 + 0.1, 0.05))
-    heat = upright * smooth(0.0, 0.5, y[:, None]) * (0.4 + body * 1.1) * (1 - at * 0.6)
-    del width
+    sway = clouds(side, 90 + number, 3, 2) - 0.5
+    # Most of its width is low down, and it's nothing at either end.
+    width = 0.72 * (1 - at * 0.35) * np.sin(np.pi * y ** 1.5) ** 0.8
+    across = np.abs(x[None, :] + sway * 1.1 * (1 - y[:, None])) / np.maximum(width[:, None], 0.02)
+    shape = 1 - smooth(0.25, 1.0, across + (body - 0.5) * 0.7)
+    foot = 1 - smooth(0.82, 0.98, y[:, None])
+    heat = shape * foot * (0.55 + body * 0.9) * (1 - at * 0.6)
     return np.clip(heat, 0, 1)
 
 

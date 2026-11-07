@@ -1,0 +1,33 @@
+format 1 effect
+
+# Metal struck: a short spray, a flash, and a little heat that fades.
+emitter sparks {
+    blend = add
+    image = textures/fx_spark.png
+    burst = 22
+    life = 0.2 0.7
+    speed = 160 440
+    spread = 65
+    gravity = 0.6
+    stretch = 0.018
+    size = 2
+    collide = bounce
+    bounce = 0.4
+    color = 0 6 3.6 1 1 1 0.7 1.4 0.05 0
+}
+emitter pop {
+    blend = add
+    image = textures/fx_star.png
+    burst = 1
+    life = 0.08
+    rotation = 0 360
+    size = 26
+    color = 0 4 3 1.6 1 1 1 0.6 0.2 0
+}
+emitter flash {
+    kind = light
+    burst = 1
+    life = 0.1
+    reach = 150
+    color = 0 3 2 1 1 1 1 0.5 0.1 0
+}

@@ -1,0 +1,54 @@
+format 1 effect
+
+# A pop: a small fireball, a few sparks, and a wisp of smoke.
+emitter fireball {
+    blend = add
+    image = textures/fx_smoke_sheet.png
+    flipbook = 4 4
+    burst = 8
+    shape = ball
+    radius = 8
+    life = 0.25 0.5
+    speed = 30 90
+    drag = 3
+    rotation = 0 360
+    size = 0 12 0.3 34 1 44
+    color = 0 5 3 1 1 0.35 2.4 0.9 0.2 0.8 1 0.4 0.08 0.02 0
+}
+emitter sparks {
+    blend = add
+    image = textures/fx_spark.png
+    burst = 16
+    life = 0.3 0.8
+    speed = 140 320
+    gravity = 0.5
+    stretch = 0.02
+    size = 2
+    collide = bounce
+    bounce = 0.4
+    color = 0 5 2.5 0.6 1 1 0.5 1 0.05 0
+}
+emitter smoke {
+    image = textures/fx_smoke_sheet.png
+    flipbook = 4 4
+    burst = 4
+    life = 0.9 1.5
+    speed = 20 50
+    gravity = -0.03
+    rotation = 0 360
+    size = 0 18 1 70
+    color = 0 0.1 0.1 0.1 0 0.2 0.14 0.13 0.12 0.5 1 0.2 0.2 0.2 0
+    soft = 16
+    lit = true
+}
+emitter flash {
+    kind = light
+    burst = 1
+    life = 0.2
+    reach = 260
+    color = 0 4 2.5 1 1 1 1 0.3 0.1 0
+}
+timeline {
+    at = 0.06
+    start = smoke
+}

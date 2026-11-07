@@ -1,0 +1,25 @@
+format 1 effect
+
+# A shower of sparks from something broken or being cut, falling and coming off the floor.
+emitter sparks {
+    blend = add
+    image = textures/fx_spark.png
+    rate = 130
+    life = 0.6 1.5
+    speed = 140 330
+    direction = 0.3 0 1
+    spread = 30
+    gravity = 0.55
+    stretch = 0.02
+    size = 2.5
+    collide = bounce
+    bounce = 0.45
+    color = 0 6 3.4 0.9 1 0.7 1.8 0.6 0.1 1 1 0.5 0.1 0 0
+}
+emitter glow {
+    kind = light
+    rate = 22
+    life = 0.08 0.14
+    reach = 170
+    color = 0 2.5 1.6 0.7 1 1 1 0.4 0.1 0.3
+}

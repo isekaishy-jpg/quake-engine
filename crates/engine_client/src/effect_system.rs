@@ -208,12 +208,35 @@ impl EffectSystem {
     }
 
     /// Changes what effects there are while they're going. What's going starts over as it now
-    /// is, so what's timed can be seen. Particles there are go on as they were made.
+    /// is, so what's timed can be seen. Particles there are stay where they are, and take up what
+    /// their emitter now says: pictures and shaders go by number, and those can have changed. So
+    /// what has gone from the files goes, but for what doesn't come from them.
     pub fn change_effects(&mut self, effects: &[Arc<EffectDef>]) {
+        let was = std::mem::take(&mut self.known);
         self.known = effects
             .iter()
             .map(|effect| (effect_id(&effect.name), Arc::clone(effect)))
             .collect();
+        let known = &self.known;
+        let from_files = |def: &EffectDef| was.contains_key(&effect_id(&def.name));
+        self.live.retain_mut(|particle| {
+            if !from_files(&particle.effect) {
+                return true;
+            }
+            let Some(def) = known.get(&effect_id(&particle.effect.name)) else {
+                return false;
+            };
+            let name = particle.effect.emitters.get(particle.emitter);
+            let name = name.map_or("", |emitter| emitter.name.as_str());
+            let Some(number) = def.emitters.iter().position(|e| e.name == name) else {
+                return false;
+            };
+            particle.effect = Arc::clone(def);
+            particle.emitter = number;
+            true
+        });
+        self.going
+            .retain(|effect| known.contains_key(&effect_id(&effect.def.name)));
         for effect in &mut self.going {
             let Some(def) = self.known.get(&effect_id(&effect.def.name)) else {
                 continue;

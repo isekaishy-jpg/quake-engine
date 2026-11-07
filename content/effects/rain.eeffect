@@ -1,0 +1,21 @@
+format 1 effect
+
+# Rain, in compute. Put it at the top of what it falls through: `half_size` is how far it reaches,
+# and `rate` times `life` is how many there are. It stops on what's seen.
+emitter drops {
+    gpu = sim
+    blend = add
+    rate = 30000
+    shape = box
+    half_size = 1000 1000 8
+    life = 1.6
+    speed = 560 640
+    direction = 0.04 0.02 -1
+    spread = 1.5
+    stretch = 0.03
+    size = 1
+    collide = die
+    color = 0.34 0.42 0.52 0.34
+    lit = true
+    far = 6000
+}

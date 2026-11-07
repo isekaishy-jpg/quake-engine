@@ -1,0 +1,22 @@
+format 1 effect
+
+# Snow, in compute: slow flakes wandering on a wind, that settle on what's seen and stay a while.
+emitter flakes {
+    gpu = sim
+    image = textures/fx_glow.png
+    rate = 5000
+    shape = box
+    half_size = 1000 1000 8
+    life = 7 9
+    speed = 50 80
+    direction = 0 0 -1
+    spread = 12
+    turbulence = 45
+    size = 0 0 0.04 3 0.9 3 1 0
+    collide = stick
+    color = 0.9 0.92 1 0.85
+    soft = 6
+    lit = true
+    far = 5000
+    force { kind = wind blowing = 34 12 0 gusts = 0.7 }
+}

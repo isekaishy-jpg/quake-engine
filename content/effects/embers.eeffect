@@ -1,0 +1,17 @@
+format 1 effect
+
+# Slow embers going up from what's nearly out.
+emitter embers {
+    blend = add
+    image = textures/fx_glow.png
+    rate = 36
+    shape = disc
+    radius = 30
+    life = 1.6 3.4
+    speed = 14 44
+    direction = 0 0 1
+    spread = 14
+    turbulence = 38
+    size = 0 6 1 1
+    color = 0 3 1.2 0.2 0 0.1 3 1.2 0.2 1 1 0.7 0.1 0.02 0
+}

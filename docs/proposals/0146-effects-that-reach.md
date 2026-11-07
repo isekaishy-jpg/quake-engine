@@ -116,3 +116,9 @@ Filled in as each part lands.
 - **The most at once** went to 16,384, as the fixture had. What's placed isn't held back by the budget, as the budget is for what an author made. What the fixture has counts towards it.
 - **What it costs:** 16,384 of them take 0.74 ms of a frame on the CPU, where a frame with one explosion takes a twentieth of that.
 - **A bug it found:** `set_gravity` never reached effects, so authored ones fell at the usual rate on a level that changes it.
+
+### A library (97)
+
+- **Trying the library found a bug in reloading.** Particles already going kept the emitter they were made by, with its old picture number, and the numbers had changed. They showed as hard squares of the wrong picture. They now take up what their emitter says, by its name, and those of an emitter that's gone go. The review of item 94 said the opposite, and was wrong.
+- **Sixteen new effects,** each tried in the game in a room a moment after it starts, and changed until it looked like what it is. Too many fireballs adding up gave one flat colour, so there are fewer, and fainter, and the smoke's own shape shows in them.
+- **The flame sheet had a hard straight base.** It came from cutting a triangle out of noise. It's now a tongue, round at its foot, and it sways.

@@ -1,0 +1,70 @@
+format 1 effect
+
+# A fireball, a ring going out from it, sparks that come off what they hit, smoke that follows, and
+# a flash. Start it where something goes up.
+emitter fireball {
+    blend = add
+    image = textures/fx_smoke_sheet.png
+    flipbook = 4 4
+    burst = 14
+    shape = ball
+    radius = 26
+    life = 0.45 0.9
+    speed = 60 200
+    drag = 2.5
+    rotation = 0 360
+    spin = -70 70
+    size = 0 26 0.25 70 1 96
+    color = 0 1.7 1 0.4 0.8 0.3 1.1 0.42 0.12 0.75 1 0.32 0.07 0.02 0
+    soft = 16
+}
+emitter ring {
+    blend = add
+    image = textures/fx_ring.png
+    burst = 1
+    life = 0.35
+    size = 0 40 1 420
+    color = 0 3 2 1 0.8 1 1 0.5 0.15 0
+}
+emitter sparks {
+    blend = add
+    image = textures/fx_spark.png
+    burst = 70
+    life = 0.5 1.5
+    speed = 220 560
+    gravity = 0.5
+    drag = 0.4
+    stretch = 0.025
+    size = 3
+    collide = bounce
+    bounce = 0.45
+    color = 0 6 3 0.8 1 1 0.6 1 0.05 0
+}
+emitter smoke {
+    image = textures/fx_smoke_sheet.png
+    flipbook = 4 4
+    burst = 18
+    shape = ball
+    radius = 30
+    life = 1.6 3
+    speed = 30 110
+    gravity = -0.03
+    drag = 1.2
+    rotation = 0 360
+    spin = -25 25
+    size = 0 50 1 170
+    color = 0 0.08 0.07 0.06 0 0.15 0.1 0.09 0.08 0.75 1 0.2 0.19 0.18 0
+    soft = 32
+    lit = true
+}
+emitter flash {
+    kind = light
+    burst = 1
+    life = 0.4
+    reach = 620
+    color = 0 6 3.5 1.2 1 1 1 0.4 0.1 0
+}
+timeline {
+    at = 0.12
+    start = smoke
+}

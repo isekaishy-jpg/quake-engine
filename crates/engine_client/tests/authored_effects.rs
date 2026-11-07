@@ -953,10 +953,12 @@ fn compute_waits_for_a_delay_and_stops_at_a_duration() {
     assert!(effects.sims().is_empty());
 }
 
-/// New ones take over from what's going, which starts again, and what's made stays as it was.
+/// New ones take over from what's going, which starts again, and what's made takes up what its
+/// emitter now says.
 #[test]
 fn changed_effects_take_over_what_is_going() {
     let old = ParticleEmitter {
+        name: "first".to_owned(),
         burst: 5,
         life: [10.0, 10.0],
         ..ParticleEmitter::default()
@@ -967,19 +969,26 @@ fn changed_effects_take_over_what_is_going() {
     assert_eq!(effects.count(), 5);
     let new = ParticleEmitter {
         burst: 7,
+        picture: 3,
         ..old.clone()
     };
     let extra = ParticleEmitter {
+        name: "second".to_owned(),
         burst: 2,
         ..old.clone()
     };
     let def = EffectDef {
         name: "test".to_owned(),
-        emitters: vec![new, extra],
+        emitters: vec![extra, new],
         timeline: Vec::new(),
     };
     effects.change_effects(&[Arc::new(def)]);
-    assert_eq!(effects.count(), 5, "they aren't touched");
+    assert_eq!(effects.count(), 5, "they stay");
+    let (draws, _) = effects.draws(&|_| [1.0; 3]);
+    assert!(
+        draws.iter().all(|draw| draw.picture == 3),
+        "with its picture now"
+    );
     effects.update(0.1, &quiet());
     assert_eq!(effects.count(), 14, "and it's started over as it now is");
     effects.update(20.0, &quiet());
@@ -989,20 +998,61 @@ fn changed_effects_take_over_what_is_going() {
     assert_eq!(effects.count(), 9, "what starts now is new");
 }
 
-/// An effect that's gone from the files goes on until it's over, and can't start again.
+/// What's gone from a file can't be drawn, as what it showed may not be there.
 #[test]
-fn an_effect_that_is_gone_goes_on_until_it_ends() {
-    let mut effects = system(vec![ParticleEmitter {
+fn an_emitter_that_has_gone_takes_its_particles_along() {
+    let one = ParticleEmitter {
+        name: "one".to_owned(),
         burst: 5,
         life: [10.0, 10.0],
         ..ParticleEmitter::default()
+    };
+    let two = ParticleEmitter {
+        name: "two".to_owned(),
+        ..one.clone()
+    };
+    let mut effects = system(vec![one.clone(), two]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 10);
+    let def = EffectDef {
+        name: "test".to_owned(),
+        emitters: vec![one],
+        timeline: Vec::new(),
+    };
+    effects.change_effects(&[Arc::new(def)]);
+    assert_eq!(effects.count(), 5);
+}
+
+/// An effect that's gone from the files goes, and can't start again.
+#[test]
+fn an_effect_that_is_gone_goes() {
+    let mut effects = system(vec![ParticleEmitter {
+        burst: 5,
+        rate: 10.0,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
     }]);
-    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
     effects.update(0.1, &quiet());
     effects.change_effects(&[]);
-    effects.update(0.1, &quiet());
-    assert_eq!(effects.count(), 5);
+    assert_eq!(effects.count(), 0);
+    assert_eq!(effects.going(), 0);
     effects.start(effect_id("test"), Vec3::ZERO, None, false);
     effects.update(0.1, &quiet());
-    assert_eq!(effects.count(), 5);
+    assert_eq!(effects.count(), 0);
+}
+
+/// What doesn't come from the files isn't touched by them.
+#[test]
+fn what_is_placed_by_hand_lives_through_a_change() {
+    let mut effects = EffectSystem::default();
+    let own = Arc::new(EffectDef {
+        name: "own".to_owned(),
+        emitters: vec![ParticleEmitter::default()],
+        timeline: Vec::new(),
+    });
+    effects.place(&own, 0, engine_client::PlacedParticle::default());
+    effects.change_effects(&[]);
+    assert_eq!(effects.count(), 1);
 }

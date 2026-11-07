@@ -1,0 +1,37 @@
+format 1 effect
+
+# A flame on a torch or a brazier: tongues of fire from a sheet, and sparks now and then.
+emitter flames {
+    blend = add
+    image = textures/fx_flame_sheet.png
+    flipbook = 4 4
+    rate = 14
+    shape = disc
+    radius = 3
+    life = 0.5 0.8
+    speed = 26 46
+    direction = 0 0 1
+    spread = 4
+    rotation = -8 8
+    size = 0 18 0.3 30 1 16
+    color = 0 1.6 0.8 0.25 0 0.2 1.6 0.8 0.25 0.9 1 0.8 0.2 0.04 0
+}
+emitter sparks {
+    blend = add
+    image = textures/fx_glow.png
+    rate = 3
+    life = 0.4 1
+    speed = 40 110
+    direction = 0 0 1
+    spread = 22
+    turbulence = 30
+    size = 0 3 1 0.5
+    color = 0 3 1.4 0.3 1 1 0.8 0.2 0.04 0
+}
+emitter glow {
+    kind = light
+    rate = 12
+    life = 0.14 0.24
+    reach = 200
+    color = 0 1.2 0.7 0.25 1 1 1 0.5 0.15 0.6
+}

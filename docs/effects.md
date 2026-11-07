@@ -130,7 +130,7 @@ fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
 
 ## Changing one while the game runs
 
-Save an effect file, a picture it shows or a shader it names, and the game reads them all again within a second. What's going starts over as the file now says, and particles already made finish as they were. A file that's wrong leaves things as they were, and the console says why.
+Save an effect file, a picture it shows or a shader it names, and the game reads them all again within a second. What's going starts over as the file now says, and particles already made stay where they are and take up what their emitter now says. Those of an emitter that's gone go too. A file that's wrong leaves things as they were, and the console says why.
 
 ## Checking
 
@@ -138,4 +138,26 @@ Save an effect file, a picture it shows or a shader it names, and the game reads
 target/release/engine-tool content - check_effects "{}"
 ```
 
-`effects/` holds some to start from: `campfire`, `smoke` and `dust`.
+## What's there to start from
+
+`effects/` has these. Copy one and change it, or start them as they are.
+
+| Effect | What it is | How it's meant to go |
+|---|---|---|
+| `explosion`, `explosion_small` | A fireball, a ring, sparks that come off things, smoke, and a flash | Once, where something goes up |
+| `spell_charge` | Light drawn in to a point | Going, until it's stopped |
+| `spell_bolt` | A bright head, a tail and motes | Following what's thrown |
+| `spell_burst` | A star, a ring, and motes flung out | Once, where a spell lands |
+| `spell_ward` | A turning circle of runes on the floor | Going, a little above the floor |
+| `spell_heal` | Light and small stars rising | Following who's being mended |
+| `rain` | 48,000 drops, in compute | At the top of what it falls through |
+| `snow` | Flakes on a wind that settle, in compute | At the top of what it falls through |
+| `ash` | Ash and embers going by, in compute | In the middle of the air they fill |
+| `fog_wisps` | Low fog that drifts | On the floor |
+| `sparks_hit` | A short spray and a flash | Once, where metal's struck |
+| `sparks_fountain` | A shower that comes off the floor | Going, from what's broken |
+| `embers`, `torch`, `campfire` | What's burning | Going |
+| `smoke`, `dust`, `bubbles`, `water_splash`, `waterfall` | What their names say | Going |
+| `blood_hit` | Drops and a dark puff | Once, on a wound |
+
+Their pictures are `textures/fx_*.png`, which `tools/make_effect_pictures.py` makes from noise.
