@@ -641,6 +641,28 @@ pub const OPERATIONS: &[OperationInfo] = &[
         ],
     },
     OperationInfo {
+        name: "add_field",
+        help: "Adds a picture worked out a step at a time, by a compute shader.",
+        args: &[
+            needs(
+                "name",
+                ArgKind::Text,
+                "What a material calls it, as field:name",
+            ),
+            needs(
+                "shader",
+                ArgKind::Text,
+                "A shader with shader_field, by name",
+            ),
+            may(
+                "size",
+                ArgKind::Number,
+                "How wide it is each way, 256 if not said",
+            ),
+            may("rate", ArgKind::Number, "Steps a second, 30 if not said"),
+        ],
+    },
+    OperationInfo {
         name: "write_graph",
         help: "Writes a shader graph, refusing one that's wrong or doesn't compile.",
         args: &[
@@ -797,6 +819,7 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "write_material" => features::write_material(session, args),
         "read_shader" => features::read_text(session, "shaders", ".wgsl", args),
         "write_shader" => features::write_shader(session, args),
+        "add_field" => features::add_field(session, args),
         "write_graph" => features::write_graph(session, args),
         "describe_graph" => features::describe_graph(session, args),
         "graph_kinds" => Ok(features::graph_kinds()),

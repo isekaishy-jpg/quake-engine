@@ -7,7 +7,7 @@ use engine_compile::{
     GRAPH_KINDS, GraphInput, GraphNode, MaterialLibrary, ShaderGraph, graph_code, read_graph,
     write_graph,
 };
-use engine_shaders::{check_post_code, check_surface_code};
+use engine_shaders::{check_field_code, check_post_code, check_surface_code};
 
 /// A node of `kind`, with `inputs` that name nodes.
 fn node(id: &str, kind: &str, inputs: &[(&str, &str)]) -> GraphNode {
@@ -118,7 +118,7 @@ fn a_graph_can_be_a_final_pass() {
 #[test]
 fn every_kind_compiles_where_it_can_be_read() {
     for kind in GRAPH_KINDS {
-        if kind.name == "color" {
+        if matches!(kind.name, "color" | "cell" | "last") {
             continue;
         }
         let mut made = node("it", kind.name, &[]);
@@ -310,4 +310,37 @@ fn a_wrong_graph_is_a_shader_that_wont_compile_and_says_why() {
     let told = check_surface_code(&code).expect_err("it's broken");
     assert!(!told.is_empty());
     let _gone = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_graph_can_be_a_fields_step() {
+    let made = graph(
+        vec![
+            node("last", "last", &[]),
+            node("left", "last", &[]),
+            node("cell", "cell", &[]),
+            node("uv", "uv", &[]),
+            node("time", "time", &[]),
+            node("noise", "noise", &[]),
+            node("sum", "add", &[("a", "last"), ("b", "left")]),
+            node("more", "add", &[("a", "sum"), ("b", "cell")]),
+            node("again", "add", &[("a", "more"), ("b", "uv")]),
+            node("all", "multiply", &[("a", "again"), ("b", "noise")]),
+        ],
+        &[("field", "all")],
+    );
+    let code = graph_code(&made).expect("it's right");
+    assert!(code.contains("fn shader_field"), "{code}");
+    check_field_code(&code).unwrap_or_else(|problem| panic!("{problem}\n{code}"));
+}
+
+#[test]
+fn a_fields_step_goes_alone_and_only_it_reads_cells() {
+    let both = graph(
+        vec![node("last", "last", &[]), node("time", "time", &[])],
+        &[("field", "last"), ("base", "time")],
+    );
+    assert!(problems(&both).contains("field is for a field's step"));
+    let misplaced = graph(vec![node("last", "last", &[])], &[("base", "last")]);
+    assert!(problems(&misplaced).contains("last can't be read in surface"));
 }

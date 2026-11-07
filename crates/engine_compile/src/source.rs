@@ -8,6 +8,7 @@ use engine_format::{Block, Document, Value};
 use engine_map::{Clouds, Contents, Fog, Sky, Spline};
 
 use crate::error::CompileError;
+use crate::field::{FieldSource, read_field};
 use crate::geometry::{Plane3, Point, normalized};
 use crate::mesh::{Mesh, PlacedMesh};
 use crate::terrain::{TerrainSource, read_terrain};
@@ -188,6 +189,8 @@ pub struct WorkingMap {
     pub decals: Vec<DecalSource>,
     /// Land.
     pub terrain: Vec<TerrainSource>,
+    /// Pictures worked out a step at a time.
+    pub fields: Vec<FieldSource>,
     /// Meshes in the world.
     pub meshes: Vec<MeshPlacement>,
     /// Those meshes, once placed.
@@ -744,6 +747,10 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
         terrain: document
             .blocks_of("terrain")
             .map(read_terrain)
+            .collect::<Result<Vec<_>, _>>()?,
+        fields: document
+            .blocks_of("field")
+            .map(read_field)
             .collect::<Result<Vec<_>, _>>()?,
         decals: document
             .blocks_of("decal")

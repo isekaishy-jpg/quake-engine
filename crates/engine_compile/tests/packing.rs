@@ -328,7 +328,7 @@ fn every_shader_a_game_could_want_is_compiled() {
 ";
     fs::write(root.join("shaders").join("twice.wgsl"), code).expect("write");
     let count = engine_compile::compile_shaders(&root).expect("compiles");
-    let modules = engine_shaders::all_modules(&[code], &[]);
+    let modules = engine_shaders::all_modules(&[code], &[], &[]);
     assert_eq!(count, modules.len());
     for module in &modules {
         let bytes = fs::read(root.join(module.path())).expect("it's there");
@@ -337,5 +337,40 @@ fn every_shader_a_game_could_want_is_compiled() {
     }
     fs::write(root.join("shaders").join("bad.wgsl"), "this isn't wgsl").expect("write");
     assert!(engine_compile::compile_shaders(&root).is_err());
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// Graphs and fields are compiled ahead like any shader, as a finished game has no compiler, and a
+/// wrong graph stops a pack.
+#[test]
+fn graphs_and_fields_are_compiled_ahead() {
+    let root = std::env::temp_dir().join(format!("engine-pack-graph-{}", std::process::id()));
+    let _gone = fs::remove_dir_all(&root);
+    fs::create_dir_all(root.join("shaders")).expect("folder");
+    let graph = "format 1 graph
+node { id = time kind = time }
+node { id = wave kind = sin a = time }
+outputs { emissive = wave }
+";
+    let field = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return field_read(at);
+}
+";
+    fs::write(root.join("shaders/wave.egraph"), graph).expect("write");
+    fs::write(root.join("shaders/rain.wgsl"), field).expect("write");
+    engine_compile::compile_shaders(&root).expect("compiles");
+    let made = engine_compile::read_graph(graph).expect("reads");
+    let code = engine_compile::graph_code(&made).expect("it's right");
+    let surface = engine_shaders::Module::Surface(&code);
+    assert!(root.join(surface.path()).exists(), "the graph");
+    let stepping = engine_shaders::Module::Field(field);
+    assert!(root.join(stepping.path()).exists(), "the field");
+    let wrong = graph.replace("a = time", "a = nothing");
+    fs::write(root.join("shaders/wave.egraph"), wrong).expect("write");
+    let refused = engine_compile::compile_shaders(&root).expect_err("it's wrong");
+    assert!(
+        refused.to_string().contains("wave reads nothing"),
+        "{refused}"
+    );
     fs::remove_dir_all(&root).expect("clean up");
 }

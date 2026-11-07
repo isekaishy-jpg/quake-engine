@@ -2,7 +2,7 @@
 //! meshes, decals, stamps, paint, splines, and a map's own script and materials
 //! (proposal 0091).
 
-use engine_shaders::{check_post_code, check_surface_code};
+use engine_shaders::{check_field_code, check_post_code, check_surface_code};
 use std::path::{Path, PathBuf};
 
 use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
@@ -507,6 +507,19 @@ fn land_brush(args: &Json) -> Result<engine_map::TerrainBrush, String> {
     })
 }
 
+/// `add_field`.
+pub(crate) fn add_field(session: &mut Session, args: &Json) -> Result<Json, String> {
+    let shader = text_of(args, "shader")?;
+    let shaders = session.content.join("shaders");
+    let known = ["wgsl", "egraph"]
+        .iter()
+        .any(|kind| shaders.join(format!("{shader}.{kind}")).exists());
+    if !known {
+        return Err(format!("there's no shader called {shader}"));
+    }
+    add_kind(session, "field", args)
+}
+
 /// `add_terrain`.
 pub(crate) fn add_terrain(session: &mut Session, args: &Json) -> Result<Json, String> {
     let source = args
@@ -743,12 +756,7 @@ pub(crate) fn check_shaders(session: &Session, _args: &Json) -> Result<Json, Str
     for name in names_in(session, "shaders", ".wgsl") {
         let path = session.content.join("shaders").join(format!("{name}.wgsl"));
         let code = std::fs::read_to_string(&path).map_err(|error| format!("{name}: {error}"))?;
-        let checked = if code.contains("fn shader_post") {
-            check_post_code(&code)
-        } else {
-            check_surface_code(&code)
-        };
-        if let Err(problem) = checked {
+        if let Err(problem) = check_code(&code) {
             found.insert(name, json!(problem));
         }
     }
@@ -830,23 +838,26 @@ pub(crate) fn read_text(
 pub(crate) fn write_shader(session: &Session, args: &Json) -> Result<Json, String> {
     let text = text_of(args, "text")?;
     let file = file_of(session, "shaders", ".wgsl", text_of(args, "name")?)?;
-    if text.contains("fn shader_post") {
-        check_post_code(text)?;
-    } else {
-        check_surface_code(text)?;
-    }
+    check_code(text)?;
     write_text(&file, text)
+}
+
+/// What's wrong with `code`, as whichever sort of shader it is.
+fn check_code(code: &str) -> Result<(), String> {
+    if code.contains("fn shader_field") {
+        check_field_code(code)
+    } else if code.contains("fn shader_post") {
+        check_post_code(code)
+    } else {
+        check_surface_code(code)
+    }
 }
 
 /// What the graph in `text` comes to as code, which has compiled.
 fn checked_graph(text: &str) -> Result<String, String> {
     let graph = engine_compile::read_graph(text)?;
     let code = engine_compile::graph_code(&graph).map_err(|problems| problems.join("; "))?;
-    if code.contains("fn shader_post") {
-        check_post_code(&code)?;
-    } else {
-        check_surface_code(&code)?;
-    }
+    check_code(&code)?;
     Ok(code)
 }
 

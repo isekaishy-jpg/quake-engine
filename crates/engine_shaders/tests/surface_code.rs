@@ -29,7 +29,11 @@ fn the_engines_own_surfaces_are_sound() {
 
 #[test]
 fn every_module_compiles() {
-    for module in all_modules(&[], &[]) {
+    let field = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return field_read(at);
+}
+";
+    for module in all_modules(&[], &[], &[field]) {
         assert!(compile(&module).is_ok(), "{module:?}");
     }
 }

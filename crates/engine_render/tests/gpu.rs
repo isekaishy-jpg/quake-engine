@@ -9,12 +9,12 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LandPicture,
-    LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough, MipLevel,
-    MovingMesh, NO_MOVE, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil,
-    Rows, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky,
-    Sprite, SpriteFacing, SpriteFrame, SpriteImage, TerrainData, TerrainLayer, TerrainSheet,
-    Texture, TextureKind, TileLight, mip_chain,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, FieldDef, Fog,
+    LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough,
+    MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT,
+    RayStencil, Rows, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart, SideFiles,
+    Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame, SpriteImage, TerrainData, TerrainLayer,
+    TerrainSheet, Texture, TextureKind, TileLight, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -3818,6 +3818,163 @@ fn hexagon_tiles_are_for_a_layer_that_asks_near_the_view() {
     let far_plain = painted_from_above(&mut renderer, striped(false), 2600.0);
     let far_hex = painted_from_above(&mut renderer, striped(true), 2600.0);
     assert_eq!(far_plain.rgba, far_hex.rgba, "and they stop");
+}
+
+/// A floor that shows one place of a field called "grid", as a shade of grey.
+fn map_with_field(code: &str, size: u32, rate: f32, read_at: f32) -> Map {
+    let mut built = map(1);
+    let surface = format!(
+        "fn shader_surface(surface: Surface) -> Surface {{\n\
+         var out = surface;\n\
+         let seen = shader_image(0, vec2<f32>({read_at:?}, 0.5)).r;\n\
+         out.base = vec4<f32>(seen, seen, seen, 1.0);\n\
+         return out;\n}}\n"
+    );
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Unlit,
+        shader: Some(Arc::new(ShaderCode {
+            name: "shows_field".to_owned(),
+            code: surface,
+        })),
+        slots: vec![Arc::new(image_of(1, |_, _| [0, 0, 0, 255]))],
+        shader_images: [Some(1), None],
+        field_images: vec![(1, "grid".to_owned())],
+        ..Material::default()
+    }));
+    built.fields.push(FieldDef {
+        name: "grid".to_owned(),
+        shader: Arc::new(ShaderCode {
+            name: "grid".to_owned(),
+            code: code.to_owned(),
+        }),
+        size,
+        rate,
+        params: [0.25, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+    });
+    built
+}
+
+/// What the floor shows at `time`.
+fn shade_at(renderer: &mut Renderer, time: f32) -> u8 {
+    let view = View {
+        time,
+        ..view_from_above()
+    };
+    let shot = renderer
+        .capture(&view, Drawables::default(), 16, 16)
+        .expect("capture");
+    centre(&shot)[0]
+}
+
+/// A field that climbs by its first number at every step.
+const CLIMBS: &str = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    return field_read(at) + vec4<f32>(shader_param(0), 0.0, 0.0, 0.0);
+}
+";
+
+/// A field steps by the clock, keeps what it had, and a surface reads it.
+#[test]
+fn a_field_steps_at_its_rate_and_a_surface_reads_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_field(CLIMBS, 8, 10.0, 0.5)))
+        .expect("load");
+    let start = shade_at(&mut renderer, 0.0);
+    assert!(start < 5, "it starts empty: {start}");
+    let one = shade_at(&mut renderer, 0.1);
+    assert!(one > 40, "a step: {one}");
+    assert_eq!(
+        shade_at(&mut renderer, 0.1),
+        one,
+        "none's due at the same time"
+    );
+    assert_eq!(shade_at(&mut renderer, 0.15), one, "or before the next");
+    let two = shade_at(&mut renderer, 0.2);
+    assert!(two > one + 10, "another: {one} and {two}");
+    assert!(renderer.take_shader_problems().is_empty());
+}
+
+/// However long a frame takes, a field doesn't try to catch up all at once.
+#[test]
+fn a_long_frame_takes_only_so_many_steps() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let code = CLIMBS.replace("shader_param(0)", "0.05");
+    renderer
+        .load_map(Arc::new(map_with_field(&code, 8, 10.0, 0.5)))
+        .expect("load");
+    let _start = shade_at(&mut renderer, 0.0);
+    let shade = shade_at(&mut renderer, 100.0);
+    // Four steps of 0.05, through the curve from light to a byte, and not a thousand.
+    assert!(shade > 20 && shade < 200, "{shade}");
+}
+
+/// What a step reads is what the last one left, so nothing spreads faster than a cell a step.
+#[test]
+fn a_step_reads_only_what_the_last_one_left() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let spreads = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    if at.x == 0 {
+        return vec4<f32>(1.0);
+    }
+    return field_read(at - vec2<i32>(1, 0));
+}
+";
+    // The third cell of four, along its middle.
+    renderer
+        .load_map(Arc::new(map_with_field(spreads, 4, 10.0, 0.625)))
+        .expect("load");
+    let empty = shade_at(&mut renderer, 0.0);
+    assert!(empty < 5, "{empty}");
+    let one = shade_at(&mut renderer, 0.1);
+    assert!(one < 5, "the first cell's lit, and not this one: {one}");
+    let two = shade_at(&mut renderer, 0.2);
+    assert!(two < 5, "the second is: {two}");
+    let three = shade_at(&mut renderer, 0.3);
+    assert!(three > 200, "and now this one: {three}");
+}
+
+/// Past the edge is what's at the edge, so a sum over neighbours needs no care there.
+#[test]
+fn a_field_read_past_its_edge_is_its_edge() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let reads_out = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    if shader_time() < 0.15 {
+        return vec4<f32>(1.0);
+    }
+    return field_read(at + vec2<i32>(1, 0));
+}
+";
+    // The last cell of four, along its middle.
+    renderer
+        .load_map(Arc::new(map_with_field(reads_out, 4, 10.0, 0.875)))
+        .expect("load");
+    let _start = shade_at(&mut renderer, 0.0);
+    let lit = shade_at(&mut renderer, 0.1);
+    assert!(lit > 200, "{lit}");
+    let after = shade_at(&mut renderer, 0.2);
+    assert_eq!(after, lit, "it read itself");
+}
+
+/// A field that won't compile doesn't step and says so, and what reads it goes on.
+#[test]
+fn a_broken_field_says_so_and_stays_still() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let broken = map_with_field("this isn't code", 8, 10.0, 0.5);
+    renderer.load_map(Arc::new(broken)).expect("load");
+    let told = renderer.take_shader_problems().join(" ");
+    assert!(told.contains("field grid"), "{told}");
+    let shade = shade_at(&mut renderer, 0.5);
+    assert!(shade < 5, "{shade}");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

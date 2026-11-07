@@ -1,6 +1,6 @@
 # Proposal 0145: shader graphs and compute
 
-Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 13 and 14, from [the research](../research/shader-graphs.md).
+Status: done, 2026-11-07, the [work list](../research/work-list.md), items 13 and 14, from [the research](../research/shader-graphs.md).
 
 ## Design
 
@@ -64,4 +64,14 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 1
 - **Nodes added** step away from each other, as they all landed in one place at first.
 - **Every test here was seen failing** with its bug put back, thirteen in all. One of those was too weak the first time, a loop check that had only been moved, so it was done again with the check gone, and the test blew its stack as it should.
 
-Filled in as each part lands.
+### Fields (14)
+
+- **Tried in the game:** a wave simulation in about ten lines of `shader_field`, with drops falling at random, seen rippling across a floor through `shader_image_a = field:ripples`.
+- **What it costs,** at 60 steps a second, on average for a frame, from the GPU's clock: 256 by 256 is 0.010 ms, 1024 is 0.054, and 2048 is 0.201. A step is about three of those at that frame rate.
+- **Two images, and a pass to keep what's made.** A step reads one and writes the other. A surface reads one image, as its set of bindings is made once. `vulkane` has no copy between images, so a second small pass does it, which the costs above include.
+- **Fields can be graphs,** which the research said they should: an output called `field`, with `cell` and `last` to read from, so that "reach as far as compute" holds for graphs too.
+- **`shader_noise` moved** to a file of its own, as surfaces and fields both want it.
+- **Adding a field** is `add_field`, or the World tab, with a name and a shader.
+- **Every test here was seen failing** with its bug put back. Reading past the edge had no test until a bug put there passed, so it has one now.
+
+The acceptance criteria hold, apart from how the Graph tab feels in use, which needs a person.

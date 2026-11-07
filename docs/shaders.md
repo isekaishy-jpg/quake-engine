@@ -77,6 +77,35 @@ outputs { emissive = wave }
 
 A graph has no branches. `step` and `mix` do most of that, and `code` the rest. One that's wrong shows green, and the console says which node and why.
 
+## Fields
+
+A field is a picture worked out a step at a time, on the GPU, by a compute shader of your own. It's for what spreads or moves over time: ripples, flow, fire creeping along a floor, things getting wet.
+
+A level names it:
+
+```text
+field { name = ripples shader = rain size = 256 rate = 60 shader_params = 0.98 }
+```
+
+The shader has one hook, which says what a cell is now:
+
+```wgsl
+fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {
+    let here = field_read(at);
+    let beside = field_read(at + vec2<i32>(1, 0));
+    return mix(here, beside, 0.5) * shader_param(0);
+}
+```
+
+- **`field_read(at)`** is what a cell was after the last step, so what you write can't get in the way of what you read. Past the edge is what's at the edge.
+- **`shader_param`, `shader_time` and `shader_noise`** are there, as on a surface.
+- **`rate`** is steps a second, by the clock, and it's 30 if you don't say. A long frame takes up to four, and lets the rest go. `size` goes up to 2048.
+- **A field starts at nothing,** and it's made of four numbers a cell, as fine as `rgba16float` is.
+- **A material shows one** with `shader_image_a = field:ripples`, and then it's a picture to its shader or graph.
+- **A graph can be a field,** with its output `field`. `cell` is where it is, `last` reads the last step, by `x` and `y` from here, and `uv` is where it is from 0 to 1.
+
+At 60 steps a second, a field of 256 costs about 0.01 ms a frame, 1024 about 0.05 and 2048 about 0.2. `add_field` puts one in a level. A broken one stays still, and says why in the console.
+
 ## Checking
 
 ```bash

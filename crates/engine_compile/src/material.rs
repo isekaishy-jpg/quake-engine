@@ -253,6 +253,8 @@ struct SlotFiller<'a, 'b> {
     name: &'a str,
     /// The images so far, after the base.
     slots: Vec<SlotImage>,
+    /// The slots that are a field's.
+    fields: Vec<(u8, String)>,
 }
 
 impl SlotFiller<'_, '_> {
@@ -324,11 +326,17 @@ impl SlotFiller<'_, '_> {
 
     /// The slot of the image `key` names, if it names one.
     fn field(&mut self, block: &Block, key: &str) -> Result<Option<u8>, CompileError> {
-        block
-            .get(key)
-            .and_then(Value::text)
-            .map(|path| self.add(path))
-            .transpose()
+        let Some(path) = block.get(key).and_then(Value::text) else {
+            return Ok(None);
+        };
+        // A field's picture is on the GPU, so this holds its place.
+        if let Some(name) = path.strip_prefix("field:") {
+            let holding = Arc::new(mip_chain(1, 1, vec![0, 0, 0, 255]));
+            let slot = self.keep(holding)?;
+            self.fields.push((slot, name.to_owned()));
+            return Ok(Some(slot));
+        }
+        self.add(path).map(Some)
     }
 }
 
@@ -444,6 +452,9 @@ impl<'a> MaterialLibrary<'a> {
                 ..sheet.data.clone()
             };
             read.push_str(&String::from_utf8_lossy(&write_terrain(&shape)));
+        }
+        for field in &mut working.fields {
+            field.code = self.shader(&field.shader);
         }
         resolve_meshes(working, &mut |name| self.mesh(name))?;
         Ok(read)
@@ -569,6 +580,7 @@ impl<'a> MaterialLibrary<'a> {
             library: self,
             name,
             slots: Vec::new(),
+            fields: Vec::new(),
         };
         let mut material = Material {
             specular_strength: number(block, "specular_strength", 1.0),
@@ -663,6 +675,7 @@ impl<'a> MaterialLibrary<'a> {
                 surface,
             });
         }
+        material.field_images = filler.fields;
         material.slots = filler.slots;
         let flatten = block.get("flatten").and_then(Value::flag) == Some(true);
         let mips = if flatten {

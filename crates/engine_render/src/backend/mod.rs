@@ -2,6 +2,7 @@
 
 mod clock;
 mod deform;
+mod field;
 mod pipeline_cache;
 mod pipelines;
 mod post;
@@ -39,6 +40,7 @@ pub use self::clock::GpuTimes;
 use self::clock::{GpuClock, Span};
 pub use self::deform::half_bits;
 use self::deform::{Deform, GpuMoving};
+use self::field::{FieldLayout, GpuField};
 use self::terrain::GpuTerrain;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
@@ -246,6 +248,8 @@ struct GpuMap {
     moving: GpuMoving,
     /// Land.
     terrain: Option<GpuTerrain>,
+    /// Pictures worked out a step at a time.
+    fields: Vec<GpuField>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -575,6 +579,10 @@ pub(crate) struct Backend {
     deform: Deform,
     /// The layout of what land reads.
     terrain_set_layout: DescriptorSetLayout,
+    /// What fields' steps are bound by.
+    field_layout: FieldLayout,
+    /// The time this frame's field steps are told.
+    field_time: f32,
     /// Times what the GPU does.
     clock: GpuClock,
     /// Whether a moving mesh has had to draw at rest.
@@ -865,6 +873,7 @@ impl Backend {
             FrameValues::new(&device, &physical)?,
         ];
         let shadows = shadow::Shadows::new(&device, &physical, &terrain_set_layout)?;
+        let field_layout = FieldLayout::new(&device)?;
         let shadow_sampler = Sampler::new(
             &device,
             SamplerCreateInfo {
@@ -953,6 +962,8 @@ impl Backend {
             deform,
             clock,
             terrain_set_layout,
+            field_layout,
+            field_time: 0.0,
             moving_overflow: false,
             device_name,
             physical,
@@ -1252,6 +1263,7 @@ impl Backend {
         };
         self.clock.start(rec, self.slot, Span::Deform);
         self.record_deform(rec);
+        self.record_fields(rec);
         self.clock.end(rec, self.slot, Span::Deform);
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));

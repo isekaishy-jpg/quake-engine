@@ -16,6 +16,7 @@ use crate::cells::{DEFAULT_CELL, cut_cells};
 use crate::compiled::Geometry;
 use crate::effects::{build_flames, build_live_light, build_stencil};
 use crate::error::CompileError;
+use crate::field::FieldSource;
 use crate::geometry::{
     Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
     solid_corners, split,
@@ -1146,6 +1147,7 @@ fn compile_with(
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
     builder.add_terrain(working, terrain_faces.as_deref());
+    builder.map.fields = working.fields.iter().map(FieldSource::def).collect();
     builder.share_meshes(working);
     builder.keep_moving_meshes(working);
     builder.map.places = level_places(working);

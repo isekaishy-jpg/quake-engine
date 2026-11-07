@@ -282,6 +282,8 @@ pub(crate) struct Editor {
     land_brush: (f32, f32),
     /// The graph that's open.
     graph: GraphEditing,
+    /// The name and shader of the next field.
+    next_field: (String, String),
     /// The sheet whose layers are shown, which is the one last touched.
     land_chosen: usize,
     /// The layer that's painted with.
@@ -501,6 +503,7 @@ impl Editor {
             land: Vec::new(),
             land_brush: (0.6, 1.0),
             graph: GraphEditing::default(),
+            next_field: (String::new(), String::new()),
             land_chosen: 0,
             land_layer: 0,
             new_layer: String::new(),
@@ -1874,6 +1877,18 @@ impl Editor {
                 }
             }
         });
+        ui.label(RichText::new("FIELD").color(ACCENT));
+        ui.label("name");
+        ui.text_edit_singleline(&mut self.next_field.0);
+        ui.label("shader");
+        ui.text_edit_singleline(&mut self.next_field.1);
+        if ui.button("add field").clicked() {
+            let (name, shader) = self.next_field.clone();
+            let added = self.operate("add_field", &json!({ "name": name, "shader": shader }));
+            if let Err(problem) = added {
+                self.note(problem);
+            }
+        }
     }
 
     /// Materials: applying them, and editing their text.

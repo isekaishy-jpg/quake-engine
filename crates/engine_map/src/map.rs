@@ -566,6 +566,8 @@ pub struct Map {
     pub mesh_groups: Vec<MeshGroup>,
     /// Land.
     pub terrain: Vec<crate::TerrainSheet>,
+    /// Pictures worked out a step at a time.
+    pub fields: Vec<crate::FieldDef>,
     /// What land's painted with, each picture once.
     pub land_pictures: Vec<crate::LandPicture>,
     /// Named places in the level, from `point` blocks and what placed meshes have.

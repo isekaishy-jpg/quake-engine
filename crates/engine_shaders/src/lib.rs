@@ -16,7 +16,10 @@ mod compiler;
 use std::sync::OnceLock;
 
 #[cfg(feature = "compiler")]
-pub use compiler::{check_post_code, check_surface_code, compile, post_source, surface_source};
+pub use compiler::{
+    check_field_code, check_post_code, check_surface_code, compile, field_source, post_source,
+    surface_source,
+};
 
 /// Changes when any of the engine's own shader code does, so that what was compiled from
 /// older code is never taken for it.
@@ -51,6 +54,8 @@ pub enum Module<'a> {
     Deform,
     /// A surface with this surface code.
     Surface(&'a str),
+    /// A field with this code.
+    Field(&'a str),
     /// A surface with nothing unusual about it.
     PlainSurface,
     /// The final pass with this post code, reading depth as it was drawn if it has samples.
@@ -75,6 +80,7 @@ impl Module<'_> {
             Self::Deform => "deform".to_owned(),
             Self::PlainSurface => "plain".to_owned(),
             Self::Surface(code) => format!("surface_{:016x}", code_id(code)),
+            Self::Field(code) => format!("field_{:016x}", code_id(code)),
             Self::Post { code, samples } => {
                 format!(
                     "post{}_{:016x}",
@@ -143,10 +149,14 @@ pub fn spirv(module: &Module<'_>) -> Result<Vec<u32>, String> {
     }
 }
 
-/// Every module a game could want, for `surfaces` and `posts`, which are surface code and
-/// post code. What's built in is always among them.
+/// Every module a game could want, for `surfaces`, `posts` and `fields`, which are surface code,
+/// post code and field code. What's built in is always among them.
 #[must_use]
-pub fn all_modules<'a>(surfaces: &[&'a str], posts: &[&'a str]) -> Vec<Module<'a>> {
+pub fn all_modules<'a>(
+    surfaces: &[&'a str],
+    posts: &[&'a str],
+    fields: &[&'a str],
+) -> Vec<Module<'a>> {
     let mut modules = vec![
         Module::Canvas,
         Module::Alias,
@@ -160,6 +170,7 @@ pub fn all_modules<'a>(surfaces: &[&'a str], posts: &[&'a str]) -> Vec<Module<'a
     ];
     modules.extend(BUILT_IN.iter().map(|(_, code)| Module::Surface(code)));
     modules.extend(surfaces.iter().map(|code| Module::Surface(code)));
+    modules.extend(fields.iter().map(|code| Module::Field(code)));
     for code in std::iter::once(&"").chain(posts) {
         modules.push(Module::Post {
             code,

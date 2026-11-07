@@ -70,6 +70,8 @@ pub enum GraphHook {
     Surface,
     /// The level's final pass.
     Post,
+    /// A step of a field.
+    Field,
 }
 
 impl GraphHook {
@@ -80,6 +82,7 @@ impl GraphHook {
             Self::Uv => "uv",
             Self::Surface => "surface",
             Self::Post => "post",
+            Self::Field => "field",
         }
     }
 }
@@ -150,13 +153,22 @@ const fn read(name: &'static str, gives: GraphType, code: &'static str) -> Graph
 }
 
 /// Every kind of node.
-pub const GRAPH_KINDS: [GraphKind; 34] = [
+pub const GRAPH_KINDS: [GraphKind; 36] = [
     read("uv", GraphType::Two, "uv"),
     read("world", GraphType::Three, "world"),
     read("normal", GraphType::Three, "surface.normal"),
     read("base", GraphType::Four, "surface.base"),
     read("color", GraphType::Three, "color"),
     read("time", GraphType::One, "shader_time()"),
+    read("cell", GraphType::Two, "vec2<f32>(at)"),
+    GraphKind {
+        name: "last",
+        group: "there",
+        inputs: &[("x", 0.0), ("y", 0.0)],
+        settings: &[],
+        gives: Gives::Fixed(GraphType::Four),
+        code: "field_read(at + vec2<i32>(i32({x}), i32({y})))",
+    },
     GraphKind {
         name: "param",
         group: "there",
@@ -280,13 +292,14 @@ pub const GRAPH_KINDS: [GraphKind; 34] = [
 ];
 
 /// The outputs of a graph: the name, its hook, and how wide it has to be.
-pub const GRAPH_OUTPUTS: [(&str, GraphHook, GraphType); 6] = [
+pub const GRAPH_OUTPUTS: [(&str, GraphHook, GraphType); 7] = [
     ("vertex", GraphHook::Vertex, GraphType::Three),
     ("uv", GraphHook::Uv, GraphType::Two),
     ("base", GraphHook::Surface, GraphType::Four),
     ("normal", GraphHook::Surface, GraphType::Three),
     ("emissive", GraphHook::Surface, GraphType::Three),
     ("color", GraphHook::Post, GraphType::Three),
+    ("field", GraphHook::Field, GraphType::Four),
 ];
 
 /// The kind called `name`.
@@ -297,12 +310,13 @@ pub fn graph_kind(name: &str) -> Option<&'static GraphKind> {
 
 /// Whether a kind can be read in `hook`.
 fn readable(kind: &str, hook: GraphHook) -> bool {
-    use GraphHook::{Post, Surface, Uv, Vertex};
+    use GraphHook::{Field, Post, Surface, Uv, Vertex};
     match kind {
-        "uv" => matches!(hook, Uv | Post | Surface),
+        "uv" => matches!(hook, Uv | Post | Surface | Field),
         "world" => matches!(hook, Vertex | Uv | Surface),
         "normal" | "base" => hook == Surface,
         "color" => hook == Post,
+        "cell" | "last" => hook == Field,
         "time" | "param" => hook != Post,
         "image" => matches!(hook, Uv | Surface),
         "noise" => hook != Post,
@@ -704,6 +718,20 @@ fn hook_lines(
     })
 }
 
+/// Adds the step of a field to `code`, if `graph` has one.
+fn body_field(graph: &ShaderGraph, code: &mut String, problems: &mut Vec<String>) {
+    if let Some(made) = hook_lines(graph, GraphHook::Field, problems) {
+        code.push_str(&made.helpers);
+        let value = made.results.first().map_or("", |(_, value)| value.as_str());
+        let _ = write!(
+            code,
+            "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> {{\n    \
+             let uv = (vec2<f32>(at) + vec2<f32>(0.5)) / vec2<f32>(size);\n{}    return {value};\n}}\n\n",
+            made.lines
+        );
+    }
+}
+
 /// What ends a hook, from what its outputs come to.
 type HookTail<'a> = dyn Fn(&[(&'static str, String)]) -> String + 'a;
 
@@ -731,6 +759,9 @@ pub fn graph_code(graph: &ShaderGraph) -> Result<String, Vec<String>> {
     let has_post = graph.outputs.contains_key("color");
     if has_post && graph.outputs.len() > 1 {
         problems.push("color is for a level's final pass, and goes alone".to_owned());
+    }
+    if graph.outputs.contains_key("field") && graph.outputs.len() > 1 {
+        problems.push("field is for a field's step, and goes alone".to_owned());
     }
     let mut code = String::from("// Made from a graph. Change the graph, not this.\n\n");
     let mut body = |hook: GraphHook, (head, start): (&str, &str), tail: &HookTail<'_>| {
@@ -780,6 +811,7 @@ pub fn graph_code(graph: &ShaderGraph) -> Result<String, Vec<String>> {
         ),
         &last,
     );
+    body_field(graph, &mut code, &mut problems);
     if problems.is_empty() {
         Ok(code)
     } else {

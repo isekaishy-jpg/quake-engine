@@ -9,6 +9,7 @@ use crate::Module;
 const WORLD_SHADER: &str = concat!(
     include_str!("shaders/frame.wgsl"),
     include_str!("shaders/world.wgsl"),
+    include_str!("shaders/noise.wgsl"),
     include_str!("shaders/material.wgsl"),
     include_str!("shaders/sky.wgsl"),
 );
@@ -17,6 +18,12 @@ const WORLD_SHADER: &str = concat!(
 const POST_SHADER: &str = concat!(
     include_str!("shaders/frame.wgsl"),
     include_str!("shaders/post.wgsl"),
+);
+
+/// What field code joins.
+const FIELD_SHADER: &str = concat!(
+    include_str!("shaders/noise.wgsl"),
+    include_str!("shaders/field.wgsl"),
 );
 
 /// The shader of models.
@@ -66,6 +73,23 @@ const POST_HOOK: (&str, &str) = (
     "fn shader_post(color: vec3<f32>, uv: vec2<f32>) -> vec3<f32> { return color; }\n",
 );
 
+/// The hook of a field, and what it does if it's left alone.
+const FIELD_HOOK: (&str, &str) = (
+    "fn shader_field",
+    "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> { return field_read(at); }\n",
+);
+
+/// The whole module of a field with `code`.
+pub fn field_source(code: &str) -> String {
+    let (name, standing_in) = FIELD_HOOK;
+    let mut source = FIELD_SHADER.to_owned();
+    if !code.contains(name) {
+        source.push_str(standing_in);
+    }
+    source.push_str(code);
+    source
+}
+
 /// The whole module of a surface with `code`.
 pub fn surface_source(code: &str) -> String {
     let mut source = WORLD_SHADER.to_owned();
@@ -99,6 +123,7 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Smaa => SMAA_SHADER.to_owned(),
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
+        Module::Field(code) => field_source(code),
         Module::PlainSurface => {
             surface_source("").replace("const PLAIN: bool = false;", "const PLAIN: bool = true;")
         }
@@ -153,6 +178,15 @@ fn check_module(source: &str) -> Result<(), String> {
 /// Returns what the compiler said.
 pub fn check_surface_code(code: &str) -> Result<(), String> {
     check_module(&surface_source(code))
+}
+
+/// What's wrong with `code` as a field's, if anything.
+///
+/// # Errors
+///
+/// Returns what the compiler said.
+pub fn check_field_code(code: &str) -> Result<(), String> {
+    check_module(&field_source(code))
 }
 
 /// What's wrong with `code` as post code, if anything.

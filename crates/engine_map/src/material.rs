@@ -72,6 +72,21 @@ pub struct ShaderCode {
     pub code: String,
 }
 
+/// A picture worked out a step at a time, by a compute shader of the level's own.
+#[derive(Clone, Debug, PartialEq)]
+pub struct FieldDef {
+    /// What it's called, which is how a material asks for it.
+    pub name: String,
+    /// Its shader.
+    pub shader: Arc<ShaderCode>,
+    /// How wide it is, each way.
+    pub size: u32,
+    /// How many steps a second it takes.
+    pub rate: f32,
+    /// What it's given, which its shader reads as it would a material's.
+    pub params: [f32; SHADER_PARAMS],
+}
+
 /// The most numbers a material can give its shader.
 pub const SHADER_PARAMS: usize = 8;
 
@@ -90,6 +105,8 @@ pub struct Material {
     pub metal_rough: Option<MetalRough>,
     /// Its shader, if it has one of its own.
     pub shader: Option<Arc<ShaderCode>>,
+    /// The slots that show a field and not a picture, with the field's name.
+    pub field_images: Vec<(u8, String)>,
     /// The numbers it gives its shader.
     pub shader_params: [f32; SHADER_PARAMS],
     /// The slots of the images it gives its shader.

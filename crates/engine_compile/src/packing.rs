@@ -66,16 +66,19 @@ pub fn compile_shaders(root: &Path) -> Result<usize, CompileError> {
             }
         }
     }
-    let (posts, surfaces): (Vec<&str>, Vec<&str>) = codes
+    let (fields, rest): (Vec<&str>, Vec<&str>) = codes
         .iter()
         .map(String::as_str)
+        .partition(|code| code.contains("fn shader_field"));
+    let (posts, surfaces): (Vec<&str>, Vec<&str>) = rest
+        .into_iter()
         .partition(|code| code.contains("fn shader_post"));
     let out = root.join("compiled").join("shaders");
     if out.exists() {
         std::fs::remove_dir_all(&out).map_err(failed)?;
     }
     std::fs::create_dir_all(&out).map_err(failed)?;
-    let modules = engine_shaders::all_modules(&surfaces, &posts);
+    let modules = engine_shaders::all_modules(&surfaces, &posts, &fields);
     for module in &modules {
         let words = engine_shaders::compile(module)
             .map_err(|error| CompileError::Bad(format!("{}: {error}", module.path())))?;

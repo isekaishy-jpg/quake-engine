@@ -701,6 +701,7 @@ impl Backend {
         }
         let moving = self.upload_moving(map)?;
         let terrain = self.upload_terrain(map, mesh.chunk_lights.clone())?;
+        let fields = self.upload_fields(map)?;
         let shadow_instances = map
             .mesh_instances
             .iter()
@@ -894,7 +895,14 @@ impl Backend {
                     .get(slot as usize)
                     .map_or(&blank.view, |image| &image.view);
                 let binding = if slot < 7 { slot + 2 } else { slot + 3 };
-                set.write_sampled_image(binding, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                let number = u8::try_from(slot + 1).unwrap_or(0);
+                let name = material.field_images.iter().find(|(at, _)| *at == number);
+                let field = name.and_then(|(_, name)| fields.iter().find(|f| f.name == *name));
+                if let Some(field) = field {
+                    set.write_sampled_image(binding, &field.shown.view, ImageLayout::GENERAL);
+                } else {
+                    set.write_sampled_image(binding, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                }
             }
             if let Some(params) = &mut material_params {
                 let offset = next_params * MATERIAL_PARAMS_STRIDE;
@@ -944,6 +952,7 @@ impl Backend {
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
             instance_centers: std::array::from_fn(|_| Vec::new()),
+            fields,
             terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
             moving,
@@ -1248,6 +1257,7 @@ impl Backend {
         scene: Option<&Scene<'_>>,
         aspect: f32,
     ) -> Result<(), RenderError> {
+        self.plan_fields(view.time);
         let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
         let sky = scene.and_then(|scene| scene.map.sky.as_ref());
         let fog = scene.and_then(|scene| scene.map.fog.as_ref());

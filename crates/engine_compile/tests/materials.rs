@@ -416,3 +416,59 @@ fn three_layers_each_with_a_surface_fit_in_a_material() {
     assert!(material.slots.len() < engine_map::MATERIAL_SLOTS);
     let _gone = fs::remove_dir_all(root);
 }
+
+#[test]
+fn a_material_can_be_shown_a_field() {
+    let text = "format 1 material\nsurface {\n    base = textures/0.png\n    \
+        shader_image_a = field:ripples\n}\n";
+    let (filesystem, root) = container("field", &[("wet", text)]);
+    let mut library = MaterialLibrary::new(&filesystem);
+    let material = library.load("wet").expect("loads").material.expect("one");
+    let [slot, _] = material.shader_images;
+    let slot = slot.expect("a slot");
+    assert_eq!(material.field_images, [(slot, "ripples".to_owned())]);
+    assert_eq!(material.slots.len(), 1);
+    let _gone = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_level_says_what_its_fields_are() {
+    let (filesystem, root) = container("fields", &[]);
+    fs::create_dir_all(root.join("shaders")).expect("directory");
+    let code = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> { return vec4(1.0); }";
+    fs::write(root.join("shaders/rain.wgsl"), code).expect("write");
+    let text = "format 1 map
+field { name = ripples shader = rain size = 128 rate = 20 shader_params = 0.5 2 }
+field { name = plain shader = rain }
+";
+    let mut working = read_map_text(text).expect("reads");
+    let mut library = MaterialLibrary::new(&filesystem);
+    library.prepare(&mut working).expect("prepares");
+    let first = &working.fields[0];
+    assert_eq!(first.name, "ripples");
+    assert_eq!(first.size, 128);
+    assert!((first.rate - 20.0).abs() < 0.001);
+    assert!((first.params[1] - 2.0).abs() < 0.001);
+    assert_eq!(first.code.code, code);
+    assert_eq!(working.fields[1].size, 256, "unless it says");
+    assert!((working.fields[1].rate - 30.0).abs() < 0.001);
+    let mut source = |name: &str| placeholder_texture(name);
+    let map = compile(&working, &mut source).expect("compiles");
+    assert_eq!(map.fields.len(), 2);
+    assert_eq!(map.fields[0].shader.code, code);
+    let _gone = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_field_that_makes_no_sense_is_refused() {
+    for block in [
+        "field { shader = rain }",
+        "field { name = a }",
+        "field { name = a shader = rain size = 0 }",
+        "field { name = a shader = rain size = 9000 }",
+        "field { name = a shader = rain rate = 0 }",
+    ] {
+        let read = read_map_text(&format!("format 1 map\n{block}\n"));
+        assert!(read.is_err(), "{block}");
+    }
+}

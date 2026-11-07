@@ -91,6 +91,7 @@ pub(crate) fn merge_tile(map: &mut WorkingMap, mut tile: WorkingMap, offset: Poi
     map.entities.append(&mut tile.entities);
     map.meshes.append(&mut tile.meshes);
     map.terrain.append(&mut tile.terrain);
+    map.fields.append(&mut tile.fields);
     map.decals.append(&mut tile.decals);
     map.stamps.append(&mut tile.stamps);
     map.paint.append(&mut tile.paint);

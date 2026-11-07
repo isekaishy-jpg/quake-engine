@@ -904,3 +904,26 @@ fn the_kinds_of_node_are_listed() {
     assert!(kinds.iter().any(|kind| kind["name"] == "mix"));
     assert!(told["outputs"].as_array().expect("outputs").len() >= 6);
 }
+
+#[test]
+fn a_field_needs_a_shader_that_is_there_and_right() {
+    let root = content("field");
+    let mut session = Session::new(&root);
+    let field = json!({ "name": "wet", "shader": "rain", "size": 64 });
+    assert!(run(&mut session, "add_field", &field).is_err(), "no shader");
+    let bad = "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> { return 1; }";
+    let refused = run(
+        &mut session,
+        "write_shader",
+        &json!({ "name": "rain", "text": bad }),
+    );
+    assert!(refused.is_err(), "it's checked as a field");
+    let good = bad.replace("return 1;", "return field_read(at);");
+    ok(
+        &mut session,
+        "write_shader",
+        json!({ "name": "rain", "text": good }),
+    );
+    ok(&mut session, "add_field", field);
+    assert_eq!(count(&mut session), 1);
+}
