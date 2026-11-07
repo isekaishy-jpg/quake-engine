@@ -19,7 +19,14 @@ use mlua::chunk::Compiler;
 use mlua::{Function, Lua, Table, Value, Vector, VmState};
 
 /// Entity types the engine looks after itself, which have nothing to spawn in a script.
-const ENGINE_TYPES: [&str; 5] = ["effect", "flame", "live_light", "ray_stencil", "zone"];
+const ENGINE_TYPES: [&str; 6] = [
+    "camera",
+    "effect",
+    "flame",
+    "live_light",
+    "ray_stencil",
+    "zone",
+];
 
 /// What a game tells the engine about itself.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -149,6 +156,8 @@ pub struct Outbox {
     pub light_styles: Vec<(u8, String)>,
     /// A yaw and pitch to turn one player, or everyone, to.
     pub views: Vec<(Option<EntityId>, f32, f32)>,
+    /// Camera changes, for one player or all, with how long each takes.
+    pub cameras: Vec<(Option<EntityId>, String, f32)>,
     /// Sounds starting.
     pub sounds: Vec<SoundStart>,
     /// Sounds looping at fixed places.
@@ -596,6 +605,20 @@ impl Game {
                     .push((target.map(id_from), yaw, pitch));
                 Ok(())
             })?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "camera",
+            lua.create_function(
+                move |_, (camera, blend, target): (String, Option<f32>, Option<f64>)| {
+                    out.borrow_mut().cameras.push((
+                        target.map(id_from),
+                        camera,
+                        blend.unwrap_or(0.0),
+                    ));
+                    Ok(())
+                },
+            )?,
         )?;
         Self::register_sound(lua, simulation, outbox, &engine)?;
         Self::register_world(lua, simulation, outbox, &engine)?;

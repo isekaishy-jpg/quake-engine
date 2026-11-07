@@ -50,6 +50,13 @@ pub enum ScreenEvent {
     },
     /// An end of level screen starts, by the game's number.
     Intermission(u8),
+    /// A change of camera, by what it's called in text, over some seconds.
+    Camera {
+        /// The camera.
+        camera: String,
+        /// How long it takes to blend to it.
+        blend: f32,
+    },
     /// The level's title.
     LevelTitle(String),
 }
@@ -168,6 +175,8 @@ pub struct Client {
     blast: Option<BlastRule>,
     /// The share of the gap own shots are eased by.
     shot_correction: f64,
+    /// Whether the player's own body is drawn, as it is from outside.
+    shows_self: bool,
     /// Sounds already played for our own shots, and when to stop waiting.
     expected_sounds: Vec<(String, f64)>,
     /// Our own shot as it's shown before the server answers.
@@ -222,6 +231,7 @@ impl Client {
             knocks: Vec::new(),
             blast: None,
             shot_correction: DEFAULT_SHOT_CORRECTION,
+            shows_self: false,
             expected_sounds: Vec::new(),
             shown: ShownShot::default(),
             touched: Vec::new(),
@@ -298,7 +308,7 @@ impl Client {
     pub fn draw_entities(&self, fraction: f32) -> Vec<DrawnEntity> {
         self.entities
             .iter()
-            .filter(|entity| entity.id != self.player_entity)
+            .filter(|entity| self.shows_self || entity.id != self.player_entity)
             .map(|entity| {
                 let mut state = *entity;
                 if let Some(from) = self.previous_entities.get(&entity.id)
@@ -357,7 +367,7 @@ impl Client {
         let mut drawn: Vec<DrawnEntity> = after
             .entities
             .iter()
-            .filter(|entity| entity.id != self.player_entity)
+            .filter(|entity| self.shows_self || entity.id != self.player_entity)
             .map(|entity| {
                 let mut state = *entity;
                 if let Some(from) = old.get(&entity.id)
@@ -692,6 +702,23 @@ impl Client {
         &self.boxes
     }
 
+    /// Says whether the camera is outside the player, so that they're drawn.
+    pub const fn show_self(&mut self, shows: bool) {
+        self.shows_self = shows;
+    }
+
+    /// How far a line from `start` along `way` gets, up to `most`, past the world and moving
+    /// models.
+    #[must_use]
+    pub fn room_along(&self, start: Vec3, way: Vec3, most: f32) -> f32 {
+        let collision = self.world.with(&self.instances);
+        let trace = collision.trace(start, start + way * most);
+        if trace.start_solid {
+            return 0.0;
+        }
+        most * trace.fraction
+    }
+
     /// Whether a line is clear of the world, moving models and bodies,
     /// counting ourselves. With `to_sky`, reaching sky counts as clear, since
     /// sky is solid to collision.
@@ -968,6 +995,9 @@ impl Client {
                 Some(ServerMessage::StaticSound(sound)) => self.static_sounds.push(sound),
                 Some(ServerMessage::Gravity(gravity)) => self.vars.gravity = gravity,
                 Some(ServerMessage::Music(track)) => self.music = Some(track),
+                Some(ServerMessage::Camera { camera, blend }) => {
+                    self.events.push(ScreenEvent::Camera { camera, blend });
+                }
                 Some(ServerMessage::SetView { yaw, pitch }) => self.view = Some((yaw, pitch)),
                 Some(ServerMessage::CenterPrint(text)) => {
                     self.events.push(ScreenEvent::CenterPrint(text));

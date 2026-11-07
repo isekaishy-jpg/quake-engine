@@ -15,6 +15,13 @@ use crate::game::ScriptError;
 /// What a script asks for.
 #[derive(Clone, Debug, PartialEq)]
 pub enum UiCommand {
+    /// Changes camera, by what it's called in text, over some seconds.
+    Camera {
+        /// The camera.
+        camera: String,
+        /// How long it takes to blend to it.
+        blend: f32,
+    },
     /// A picture at its own size, by name.
     Picture {
         /// Its name.
@@ -223,6 +230,15 @@ impl UiScript {
         Ok(self.call("open_menu", state, None)?.0)
     }
 
+    /// Says a level has begun, for what a game wants from the start, such as its camera.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the script fails.
+    pub fn level_started(&self, state: &UiState) -> Result<Vec<UiCommand>, ScriptError> {
+        Ok(self.call("level_started", state, None)?.0)
+    }
+
     /// Hands `key` to the menu, and returns what it asked for.
     ///
     /// # Errors
@@ -341,6 +357,15 @@ fn register(lua: &Lua, out: &Rc<RefCell<Vec<UiCommand>>>) -> Result<(), ScriptEr
         "sound",
         lua.create_function(move |_, name: String| {
             push(UiCommand::Sound(name), &sink);
+            Ok(())
+        })?,
+    )?;
+    let sink = Rc::clone(out);
+    ui.set(
+        "camera",
+        lua.create_function(move |_, (camera, blend): (String, Option<f32>)| {
+            let blend = blend.unwrap_or(0.0);
+            push(UiCommand::Camera { camera, blend }, &sink);
             Ok(())
         })?,
     )?;

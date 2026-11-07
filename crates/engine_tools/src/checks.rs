@@ -81,6 +81,16 @@ fn entity_problems(session: &Session, block: &Block, problems: &mut Vec<String>)
                 problems.push(format!("{name}: no music at {music}"));
             }
         }
+        Some("camera") => {
+            if let Some(path) = text("path")
+                && !session
+                    .document
+                    .blocks_of("spline")
+                    .any(|spline| spline.name.as_deref() == Some(path))
+            {
+                problems.push(format!("{name}: no spline called {path}"));
+            }
+        }
         None => problems.push(format!("{name} has no `type`")),
         Some(_) => {}
     }

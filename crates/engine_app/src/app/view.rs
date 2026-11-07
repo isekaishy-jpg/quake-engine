@@ -3,9 +3,9 @@
 use std::collections::HashMap;
 
 use engine_audio::Listener;
+use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject};
 use engine_client::{
-    DrawnEntity, EffectDraw, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob,
-    view_idle, view_roll,
+    DrawnEntity, EffectDraw, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob, view_roll,
 };
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
@@ -99,6 +99,7 @@ impl World {
                 ScreenEvent::CenterPrint(text) => self.hud.center_print(text),
                 ScreenEvent::Command(text) => self.commands.push(text),
                 ScreenEvent::Damage { armor, blood, from } => self.hurt(armor, blood, from),
+                ScreenEvent::Camera { camera, blend } => self.change_camera(&camera, blend),
                 ScreenEvent::Intermission(kind) => {
                     self.hud.set_intermission(Intermission::from_number(kind));
                 }
@@ -126,6 +127,19 @@ impl World {
         let [forward, right, _up] = view_axes(self.look.yaw() as f32, self.look.pitch() as f32);
         self.kick
             .hit(count, direction.dot(right), direction.dot(forward));
+    }
+
+    /// Changes to the camera called `camera` in text.
+    pub(crate) fn change_camera(&mut self, camera: &str, blend: f32) {
+        if let Some(kind) = CameraKind::parse(camera) {
+            let order = CameraOrder { kind, blend };
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "a camera's start is near enough"
+            )]
+            let time = self.map_time as f32;
+            self.cameras.order(&order, self.map.as_deref(), time);
+        }
     }
 
     /// What's at the eye, for the colour of the view.
@@ -272,10 +286,14 @@ impl World {
         let mut lists = DrawLists::default();
         let mut lights = Vec::new();
         let mut styles = [1.0; engine_client::LIGHT_STYLE_COUNT];
-        let mut punch = Vec3::ZERO;
         let online = self.is_online();
-        let mut sway = (0.0, 0.0, 0.0);
-        let mut roll = 0.0;
+        let mut shot = CameraShot {
+            origin: Vec3::ZERO,
+            yaw: self.look.yaw() as f32,
+            pitch: self.look.pitch() as f32,
+            roll: 0.0,
+            first_person: true,
+        };
         let mut capsules = Vec::new();
         let mut moving = Vec::new();
         let time = self.map_time as f32;
@@ -306,18 +324,35 @@ impl World {
                     track.blend(&mut styles, time);
                 }
             }
-            punch = client.punch(fraction);
+            let mut punch = client.punch(fraction);
             let (kick_pitch, kick_roll) = self.kick.update(frame_seconds);
             let right = self.listener.right;
-            roll = view_roll(state.velocity.dot(right)) + kick_roll;
+            let mut roll = view_roll(state.velocity.dot(right)) + kick_roll;
             punch.x += kick_pitch;
             if state.dead {
                 roll = dead_roll();
             }
             if frozen {
                 roll = 0.0;
-                sway = view_idle(time);
             }
+            let subject = CameraSubject {
+                eye: origin,
+                yaw: self.look.yaw() as f32 + punch.y,
+                pitch: self.look.pitch() as f32 + punch.x,
+                roll,
+                time,
+                seconds: frame_seconds,
+            };
+            shot = self.cameras.shot(&subject, &|start, way, most| {
+                client.room_along(start, way, most)
+            });
+            client.show_self(!shot.first_person);
+            origin = shot.origin;
+            let (sin, cos) = f64::from(shot.yaw).to_radians().sin_cos();
+            self.listener = Listener {
+                origin,
+                right: Vec3::new(sin as f32, -cos as f32, 0.0),
+            };
             let drawn = if online {
                 client.draw_entities_buffered(f64::from(frame_seconds))
             } else {
@@ -385,7 +420,7 @@ impl World {
                 let placed = origin + forward * (bob * 0.4) + Vec3::new(0.0, 0.0, 2.0);
                 let angles = Vec3::new(-pitch, yaw, 0.0);
                 capsules = capsule_draws(&map, body, origin, &lists.shades, &instances);
-                if !frozen {
+                if !frozen && shot.first_person {
                     lists.entities.extend(self.models.draw_weapon(
                         u32::from(model),
                         frame,
@@ -414,9 +449,9 @@ impl World {
         self.view_tint.pass(fade);
         let view = View {
             origin,
-            yaw: self.look.yaw() as f32 + punch.y + sway.1,
-            pitch: self.look.pitch() as f32 + punch.x + sway.0,
-            roll: roll + sway.2,
+            yaw: shot.yaw,
+            pitch: shot.pitch,
+            roll: shot.roll,
             fov: self.fov,
             time: self.map_time as f32,
             styles,

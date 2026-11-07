@@ -287,8 +287,30 @@ entity {
     id = 43
 }
 
+entity over_the_yard {
+    type = "camera"
+    origin = [-950 -650 300]
+    idle = 1
+    look_at = "-400 0 40"
+    id = 44
+}
+
+spline fly_in {
+    points = [[-950 600 320] [-500 300 200] [-200 0 120] [-60 0 60]]
+    id = 45
+}
+
+entity fly_to_the_door {
+    type = "camera"
+    origin = [-950 600 320]
+    look_at = "0 0 60"
+    path = "fly_in"
+    seconds = 6
+    id = 46
+}
+
 mesh {
     origin = [-600 260 0]
     source = "barrel"
-    id = 44
+    id = 47
 }

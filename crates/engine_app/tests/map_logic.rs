@@ -135,6 +135,7 @@ impl Game {
                     | ServerMessage::LevelTitle(_)
                     | ServerMessage::SnapshotDelta(_)
                     | ServerMessage::Level(_)
+                    | ServerMessage::Camera { .. }
                     | ServerMessage::Scores(_) => {}
                 }
             }

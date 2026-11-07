@@ -174,6 +174,13 @@ function hold_at_camera(player, pos)
 	player.angles = mangle
 	-- Turn this way immediately.
 	set_view(player, mangle.y, mangle.x)
+	-- The end of a level is seen from its spot, which sways a little.
+	local place = pos.origin
+	engine.camera(
+		string.format("fixed %g %g %g %g %g 1", place.x, place.y, place.z, mangle.y, mangle.x),
+		0,
+		rawget(player, "_id")
+	)
 	player.nextthink = time() + 0.5
 	player.takedamage = DAMAGE_NO
 	player.solid = SOLID_NOT

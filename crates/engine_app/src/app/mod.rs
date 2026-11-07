@@ -20,7 +20,7 @@ use std::time::Duration;
 use engine_assets::{AssetError, DirectoryArchive, FileSystem, PackArchive};
 use engine_audio::{Audio, Listener};
 use engine_client::{
-    AmbientSounds, Bindings, Bot, Buttons, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
+    AmbientSounds, Bindings, Bot, Buttons, Cameras, Client, DEFAULT_SHOT_CORRECTION, Effects, Look,
     LookScale, ShotClock, StepSmoother, ViewKick, ViewTint, ZoneTracker,
 };
 use engine_console::{Console, CvarFlags};
@@ -182,6 +182,8 @@ pub(crate) struct World {
     pub(crate) hud: Hud,
     /// The colour over the view.
     pub(crate) view_tint: ViewTint,
+    /// What the view is seen from.
+    pub(crate) cameras: Cameras,
     /// The menus.
     pub(crate) menu: Menu,
     /// The console, as it's drawn.
@@ -365,6 +367,7 @@ impl World {
         self.map_time = 0.0;
         self.hud = Hud::new();
         self.view_tint = ViewTint::default();
+        self.cameras = Cameras::default();
         self.hud.set_palette(&palette);
         self.kick = ViewKick::default();
         self.paused = false;
@@ -405,6 +408,7 @@ impl World {
         if unlit && self.filesystem.read(&format!("maps/{name}.ebake")).is_ok() {
             self.load_warning = Some(format!("{name} has an out of date bake, so it's unlit"));
         }
+        self.level_started_to_script();
         Ok(())
     }
 
@@ -678,6 +682,7 @@ impl Engine {
                 map: None,
                 hud: Hud::new(),
                 view_tint: ViewTint::default(),
+                cameras: Cameras::default(),
                 menu: Menu::new(),
                 console_view: ConsoleView::new(),
                 pictures: PictureBank::default(),

@@ -42,6 +42,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("unbindall", unbindall);
     console.register("screenshot", screenshot);
     console.register("setpos", setpos);
+    console.register("camera", camera);
     console.register("noclip", noclip);
     console.register("changelevel", changelevel);
     console.register("restart", restart);
@@ -699,6 +700,18 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
 }
 
 /// `setpos x y z [yaw pitch]`: moves the player, through the server.
+/// `camera third 96 8 0`: changes camera, as a script would.
+fn camera(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let line: Vec<&str> = (1..args.count()).map(|index| args.get(index)).collect();
+    if line.is_empty() {
+        console.print(
+            "camera first | third [boom rise side] | fixed x y z yaw pitch idle | scene name",
+        );
+        return;
+    }
+    world.change_camera(&line.join(" "), 0.0);
+}
+
 fn setpos(console: &mut Console<World>, world: &mut World, args: &Args) {
     let number = |index: usize| args.get(index).parse::<f32>().ok();
     let (Some(x), Some(y), Some(z)) = (number(1), number(2), number(3)) else {

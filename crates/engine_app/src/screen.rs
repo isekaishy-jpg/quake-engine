@@ -126,7 +126,10 @@ fn draw_ui(canvas: &mut Canvas<'_>, theme: &mut UiTheme, commands: &[UiCommand])
                 let place = (at[0] - width * align, at[1], *size);
                 draw_text(canvas, theme, style, place, text, *color);
             }
-            UiCommand::Run(_) | UiCommand::Sound(_) | UiCommand::Close => {}
+            UiCommand::Run(_)
+            | UiCommand::Sound(_)
+            | UiCommand::Close
+            | UiCommand::Camera { .. } => {}
         }
     }
 }
@@ -301,6 +304,15 @@ impl World {
         }
     }
 
+    /// Tells the script a level has begun.
+    pub(crate) fn level_started_to_script(&mut self) {
+        if let Some(script) = &self.ui_script {
+            let state = self.ui_state_now(script);
+            let result = script.level_started(&state);
+            self.after_ui(result);
+        }
+    }
+
     /// Hands a key to the script's menu.
     pub(crate) fn menu_key_to_script(&mut self, key: &str) {
         if let Some(script) = &self.ui_script {
@@ -334,6 +346,7 @@ impl World {
                 UiCommand::Run(line) => self.commands.push(line),
                 UiCommand::Sound(name) => self.play_local(&name),
                 UiCommand::Close => self.script_menu = false,
+                UiCommand::Camera { camera, blend } => self.change_camera(&camera, blend),
                 _ => {}
             }
         }

@@ -88,6 +88,8 @@ const TAG_GRAVITY: u8 = 26;
 
 /// An effect an author described.
 const TAG_NAMED_EFFECT: u8 = 27;
+/// Changes camera.
+const TAG_CAMERA: u8 = 28;
 
 /// The most commands in a move message.
 const MAX_MOVE_COMMANDS: usize = 8;
@@ -237,6 +239,13 @@ pub enum ServerMessage {
         yaw: f32,
         /// The pitch in degrees.
         pitch: f32,
+    },
+    /// Changes camera, by what it's called in text, over some seconds.
+    Camera {
+        /// The camera.
+        camera: String,
+        /// How long it takes to blend to it.
+        blend: f32,
     },
     /// Text for the middle of the screen.
     CenterPrint(String),
@@ -520,6 +529,11 @@ impl ServerMessage {
                 out.push(TAG_PRINT);
                 out.extend_from_slice(text.as_bytes());
             }
+            Self::Camera { camera, blend } => {
+                out.push(TAG_CAMERA);
+                put_f32(&mut out, *blend);
+                out.extend_from_slice(camera.as_bytes());
+            }
             Self::SetView { yaw, pitch } => {
                 out.push(TAG_SET_VIEW);
                 put_f32(&mut out, *yaw);
@@ -651,6 +665,11 @@ impl ServerMessage {
                 Some(Self::LightStyle { index, pattern })
             }
             TAG_PRINT => text_from(rest).map(Self::Print),
+            TAG_CAMERA => {
+                let (blend, camera) = rest.split_first_chunk::<4>()?;
+                let blend = f32::from_le_bytes(*blend);
+                text_from(camera).map(|camera| Self::Camera { camera, blend })
+            }
             TAG_SET_VIEW => {
                 let mut reader = Reader { bytes: rest };
                 let (yaw, pitch) = (reader.f32()?, reader.f32()?);

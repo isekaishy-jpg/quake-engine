@@ -867,6 +867,9 @@ impl Server {
         for (target, yaw, pitch) in outbox.views {
             self.send_to(target, &ServerMessage::SetView { yaw, pitch });
         }
+        for (target, camera, blend) in outbox.cameras {
+            self.send_to(target, &ServerMessage::Camera { camera, blend });
+        }
         for sound in outbox.static_sounds {
             self.told.static_sounds.push(sound.clone());
             self.broadcast(&ServerMessage::StaticSound(sound));

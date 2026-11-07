@@ -122,5 +122,12 @@ op("add_entity", type="info_player_start", origin=[-400, 0, 24], fields={"angle"
 op("add_entity", type="light", origin=[320, 0, 180], fields={"light": 300})
 op("add_entity", type="light", origin=[420, 0, -160], fields={"light": 260})
 op("add_entity", type="effect", origin=[-700, 300, 8], fields={"effect": "campfire"})
+
+# Scene cameras: one that stays and looks, and one that flies along a line.
+op("add_entity", type="camera", name="over_the_yard", origin=[-950, -650, 300],
+   fields={"look_at": "-400 0 40", "idle": 1})
+op("add_spline", name="fly_in", points=[[-950, 600, 320], [-500, 300, 200], [-200, 0, 120], [-60, 0, 60]])
+op("add_entity", type="camera", name="fly_to_the_door", origin=[-950, 600, 320],
+   fields={"path": "fly_in", "seconds": 6, "look_at": "0 0 60"})
 op("place_mesh", source="barrel", origin=[-600, 260, 0])
 print(json.dumps(steps, indent=1))

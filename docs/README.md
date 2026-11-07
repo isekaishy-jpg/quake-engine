@@ -16,6 +16,7 @@
   - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Meshes](meshes.md): bringing models in, and placing them
   - [Mesh and prefab standard](mesh-standard.md): what a mesh or prefab has to be
+  - [Cameras](cameras.md): which camera, and setting them up
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one
   - [Water](water.md): how a level sets it
@@ -175,6 +176,7 @@
     - [0135: the engine and the game](proposals/0135-the-engine-and-the-game.md)
     - [0136: standards for art and meshes](proposals/0136-art-standards.md)
     - [0137: tools an agent can trust](proposals/0137-mcp-you-can-trust.md)
+    - [0138: cameras](proposals/0138-cameras.md)
 - **Reviews:**
   - [0001: adopting the workflow](reviews/0001-adopting-the-workflow.md)
   - [0002: increment 0](reviews/0002-increment-0.md)

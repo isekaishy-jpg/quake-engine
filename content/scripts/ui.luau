@@ -8,6 +8,11 @@ local MUTED = { 0.53, 0.52, 0.51, 1 }
 local ACCENT = { 0.73, 0.29, 0.24, 1 }
 local POINTER = "ui/art/pointers/kris-right-128.png"
 
+-- A level has begun. This is where a game says what it's played from.
+function level_started()
+	ui.camera("first")
+end
+
 -- Levels a player can start, with what they're called.
 local LEVELS = {
 	{ map = "vesper_deep", title = "Vesper Deep" },

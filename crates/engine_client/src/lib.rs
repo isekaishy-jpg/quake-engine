@@ -5,6 +5,7 @@
 mod ambience;
 mod bindings;
 mod bot;
+mod camera;
 mod client;
 mod effect_system;
 mod effects;
@@ -22,6 +23,7 @@ mod zones;
 pub use ambience::AmbientSounds;
 pub use bindings::{Bindings, canonical_key};
 pub use bot::{Bot, BotSkill};
+pub use camera::{CameraKind, CameraOrder, CameraShot, CameraSubject, Cameras};
 pub use client::{Client, DEFAULT_SHOT_CORRECTION, DrawnEntity, ScreenEvent};
 pub use effect_system::{EffectDraw, EffectLight, EffectSystem, GpuEmitter, MAX_EFFECT_PARTICLES};
 pub use effects::{BeamPiece, DynamicLight, EffectSource, Effects, MAX_LIGHTS};
