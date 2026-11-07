@@ -1,0 +1,29 @@
+// The index of a .pkt container (proposal 0131). Field ids are explicit, so that it can grow.
+
+namespace Pkt;
+
+/// One file in a container.
+table Entry {
+  /// Its file id, from the content's table. Entries are sorted by this.
+  fid: uint32 (id: 0);
+  /// Its path.
+  path: string (id: 1, required);
+  /// Where its bytes start, counted from the end of the index.
+  offset: uint64 (id: 2);
+  /// How long they are there.
+  stored: uint64 (id: 3);
+  /// How long the file is. If that's more than `stored`, it's squeezed.
+  size: uint64 (id: 4);
+}
+
+/// What a container holds.
+table Manifest {
+  /// The format, which only changes if old readers can't cope.
+  format: uint32 (id: 0);
+  /// The SHA-256 of everything after the index, in hexadecimal.
+  sha256: string (id: 1, required);
+  /// The files.
+  entries: [Entry] (id: 2, required);
+}
+
+root_type Manifest;

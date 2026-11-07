@@ -1,30 +1,37 @@
-//! Packed containers: a folder of reusable items, written as one file by the
-//! compile step (proposal 0068).
+//! Containers: a folder of reusable items, written as one `.pkt` file by the compile step
+//! (proposals 0068 and 0131). A short header says how long the index is, the index is a
+//! FlatBuffer of [`pkt_generated`](crate::pkt_generated), and the files follow it.
 
 use std::collections::{BTreeMap, HashMap};
+use std::fmt::Write as _;
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom, Write};
 use std::path::Path;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Mutex, mpsc};
 
+use planus::ReadAsRoot;
+use sha2::{Digest, Sha256};
+
 use crate::archive::Archive;
 use crate::error::AssetError;
+use crate::file_ids::FileIds;
+use crate::pkt_generated::pkt::{Entry as IndexEntry, Manifest, ManifestRef};
 
-/// What a pack starts with.
-const MAGIC: &[u8; 4] = b"EPAK";
+/// What a container starts with.
+const MAGIC: &[u8; 4] = b"PKT\0";
 
-/// The pack version this build writes and reads. Version 2 added squeezing.
-const VERSION: u32 = 2;
+/// The container format this build writes and reads.
+const FORMAT: u32 = 1;
 
-/// The longest path a pack holds, so a damaged size can't ask for much.
-const MAX_PATH_BYTES: usize = 1024;
+/// The bytes before the index: the magic, the format and the index's length.
+const HEADER_BYTES: usize = 16;
+
+/// The longest index a container can have, so a damaged size can't ask for much.
+const MAX_INDEX_BYTES: u64 = 1 << 30;
 
 /// How hard files are squeezed: about the best for its time.
 const SQUEEZE_LEVEL: u8 = 6;
-
-/// What a pack's index holds for each file, after its path and its length.
-const ENTRY_NUMBERS: usize = 24;
 
 /// What writing a pack came to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -75,17 +82,35 @@ fn all_squeezed(files: &[&[u8]]) -> Vec<Option<Vec<u8>>> {
     out
 }
 
-/// Writes every file of `archive` to `out` as a pack, in path order.
+/// Writes every file of `archive` to `out` as a container, with their ids from `ids`.
 ///
 /// # Errors
 ///
 /// Returns an error if a file can't be read, or writing fails.
-pub fn write_pack(archive: &dyn Archive, out: &mut dyn Write) -> Result<PackSummary, AssetError> {
-    write_pack_of(archive, archive.paths(), out)
+pub fn write_pack(
+    archive: &dyn Archive,
+    ids: &mut FileIds,
+    out: &mut dyn Write,
+) -> Result<PackSummary, AssetError> {
+    write_pack_of(archive, archive.paths(), ids, out)
 }
 
-/// Writes the files of `archive` at `paths` to `out` as a pack, in path order.
-/// Files that are the same are held once, and each is squeezed if that helps.
+/// The SHA-256 of `parts`, in hexadecimal.
+fn hash_of<'a>(parts: impl Iterator<Item = &'a [u8]>) -> String {
+    let mut hasher = Sha256::new();
+    for part in parts {
+        hasher.update(part);
+    }
+    let mut text = String::with_capacity(64);
+    for byte in hasher.finalize() {
+        let _written = write!(text, "{byte:02x}");
+    }
+    text
+}
+
+/// Writes the files of `archive` at `paths` to `out` as a container, in id order. New paths
+/// get ids in `ids`. Files that are the same are held once, and each is squeezed if that
+/// helps.
 ///
 /// # Errors
 ///
@@ -93,22 +118,24 @@ pub fn write_pack(archive: &dyn Archive, out: &mut dyn Write) -> Result<PackSumm
 pub fn write_pack_of(
     archive: &dyn Archive,
     mut paths: Vec<String>,
+    ids: &mut FileIds,
     out: &mut dyn Write,
 ) -> Result<PackSummary, AssetError> {
     let failed = |source| AssetError::Io {
-        path: "pack".to_owned(),
+        path: "container".to_owned(),
         source,
     };
     paths.sort();
     let mut files = Vec::with_capacity(paths.len());
     for path in paths {
         let bytes = archive.read(&path)?;
-        files.push((path, bytes));
+        files.push((ids.assign(&path), path, bytes));
     }
+    files.sort_by_key(|(id, _, _)| *id);
     let mut first = HashMap::new();
     let mut unique: Vec<&[u8]> = Vec::new();
     let mut held = Vec::with_capacity(files.len());
-    for (_, bytes) in &files {
+    for (_, _, bytes) in &files {
         let number = *first.entry(bytes.as_slice()).or_insert_with(|| {
             unique.push(bytes);
             unique.len() - 1
@@ -121,42 +148,47 @@ pub fn write_pack_of(
         .zip(&small)
         .map(|(bytes, small)| small.as_deref().unwrap_or(bytes))
         .collect();
-    let index_size: usize = files
-        .iter()
-        .map(|(path, _)| path.len() + 2 + ENTRY_NUMBERS)
-        .sum();
     let mut offsets = Vec::with_capacity(stored.len());
-    let mut offset = 12 + index_size as u64;
+    let mut offset = 0;
     for bytes in &stored {
         offsets.push(offset);
         offset += bytes.len() as u64;
     }
-    let mut header = Vec::with_capacity(12 + index_size);
-    header.extend_from_slice(MAGIC);
-    header.extend_from_slice(&VERSION.to_le_bytes());
-    let count = u32::try_from(files.len()).unwrap_or(u32::MAX);
-    header.extend_from_slice(&count.to_le_bytes());
-    for ((path, bytes), number) in files.iter().zip(&held) {
-        let length = u16::try_from(path.len()).unwrap_or(u16::MAX);
-        header.extend_from_slice(&length.to_le_bytes());
-        header.extend_from_slice(path.as_bytes());
-        header.extend_from_slice(&offsets[*number].to_le_bytes());
-        header.extend_from_slice(&(stored[*number].len() as u64).to_le_bytes());
-        header.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
-    }
-    out.write_all(&header).map_err(failed)?;
+    let entries = files
+        .iter()
+        .zip(&held)
+        .map(|((id, path, bytes), number)| IndexEntry {
+            fid: *id,
+            path: path.clone(),
+            offset: offsets[*number],
+            stored: stored[*number].len() as u64,
+            size: bytes.len() as u64,
+        })
+        .collect();
+    let manifest = Manifest {
+        format: FORMAT,
+        sha256: hash_of(stored.iter().copied()),
+        entries,
+    };
+    let mut builder = planus::Builder::new();
+    let index = builder.finish(&manifest, None);
+    out.write_all(MAGIC).map_err(failed)?;
+    out.write_all(&FORMAT.to_le_bytes()).map_err(failed)?;
+    out.write_all(&(index.len() as u64).to_le_bytes())
+        .map_err(failed)?;
+    out.write_all(index).map_err(failed)?;
     for bytes in &stored {
         out.write_all(bytes).map_err(failed)?;
     }
     Ok(PackSummary {
         files: files.len(),
         shared: files.len() - unique.len(),
-        bytes: files.iter().map(|(_, bytes)| bytes.len() as u64).sum(),
+        bytes: files.iter().map(|(_, _, bytes)| bytes.len() as u64).sum(),
         stored: stored.iter().map(|bytes| bytes.len() as u64).sum(),
     })
 }
 
-/// A pack's place in its file.
+/// A file's place in its container.
 #[derive(Clone, Copy, Debug)]
 struct Entry {
     /// Where the file starts.
@@ -167,7 +199,7 @@ struct Entry {
     size: u64,
 }
 
-/// A packed container, read from one file.
+/// A container, read from one file.
 #[derive(Debug)]
 pub struct PackArchive {
     /// The file's name.
@@ -176,14 +208,20 @@ pub struct PackArchive {
     file: Mutex<File>,
     /// What it holds, by path.
     entries: BTreeMap<String, Entry>,
+    /// Each file's path, by id.
+    paths: BTreeMap<u32, String>,
+    /// Where the files start.
+    body: u64,
+    /// The SHA-256 the index says they have.
+    sha256: String,
 }
 
 impl PackArchive {
-    /// Opens the pack at `path`.
+    /// Opens the container at `path`.
     ///
     /// # Errors
     ///
-    /// Returns an error if it can't be read, or isn't a whole pack.
+    /// Returns an error if it can't be read, or isn't a whole container.
     pub fn open(path: &Path) -> Result<Self, AssetError> {
         let label = path.display().to_string();
         let failed = |source| AssetError::Io {
@@ -196,57 +234,89 @@ impl PackArchive {
         };
         let mut file = File::open(path).map_err(failed)?;
         let file_size = file.metadata().map_err(failed)?.len();
-        let mut header = [0; 12];
+        let mut header = [0; HEADER_BYTES];
         file.read_exact(&mut header)
             .map_err(|_| corrupt("too short"))?;
         if &header[..4] != MAGIC {
-            return Err(corrupt("not a pack"));
+            return Err(corrupt("not a container"));
         }
-        let word = |at: usize| {
-            u32::from_le_bytes([header[at], header[at + 1], header[at + 2], header[at + 3]])
-        };
-        if word(4) != VERSION {
+        if header[4..8] != FORMAT.to_le_bytes() {
             return Err(corrupt("made by another version"));
         }
+        let length = u64::from_le_bytes(header[8..].try_into().unwrap_or([0xFF; 8]));
+        let body = (HEADER_BYTES as u64).saturating_add(length);
+        if length > MAX_INDEX_BYTES || body > file_size {
+            return Err(corrupt("the index runs past the end"));
+        }
+        let mut index = vec![0; usize::try_from(length).map_err(|_| corrupt("too big"))?];
+        file.read_exact(&mut index)
+            .map_err(|_| corrupt("the index ends early"))?;
+        let bad_index = |_| corrupt("the index doesn't read");
+        let manifest = ManifestRef::read_as_root(&index).map_err(bad_index)?;
         let mut entries = BTreeMap::new();
-        for _ in 0..word(8) {
-            let mut length = [0; 2];
-            file.read_exact(&mut length)
-                .map_err(|_| corrupt("the index ends early"))?;
-            let length = usize::from(u16::from_le_bytes(length));
-            if length > MAX_PATH_BYTES {
-                return Err(corrupt("a path is too long"));
-            }
-            let mut name = vec![0; length];
-            file.read_exact(&mut name)
-                .map_err(|_| corrupt("the index ends early"))?;
-            let name = String::from_utf8(name).map_err(|_| corrupt("a path isn't text"))?;
-            let mut numbers = [0; ENTRY_NUMBERS];
-            file.read_exact(&mut numbers)
-                .map_err(|_| corrupt("the index ends early"))?;
-            let number = |at: usize| {
-                let bytes = numbers[at..at + 8].try_into().unwrap_or([0; 8]);
-                u64::from_le_bytes(bytes)
-            };
-            let (offset, stored, size) = (number(0), number(8), number(16));
-            if offset.checked_add(stored).is_none_or(|end| end > file_size) {
+        let mut paths = BTreeMap::new();
+        for entry in manifest.entries().map_err(bad_index)? {
+            let entry = entry.map_err(bad_index)?;
+            let (offset, stored, size) = (
+                entry.offset().map_err(bad_index)?,
+                entry.stored().map_err(bad_index)?,
+                entry.size().map_err(bad_index)?,
+            );
+            let end = offset
+                .checked_add(stored)
+                .and_then(|end| end.checked_add(body));
+            if end.is_none_or(|end| end > file_size) {
                 return Err(corrupt("a file runs past the end"));
             }
             if stored > size {
                 return Err(corrupt("a file is bigger stored than it is"));
             }
-            let entry = Entry {
+            let path = entry.path().map_err(bad_index)?.to_owned();
+            paths.insert(entry.fid().map_err(bad_index)?, path.clone());
+            let held = Entry {
                 offset,
                 stored,
                 size,
             };
-            entries.insert(name, entry);
+            entries.insert(path, held);
         }
+        let sha256 = manifest.sha256().map_err(bad_index)?.to_owned();
         Ok(Self {
             label,
             file: Mutex::new(file),
             entries,
+            paths,
+            body,
+            sha256,
         })
+    }
+
+    /// Reads every file's bytes and checks them against the index's hash, which a load
+    /// leaves out for the time it takes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if it can't be read, or it doesn't match.
+    pub fn verify(&self) -> Result<(), AssetError> {
+        let corrupt = |reason: &str| AssetError::Corrupt {
+            archive: self.label.clone(),
+            reason: reason.to_owned(),
+        };
+        let failed = |source| AssetError::Io {
+            path: self.label.clone(),
+            source,
+        };
+        let mut body = Vec::new();
+        {
+            let mut file = self.file.lock().map_err(|_| corrupt("a reader panicked"))?;
+            file.seek(SeekFrom::Start(self.body)).map_err(failed)?;
+            file.read_to_end(&mut body).map_err(failed)?;
+        }
+        if hash_of(std::iter::once(body.as_slice())) == self.sha256 {
+            Ok(())
+        } else {
+            Err(corrupt("its hash doesn't match"))
+        }
     }
 }
 
@@ -261,6 +331,10 @@ impl Archive for PackArchive {
 
     fn contains(&self, path: &str) -> bool {
         self.entries.contains_key(path)
+    }
+
+    fn path_of_id(&self, id: u32) -> Option<String> {
+        self.paths.get(&id).cloned()
     }
 
     fn read(&self, path: &str) -> Result<Vec<u8>, AssetError> {
@@ -281,7 +355,8 @@ impl Archive for PackArchive {
         let mut bytes = vec![0; stored];
         {
             let mut file = self.file.lock().map_err(|_| corrupt("a reader panicked"))?;
-            file.seek(SeekFrom::Start(entry.offset)).map_err(failed)?;
+            file.seek(SeekFrom::Start(self.body + entry.offset))
+                .map_err(failed)?;
             file.read_exact(&mut bytes).map_err(failed)?;
         }
         if stored == size {

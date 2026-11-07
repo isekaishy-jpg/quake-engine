@@ -287,10 +287,6 @@ pub const BACKEND_RULES: &[BackendRule] = &[
         owner: "engine_net",
     },
     BackendRule {
-        dependency: "sha2",
-        owner: "engine_net",
-    },
-    BackendRule {
         dependency: "qbsp",
         owner: "fixture_quake",
     },
@@ -306,10 +302,16 @@ pub struct FormatRule {
 }
 
 /// The format libraries.
-pub const FORMAT_RULES: &[FormatRule] = &[FormatRule {
-    dependency: "serde_json",
-    users: &["engine_app", "engine_editor", "engine_tools"],
-}];
+pub const FORMAT_RULES: &[FormatRule] = &[
+    FormatRule {
+        dependency: "serde_json",
+        users: &["engine_app", "engine_editor", "engine_tools"],
+    },
+    FormatRule {
+        dependency: "sha2",
+        users: &["engine_assets", "engine_net"],
+    },
+];
 
 /// Packages that reach their tests through `#[path]` modules and keep hooks for them, to
 /// drive a fake window system or inject faults through private seams. No test sits in

@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::Arc;
 
-use engine_assets::{Archive, DirectoryArchive, FileSystem, PackSummary, write_pack_of};
+use engine_assets::{Archive, DirectoryArchive, FileIds, FileSystem, PackSummary, write_pack_of};
 use engine_core::math::Vec3;
 use engine_format::Document;
 use engine_map::{EffectDef, EffectPoint, Map, Texture};
@@ -152,8 +152,11 @@ fn map_at<'a>(path: &'a str, all: &BTreeSet<String>) -> Option<&'a str> {
     (!all.contains(&format!("maps/{name}.emap"))).then_some(name)
 }
 
-/// Writes the content at `root` to the pack at `out`, with its pictures
-/// compiled.
+/// The table of file ids, in the content.
+const FILE_ID_TABLE: &str = "fids.txt";
+
+/// Writes the content at `root` to the container at `out`, with its pictures compiled.
+/// New files get ids in the table beside the content, which is kept in the repository.
 ///
 /// # Errors
 ///
@@ -178,7 +181,15 @@ pub fn pack_content(root: &Path, out: &Path) -> Result<PackSummary, CompileError
         .filter(|path| shipped(path, &all, &pixels))
         .cloned()
         .collect();
-    let failed = |error: std::io::Error| CompileError::Bad(format!("the pack: {error}"));
+    let failed = |error: std::io::Error| CompileError::Bad(format!("the container: {error}"));
+    let table = root.join(FILE_ID_TABLE);
+    let mut ids = match std::fs::read_to_string(&table) {
+        Ok(text) => FileIds::parse(&text).map_err(unread)?,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => FileIds::default(),
+        Err(error) => return Err(failed(error)),
+    };
     let mut file = std::fs::File::create(out).map_err(failed)?;
-    write_pack_of(&archive, wanted, &mut file).map_err(unread)
+    let summary = write_pack_of(&archive, wanted, &mut ids, &mut file).map_err(unread)?;
+    std::fs::write(&table, ids.to_text()).map_err(failed)?;
+    Ok(summary)
 }

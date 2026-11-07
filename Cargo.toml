@@ -90,6 +90,7 @@ spake2 = { version = "=0.4.0" }
 ed25519-dalek = { version = "=2.2.0" }
 # Proposal 0058: open games agree keys without `spake2`.
 sha2 = { version = "=0.10.9" }
+planus = { version = "=1.3.0" }
 x25519-dalek = { version = "=2.0.1", features = ["static_secrets"] }
 # Proposal 0025: Luau, private to `engine_script`.
 mlua = { version = "=0.12.2", features = ["luau", "vendored"] }

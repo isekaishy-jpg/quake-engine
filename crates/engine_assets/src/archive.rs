@@ -14,6 +14,11 @@ pub trait Archive: Send + Sync {
     /// Whether it holds `path`.
     fn contains(&self, path: &str) -> bool;
 
+    /// The path of file id `id`, for an archive that knows ids.
+    fn path_of_id(&self, _id: u32) -> Option<String> {
+        None
+    }
+
     /// Reads `path`.
     ///
     /// # Errors

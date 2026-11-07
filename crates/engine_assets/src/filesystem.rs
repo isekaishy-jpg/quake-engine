@@ -42,6 +42,22 @@ impl FileSystem {
             .read(&normalized)
     }
 
+    /// Reads the file with id `id`, from the last archive that knows it.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`AssetError::NotFound`] if no archive knows it, and other errors if
+    /// reading fails.
+    pub fn read_id(&self, id: u32) -> Result<Vec<u8>, AssetError> {
+        let path = self
+            .archives
+            .iter()
+            .rev()
+            .find_map(|archive| archive.path_of_id(id))
+            .ok_or_else(|| AssetError::NotFound(format!("file id {id}")))?;
+        self.read(&path)
+    }
+
     /// Whether any archive holds `path`.
     #[must_use]
     pub fn exists(&self, path: &str) -> bool {
