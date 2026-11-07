@@ -24,7 +24,7 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 12. Sky and light | 62 to 69 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
-| 15. The editor | 39 to 42, 44 to 55, 61, 15 |
+| 15. The editor | 155, 39 to 42, 44 to 55, 61, 15 |
 | 16. Doors | 151 |
 | 17. Artifacts and the test map | 133 to 148, 124 finished, 18, 19, 20, 21 |
 | 18. Review | 152, then circular quality and bug rounds, and a performance sweep |
@@ -355,7 +355,7 @@ The human's direction, 2026-11-06: item 18's floor plan went the wrong way. This
 | 53 | A run mode for testing, with no compile step | |
 | 54 | Toolbars of small icon squares in the viewport, for path drawing, swapping to the camera and the like | |
 | 55 | Remove the floor plan: you can't really tell what you're making on it, so it isn't useful. That's `easy.rs`, `plan.rs`, the `plan_` tools and its part of `docs/editor.md`. Bigger, Plain colours and working by keyboard or mouse alone are kept for the new editor | 39 |
-| 61 | Camera setup tab | 57 |
+| 61 | Camera setup tab | 57, 155 |
 
 Real maps are expected to mix meshes, mesh terrain and primitives.
 
@@ -377,6 +377,7 @@ Added by the human, 2026-11-06. How the usual third person camera works is resea
 | 58 | A core third person camera, with a spring boom, pushing in at walls, snapping in, and the rest of what makes one usable | 56 |
 | 59 | Scene cameras: a fixed one like the intermission's, or a set play that moves along a path | 57 |
 | 60 | The intermission camera: static, by the human's choice, after checking videos | 56 |
+| 155 | A proper camera system, past what these built. Today a camera is one of four kinds, it can only be about the player, and whether the player's body shows goes by the kind. Research what's wanted, and what's likely wanted later is done now: following something that isn't the player, a camera's own field of view, shots in a row for a cutscene, shake, a free camera for watching, a script driving one frame by frame, a view shown on a screen in the world, and the player's body not being tied to where a camera is. Comes from the end of level camera showing part of the player | 56 to 60 |
 
 Third person is likely to be the more usable camera in the editor, so items 40 and 54 lean on 58.
 
