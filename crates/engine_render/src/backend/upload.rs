@@ -21,11 +21,11 @@ use super::{
     GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_POOLS, POST_BYTES, SKY_BYTES, Scene,
     ShadowInstance, TileWrite,
 };
-use crate::alias::{pose_bytes, rest_bytes, uv_bytes, weld_corners};
+use crate::alias::{look_bytes, pose_bytes, rest_bytes, weld_corners};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
 use crate::instances::{
-    INSTANCE_BYTES, LevelView, instance_batches, shared_places, shared_uvs, view_planes,
+    INSTANCE_BYTES, LevelView, instance_batches, shared_looks, shared_places, view_planes,
 };
 use crate::live::live_bytes;
 use crate::material::{
@@ -595,7 +595,7 @@ impl Backend {
             &rest_bytes(&model, &welded.corners),
             BufferUsage::VERTEX_BUFFER,
         )?;
-        let uvs = self.device_buffer(&uv_bytes(&welded.corners), BufferUsage::VERTEX_BUFFER)?;
+        let uvs = self.device_buffer(&look_bytes(&welded.corners), BufferUsage::VERTEX_BUFFER)?;
         let index_bytes: Vec<u8> = welded
             .indices
             .iter()
@@ -682,7 +682,7 @@ impl Backend {
                 .collect();
             shared_meshes.push(GpuMesh {
                 places: self.device_buffer(&shared_places(shared), BufferUsage::VERTEX_BUFFER)?,
-                uvs: self.device_buffer(&shared_uvs(shared), BufferUsage::VERTEX_BUFFER)?,
+                uvs: self.device_buffer(&shared_looks(shared), BufferUsage::VERTEX_BUFFER)?,
                 indices: self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?,
                 levels: shared.levels.clone(),
                 shadow_parts: shared

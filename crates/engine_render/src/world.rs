@@ -34,11 +34,13 @@ pub struct Vertex {
     pub styles: [u8; 4],
     /// Which way it faces, in steps of 1/127, or zeros for a flat face.
     pub normal: [i8; 4],
+    /// What its colour multiplies its surface by.
+    pub color: [u8; 4],
 }
 
 impl Vertex {
     /// The size in bytes.
-    pub const SIZE: usize = 40;
+    pub const SIZE: usize = 44;
 
     /// Appends this vertex's bytes.
     pub(crate) fn write(&self, out: &mut Vec<u8>) {
@@ -53,6 +55,7 @@ impl Vertex {
         }
         out.extend_from_slice(&self.styles);
         out.extend(self.normal.map(i8::to_ne_bytes).into_iter().flatten());
+        out.extend_from_slice(&self.color);
     }
 }
 
@@ -491,6 +494,11 @@ fn make_vertex(
         uv: [s / size[0], t / size[1]],
         styles: [Face::NO_STYLE; 4],
         normal: [x, y, z, if face.lit_by_probe() { 127 } else { 0 }],
+        color: map
+            .point_colors
+            .get(number)
+            .copied()
+            .unwrap_or([u8::MAX; 4]),
         ..Vertex::default()
     };
     #[expect(

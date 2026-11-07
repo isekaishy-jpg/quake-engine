@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use engine_core::math::Vec3;
 use engine_map::{AliasCorner, AliasModel, Rows};
 
-use crate::instances::PLACE_BYTES;
+use crate::instances::{LOOK_BYTES, PLACE_BYTES};
 
 /// Bytes in one corner of one pose: a position, then a normal.
 pub(crate) const POSE_CORNER_BYTES: usize = 8;
@@ -83,14 +83,15 @@ pub(crate) fn pose_bytes(model: &AliasModel, corners: &[AliasCorner]) -> Vec<u8>
     bytes
 }
 
-/// `corners`' places on the skin.
+/// `corners`' places on the skin, as a mesh's corners keep them, with a colour that does nothing.
 #[must_use]
-pub(crate) fn uv_bytes(corners: &[AliasCorner]) -> Vec<u8> {
-    corners
-        .iter()
-        .flat_map(|corner| corner.uv)
-        .flat_map(f32::to_le_bytes)
-        .collect()
+pub(crate) fn look_bytes(corners: &[AliasCorner]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(corners.len() * LOOK_BYTES);
+    for corner in corners {
+        bytes.extend(corner.uv.into_iter().flat_map(f32::to_le_bytes));
+        bytes.extend_from_slice(&[u8::MAX; 4]);
+    }
+    bytes
 }
 
 /// `corners` as a mesh's are, in `model`'s first pose, for when there's no room to move them.

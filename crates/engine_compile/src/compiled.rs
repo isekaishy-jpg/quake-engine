@@ -11,7 +11,7 @@ use engine_map::{
 
 /// Changes when what's kept changes, so that a file from before it's kept differently reads as
 /// out of date, and isn't misread.
-const GEOMETRY_FORMAT: u64 = 2;
+const GEOMETRY_FORMAT: u64 = 3;
 
 /// What takes a compile its time.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -22,6 +22,8 @@ pub struct Geometry {
     pub(crate) points: Vec<Vec3>,
     /// Which way corners face.
     pub(crate) normals: Vec<[i8; 3]>,
+    /// Each point's colour, as far as the last that has one.
+    pub(crate) point_colors: Vec<[u8; 4]>,
     /// Each placed mesh's faces.
     pub(crate) mesh_groups: Vec<MeshGroup>,
     /// The faces, without their light.
@@ -115,6 +117,13 @@ impl Reader<'_> {
         let (three, rest) = self.0.split_first_chunk::<3>()?;
         self.0 = rest;
         Some(three.map(|part| i8::from_ne_bytes([part])))
+    }
+
+    /// A colour.
+    fn color(&mut self) -> Option<[u8; 4]> {
+        let (four, rest) = self.0.split_first_chunk::<4>()?;
+        self.0 = rest;
+        Some(*four)
     }
 
     /// How many of something follow, so long as there are that many bytes left
@@ -342,6 +351,8 @@ pub fn write_geometry(map: &Map, hash: u64) -> Vec<u8> {
         out.0
             .extend(normal.map(i8::to_ne_bytes).into_iter().flatten());
     }
+    out.count(map.point_colors.len());
+    out.0.extend(map.point_colors.iter().flatten());
     out.count(map.mesh_groups.len());
     for group in &map.mesh_groups {
         out.number(group.first_face);
@@ -398,6 +409,9 @@ pub fn read_geometry(bytes: &[u8], hash: u64) -> Option<Geometry> {
     geometry.tree = read_tree(&mut input)?;
     for _ in 0..input.count(3)? {
         geometry.normals.push(input.normal()?);
+    }
+    for _ in 0..input.count(4)? {
+        geometry.point_colors.push(input.color()?);
     }
     for _ in 0..input.count(12)? {
         geometry.mesh_groups.push(MeshGroup {

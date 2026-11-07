@@ -9,7 +9,7 @@ use engine_map::{Emitter, LiveLightSource, RayStencil, stencil_boxes};
 use crate::build::TextureSource;
 use crate::error::CompileError;
 use crate::geometry::Point;
-use crate::mesh::{PlacedMesh, PlacedTriangle};
+use crate::mesh::{PlacedMesh, PlacedTriangle, WHITE_CORNERS};
 use crate::source::EntitySource;
 
 /// A point as the map stores it.
@@ -33,6 +33,7 @@ fn both_sides(corners: [Point; 4], material: &str) -> [PlacedTriangle; 4] {
     let (uv_a, uv_b, uv_c, uv_d) = ([0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]);
     let triangle = |points, uvs| PlacedTriangle {
         normals: [[0.0; 3]; 3],
+        colors: WHITE_CORNERS,
         points,
         uvs,
         material: material.to_owned(),

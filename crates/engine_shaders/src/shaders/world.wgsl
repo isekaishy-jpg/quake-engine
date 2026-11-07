@@ -20,6 +20,7 @@ struct VertexIn {
     @location(3) light_step: f32,
     @location(4) styles: vec4<u32>,
     @location(5) normal: vec4<f32>,
+    @location(11) color: vec4<f32>,
 }
 
 struct VertexOut {
@@ -33,6 +34,8 @@ struct VertexOut {
     // Which way a mesh faces here, or zeros on a flat face. w is 1 where its
     // light came from one place, as a probe's does, and has no shape yet.
     @location(5) normal: vec4<f32>,
+    // What a mesh's corners' colours multiply the surface by. White on what has none.
+    @location(6) color: vec4<f32>,
 }
 
 // A style saying that what moves has no chart in the atlas, and its light fields are a colour.
@@ -48,6 +51,7 @@ struct MeshIn {
     @location(8) row_z: vec4<f32>,
     @location(9) light: vec3<f32>,
     @location(10) styles: vec4<u32>,
+    @location(11) color: vec4<f32>,
 }
 
 @vertex
@@ -64,6 +68,7 @@ fn placed_mesh(in: MeshIn) -> VertexOut {
     out.clip = frame.view_projection * vec4<f32>(world, 1.0);
     out.world = world;
     out.uv = in.uv;
+    out.color = in.color;
     out.light_uv = in.light.xy;
     out.light_step = in.light.z;
     out.styles = in.styles;
@@ -106,6 +111,7 @@ fn vs_main(in: VertexIn) -> VertexOut {
     out.clip = frame.view_projection * vec4<f32>(world, 1.0);
     out.world = world;
     out.uv = in.uv;
+    out.color = in.color;
     out.light_uv = in.light_uv;
     out.light_step = in.light_step;
     out.styles = in.styles;

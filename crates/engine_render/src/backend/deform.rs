@@ -15,7 +15,7 @@ use super::{Backend, FRAMES, GpuAlias, GpuBuffer, INDEX_TYPE_U32};
 use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix, rows_of_matrix};
 use crate::error::RenderError;
 use crate::instances::{
-    INSTANCE_BYTES, MovingDraw, PLACE_BYTES, UV_BYTES, ball_in_view, shared_places, shared_uvs,
+    INSTANCE_BYTES, LOOK_BYTES, MovingDraw, PLACE_BYTES, ball_in_view, shared_looks, shared_places,
     write_instance,
 };
 use crate::world::{InstanceLight, OWN_LIGHT_STYLE};
@@ -582,7 +582,7 @@ impl Backend {
         for moving in &map.moving_meshes {
             let shared = &moving.mesh;
             corner_bytes.extend(shared_places(shared));
-            uv_bytes.extend(shared_uvs(shared));
+            uv_bytes.extend(shared_looks(shared));
             for corner in 0..shared.corners.len() {
                 // A mesh with no skin stays with its first joint, which is at rest, or nothing.
                 let joints = shared.joints.get(corner).copied().unwrap_or([0; 4]);
@@ -644,7 +644,7 @@ impl Backend {
         // can't be empty.
         for (bytes, size) in [
             (&mut corner_bytes, PLACE_BYTES),
-            (&mut uv_bytes, UV_BYTES),
+            (&mut uv_bytes, LOOK_BYTES),
             (&mut skin_bytes, 8),
             (&mut head_bytes, 8),
             (&mut morph_bytes, 16),
@@ -855,7 +855,7 @@ pub(super) fn bind_moving(
     let mesh = moving.meshes.get(job.mesh as usize)?;
     let (corners, offset) = moving.places_of(job, slot);
     if instances {
-        let uvs = u64::from(mesh.first_corner) * UV_BYTES as u64;
+        let uvs = u64::from(mesh.first_corner) * LOOK_BYTES as u64;
         rec.bind_vertex_buffers(
             0,
             &[

@@ -29,7 +29,6 @@ A copy's triangles on the CPU, and what posing costs the CPU.
 - **Hit volumes on joints:** capsules named on joints, tested by `traceline` after the box says it's near. Movement keeps its box.
 - **Sorting what's see-through:** with the world's, in its far to near list, which is there already.
 - **Vertex colours:** `COLOR_0`, in the stream that doesn't move, multiplying the base colour, and open to surface shaders.
-- **UV and colour targets:** that stream moved too, for only the meshes that have them.
 - **Hit volumes go by the rewound time,** through what proposal 0048 built.
 
 ### Trying
@@ -104,4 +103,21 @@ Tried in the game, firing from a script at the Blender arm, which has a box 160 
 ### Tangents
 
 Not built, as [the research](../research/mesh-limits.md) measured that they aren't worth it. What it found was a bug: `surface_frame` scaled tangent and bitangent together, so a stretched texture's bumps leaned less one way. Each has its own length now. `a_stretched_normal_map_leans_as_far` goes through a matcap, which shows a lean as a colour, and fails on the old shader, where the same map read 34 and 86. Two earlier tries at that test proved nothing: a moving light doesn't go by a normal map, and squeezing a texture also moved its light off the map.
+
+### Vertex colours
+
+A file's `COLOR_0` comes in with a mesh, turned from linear into a picture's values, as surfaces are multiplied as pictures are. It multiplies the surface, and white leaves it alone. It reaches every way a mesh is drawn:
+
+- **Copies and moving meshes** keep it with their UV, in the stream that doesn't move, which is 12 bytes a corner now.
+- **Baked placements** keep it by point, in `Map::point_colors`, and a world vertex is 44 bytes. It stops at the last point that has one, so a level with none holds none. Geometry's format went up, so a level's old `.egeo` is compiled again.
+- **Both surface paths:** a material, and the classic shaders for what has none. The first test failed for that, as the classic ones don't go through `material_color`.
+- **A surface shader** has it as `in.color`.
+
+Tried in the game with a plane from Blender, red to grey, as a copy and baked, each under its own light. The 474 pictures of the fixture are still within a step of the old path.
+
+Five bugs were put back, each failing a test: materials ignoring it, classic shaders ignoring it, faces losing it, copies losing it, and corners joined past a colour. That last one passed at first, as the Blender plane is painted by point, so it has a test of its own, as a seam in the paint is two corners in one place.
+
+### UV and colour targets
+
+Not built: nothing here could make one, as [the research](../research/mesh-limits.md) sets out.
 

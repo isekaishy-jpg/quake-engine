@@ -2962,6 +2962,75 @@ fn a_stretched_normal_map_leans_as_far() {
     );
 }
 
+/// The middle of a picture with `moving` over the map's floor, with corners coloured `colors`.
+fn moving_square_coloured(colors: Vec<[u8; 4]>, material: bool) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut map = map_with_a_moving_square(false);
+    map.moving_meshes[0].mesh.colors = colors;
+    if material {
+        map.textures[0].material = Some(Arc::new(Material::default()));
+    }
+    renderer.load_map(Arc::new(map)).expect("load");
+    let draws = [MovingDraw {
+        rows: NO_MOVE,
+        joint_count: 2,
+        light: [1.0; 3],
+        center: Vec3::new(64.0, 64.0, 32.0),
+        radius: 200.0,
+        ..MovingDraw::default()
+    }];
+    let drawables = Drawables {
+        moving: &draws,
+        palette: &[NO_MOVE, NO_MOVE],
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A mesh's corners' colours multiply its surface, and with none it's as it was.
+#[test]
+fn a_corners_colour_multiplies_a_mesh() {
+    for material in [false, true] {
+        let Some(plain) = moving_square_coloured(Vec::new(), material) else {
+            return;
+        };
+        let red = moving_square_coloured(vec![[255, 0, 0, 255]; 4], material).expect("it drew");
+        assert!(plain[1] > 100, "it's lit: {plain:?}");
+        assert_eq!(red[0], plain[0], "red goes through");
+        assert!(red[1] < 5 && red[2] < 5, "and nothing else: {red:?}");
+    }
+}
+
+/// A baked mesh's faces keep their colours too.
+#[test]
+fn a_points_colour_multiplies_a_face() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    let mut centre_with = |colors: Vec<[u8; 4]>| {
+        built.point_colors = colors;
+        renderer.load_map(Arc::new(built.clone())).expect("load");
+        let capture = renderer
+            .capture(&view_from_above(), Drawables::default(), 64, 64)
+            .expect("capture");
+        centre(&capture)
+    };
+    let plain = centre_with(Vec::new());
+    assert_eq!(
+        centre_with(vec![[255; 4]; 4]),
+        plain,
+        "white changes nothing"
+    );
+    // The floor's red is past what a screen shows, and that holds its green down, so with no red
+    // its green can be higher than it was.
+    let green = centre_with(vec![[0, 255, 0, 255]; 4]);
+    assert!(green[1] > 100 && green[0] < 5 && green[2] < 5, "{green:?}");
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

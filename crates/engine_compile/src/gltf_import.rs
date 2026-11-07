@@ -299,6 +299,10 @@ impl Importer<'_> {
                 .map(|normal| to_engine(turned(matrix, normal.map(f64::from))))
                 .collect()
         });
+        // A file's colours are linear, and surfaces are multiplied as pictures are.
+        let colors: Vec<[u8; 4]> = reader.read_colors(0).map_or_else(Vec::new, |colors| {
+            colors.into_rgba_f32().map(picture_color).collect()
+        });
         let uvs: Vec<[f64; 2]> = reader.read_tex_coords(0).map_or_else(
             || vec![[0.0; 2]; points.len()],
             |uvs| uvs.into_f32().map(|uv| uv.map(f64::from)).collect(),
@@ -363,6 +367,7 @@ impl Importer<'_> {
             normals,
             points,
             uvs,
+            colors,
             triangles,
             levels: Vec::new(),
             joints,
@@ -473,6 +478,12 @@ fn fold_levels(mesh: &mut Mesh) {
             target.give_normals();
             part.give_normals();
         }
+        // So are colours, where only some of what's joined has them.
+        if target.colors.is_empty() != part.colors.is_empty() {
+            target.colors.resize(target.points.len(), [u8::MAX; 4]);
+            part.colors.resize(part.points.len(), [u8::MAX; 4]);
+        }
+        target.colors.append(&mut part.colors);
         let first = u32::try_from(target.points.len()).unwrap_or(u32::MAX);
         target.points.append(&mut part.points);
         target.uvs.append(&mut part.uvs);
@@ -491,6 +502,29 @@ fn fold_levels(mesh: &mut Mesh) {
         target.levels.push(moved.collect());
     }
     mesh.parts = finest;
+}
+
+/// A file's linear colour as a picture's bytes. Alpha isn't a light, so it stays as it is.
+fn picture_color([red, green, blue, alpha]: [f32; 4]) -> [u8; 4] {
+    let curve = |part: f32| {
+        if part <= 0.003_130_8 {
+            part * 12.92
+        } else {
+            1.055 * part.powf(1.0 / 2.4) - 0.055
+        }
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "kept to a byte"
+    )]
+    let byte = |part: f32| (part.clamp(0.0, 1.0) * 255.0).round() as u8;
+    [
+        byte(curve(red)),
+        byte(curve(green)),
+        byte(curve(blue)),
+        byte(alpha),
+    ]
 }
 
 /// Reads the glTF file at `path`, naming what's made after `name`. `scale` is how
@@ -651,6 +685,10 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
         block.set("uvs", flat(&mut part.uvs.iter().flatten().copied()));
         if !part.normals.is_empty() {
             block.set("normals", flat(&mut part.normals.iter().flatten().copied()));
+        }
+        if !part.colors.is_empty() {
+            let colors = part.colors.iter().flatten().map(|part| f64::from(*part));
+            block.set("colors", flat(&mut colors.into_iter()));
         }
         let corners = part.triangles.iter().flatten().map(|c| f64::from(*c));
         block.set("triangles", flat(&mut corners.into_iter()));

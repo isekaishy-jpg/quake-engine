@@ -154,9 +154,13 @@ The first two runs of the sum were wrong, and worth knowing about: they gave 11 
 
 They're [blend weights between materials](https://www.strayspark.studio/blog/blender-vertex-colors-game-engine-workflows), [a tint so that a repeated texture looks less so](https://www.strayspark.studio/blog/blender-vertex-colors-game-engine-workflows), and [ambient occlusion at no cost in textures](https://superhivemarket.com/products/vertex-color-octopus). Those are tutorials and tool pages, but the uses aren't in doubt. glTF defines `COLOR_0` as multiplying the base colour. It costs four bytes a corner in the stream that doesn't move. A surface shader can read it too, so blending by it is open to a material.
 
-### UV and colour targets: yes, as one thing
+### UV and colour targets: no
 
-The note above said colour targets weren't agreed. Looking closer, the disagreement was [a tool's fault](https://forum.nomadsculpt.com/t/morph-target-colors-arent-additive-but-replacing/6430): glTF's targets are [differences](https://github.com/mrdoob/three.js/issues/17608), and [three.js reads colour targets](https://pub.dev/documentation/three_js_advanced_loaders/latest/gltf_gltf_helper/addMorphTargets.html). [Babylon had UV targets as a draft](https://forum.babylonjs.com/t/uv-morphing-results-in-two-textures-of-different-types-use-the-same-sampler-location/55346). A use is easy to see: a blush, a wound, a scrolling mouth. UV and colour live in the same stream, so moving one moves both, for only the meshes that have such targets, and it's cheaper to do the two together than either alone.
+This note first said yes. Looking closer, the disagreement over colour targets was [a tool's fault](https://forum.nomadsculpt.com/t/morph-target-colors-arent-additive-but-replacing/6430): glTF's targets are [differences](https://github.com/mrdoob/three.js/issues/17608), and [three.js reads colour targets](https://pub.dev/documentation/three_js_advanced_loaders/latest/gltf_gltf_helper/addMorphTargets.html). So they can be done.
+
+**But nothing here could ever make one.** Blender's shape keys hold places, and [its exporter's options are shape keys, their normals and their tangents](https://developer.blender.org/rBA9a627ee667454ce92fbce908f887fe6577f0b297). That's from its options, as no source says it outright. The `gltf` crate reads the same three, so reading more would mean parsing a file's JSON by hand. [Babylon's UV targets were a draft](https://forum.babylonjs.com/t/uv-morphing-results-in-two-textures-of-different-types-use-the-same-sampler-location/55346) too. It would be code no asset could reach.
+
+What they'd be for has better ways. A blush or a wound is a surface shader, or a material's numbers, which a script can already set, and vertex colours are there to mask them.
 
 ### Rewinding hit volumes: yes
 
@@ -170,5 +174,5 @@ It's there for boxes, as above, so hit volumes go by the rewound time from the s
 - **Measure, then decide:** a copy's triangles on the CPU, and what posing costs the CPU.
 - **Building:** a coarse level moving fewer corners, hit volumes on joints, sorting what's see-through.
 - **Trying:** clips on a bad network.
-- **What we don't have:** vertex colours, and UV and colour targets, are yes, as above. Real tangents are no, as a bug fix does nearly all of it. Hit volumes go by the rewind that's there.
+- **What we don't have:** vertex colours are yes. UV and colour targets are no, as nothing here can make them. Real tangents are no, as a bug fix does nearly all of it. Hit volumes go by the rewind that's there.
 - **Item 12:** with this done the human moved the fixture's models over, in [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). So the comparison above, of two paths, is history now.

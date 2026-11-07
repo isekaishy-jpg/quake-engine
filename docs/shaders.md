@@ -76,3 +76,6 @@ cargo build --release -p engine_app --no-default-features
 ```
 
 It reads only what's in its `common.pkt`. A shader that doesn't compile stops a pack. See [proposal 0133](proposals/0133-precompiled-shaders.md).
+
+`in.color` is what a mesh's corners' colours say there, which is white on what has none, so a surface shader can use them to mask something.
+

@@ -22,8 +22,8 @@ use crate::geometry::{
 };
 use crate::light::light_tracks;
 use crate::mesh::{
-    PlacedMesh, PlacedTriangle, at_rest, coarsest_corners_first, placement_rows, shared_mesh,
-    with_hit_capsules,
+    PlacedMesh, PlacedTriangle, WHITE_CORNERS, at_rest, coarsest_corners_first, placement_rows,
+    shared_mesh, with_hit_capsules,
 };
 use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
@@ -358,6 +358,7 @@ fn decal_triangles(decal: &DecalSource, faces: &[VisibleFace<'_>]) -> Vec<Placed
             let points = [lifted[0], pair[0], pair[1]];
             out.push(PlacedTriangle {
                 normals: [[0.0; 3]; 3],
+                colors: WHITE_CORNERS,
                 points,
                 uvs: points.map(uv),
                 material: decal.material.clone(),
@@ -724,6 +725,12 @@ impl Builder<'_> {
         self.map
             .normals
             .extend(triangle.normals.iter().map(|normal| packed_normal(*normal)));
+        if triangle.colors != WHITE_CORNERS {
+            self.map
+                .point_colors
+                .resize(first_point as usize, [u8::MAX; 4]);
+            self.map.point_colors.extend(triangle.colors);
+        }
         self.map.faces.push(Face {
             first_point,
             point_count: 3,
@@ -1035,6 +1042,7 @@ fn compile_with(
         builder.known_models = Some((count, 0));
         builder.map.points = geometry.points;
         builder.map.normals = geometry.normals;
+        builder.map.point_colors = geometry.point_colors;
         builder.map.mesh_groups = geometry.mesh_groups;
         builder.map.faces = geometry.faces;
         builder.map.models = geometry.models;

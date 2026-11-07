@@ -13,8 +13,8 @@ pub const INSTANCE_BYTES: usize = 64;
 /// from its UVs, as this is what a moving mesh rewrites each frame.
 pub(crate) const PLACE_BYTES: usize = 16;
 
-/// Bytes in a mesh corner's UV.
-pub(crate) const UV_BYTES: usize = 8;
+/// Bytes in what stays put of a mesh's corner: its UV and its colour.
+pub(crate) const LOOK_BYTES: usize = 12;
 
 /// How much further in a mesh has to come to go back to a finer level, so that something at
 /// a boundary doesn't flicker between two.
@@ -206,13 +206,15 @@ pub(crate) fn shared_places(mesh: &engine_map::SharedMesh) -> Vec<u8> {
     bytes
 }
 
-/// A mesh's corners' UVs, which is what stays put when it moves.
-pub(crate) fn shared_uvs(mesh: &engine_map::SharedMesh) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(mesh.corners.len() * UV_BYTES);
-    for corner in &mesh.corners {
+/// A mesh's corners' UVs and colours, which is what stays put when it moves.
+pub(crate) fn shared_looks(mesh: &engine_map::SharedMesh) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(mesh.corners.len() * LOOK_BYTES);
+    for (at, corner) in mesh.corners.iter().enumerate() {
         for number in corner.uv {
             bytes.extend_from_slice(&number.to_le_bytes());
         }
+        let color = mesh.colors.get(at).copied().unwrap_or([u8::MAX; 4]);
+        bytes.extend_from_slice(&color);
     }
     bytes
 }

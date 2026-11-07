@@ -38,6 +38,8 @@ pub struct MeshPart {
     pub triangles: Vec<[u32; 3]>,
     /// Its triangles at each coarser level of detail, on the same corners.
     pub levels: Vec<Vec<[u32; 3]>>,
+    /// What each corner's colour multiplies its material by, if it has any.
+    pub colors: Vec<[u8; 4]>,
     /// The joints that carry each corner, if it has a skin.
     pub joints: Vec<[u8; 4]>,
     /// How much of each corner goes with each of those, out of 255.
@@ -66,6 +68,7 @@ impl MeshPart {
         }
         let worked_out = smooth_normals(self, &self.triangles);
         let (mut points, mut uvs, mut normals) = (Vec::new(), Vec::new(), Vec::new());
+        let mut colors = Vec::new();
         let mut known = HashMap::new();
         let mut triangles = Vec::with_capacity(self.triangles.len());
         for (triangle, facing) in self.triangles.iter().zip(&worked_out) {
@@ -76,11 +79,13 @@ impl MeshPart {
                     self.points[corner].map(f64::to_bits),
                     self.uvs[corner].map(f64::to_bits),
                     facing[at].map(f64::to_bits),
+                    self.colors.get(corner).copied(),
                 );
                 made[at] = *known.entry(key).or_insert_with(|| {
                     points.push(self.points[corner]);
                     uvs.push(self.uvs[corner]);
                     normals.push(facing[at]);
+                    colors.extend(self.colors.get(corner));
                     u32::try_from(points.len() - 1).unwrap_or(u32::MAX)
                 });
             }
@@ -89,6 +94,7 @@ impl MeshPart {
         self.points = points;
         self.uvs = uvs;
         self.normals = normals;
+        self.colors = colors;
         self.triangles = triangles;
     }
 }
@@ -133,9 +139,14 @@ pub struct PlacedTriangle {
     pub uvs: [[f64; 2]; 3],
     /// Which way they face.
     pub normals: [Point; 3],
+    /// What their colours multiply its material by.
+    pub colors: [[u8; 4]; 3],
     /// Its material.
     pub material: String,
 }
+
+/// The colours of a triangle that has none, which change nothing.
+pub(crate) const WHITE_CORNERS: [[u8; 4]; 3] = [[u8::MAX; 4]; 3];
 
 /// A mesh where it was placed.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -180,6 +191,15 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
         let points = groups::<3>(block, "points");
         let uvs = groups::<2>(block, "uvs");
         let normals = groups::<3>(block, "normals");
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "kept to a byte"
+        )]
+        let colors: Vec<[u8; 4]> = groups::<4>(block, "colors")
+            .iter()
+            .map(|color| color.map(|part| part.clamp(0.0, 255.0) as u8))
+            .collect();
         #[expect(
             clippy::cast_possible_truncation,
             clippy::cast_sign_loss,
@@ -274,6 +294,7 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 .to_owned(),
             points,
             uvs,
+            colors,
             normals,
             triangles,
             levels,
@@ -822,6 +843,9 @@ pub(crate) fn coarsest_corners_first(shared: &mut SharedMesh) {
     if !shared.morph_heads.is_empty() {
         shared.morph_heads = order.iter().map(|at| shared.morph_heads[*at]).collect();
     }
+    if !shared.colors.is_empty() {
+        shared.colors = order.iter().map(|at| shared.colors[*at]).collect();
+    }
 }
 
 /// `mesh` as its rest weights show it, for what's placed and doesn't move: a file's morph weights
@@ -893,6 +917,7 @@ fn keep_morphs(shared: &mut SharedMesh, mesh: &Mesh, became: &HashMap<(usize, u3
 /// only costs its indices.
 #[must_use]
 pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f32)) -> SharedMesh {
+    let colored = mesh.parts.iter().any(|part| !part.colors.is_empty());
     let mut shared = SharedMesh::default();
     let mut known = HashMap::new();
     // Which of the kept corners each of a part's became, as one can become several where its
@@ -936,12 +961,14 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
                     let joints = part.joints.get(corner).copied().unwrap_or([0; 4]);
                     let weights = part.weights.get(corner).copied().unwrap_or([0; 4]);
                     let skinned = !part.joints.is_empty();
+                    let color = part.colors.get(corner).copied().unwrap_or([u8::MAX; 4]);
                     let key = (
                         made.position.map(f32::to_bits),
                         made.uv.map(f32::to_bits),
                         made.normal,
                         joints,
                         weights,
+                        color,
                     );
                     let index = *known.entry(key).or_insert_with(|| {
                         for axis in 0..3 {
@@ -949,6 +976,9 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
                             high[axis] = high[axis].max(made.position[axis]);
                         }
                         shared.corners.push(made);
+                        if colored {
+                            shared.colors.push(color);
+                        }
                         if skinned {
                             shared.joints.push(joints);
                             shared.weights.push(weights);
@@ -1022,6 +1052,8 @@ pub fn place_mesh(mesh: &Mesh, placement: &MeshPlacement) -> PlacedMesh {
                 points: corners.map(|corner| transform.apply(part.points[corner])),
                 uvs: corners.map(|corner| part.uvs[corner]),
                 normals: normals.map(|normal| transform.turn(normal)),
+                colors: corners
+                    .map(|corner| part.colors.get(corner).copied().unwrap_or([u8::MAX; 4])),
                 material: part.material.clone(),
             });
         }

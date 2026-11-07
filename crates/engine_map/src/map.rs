@@ -217,6 +217,8 @@ pub struct SharedPart {
 /// A mesh kept once, however many times it's placed (proposal 0140).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct SharedMesh {
+    /// What each corner's colour multiplies its surface by, or nothing if they're all white.
+    pub colors: Vec<[u8; 4]>,
     /// Its corners.
     pub corners: Vec<MeshCorner>,
     /// Its triangles, three to each.
@@ -364,6 +366,7 @@ impl Map {
     fn keep_points_of(&mut self, gone: &[bool]) {
         let old_points = std::mem::take(&mut self.points);
         let old_normals = std::mem::take(&mut self.normals);
+        let old_colors = std::mem::take(&mut self.point_colors);
         let faces = std::mem::take(&mut self.faces);
         for (mut face, _) in faces.into_iter().zip(gone).filter(|(_, gone)| !**gone) {
             let first = face.first_point as usize;
@@ -373,6 +376,10 @@ impl Map {
                 .extend_from_slice(old_points.get(first..last).unwrap_or_default());
             let normal = |at: usize| old_normals.get(at).copied().unwrap_or_default();
             self.normals.extend((first..last).map(normal));
+            if !old_colors.is_empty() {
+                let color = |at: usize| old_colors.get(at).copied().unwrap_or([u8::MAX; 4]);
+                self.point_colors.extend((first..last).map(color));
+            }
             self.faces.push(face);
         }
     }
@@ -544,6 +551,9 @@ pub struct Map {
     /// Which way points face, in steps of 1/127, by their place in `points`. It
     /// stops at the last that has one, and all zeros means the face is flat.
     pub normals: Vec<[i8; 3]>,
+    /// What each point's colour multiplies a surface by, by its place in `points`. It stops at the
+    /// last that has one, and past that it's white.
+    pub point_colors: Vec<[u8; 4]>,
     /// The faces.
     pub faces: Vec<Face>,
     /// Each placed mesh's faces.

@@ -1272,3 +1272,72 @@ fn a_moving_mesh_gets_capsules_round_its_joints() {
         assert!(off <= capsule.radius + 0.01, "{off} of {}", capsule.radius);
     }
 }
+
+/// A plane from Blender, red at one end and half grey at the other.
+fn painted() -> Mesh {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/colour_test.glb");
+    import_gltf(&path, "painted", 32.0).expect("imports").mesh
+}
+
+/// Colours come in from a file, as a picture's: a linear half is 188.
+#[test]
+fn a_files_colours_come_through_as_a_pictures() {
+    let mesh = painted();
+    let colors = &mesh.parts[0].colors;
+    assert_eq!(colors.len(), mesh.parts[0].points.len());
+    assert!(colors.contains(&[255, 0, 0, 255]), "{colors:?}");
+    assert!(colors.contains(&[188, 188, 188, 255]), "{colors:?}");
+}
+
+/// They survive being kept in a mesh file.
+#[test]
+fn colours_survive_a_file() {
+    let mesh = painted();
+    let back = read_mesh(&document_of(&write_mesh(&mesh)).expect("reads")).expect("is a mesh");
+    assert_eq!(back.parts[0].colors, mesh.parts[0].colors);
+}
+
+/// A copy keeps them on its corners, and a baked placement on its points, and that's kept on disk.
+#[test]
+fn colours_reach_what_is_placed() {
+    let mesh = painted();
+    let (working, map) = level_with(
+        mesh,
+        &["origin = [0 0 0] light = probe", "origin = [40 0 0]"],
+    );
+    assert!(map.shared_meshes[0].colors.contains(&[255, 0, 0, 255]));
+    assert_eq!(
+        map.shared_meshes[0].colors.len(),
+        map.shared_meshes[0].corners.len()
+    );
+    assert!(map.point_colors.contains(&[188, 188, 188, 255]));
+    let geometry = read_geometry(&write_geometry(&map, 7), 7).expect("it reads");
+    let again = compile_known(&working, &mut Plain, geometry).expect("compiles");
+    assert_eq!(again.point_colors, map.point_colors);
+}
+
+/// Two corners in one place, painted differently, are two corners: that's what a seam in the paint
+/// is, and joining them would lose one of the colours.
+#[test]
+fn corners_painted_differently_stay_apart() {
+    let square = [[0.0, 0.0, 0.0], [8.0, 0.0, 0.0], [8.0, 8.0, 0.0]];
+    let part = MeshPart {
+        name: "painted".to_owned(),
+        material: "plain".to_owned(),
+        points: [square, square].concat(),
+        uvs: vec![[0.0, 0.0]; 6],
+        normals: vec![[0.0, 0.0, 1.0]; 6],
+        colors: [[[255, 0, 0, 255]; 3], [[0, 255, 0, 255]; 3]].concat(),
+        triangles: vec![[0, 1, 2], [3, 4, 5]],
+        ..MeshPart::default()
+    };
+    let mesh = Mesh {
+        parts: vec![part],
+        ..Mesh::default()
+    };
+    let (_, map) = level_with(mesh, &["origin = [0 0 0] light = probe"]);
+    let shared = &map.shared_meshes[0];
+    assert_eq!(shared.corners.len(), 6);
+    assert!(shared.colors.contains(&[255, 0, 0, 255]));
+    assert!(shared.colors.contains(&[0, 255, 0, 255]));
+}

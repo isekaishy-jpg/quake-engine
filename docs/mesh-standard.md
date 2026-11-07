@@ -55,6 +55,7 @@ A player is 56 units tall and 32 wide, and steps up 18. Things are made for that
 - **A joint that twists far** wants a twist bone, or it loses volume.
 - **Clips are named,** as scripts play them by name.
 - **Shape keys are named,** for the same reason. They move corners and normals. UVs and colours don't change.
+- **Colours are optional.** A colour attribute comes through, set as the active one on export, and it multiplies the material. White changes nothing, so use it for tints, or dirt in the corners, and paint a seam where two colours should meet.
 
 ## Texturing
 

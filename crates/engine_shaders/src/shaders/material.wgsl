@@ -331,6 +331,9 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         base = vec4<f32>(base.rgb * detail.rgb * 2.0, base.a);
     }
 
+    // As glTF has it: a corner's colour multiplies the surface, and white leaves it alone.
+    base = base * in.color;
+
     var normal = surface_at.normal;
     if material.slots_a.x >= 0 {
         // Compiled normal maps hold two channels, and the third follows from them.
