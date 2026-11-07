@@ -118,4 +118,12 @@ Five bugs were put back, and each fails a test: light ignoring holes, land left 
 - **What it costs,** with every layer on every pixel of a full-screen view, which is the worst there can be: lowest of two rounds, in ms for the scene. None 1.07, one 1.01, two 1.17, four 1.47, eight 2.04. So a layer is about 0.14 ms at worst, and most pixels have one or two. One with hexagon tiles is 1.17, and four 2.15, so hexagon tiles cost about twice as much as plain layers, as they're near the view. The GPU's clock moves a scene by more than that between runs, which is why it's the lowest.
 - **Every test here was seen failing:** with height blending off, one picture for all, paint not sent, far land never plain, hexagon tiles never and always, no side reading, and no triangle slope. The far land test passed with its bug at first, since a picture's own mips came to the same thing. It now has a repeat too wide for that.
 
+### Blending on materials (the rest of 131)
+
+- **How many:** eight on land and three on a material. A layer's two reads, and it's about 0.14 ms over a whole screen at worst. Land's the only thing a player can see a whole screen of, and it wants eight, as a landscape has that many grounds. A material's on a wall or a floor, and paint on it is a stain or a patch of moss, so three stays, and paint keeps its four channels.
+- **A layer has its own bumps and shine.** A `layer` block can name `normal`, `specular` and `height`, as a surface does. They're packed into one surface picture, which is one read more for a layer that has one, and nothing for one that doesn't. They blend as its colour does. Without them a layer keeps what's under it, as it always has.
+- **A material has twelve slots,** up from eight, as three layers with a colour and a surface each wouldn't fit with a base, a normal and a specular. That's four more bindings, and a material that doesn't use them reads nothing more.
+- **Baking takes the cost away,** as the item said it could. The mega texture now mixes a layer's bumps and shine into its normal and specular images, as it did its colour. `flatten` has only the colour to go on, so a layer with a surface stays live rather than lose it.
+- Tried in the game: wood painted over rock, with each one's own bumps, and the wood's shine under a lamp.
+
 Filled in as each part lands.

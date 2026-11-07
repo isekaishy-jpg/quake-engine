@@ -32,7 +32,7 @@ fn container(name: &str, materials: &[(&str, &str)]) -> (FileSystem, PathBuf) {
     let _gone = fs::remove_dir_all(&root);
     fs::create_dir_all(root.join("textures")).expect("directory");
     fs::create_dir_all(root.join("materials")).expect("directory");
-    for index in 0..10 {
+    for index in 0..13 {
         fs::write(root.join("textures").join(format!("{index}.png")), pixel()).expect("write");
     }
     for (name, text) in materials {
@@ -64,12 +64,30 @@ fn a_material_fills_its_slots_and_shares_repeats() {
 
 #[test]
 fn too_many_images_are_refused() {
-    let text = "format 1 material\nsurface {\n base = textures/0.png\n normal = textures/1.png\n specular = textures/2.png\n emissive = textures/3.png\n height = textures/4.png\n tint = textures/5.png\n matcap = textures/6.png\n ramp = textures/7.png\n detail = textures/8.png\n}\n";
-    let (filesystem, root) = container("many", &[("wall", text)]);
+    let maps = [
+        "normal",
+        "specular",
+        "emissive",
+        "height",
+        "tint",
+        "matcap",
+        "ramp",
+        "detail",
+        "flow",
+        "shader_image_a",
+        "shader_image_b",
+        "metal_rough",
+    ];
+    let lines: String = (1..)
+        .zip(maps)
+        .map(|(at, map)| format!(" {map} = textures/{at}.png\n"))
+        .collect();
+    let text = format!("format 1 material\nsurface {{\n base = textures/0.png\n{lines}}}\n");
+    let (filesystem, root) = container("many", &[("wall", &text)]);
     let error = MaterialLibrary::new(&filesystem)
         .load("wall")
         .expect_err("too many");
-    assert!(error.to_string().contains("more than 8"), "{error}");
+    assert!(error.to_string().contains("more than 12"), "{error}");
     fs::remove_dir_all(&root).expect("clean up");
 }
 
@@ -323,4 +341,78 @@ fn most_materials_arent_metal() {
         .expect("loads");
     assert_eq!(texture.material.expect("a material").metal_rough, None);
     fs::remove_dir_all(&root).expect("clean up");
+}
+
+#[test]
+fn a_layer_has_bumps_and_shine_of_its_own() {
+    let text = "format 1 material\nsurface {\n    base = textures/0.png\n    \
+        layer {\n base = textures/moss.png\n mask = paint\n normal = textures/bump.png\n \
+        specular = textures/shine.png\n specular_strength = 0.5\n height = textures/high.png\n}\n\
+        layer { base = textures/moss.png mask = paint }\n}\n";
+    let (filesystem, root) = container("own", &[("mossy", text)]);
+    let write = |name: &str, color: &[u8; 4]| {
+        fs::write(root.join("textures").join(name), colored(color)).expect("write");
+    };
+    write("moss.png", &[30, 200, 40, 255]);
+    write("bump.png", &[10, 240, 255, 255]);
+    write("shine.png", &[255, 255, 255, 255]);
+    write("high.png", &[77, 77, 77, 255]);
+    let mut library = MaterialLibrary::new(&filesystem);
+    let texture = library.load("mossy").expect("loads");
+    let material = texture.material.expect("a material");
+    assert_eq!(material.layers[1].surface, None, "if it says so");
+    let slot = material.layers[0].surface.expect("a surface");
+    let surface = &material.slots[usize::from(slot) - 1][0].rgba;
+    assert_eq!(surface[..3], [10, 240, 77]);
+    assert!(
+        surface[3].abs_diff(128) < 2,
+        "half of white: {}",
+        surface[3]
+    );
+    let _gone = fs::remove_dir_all(root);
+}
+
+#[test]
+fn a_layer_with_its_own_surface_isnt_flattened() {
+    let text = "format 1 material\nsurface {\n    base = textures/0.png\n    flatten = true\n\
+        layer { base = textures/1.png mask = textures/2.png normal = textures/3.png }\n}\n";
+    let (filesystem, root) = container("kept", &[("mixed", text)]);
+    let mut library = MaterialLibrary::new(&filesystem);
+    let material = library.load("mixed").expect("loads").material.expect("one");
+    assert_eq!(material.layers.len(), 1);
+    assert!(material.layers[0].surface.is_some());
+    let _gone = fs::remove_dir_all(root);
+}
+
+#[test]
+fn three_layers_each_with_a_surface_fit_in_a_material() {
+    let layer = |at: u32| {
+        format!(
+            "layer {{ base = textures/{at}.png mask = paint normal = textures/{}.png }}\n",
+            at + 3
+        )
+    };
+    let text = format!(
+        "format 1 material\nsurface {{\n    base = textures/0.png\n normal = textures/8.png\n \
+         specular = textures/9.png\n{}{}{}}}\n",
+        layer(1),
+        layer(2),
+        layer(3)
+    );
+    let (filesystem, root) = container("three", &[("many", &text)]);
+    // Each its own picture, as a slot's shared by a picture that's the same one.
+    for (at, name) in ["1", "2", "3", "8", "9"].iter().enumerate() {
+        let shade = u8::try_from(at * 40).expect("small");
+        fs::write(
+            root.join("textures").join(format!("{name}.png")),
+            colored(&[shade, 9, 9, 255]),
+        )
+        .expect("write");
+    }
+    let mut library = MaterialLibrary::new(&filesystem);
+    let material = library.load("many").expect("loads").material.expect("one");
+    assert_eq!(material.layers.len(), 3);
+    assert!(material.layers.iter().all(|layer| layer.surface.is_some()));
+    assert!(material.slots.len() < engine_map::MATERIAL_SLOTS);
+    let _gone = fs::remove_dir_all(root);
 }

@@ -2111,6 +2111,7 @@ fn a_painted_layer_follows_the_paint() {
         layers: vec![MaterialLayer {
             base: 1,
             mask: PAINT_MASK,
+            surface: None,
         }],
         ..Material::default()
     };
@@ -2961,6 +2962,142 @@ fn a_stretched_normal_map_leans_as_far() {
         apart(other_way, leaning) <= 3,
         "{leaning:?} and {other_way:?}"
     );
+}
+
+/// The middle of a floor with a matcap on it, under a layer whose surface leans by `slope`,
+/// painted on by `paint`.
+fn matcap_under_a_layer(slope: u8, paint: u8) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Matcap,
+        matcap: Some(1),
+        slots: vec![
+            Arc::new(image_of(64, |x, y| {
+                [
+                    u8::try_from(x * 4).expect("small"),
+                    u8::try_from(y * 4).expect("small"),
+                    0,
+                    255,
+                ]
+            })),
+            Arc::new(image_of(2, |_, _| [255, 255, 255, 255])),
+            Arc::new(image_of(2, |_, _| [128, slope, 128, 0])),
+        ],
+        layers: vec![MaterialLayer {
+            base: 2,
+            mask: PAINT_MASK,
+            surface: Some(3),
+        }],
+        ..Material::default()
+    }));
+    built.paint = vec![[paint, 0, 0, 0]; built.light.len()];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A layer's own bumps lean a surface where it's painted, and only there.
+#[test]
+fn a_layer_leans_a_surface_by_its_own_bumps() {
+    let Some(flat) = matcap_under_a_layer(128, 255) else {
+        return;
+    };
+    let leaning = matcap_under_a_layer(230, 255).expect("it drew");
+    let unpainted = matcap_under_a_layer(230, 0).expect("it drew");
+    let apart = |a: [u8; 4], b: [u8; 4]| (0..3).map(|at| a[at].abs_diff(b[at])).max().unwrap_or(0);
+    assert!(apart(leaning, flat) > 10, "{flat:?} and {leaning:?}");
+    assert!(apart(unpainted, flat) < 25, "{flat:?} and {unpainted:?}");
+    assert!(
+        apart(unpainted, leaning) > 10,
+        "{unpainted:?} and {leaning:?}"
+    );
+}
+
+/// The middle of a black floor under a white light, painted over with a layer that shines this
+/// much.
+fn shine_of_a_layer(shine: u8) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].mips = image_of(2, |_, _| [0, 0, 0, 255]);
+    built.textures[0].material = Some(Arc::new(Material {
+        specular_strength: 1.0,
+        gloss: 32.0,
+        slots: vec![
+            Arc::new(image_of(2, |_, _| [0, 0, 0, 255])),
+            Arc::new(image_of(2, |_, _| [128, 128, 128, shine])),
+        ],
+        layers: vec![MaterialLayer {
+            base: 1,
+            mask: PAINT_MASK,
+            surface: Some(2),
+        }],
+        ..Material::default()
+    }));
+    built.paint = vec![[255, 0, 0, 0]; built.light.len()];
+    renderer.load_map(Arc::new(built)).expect("load");
+    let lights = [LightDraw {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        radius: 300.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A layer's own shine shows under a light, with nothing of the material's to go on.
+#[test]
+fn a_layer_shines_by_its_own_map() {
+    let Some(dull) = shine_of_a_layer(0) else {
+        return;
+    };
+    let bright = shine_of_a_layer(255).expect("it drew");
+    assert!(dull[0] < 10, "{dull:?}");
+    assert!(bright[0] > 60, "{bright:?}");
+}
+
+/// The middle of black land under a white light, painted with a layer that shines this much.
+fn shine_of_land(shine: u8) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = painted_land([128, 128], |_| [255, 0]);
+    let black = [0, 0, 0, 255].repeat(16);
+    built.land_pictures[0].color = Arc::new(mip_chain(4, 4, black));
+    let surface = [128, 128, 128, shine].repeat(16);
+    built.land_pictures[0].surface = Arc::new(mip_chain(4, 4, surface));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let lights = [LightDraw {
+        origin: Vec3::new(0.0, 0.0, 100.0),
+        radius: 600.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, 300.0),
+        ..view_from_above()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    Some(centre(&capture))
+}
+
+#[test]
+fn land_shines_by_its_layers() {
+    let Some(dull) = shine_of_land(0) else {
+        return;
+    };
+    let bright = shine_of_land(255).expect("it drew");
+    assert!(dull[0] < 10, "{dull:?}");
+    assert!(bright[0] > 60, "{bright:?}");
 }
 
 /// The middle of a picture with `moving` over the map's floor, with corners coloured `colors`.

@@ -117,7 +117,13 @@ fn share_of(texture: &Texture, axes: &[TexelAxis; 2], point: Vec3) -> Option<(f3
 
 /// Writes what a surface's other maps hold at a point into the texel at `to`
 /// of each image there is.
-fn write_maps(maps: &mut MegaMaps, to: usize, material: &Material, u: f32, v: f32) {
+fn write_maps(
+    maps: &mut MegaMaps,
+    to: usize,
+    material: &Material,
+    (u, v): (f32, f32),
+    paint: [u8; 4],
+) {
     let write = |image: &mut Option<Vec<u8>>, color: Option<[u8; 4]>| {
         if let (Some(image), Some(color)) = (image, color) {
             image[to..to + 4].copy_from_slice(&color);
@@ -135,15 +141,44 @@ fn write_maps(maps: &mut MegaMaps, to: usize, material: &Material, u: f32, v: f3
         ]
     };
     let lit = |[r, g, b, a]: [u8; 4]| [scaled(r, glow), scaled(g, glow), scaled(b, glow), a];
-    write(&mut maps.normal, slot_at(material, material.normal, u, v));
-    write(
-        &mut maps.specular,
-        slot_at(material, material.specular, u, v).map(shine),
-    );
+    let mut normal = slot_at(material, material.normal, u, v);
+    let mut specular = slot_at(material, material.specular, u, v).map(shine);
+    for (index, layer) in material.layers.iter().enumerate() {
+        let Some(surface) = slot_at(material, layer.surface, u, v) else {
+            continue;
+        };
+        let share = if layer.mask == PAINT_MASK {
+            paint[index.min(3)]
+        } else {
+            slot_at(material, Some(layer.mask), u, v).map_or(0, |mask| mask[0])
+        };
+        let mix = |old: u8, new: u8| {
+            let mixed =
+                u32::from(old) * (255 - u32::from(share)) + u32::from(new) * u32::from(share);
+            u8::try_from(mixed / 255).unwrap_or(u8::MAX)
+        };
+        let [old_x, old_y, old_z, old_a] = normal.unwrap_or(FLAT_NORMAL);
+        normal = Some([mix(old_x, surface[0]), mix(old_y, surface[1]), old_z, old_a]);
+        let [red, green, blue, gloss_now] = specular.unwrap_or([0; 4]);
+        let own = scaled(surface[3], 1.0 / MEGA_STRENGTH);
+        specular = Some([
+            mix(red, own),
+            mix(green, own),
+            mix(blue, own),
+            mix(gloss_now, scaled(255, gloss)),
+        ]);
+    }
+    write(&mut maps.normal, normal);
+    write(&mut maps.specular, specular);
     write(
         &mut maps.emissive,
         slot_at(material, material.emissive, u, v).map(lit),
     );
+}
+
+/// Whether a layer of `material` has bumps and shine of its own.
+fn own_surface(material: &Material) -> bool {
+    material.layers.iter().any(|layer| layer.surface.is_some())
 }
 
 /// The images a mega texture of these materials needs, empty to start.
@@ -153,8 +188,14 @@ fn empty_maps<'a>(materials: impl Iterator<Item = &'a Material> + Clone) -> Mega
         materials.clone().any(pick).then(|| color.repeat(texels))
     };
     MegaMaps {
-        normal: image(|material| material.normal.is_some(), FLAT_NORMAL),
-        specular: image(|material| material.specular.is_some(), [0; 4]),
+        normal: image(
+            |material| material.normal.is_some() || own_surface(material),
+            FLAT_NORMAL,
+        ),
+        specular: image(
+            |material| material.specular.is_some() || own_surface(material),
+            [0; 4],
+        ),
         emissive: image(|material| material.emissive.is_some(), [0; 4]),
     }
 }
@@ -316,7 +357,7 @@ pub(crate) fn bake_mega(
                 let to = ((at[1] + y) as usize * side + (at[0] + x) as usize) * 4;
                 rgba[to..to + 4].copy_from_slice(&color);
                 if let Some((u, v)) = share_of(texture, &face.axes, point) {
-                    write_maps(&mut maps, to, material, u, v);
+                    write_maps(&mut maps, to, material, (u, v), paint(point));
                 }
             }
         }

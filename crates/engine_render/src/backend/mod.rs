@@ -732,6 +732,10 @@ impl Backend {
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
                 image_binding(9, DescriptorType::UNIFORM_BUFFER),
+                image_binding(10, DescriptorType::SAMPLED_IMAGE),
+                image_binding(11, DescriptorType::SAMPLED_IMAGE),
+                image_binding(12, DescriptorType::SAMPLED_IMAGE),
+                image_binding(13, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_set_layout = DescriptorSetLayout::new(

@@ -10,7 +10,7 @@ struct MaterialParams {
     slots_a: vec4<i32>,
     // Slots of the tint, matcap, ramp and detail maps, or -1.
     slots_b: vec4<i32>,
-    // Each layer's base and mask slots.
+    // Each layer's base, mask and surface slots, the last -1 if it has none.
     layers: array<vec4<i32>, 3>,
     // xy scroll in repeats a second, zw flipbook columns and rows.
     motion: vec4<f32>,
@@ -63,6 +63,10 @@ fn shader_time() -> f32 {
 @group(1) @binding(7) var slot6: texture_2d<f32>;
 @group(1) @binding(8) var slot7: texture_2d<f32>;
 @group(1) @binding(9) var<uniform> material: MaterialParams;
+@group(1) @binding(10) var slot8: texture_2d<f32>;
+@group(1) @binding(11) var slot9: texture_2d<f32>;
+@group(1) @binding(12) var slot10: texture_2d<f32>;
+@group(1) @binding(13) var slot11: texture_2d<f32>;
 
 // One slot's texel, with derivatives worked out once up front, so that it can
 // be read inside branches.
@@ -75,6 +79,10 @@ fn read_slot(slot: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32
         case 5: { return textureSampleGrad(slot5, surface_sampler, uv, dx, dy); }
         case 6: { return textureSampleGrad(slot6, surface_sampler, uv, dx, dy); }
         case 7: { return textureSampleGrad(slot7, surface_sampler, uv, dx, dy); }
+        case 8: { return textureSampleGrad(slot8, surface_sampler, uv, dx, dy); }
+        case 9: { return textureSampleGrad(slot9, surface_sampler, uv, dx, dy); }
+        case 10: { return textureSampleGrad(slot10, surface_sampler, uv, dx, dy); }
+        case 11: { return textureSampleGrad(slot11, surface_sampler, uv, dx, dy); }
         default: { return textureSampleGrad(surface, surface_sampler, uv, dx, dy); }
     }
 }
@@ -348,6 +356,10 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     if height_slot >= 0 {
         below = read_slot(height_slot, uv, dx, dy).r;
     }
+    // What layers with bumps and shine of their own have put over the base, and how much of it.
+    var layer_bump = vec2<f32>(0.0);
+    var layer_shine = 0.0;
+    var layer_cover = 0.0;
     for (var index = 0; index < layers; index = index + 1) {
         let layer = material.layers[index];
         let color = read_slot(layer.x, uv, dx, dy);
@@ -358,6 +370,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         }
         let share = smoothstep(below - 0.1, below + 0.1, mask * 1.2 - 0.1);
         base = vec4<f32>(mix(base.rgb, color.rgb, share), base.a);
+        if layer.z >= 0 {
+            let own = read_slot(layer.z, uv, dx, dy);
+            layer_bump = mix(layer_bump, own.xy * 2.0 - vec2<f32>(1.0), share);
+            layer_shine = mix(layer_shine, own.w, share);
+            layer_cover = mix(layer_cover, 1.0, share);
+        }
     }
 
     if !PLAIN && !ground.painted && material.slots_b.w >= 0 {
@@ -373,16 +391,20 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     var normal = surface_at.normal;
     if ground.painted {
         normal = ground.normal;
-    } else if material.slots_a.x >= 0 {
+    } else if material.slots_a.x >= 0 || layer_cover > 0.0 {
         // Compiled normal maps hold two channels, and the third follows from them.
-        var coded_bump = vec4<f32>(0.0);
-        if (features & 2) != 0 {
-            // The bumps have to move with the picture they belong to.
-            coded_bump = read_hex(material.slots_a.x, uv, dx, dy);
-        } else {
-            coded_bump = read_slot(material.slots_a.x, uv, dx, dy);
+        var flat_bump = vec2<f32>(0.0);
+        if material.slots_a.x >= 0 {
+            var coded_bump = vec4<f32>(0.0);
+            if (features & 2) != 0 {
+                // The bumps have to move with the picture they belong to.
+                coded_bump = read_hex(material.slots_a.x, uv, dx, dy);
+            } else {
+                coded_bump = read_slot(material.slots_a.x, uv, dx, dy);
+            }
+            flat_bump = coded_bump.xy * 2.0 - vec2<f32>(1.0);
         }
-        let flat_bump = coded_bump.xy * 2.0 - vec2<f32>(1.0);
+        flat_bump = flat_bump * (1.0 - layer_cover) + layer_bump;
         let rise = sqrt(max(1.0 - dot(flat_bump, flat_bump), 0.0));
         let bump = vec3<f32>(flat_bump, rise);
         normal = normalize(
@@ -440,7 +462,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         shading = material.flags.x;
     }
     var baked = vec3<f32>(0.0);
-    if shading != 3 || material.slots_a.y >= 0 || described || ground.painted {
+    if shading != 3 || material.slots_a.y >= 0 || described || ground.painted || layer_cover > 0.0 {
         baked = light(in);
     }
     if shading != 3 {
@@ -478,8 +500,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
             let lit_shine = shine_at(in, normal, to_eye, ground.gloss, baked, baked_from, has_direction);
             color = color + vec3<f32>(ground.shine) * lit_shine;
         }
-    } else if material.slots_a.y >= 0 {
-        let specular = read_slot(material.slots_a.y, uv, dx, dy);
+    } else if material.slots_a.y >= 0 || layer_cover > 0.0 {
+        var specular = vec4<f32>(0.0);
+        if material.slots_a.y >= 0 {
+            specular = read_slot(material.slots_a.y, uv, dx, dy) * (1.0 - layer_cover);
+        }
+        specular = specular + vec4<f32>(vec3<f32>(layer_shine), layer_cover);
         let gloss = material.values.y * max(specular.a, 0.05);
         color = color + specular.rgb * shine_at(in, normal, to_eye, gloss, baked, baked_from, has_direction) * material.values.x;
     }

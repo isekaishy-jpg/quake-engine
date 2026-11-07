@@ -6,7 +6,7 @@ use crate::map::MipLevel;
 
 /// The most images a material can use, base colour included. Layers and extra
 /// maps share them, because each is at least one read per pixel.
-pub const MATERIAL_SLOTS: usize = 8;
+pub const MATERIAL_SLOTS: usize = 12;
 
 /// The most blended layers a material can have over its base.
 pub const MAX_LAYERS: usize = 3;
@@ -44,6 +44,9 @@ pub struct MaterialLayer {
     pub base: u8,
     /// The slot of the mask saying where it shows.
     pub mask: u8,
+    /// The slot of its own bumps, in red and green, and shine, in alpha, if it has them. Without
+    /// them, it keeps what's under it.
+    pub surface: Option<u8>,
 }
 
 /// The mask of a layer that reads the map's paint, not an image.

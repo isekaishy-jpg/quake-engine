@@ -146,7 +146,10 @@ fn slot_format(material: &Material, number: u8) -> Format {
         first,
         second,
     ];
-    let mask = material.layers.iter().any(|layer| layer.mask == number);
+    let mask = material
+        .layers
+        .iter()
+        .any(|layer| layer.mask == number || layer.surface == Some(number));
     if mask || data.contains(&Some(number)) {
         Format::R8G8B8A8_UNORM
     } else {
@@ -728,7 +731,7 @@ impl Backend {
 
         let sets = u32::try_from(map.textures.len() + 2).unwrap_or(u32::MAX);
         let material_count = map.textures.len();
-        let images = sets.saturating_mul(8);
+        let images = sets.saturating_mul(12);
         let pool = DescriptorPool::new(
             &self.device,
             sets,
@@ -885,11 +888,13 @@ impl Backend {
                     .collect();
                 uploaded.push(self.upload_image(&levels, slot_format(material, number))?);
             }
-            for binding in 0..7_u32 {
+            // The first seven follow the sampler, and the rest the uniforms.
+            for slot in 0..11_u32 {
                 let view = uploaded
-                    .get(binding as usize)
+                    .get(slot as usize)
                     .map_or(&blank.view, |image| &image.view);
-                set.write_sampled_image(binding + 2, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+                let binding = if slot < 7 { slot + 2 } else { slot + 3 };
+                set.write_sampled_image(binding, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
             }
             if let Some(params) = &mut material_params {
                 let offset = next_params * MATERIAL_PARAMS_STRIDE;

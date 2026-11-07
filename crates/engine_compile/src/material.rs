@@ -13,7 +13,7 @@ use engine_map::{
 
 use crate::convex::fit_convex;
 use crate::error::CompileError;
-use crate::land_pictures::packed_pictures;
+use crate::land_pictures::{SurfaceMaps, packed_pictures, surface_pixels};
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
 use crate::source::{WorkingMap, read_map};
 use crate::terrain::{read_terrain_data, write_terrain};
@@ -128,7 +128,8 @@ fn flatten_layers(material: &mut Material, mips: Vec<MipLevel>) -> Vec<MipLevel>
             slot_image(&material.slots, layer.base),
             slot_image(&material.slots, layer.mask),
         );
-        let (Some(color), Some(mask)) = images else {
+        // A layer with bumps and shine of its own has more than a colour to give, so it stays.
+        let (Some(color), Some(mask), None) = (images.0, images.1, layer.surface) else {
             kept.push(layer);
             continue;
         };
@@ -257,6 +258,11 @@ impl SlotFiller<'_, '_> {
     /// Takes a slot for `path`, reusing one already holding it.
     fn add(&mut self, path: &str) -> Result<u8, CompileError> {
         let image = self.library.image(path)?;
+        self.keep(image)
+    }
+
+    /// Takes a slot for `image`, reusing one already holding it.
+    fn keep(&mut self, image: SlotImage) -> Result<u8, CompileError> {
         let found = self
             .slots
             .iter()
@@ -274,6 +280,45 @@ impl SlotFiller<'_, '_> {
             )));
         }
         Ok(u8::try_from(index + 1).unwrap_or(u8::MAX))
+    }
+
+    /// The slot of a layer's own bumps and shine, if its block names any, at the size of the
+    /// colour in `base`.
+    fn layer_surface(&mut self, block: &Block, base: u8) -> Result<Option<u8>, CompileError> {
+        let wanted = ["normal", "specular", "height"]
+            .map(|key| block.get(key).and_then(Value::text).map(str::to_owned));
+        if wanted.iter().all(Option::is_none) {
+            return Ok(None);
+        }
+        let color = self
+            .slots
+            .get(usize::from(base).wrapping_sub(1))
+            .map(Arc::clone)
+            .ok_or_else(|| CompileError::Bad(format!("{}: a layer with no base", self.name)))?;
+        let [normal, specular, height] = wanted;
+        let read = |library: &mut MaterialLibrary<'_>, path: Option<String>| {
+            path.map(|path| library.image(&path)).transpose()
+        };
+        let normal = read(self.library, normal)?;
+        let specular = read(self.library, specular)?;
+        let height = read(self.library, height)?;
+        let top =
+            |image: &Option<SlotImage>| image.as_ref().and_then(|image| image.first().cloned());
+        let (normal, specular, height) = (top(&normal), top(&specular), top(&height));
+        let Some(first) = color.first() else {
+            return Ok(None);
+        };
+        let pixels = surface_pixels(
+            first,
+            SurfaceMaps {
+                normal: normal.as_ref(),
+                height: height.as_ref(),
+                specular: specular.as_ref(),
+                strength: number(block, "specular_strength", 1.0),
+            },
+        );
+        self.keep(Arc::new(mip_chain(first.width, first.height, pixels)))
+            .map(Some)
     }
 
     /// The slot of the image `key` names, if it names one.
@@ -610,7 +655,12 @@ impl<'a> MaterialLibrary<'a> {
                     "{name}: a layer needs a base and a mask"
                 )));
             };
-            material.layers.push(MaterialLayer { base, mask });
+            let surface = filler.layer_surface(layer, base)?;
+            material.layers.push(MaterialLayer {
+                base,
+                mask,
+                surface,
+            });
         }
         material.slots = filler.slots;
         let flatten = block.get("flatten").and_then(Value::flag) == Some(true);

@@ -50,6 +50,7 @@ pub fn material_params(material: &Material) -> [u8; MATERIAL_PARAMS_BYTES] {
     for (index, layer) in material.layers.iter().take(3).enumerate() {
         words[12 + index * 4] = i32::from(layer.base);
         words[13 + index * 4] = i32::from(layer.mask);
+        words[14 + index * 4] = slot(layer.surface);
     }
     for (chunk, word) in out.as_chunks_mut::<4>().0.iter_mut().zip(&words) {
         *chunk = word.to_le_bytes();

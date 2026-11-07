@@ -131,6 +131,9 @@ Terrain is painted from sets of ground, blended together, so each has to work be
 - **Height matters here.** Blends follow it, so stones stick out through dirt. Give true height, not brightness.
 - **Keep it plain.** Over a large area any feature that stands out shows as a pattern. Save those for decals and meshes.
 - **All sets in a family share a tone and a world size,** so that they blend.
+- **Eight to a sheet.** A sheet of land has up to eight layers, and a pixel reads only those it has. Each layer sets how wide its repeat is, so give sets sizes that don't line up with each other.
+- **A material's fine as it is.** Land uses a material's colour, normal, height and specular, at the size of the largest one a level paints with, up to 1024. With no height, its light and dark stand in, so give a true height where the blend matters.
+- **The layer of a material** can name its own `normal`, `specular` and `height`, as a surface does. Up to three of those on a material, each one read more where it's used.
 
 ## Flipbooks
 

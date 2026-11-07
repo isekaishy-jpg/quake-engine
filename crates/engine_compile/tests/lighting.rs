@@ -621,6 +621,7 @@ fn mega_texture() -> Texture {
             layers: vec![MaterialLayer {
                 base: 1,
                 mask: PAINT_MASK,
+                surface: None,
             }],
             ..Material::default()
         })),
@@ -746,6 +747,80 @@ fn a_mega_surface_keeps_its_other_maps() {
     assert_eq!(texel_of(material.specular), [100, 50, 0, 64], "scaled");
     assert_eq!(texel_of(material.emissive), [0, 20, 40, 255], "scaled");
     assert!((material.specular_strength - 4.0).abs() < f32::EPSILON);
+}
+
+/// What a layer brings of its own goes into the mega texture where it's painted, as its colour
+/// does.
+#[test]
+fn a_mega_surface_holds_a_layers_bumps_and_shine() {
+    let image = |color: [u8; 4]| {
+        Arc::new(vec![MipLevel {
+            width: 4,
+            height: 4,
+            rgba: color.repeat(16),
+            form: engine_map::PixelForm::Rgba,
+        }])
+    };
+    let mut texture = mega_texture();
+    texture.material = Some(Arc::new(Material {
+        mega: true,
+        slots: vec![image([0, 200, 0, 255]), image([40, 220, 128, 200])],
+        layers: vec![MaterialLayer {
+            base: 1,
+            mask: PAINT_MASK,
+            surface: Some(2),
+        }],
+        gloss: 64.0,
+        ..Material::default()
+    }));
+    let text = format!(
+        "{ROOM}\nentity lamp {{ type = light origin = 0 0 0 intensity = 500 }}\n\
+         paint {{ layer = 0 radius = 40 points = -256 0 -256 256 0 -256 }}\n"
+    );
+    let map = baked(&text, &[texture]);
+    let mega = map
+        .textures
+        .iter()
+        .find(|t| t.name == "*mega")
+        .expect("the image");
+    let material = mega.material.as_ref().expect("a material");
+    let face = map
+        .faces
+        .iter()
+        .find(|face| {
+            map.textures[face.texture as usize].name == "*mega"
+                && map
+                    .face_points(face)
+                    .iter()
+                    .all(|point| (point.z + 256.0).abs() < 1.0)
+        })
+        .expect("the floor");
+    let texel_of = |slot: Option<u8>, point: Vec3| {
+        let image = &material.slots[usize::from(slot.expect("a slot")) - 1][0];
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "texel coordinates are small and positive"
+        )]
+        let (s, t) = (
+            face.axes[0].project(point) as usize,
+            face.axes[1].project(point) as usize,
+        );
+        let at = (t * image.width as usize + s) * 4;
+        [image.rgba[at], image.rgba[at + 1], image.rgba[at + 2]]
+    };
+    let painted = Vec3::new(0.0, 0.0, -256.0);
+    let bare = Vec3::new(200.0, 200.0, -256.0);
+    let bump = texel_of(material.normal, painted);
+    assert!(bump[0] < 50 && bump[1] > 210, "the layer's: {bump:?}");
+    let flat = texel_of(material.normal, bare);
+    assert!(
+        flat[0].abs_diff(128) < 2,
+        "and none of it where it isn't: {flat:?}"
+    );
+    let shine = texel_of(material.specular, painted);
+    assert!(shine[0] > 40, "its shine, scaled: {shine:?}");
+    assert_eq!(texel_of(material.specular, bare)[0], 0);
 }
 
 /// Reading a bake puts mega surfaces and their light just where baking did.

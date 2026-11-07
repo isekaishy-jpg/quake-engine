@@ -37,28 +37,33 @@ fn side_of(texture: &Texture) -> u32 {
 
 /// `level` at `side` by `side`, wrapped at its edges, as it repeats.
 fn scaled(level: &MipLevel, side: u32) -> Vec<u8> {
-    if level.width == side && level.height == side {
+    scaled_to(level, side, side)
+}
+
+/// `level` at `across` by `down`, wrapped at its edges, as it repeats.
+fn scaled_to(level: &MipLevel, across: u32, down: u32) -> Vec<u8> {
+    if level.width == across && level.height == down {
         return level.rgba.clone();
     }
     let (width, height) = (level.width.max(1) as usize, level.height.max(1) as usize);
-    let side = side as usize;
-    let mut out = Vec::with_capacity(side * side * 4);
+    let (across, down) = (across as usize, down as usize);
+    let mut out = Vec::with_capacity(across * down * 4);
     #[expect(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
         reason = "picture sizes are small"
     )]
-    let place = |at: usize, of: usize| {
+    let place = |at: usize, side: usize, of: usize| {
         let spot = (at as f32 + 0.5) / side as f32 * of as f32 - 0.5;
         let low = spot.floor();
         let first = (low + of as f32) as usize % of;
         (first, (first + 1) % of, spot - low)
     };
-    for y in 0..side {
-        let (top, bottom, down) = place(y, height);
-        for x in 0..side {
-            let (left, right, across) = place(x, width);
+    for y in 0..down {
+        let (top, bottom, lower_share) = place(y, down, height);
+        for x in 0..across {
+            let (left, right, right_share) = place(x, across, width);
             for channel in 0..4 {
                 let read = |x: usize, y: usize| {
                     f32::from(
@@ -69,15 +74,15 @@ fn scaled(level: &MipLevel, side: u32) -> Vec<u8> {
                             .unwrap_or(0),
                     )
                 };
-                let upper = read(left, top) + (read(right, top) - read(left, top)) * across;
+                let upper = read(left, top) + (read(right, top) - read(left, top)) * right_share;
                 let lower =
-                    read(left, bottom) + (read(right, bottom) - read(left, bottom)) * across;
+                    read(left, bottom) + (read(right, bottom) - read(left, bottom)) * right_share;
                 #[expect(
                     clippy::cast_possible_truncation,
                     clippy::cast_sign_loss,
                     reason = "between two bytes"
                 )]
-                out.push((upper + (lower - upper) * down).round() as u8);
+                out.push((upper + (lower - upper) * lower_share).round() as u8);
             }
         }
     }
@@ -107,17 +112,32 @@ fn byte(value: f32) -> u8 {
     (value * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
-/// The surface of `texture`, whose colour at `side` is `color`: bumps across and down, how high it
-/// stands, and how much it shines. With no height, its own light and dark stand in, as they do on
-/// a material with layers. A material has its normal and specular in plain pixels here.
-fn surface_of(texture: &Texture, color: &[u8], side: u32) -> Vec<u8> {
-    let material = texture.material.as_ref();
-    let normal = slot_top(texture, material.and_then(|m| m.normal)).map(|top| scaled(top, side));
-    let height = slot_top(texture, material.and_then(|m| m.height)).map(|top| scaled(top, side));
-    let shine = slot_top(texture, material.and_then(|m| m.specular)).map(|top| scaled(top, side));
-    let strength = material.map_or(1.0, |m| m.specular_strength);
-    let mut out = Vec::with_capacity(color.len());
-    for (at, pixel) in color.as_chunks::<4>().0.iter().enumerate() {
+/// What a surface picture's made from, each in plain pixels.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct SurfaceMaps<'a> {
+    /// A normal map.
+    pub normal: Option<&'a MipLevel>,
+    /// A height map.
+    pub height: Option<&'a MipLevel>,
+    /// A specular map.
+    pub specular: Option<&'a MipLevel>,
+    /// What shine's multiplied by.
+    pub strength: f32,
+}
+
+/// A surface picture, the size of `color`: bumps across and down, how high it stands, and how much
+/// it shines. With no height, its own light and dark stand in, as they do on a material with
+/// layers.
+pub(crate) fn surface_pixels(color: &MipLevel, maps: SurfaceMaps<'_>) -> Vec<u8> {
+    let (width, height) = (color.width, color.height);
+    let at_size = |map: Option<&MipLevel>| map.map(|map| scaled_to(map, width, height));
+    let (normal, high, shine) = (
+        at_size(maps.normal),
+        at_size(maps.height),
+        at_size(maps.specular),
+    );
+    let mut out = Vec::with_capacity(color.rgba.len());
+    for (at, pixel) in color.rgba.as_chunks::<4>().0.iter().enumerate() {
         let of = |picture: &Option<Vec<u8>>| {
             picture
                 .as_ref()
@@ -125,11 +145,30 @@ fn surface_of(texture: &Texture, color: &[u8], side: u32) -> Vec<u8> {
                 .map(<[u8]>::to_vec)
         };
         let bump = of(&normal).map_or([128, 128], |pixel| [pixel[0], pixel[1]]);
-        let high = of(&height).map_or_else(|| byte(brightness(pixel).sqrt()), |pixel| pixel[0]);
-        let bright = of(&shine).map_or(0, |pixel| byte(brightness(&pixel) * strength));
-        out.extend([bump[0], bump[1], high, bright]);
+        let stands = of(&high).map_or_else(|| byte(brightness(pixel).sqrt()), |pixel| pixel[0]);
+        let bright = of(&shine).map_or(0, |pixel| byte(brightness(&pixel) * maps.strength));
+        out.extend([bump[0], bump[1], stands, bright]);
     }
     out
+}
+
+/// The surface of `texture`, whose colour at `side` is `color`. A material has its normal and
+/// specular in plain pixels here.
+fn surface_of(texture: &Texture, color: &[u8], side: u32) -> Vec<u8> {
+    let material = texture.material.as_ref();
+    let maps = SurfaceMaps {
+        normal: slot_top(texture, material.and_then(|m| m.normal)),
+        height: slot_top(texture, material.and_then(|m| m.height)),
+        specular: slot_top(texture, material.and_then(|m| m.specular)),
+        strength: material.map_or(1.0, |m| m.specular_strength),
+    };
+    let top = MipLevel {
+        width: side,
+        height: side,
+        rgba: color.to_vec(),
+        form: engine_map::PixelForm::Rgba,
+    };
+    surface_pixels(&top, maps)
 }
 
 /// `texture`, which is in plain pixels, as land has it at `side`.
