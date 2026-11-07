@@ -16,6 +16,7 @@ mod effects;
 mod error;
 mod geometry;
 mod gltf_import;
+mod gltf_skin;
 mod light;
 mod material;
 mod mega;

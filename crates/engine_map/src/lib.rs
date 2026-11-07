@@ -17,6 +17,7 @@ mod nav_chunks;
 mod occluder;
 mod pool;
 mod probes;
+mod skeleton;
 mod sky;
 mod sprite;
 mod stencil;
@@ -45,6 +46,10 @@ pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, c
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook, look_around};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
+pub use skeleton::{
+    Channel, ChannelPath, Clip, Interpolation, Joint, JointPose, NO_MOVE, Rows, Skeleton,
+    SkeletonPlace, after, moved, turned,
+};
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};

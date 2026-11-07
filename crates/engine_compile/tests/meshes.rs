@@ -762,3 +762,163 @@ fn something_turned_does_not_blow_up_a_real_level() {
     assert!(nodes < 10_000, "{nodes} nodes");
     assert!(clip < 50_000, "{clip} clip nodes");
 }
+
+/// An arm of three bones from Blender, that waves, with a place on its tip and a shape key.
+fn rigged() -> Mesh {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/data/rig_test.glb");
+    import_gltf(&path, "arm", 32.0).expect("imports").mesh
+}
+
+/// The tallest corner of `mesh` after `palette`, skinned as the engine does it.
+fn tallest_skinned(mesh: &Mesh, palette: &[engine_map::Rows]) -> engine_core::math::Vec3 {
+    let mut tallest = engine_core::math::Vec3::new(0.0, 0.0, f32::MIN);
+    let part = &mesh.parts[0];
+    for ((point, joints), weights) in part.points.iter().zip(&part.joints).zip(&part.weights) {
+        #[expect(clippy::cast_possible_truncation, reason = "meshes draw in f32")]
+        let corner =
+            engine_core::math::Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+        let mut skinned = engine_core::math::Vec3::ZERO;
+        for (joint, weight) in joints.iter().zip(weights) {
+            let moved = engine_map::moved(&palette[usize::from(*joint)], corner);
+            skinned = skinned + moved * (f32::from(*weight) / 255.0);
+        }
+        if skinned.z > tallest.z {
+            tallest = skinned;
+        }
+    }
+    tallest
+}
+
+#[test]
+fn a_skeleton_comes_in_from_blender() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("has one");
+    // The three bones, and the rig above them, which moves them as a joint does.
+    let names: Vec<&str> = skeleton
+        .joints
+        .iter()
+        .map(|joint| joint.name.as_str())
+        .collect();
+    assert_eq!(names, ["rig", "root", "middle", "end"]);
+    for (at, joint) in skeleton.joints.iter().enumerate() {
+        assert!(
+            joint.parent.is_none_or(|parent| usize::from(parent) < at),
+            "parents first"
+        );
+    }
+    assert_eq!(skeleton.clips.len(), 1);
+    assert!(
+        (skeleton.clips[0].length - 2.0).abs() < 0.02,
+        "{}",
+        skeleton.clips[0].length
+    );
+    assert!(skeleton.reach > 10.0, "{}", skeleton.reach);
+}
+
+#[test]
+fn each_corner_of_a_skin_comes_to_a_whole() {
+    let mesh = rigged();
+    let part = &mesh.parts[0];
+    assert_eq!(part.joints.len(), part.points.len());
+    for weights in &part.weights {
+        let total: u32 = weights.iter().copied().map(u32::from).sum();
+        assert_eq!(total, 255, "{weights:?}");
+    }
+}
+
+/// A skinned mesh at rest is where it was made, with no joint moving it, in our axes.
+#[test]
+fn at_rest_a_skinned_mesh_stands_as_it_was_made() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("has one");
+    let palette = skeleton.palette(&skeleton.placed(&skeleton.pose(None, 0.0)));
+    let tallest = tallest_skinned(&mesh, &palette);
+    // Three metres tall, at 32 units to the metre, and up is our Z.
+    assert!((tallest.z - 96.0).abs() < 0.5, "{tallest:?}");
+    // On its top ring, a third of a metre out.
+    assert!(
+        (tallest.x.hypot(tallest.y) - 11.2).abs() < 0.5,
+        "{tallest:?}"
+    );
+}
+
+/// It bends the way Blender does: about the bones' own X, in the clip's first third.
+#[test]
+fn a_clip_bends_a_skinned_mesh() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("has one");
+    let at = |seconds: f32| {
+        let placed = skeleton.placed(&skeleton.pose(Some(0), seconds));
+        tallest_skinned(&mesh, &skeleton.palette(&placed))
+    };
+    let still = at(0.0);
+    let bent = at(0.5);
+    assert!((still.z - 96.0).abs() < 0.5, "it starts upright: {still:?}");
+    assert!(bent.z < still.z - 5.0, "it's come down: {bent:?}");
+    assert!(bent.y.abs() > 5.0, "and over to one side: {bent:?}");
+    assert!(bent.x.abs() < 1.0, "and only to that side: {bent:?}");
+    let other = at(1.5);
+    assert!(
+        other.y * bent.y < 0.0,
+        "and later to the other: {other:?} after {bent:?}"
+    );
+}
+
+/// A place on a bone goes with it, and it comes in on that bone.
+#[test]
+fn a_place_on_a_bone_goes_with_it() {
+    let mesh = rigged();
+    let skeleton = mesh.skeleton.as_ref().expect("has one");
+    let place = skeleton
+        .places
+        .iter()
+        .find(|place| place.name == "tip")
+        .expect("there");
+    let end = skeleton
+        .joints
+        .iter()
+        .position(|joint| joint.name == "end")
+        .expect("there");
+    assert_eq!(place.joint.map(usize::from), Some(end));
+    let tip = |seconds: f32| {
+        let placed = skeleton.placed(&skeleton.pose(Some(0), seconds));
+        let rows = skeleton.place("tip", &placed).expect("there");
+        engine_map::moved(&rows, engine_core::math::Vec3::ZERO)
+    };
+    assert!(
+        (tip(0.5) - tip(0.0)).length() > 10.0,
+        "{:?} from {:?}",
+        tip(0.5),
+        tip(0.0)
+    );
+}
+
+#[test]
+fn a_skeleton_survives_a_file() {
+    let mesh = rigged();
+    let back = read_mesh(&document_of(&write_mesh(&mesh)).expect("reads")).expect("is a mesh");
+    assert_eq!(back.parts[0].joints, mesh.parts[0].joints);
+    assert_eq!(back.parts[0].weights, mesh.parts[0].weights);
+    let (kept, was) = (back.skeleton.expect("kept"), mesh.skeleton.expect("was"));
+    assert_eq!(kept.joints.len(), was.joints.len());
+    assert_eq!(kept.joints[2].parent, was.joints[2].parent);
+    assert_eq!(kept.clips[0].channels.len(), was.clips[0].channels.len());
+    assert_eq!(
+        kept.clips[0].channels[1].path,
+        was.clips[0].channels[1].path
+    );
+    assert_eq!(kept.places.len(), was.places.len());
+    let (pose, rest) = (kept.pose(Some(0), 0.5), was.pose(Some(0), 0.5));
+    for (a, b) in pose.iter().zip(&rest) {
+        for (a, b) in a.rotation.iter().zip(&b.rotation) {
+            assert!((a - b).abs() < 0.0001);
+        }
+    }
+}
+
+/// A skin that names a joint the file doesn't have is refused, not drawn with garbage.
+#[test]
+fn a_skin_with_no_such_joint_is_refused() {
+    let text = "format 1 mesh\npart { material = a points = [0 0 0] uvs = [0 0] triangles = [] joints = [3 0 0 0] weights = [255 0 0 0] }\n";
+    assert!(read_mesh(&from_text(text).expect("reads")).is_err());
+}

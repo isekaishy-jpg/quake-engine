@@ -6,12 +6,14 @@ use std::fmt::Write;
 use std::path::Path;
 
 use engine_format::{Block, Document, Value, to_binary};
+use engine_map::{ChannelPath, Interpolation, Skeleton, SkeletonPlace};
 use gltf::image::{Data, Format};
 
 use crate::convex::fit_convex;
 use crate::derive::encode_png;
 use crate::error::CompileError;
 use crate::geometry::{Point, dot, normalized};
+use crate::gltf_skin::{ImportedSkeleton, reach_of, read_skeleton};
 use crate::mesh::{Mesh, MeshAttach, MeshPart};
 
 /// What a model comes to, in the engine's own files.
@@ -129,6 +131,11 @@ struct Importer<'a> {
     done: HashMap<Option<usize>, String>,
     /// Pictures written so far, by what they hold.
     written: HashMap<(usize, &'static str), String>,
+    /// Its skeleton, if it has skins.
+    skeleton: Option<ImportedSkeleton>,
+    /// What a skinned mesh is placed by: only the scale, as a skinned mesh's own node is ignored
+    /// and its joints say where it is.
+    unmoved: Matrix,
 }
 
 /// How a picture is changed on its way in.
@@ -275,6 +282,7 @@ impl Importer<'_> {
         buffers: &[gltf::buffer::Data],
         matrix: &Matrix,
         part_name: &str,
+        skin: Option<usize>,
     ) -> Result<(), CompileError> {
         if primitive.mode() != gltf::mesh::Mode::Triangles {
             return Ok(());
@@ -301,6 +309,31 @@ impl Importer<'_> {
         );
         let triangles: Vec<[u32; 3]> = corners.as_chunks::<3>().0.to_vec();
         let material = self.material(&primitive.material())?;
+        let (mut joints, mut weights) = (Vec::new(), Vec::new());
+        if let (Some(skin), Some(skeleton)) = (skin, &self.skeleton) {
+            // A corner can have more than one set of four. They're read together, and only
+            // the strongest four are kept.
+            let mut moves: Vec<Vec<(usize, f32)>> = vec![Vec::new(); points.len()];
+            for set in 0.. {
+                let (Some(carried), Some(shares)) =
+                    (reader.read_joints(set), reader.read_weights(set))
+                else {
+                    break;
+                };
+                for ((corner, carried), shares) in moves
+                    .iter_mut()
+                    .zip(carried.into_u16())
+                    .zip(shares.into_f32())
+                {
+                    corner.extend(carried.map(usize::from).into_iter().zip(shares));
+                }
+            }
+            for corner in &moves {
+                let (corner_joints, corner_weights) = skeleton.weights_of(skin, corner);
+                joints.push(corner_joints);
+                weights.push(corner_weights);
+            }
+        }
         self.model.mesh.parts.push(MeshPart {
             name: part_name.to_owned(),
             material,
@@ -309,6 +342,8 @@ impl Importer<'_> {
             uvs,
             triangles,
             levels: Vec::new(),
+            joints,
+            weights,
         });
         Ok(())
     }
@@ -347,8 +382,11 @@ impl Importer<'_> {
         }
         if let Some(mesh) = node.mesh() {
             let name = node.name().or(mesh.name()).map_or_else(String::new, slug);
+            let skin = node.skin().map(|skin| skin.index());
+            let unmoved = self.unmoved;
+            let placed = if skin.is_some() { &unmoved } else { &matrix };
             for primitive in mesh.primitives() {
-                self.primitive(&primitive, buffers, &matrix, &name)?;
+                self.primitive(&primitive, buffers, placed, &name, skin)?;
             }
         }
         for child in node.children() {
@@ -406,6 +444,8 @@ fn fold_levels(mesh: &mut Mesh) {
         target.points.append(&mut part.points);
         target.uvs.append(&mut part.uvs);
         target.normals.append(&mut part.normals);
+        target.joints.append(&mut part.joints);
+        target.weights.append(&mut part.weights);
         // A level skipped in the file is the one before it.
         while target.levels.len() + 1 < level {
             let last = target.levels.last().unwrap_or(&target.triangles).clone();
@@ -429,19 +469,21 @@ fn fold_levels(mesh: &mut Mesh) {
 pub fn import_gltf(path: &Path, name: &str, scale: f64) -> Result<ImportedModel, CompileError> {
     let bad = |error: gltf::Error| CompileError::Bad(format!("{}: {error}", path.display()));
     let (document, buffers, images) = gltf::import(path).map_err(bad)?;
-    let mut importer = Importer {
-        name,
-        images: &images,
-        model: ImportedModel::default(),
-        done: HashMap::new(),
-        written: HashMap::new(),
-    };
     let root = [
         [scale, 0.0, 0.0, 0.0],
         [0.0, scale, 0.0, 0.0],
         [0.0, 0.0, scale, 0.0],
         [0.0, 0.0, 0.0, 1.0],
     ];
+    let mut importer = Importer {
+        name,
+        images: &images,
+        model: ImportedModel::default(),
+        done: HashMap::new(),
+        written: HashMap::new(),
+        skeleton: read_skeleton(&document, &buffers, scale)?,
+        unmoved: root,
+    };
     let scene = document.default_scene().or(document.scenes().next());
     let Some(scene) = scene else {
         return Err(CompileError::Bad(format!("{name}: it has no scene")));
@@ -453,8 +495,107 @@ pub fn import_gltf(path: &Path, name: &str, scale: f64) -> Result<ImportedModel,
         return Err(CompileError::Bad(format!("{name}: nothing in it draws")));
     }
     fold_levels(&mut importer.model.mesh);
+    if let Some(imported) = importer.skeleton.take() {
+        let mesh = &mut importer.model.mesh;
+        let mut skeleton = imported.skeleton;
+        skeleton.reach = reach_of(mesh, &skeleton);
+        // A place on no joint goes with the whole.
+        for point in &mesh.attach {
+            if !skeleton.places.iter().any(|place| place.name == point.name) {
+                skeleton.places.push(place_of(point));
+            }
+        }
+        mesh.skeleton = Some(skeleton);
+    }
     importer.model.mesh.convex = fit_convex(&importer.model.mesh);
     Ok(importer.model)
+}
+
+/// A place on a model as a skeleton keeps it, on no joint.
+fn place_of(point: &MeshAttach) -> SkeletonPlace {
+    let left = point.left;
+    let forward = point.forward;
+    let up = [
+        forward[1] * left[2] - forward[2] * left[1],
+        forward[2] * left[0] - forward[0] * left[2],
+        forward[0] * left[1] - forward[1] * left[0],
+    ];
+    #[expect(clippy::cast_possible_truncation, reason = "joints store f32")]
+    let row = |at: usize| [forward[at], left[at], up[at], point.origin[at]].map(|part| part as f32);
+    SkeletonPlace {
+        name: point.name.clone(),
+        joint: None,
+        offset: [row(0), row(1), row(2)],
+    }
+}
+
+/// Numbers as a value.
+fn numbers(values: impl Iterator<Item = f32>) -> Value {
+    Value::List(
+        values
+            .map(|value| Value::Number(f64::from(value)))
+            .collect(),
+    )
+}
+
+/// A joint's number as a file keeps it, where -1 is none.
+fn joint_number(joint: Option<u16>) -> Value {
+    Value::Number(joint.map_or(-1.0, f64::from))
+}
+
+/// Adds `skeleton` to `document`.
+fn write_skeleton(document: &mut Document, skeleton: &Skeleton) {
+    let mut settings = Block::new("skeleton");
+    settings.set("reach", Value::Number(f64::from(skeleton.reach)));
+    document.blocks.push(settings);
+    for joint in &skeleton.joints {
+        let mut block = Block::new("joint");
+        block.name = Some(joint.name.clone());
+        block.set("parent", joint_number(joint.parent));
+        block.set(
+            "translation",
+            numbers(joint.rest.translation.iter().copied()),
+        );
+        block.set("rotation", numbers(joint.rest.rotation.iter().copied()));
+        block.set("scale", numbers(joint.rest.scale.iter().copied()));
+        block.set(
+            "inverse_bind",
+            numbers(joint.inverse_bind.iter().flatten().copied()),
+        );
+        document.blocks.push(block);
+    }
+    for clip in &skeleton.clips {
+        let mut block = Block::new("clip");
+        block.name = Some(clip.name.clone());
+        block.set("length", Value::Number(f64::from(clip.length)));
+        for channel in &clip.channels {
+            let mut child = Block::new("channel");
+            child.set("joint", Value::Number(f64::from(channel.joint)));
+            let path = match channel.path {
+                ChannelPath::Translation => "translation",
+                ChannelPath::Rotation => "rotation",
+                ChannelPath::Scale => "scale",
+            };
+            child.set("path", Value::Text(path.to_owned()));
+            let between = match channel.interpolation {
+                Interpolation::Step => "step",
+                Interpolation::Linear => "linear",
+                Interpolation::Cubic => "cubic",
+            };
+            child.set("between", Value::Text(between.to_owned()));
+            child.set("times", numbers(channel.times.iter().copied()));
+            child.set("values", numbers(channel.values.iter().copied()));
+            block.children.push(child);
+        }
+        document.blocks.push(block);
+    }
+    for place in &skeleton.places {
+        let mut block = Block::new("place");
+        block.name = Some(place.name.clone());
+        block.set("joint", joint_number(place.joint));
+        block.set("offset", numbers(place.offset.iter().flatten().copied()));
+        document.blocks.push(block);
+    }
 }
 
 /// `mesh` as a binary document.
@@ -474,11 +615,27 @@ pub fn write_mesh(mesh: &Mesh) -> Vec<u8> {
         }
         let corners = part.triangles.iter().flatten().map(|c| f64::from(*c));
         block.set("triangles", flat(&mut corners.into_iter()));
+        if !part.joints.is_empty() {
+            let bytes = |groups: &[[u8; 4]]| {
+                Value::List(
+                    groups
+                        .iter()
+                        .flatten()
+                        .map(|byte| Value::Number(f64::from(*byte)))
+                        .collect(),
+                )
+            };
+            block.set("joints", bytes(&part.joints));
+            block.set("weights", bytes(&part.weights));
+        }
         for (level, triangles) in (1_usize..).zip(&part.levels) {
             let corners = triangles.iter().flatten().map(|c| f64::from(*c));
             block.set(&format!("level_{level}"), flat(&mut corners.into_iter()));
         }
         document.blocks.push(block);
+    }
+    if let Some(skeleton) = &mesh.skeleton {
+        write_skeleton(&mut document, skeleton);
     }
     for point in &mesh.attach {
         let mut block = Block::new("attach");

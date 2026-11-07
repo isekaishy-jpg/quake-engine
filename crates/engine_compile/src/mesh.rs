@@ -6,7 +6,10 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, to_text};
-use engine_map::{AttachPoint, Contents, MeshCorner, OccluderSphere, SharedMesh, SharedPart};
+use engine_map::{
+    AttachPoint, Channel, ChannelPath, Clip, Contents, Interpolation, Joint, JointPose, MeshCorner,
+    NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedPart, Skeleton, SkeletonPlace,
+};
 
 use crate::build::packed_normal;
 
@@ -33,6 +36,10 @@ pub struct MeshPart {
     pub triangles: Vec<[u32; 3]>,
     /// Its triangles at each coarser level of detail, on the same corners.
     pub levels: Vec<Vec<[u32; 3]>>,
+    /// The joints that carry each corner, if it has a skin.
+    pub joints: Vec<[u8; 4]>,
+    /// How much of each corner goes with each of those, out of 255.
+    pub weights: Vec<[u8; 4]>,
 }
 
 impl MeshPart {
@@ -93,6 +100,8 @@ pub struct Mesh {
     pub level_sizes: Vec<f32>,
     /// Its named places.
     pub attach: Vec<MeshAttach>,
+    /// Its joints and clips, if it moves.
+    pub skeleton: Option<Skeleton>,
     /// Boxes for collision, as low and high corners, if an author chose them.
     pub hulls: Vec<[f64; 6]>,
     /// Convex pieces that fit it, for collision where no boxes were chosen. With
@@ -198,6 +207,23 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
                 "a mesh's normals aren't one for each corner".to_owned(),
             ));
         }
+        let bytes = |key: &str| -> Vec<[u8; 4]> {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "these were bytes going in"
+            )]
+            groups::<4>(block, key)
+                .iter()
+                .map(|group| group.map(|part| part as u8))
+                .collect()
+        };
+        let (joints, weights) = (bytes("joints"), bytes("weights"));
+        if !joints.is_empty() && (joints.len() != points.len() || weights.len() != points.len()) {
+            return Err(CompileError::Bad(
+                "a mesh's skin isn't one for each corner".to_owned(),
+            ));
+        }
         mesh.parts.push(MeshPart {
             name: block.name.clone().unwrap_or_default(),
             material: block
@@ -210,7 +236,24 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
             normals,
             triangles,
             levels,
+            joints,
+            weights,
         });
+    }
+    mesh.skeleton = read_skeleton_of(document);
+    let last_joint = mesh
+        .parts
+        .iter()
+        .flat_map(|part| part.joints.iter().flatten())
+        .max();
+    let joint_count = mesh
+        .skeleton
+        .as_ref()
+        .map_or(0, |skeleton| skeleton.joints.len());
+    if last_joint.is_some_and(|joint| usize::from(*joint) >= joint_count) {
+        return Err(CompileError::Bad(
+            "a mesh's skin has no such joint".to_owned(),
+        ));
     }
     for block in document.blocks_of("attach") {
         let triple =
@@ -239,6 +282,107 @@ pub fn read_mesh(document: &Document) -> Result<Mesh, CompileError> {
         mesh.convex.push(piece.collect());
     }
     Ok(mesh)
+}
+
+/// Numbers as a `[f32]`, as a file keeps them.
+#[expect(clippy::cast_possible_truncation, reason = "joints store f32")]
+fn floats(block: &Block, key: &str) -> Vec<f32> {
+    let numbers = block.get(key).and_then(Value::numbers).unwrap_or_default();
+    numbers.iter().map(|number| *number as f32).collect()
+}
+
+/// Rows from twelve numbers, or what moves nothing.
+fn rows_from(numbers: &[f32]) -> Rows {
+    let mut rows = NO_MOVE;
+    for (slot, number) in rows.iter_mut().flatten().zip(numbers) {
+        *slot = *number;
+    }
+    rows
+}
+
+/// A joint's number from a file, where -1 is none.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a joint's number"
+)]
+fn joint_at(block: &Block, key: &str) -> Option<u16> {
+    let number = block.get(key).and_then(Value::number)?;
+    (number >= 0.0).then_some(number as u16)
+}
+
+/// The skeleton in `document`, if it has one.
+fn read_skeleton_of(document: &Document) -> Option<Skeleton> {
+    let settings = document.blocks_of("skeleton").next()?;
+    #[expect(clippy::cast_possible_truncation, reason = "joints store f32")]
+    let reach = settings.get("reach").and_then(Value::number).unwrap_or(0.0) as f32;
+    let three = |numbers: Vec<f32>, fallback: [f32; 3]| {
+        numbers
+            .get(..3)
+            .map_or(fallback, |part| [part[0], part[1], part[2]])
+    };
+    let joints = document
+        .blocks_of("joint")
+        .map(|block| {
+            let turn = floats(block, "rotation");
+            Joint {
+                name: block.name.clone().unwrap_or_default(),
+                parent: joint_at(block, "parent"),
+                rest: JointPose {
+                    translation: three(floats(block, "translation"), [0.0; 3]),
+                    rotation: turn.get(..4).map_or([0.0, 0.0, 0.0, 1.0], |part| {
+                        [part[0], part[1], part[2], part[3]]
+                    }),
+                    scale: three(floats(block, "scale"), [1.0; 3]),
+                },
+                inverse_bind: rows_from(&floats(block, "inverse_bind")),
+            }
+        })
+        .collect();
+    let clips = document
+        .blocks_of("clip")
+        .map(|block| {
+            #[expect(clippy::cast_possible_truncation, reason = "clips store f32")]
+            let length = block.get("length").and_then(Value::number).unwrap_or(0.0) as f32;
+            let channels = block
+                .children_of("channel")
+                .map(|channel| Channel {
+                    joint: joint_at(channel, "joint").unwrap_or(u16::MAX),
+                    path: match channel.get("path").and_then(Value::text) {
+                        Some("rotation") => ChannelPath::Rotation,
+                        Some("scale") => ChannelPath::Scale,
+                        _ => ChannelPath::Translation,
+                    },
+                    interpolation: match channel.get("between").and_then(Value::text) {
+                        Some("step") => Interpolation::Step,
+                        Some("cubic") => Interpolation::Cubic,
+                        _ => Interpolation::Linear,
+                    },
+                    times: floats(channel, "times"),
+                    values: floats(channel, "values"),
+                })
+                .collect();
+            Clip {
+                name: block.name.clone().unwrap_or_default(),
+                length,
+                channels,
+            }
+        })
+        .collect();
+    let places = document
+        .blocks_of("place")
+        .map(|block| SkeletonPlace {
+            name: block.name.clone().unwrap_or_default(),
+            joint: joint_at(block, "joint"),
+            offset: rows_from(&floats(block, "offset")),
+        })
+        .collect();
+    Some(Skeleton {
+        joints,
+        clips,
+        places,
+        reach,
+    })
 }
 
 /// The low and high corners of `points`.
