@@ -22,9 +22,10 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 10. Effects | 78 to 97, 16, 9 |
 | 11. Fog and water | 70 to 76, 17, 98 to 102 |
 | 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168 |
+| 12b. Land that's whole | 171, then 169 and 170 in the tools, and the editor's part of them in stage 15 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
-| 15. The editor | 155 to 162, 169, 170, 39 to 42, 44 to 55, 61, 15 |
+| 15. The editor | 155 to 162, 39 to 42, 44 to 55, 61, 15 |
 | 16. Doors | 151 |
 | 17. Artifacts and the test map | 133 to 148, 124 finished, 18, 19, 20, 21 |
 | 18. Review | 152, then circular quality and bug rounds, and a performance sweep |
@@ -112,6 +113,7 @@ Likely a heightfield and an inverse heightfield, as many games have. Real maps a
 | 132 | Better tiling over big areas. Today a texture is just spread over them. Research the ways: variation at large scale, breaking up the repeat, and mixing sizes | |
 
 | 169 | Caves, overhangs and bridges in one step, in the tools and the editor. Inverse land and holes are in, and each can be made and walked today, but by hand: sheets are added one at a time, their holes cut to match, and nothing lines their edges up. Say where and how big, and the sheets, thickness, matching holes and edges come out right | 126, 127 |
+| 171 | Land that folds back on itself, so that a cliff can lean out and a cave can be sculpted, as one surface. Sheets can't, and today what folds has to be a mesh, which the human says is a real issue. Research the ways: heights that can also push sideways, a volume made into a surface when a level's built, or sculpting meshes. Each has to work with collision, the bake, paths, painting, water and the tools. Decide this first, as it changes what items 169 and 170 are | 126 |
 | 170 | Better edges on holes. A hole is a whole cell, so its edge steps, and today a mesh has to hide that. Research the ways, for the common cases at least | 126 |
 
 `test/docs/terrain.md` and `test/src/render.rs` are an older experiment in heightfields, painted layers and water on mesh terrain. They give an idea, and aren't to copy.
@@ -359,7 +361,7 @@ The human's direction, 2026-11-06: item 18's floor plan went the wrong way. This
 | 41 | Sky tab: choose or make sky scripts, sky spheres and horizons | |
 | 42 | Good default skies with variance | Authoring, later |
 | 43 | Mesh terrain, which the engine doesn't have yet. See items 125 to 130 | Mesh support |
-| 44 | Terrain tab, with proper support for all of what land can do. Today the editor can shape, cut holes, fill them, paint and flood, and works on a sheet facing down, but it can't make a sheet or add one, or say which way it faces or how thick it is. Those are only in the tools. It has to do those, and items 169 and 170 | 43, 169, 170 |
+| 44 | Terrain tab, with proper support for all of what land can do. Today the editor can shape, cut holes, fill them, paint and flood, and works on a sheet facing down, but it can't make a sheet or add one, or say which way it faces or how thick it is. Those are only in the tools. It has to do those, and items 169 to 171 | 43, 169 to 171 |
 | 45 | A real circle on terrain and geometry, as the brush for sculpting and for painting textures, with our layers and alpha blending. A must have | |
 | 46 | Prefabs tab, with two sets: primitives and meshes | Mesh support, for the meshes |
 | 47 | Primitives that snap together: a ramp with walls, dressing and moulding, rooms, blockouts and basic items | |
