@@ -61,4 +61,14 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 
 ## Review
 
+### Drawing (78 to 85)
+
+- **Tried in the game:** smoke from a sheet of frames, with flame and sparks, in a room with a wall behind them. The smoke looks like smoke, and fades into the wall.
+- **Particles have a module of their own,** `particle.wgsl`, and sprites stay where they were.
+- **No groups by shader.** The proposal had groups in order of their nearest. Sorting everything by distance and drawing each run of one shader is simpler, and it's right, at the cost of a draw for each run.
+- **What's behind glass** is found by a line from the eye to each particle, against the bounds of the nearest 64 see-through faces. That's right for what's flat and square to the world, which most glass is. Those go in ahead of what's see-through, in a pass of their own, and the scene's pass carries on after them. It costs nothing when there's no such particle.
+- **Lit particles** take the probes' brightness, by a sum on the CPU for each one.
+- **Graphs** gained `particle`, with `tinted` and `life`. `vendor/vulkane` gained `premultiplied_blending`, as its other blends are engine extensions.
+- **Every test here was seen failing** with its bug put back, fourteen in all.
+
 Filled in as each part lands.

@@ -36,7 +36,7 @@ fn side_of(texture: &Texture) -> u32 {
 }
 
 /// `level` at `side` by `side`, wrapped at its edges, as it repeats.
-fn scaled(level: &MipLevel, side: u32) -> Vec<u8> {
+pub(crate) fn scaled(level: &MipLevel, side: u32) -> Vec<u8> {
     scaled_to(level, side, side)
 }
 

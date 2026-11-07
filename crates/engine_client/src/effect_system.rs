@@ -32,6 +32,20 @@ pub struct EffectDraw {
     pub kind: ParticleKind,
     /// Whether it adds to what's behind it.
     pub adds: bool,
+    /// How it's turned, in radians.
+    pub rotation: f32,
+    /// How far it fades into what's behind it.
+    pub soft: f32,
+    /// Its picture, plus one, or 0 for a soft dot.
+    pub picture: u32,
+    /// Which frame of a sheet it's on, and how far to the next.
+    pub frame: f32,
+    /// The columns and rows of that sheet.
+    pub sheet: [u32; 2],
+    /// How far through its life it is.
+    pub life: f32,
+    /// The shader it has of its own, plus one, or 0 for none.
+    pub shader: u32,
 }
 
 /// A light from an effect.
@@ -76,6 +90,10 @@ pub struct GpuEmitter {
     pub adds: bool,
     /// How far they start from it.
     pub radius: f32,
+    /// Their picture, plus one, or 0 for a soft dot.
+    pub picture: u32,
+    /// How far they fade into what's behind them.
+    pub soft: f32,
 }
 
 /// One particle.
@@ -97,6 +115,10 @@ struct Live {
     trail: Vec<Vec3>,
     /// Whether it's a flat mark that has landed, facing this way.
     facing: Vec3,
+    /// How it's turned, in radians.
+    rotation: f32,
+    /// How fast it turns, in radians a second.
+    spin: f32,
 }
 
 /// An effect that's going.
@@ -263,10 +285,13 @@ impl EffectSystem {
             emitter.spread,
             emitter.kind,
         );
+        let (rotation, spin) = (emitter.rotation, emitter.spin);
         let start = origin + self.shape_offset(shape);
         let heading = self.heading(direction, spread);
         let speed = self.between(speed);
         let life = self.between(life);
+        let rotation = self.between(rotation).to_radians();
+        let spin = self.between(spin).to_radians();
         self.live.push(Live {
             effect: Arc::clone(effect),
             emitter: number,
@@ -280,6 +305,8 @@ impl EffectSystem {
                 Vec::new()
             },
             facing: Vec3::new(0.0, 0.0, 1.0),
+            rotation,
+            spin,
         });
     }
 
@@ -350,6 +377,7 @@ impl EffectSystem {
                 particle.velocity = particle.velocity + push * (emitter.turbulence * seconds * 8.0);
             }
             particle.origin = particle.origin + particle.velocity * seconds;
+            particle.rotation += particle.spin * seconds;
             if emitter.kind == ParticleKind::Ribbon {
                 particle.trail.push(particle.origin);
                 if particle.trail.len() > RIBBON_POINTS {
@@ -403,9 +431,10 @@ impl EffectSystem {
         }
     }
 
-    /// What's to be drawn of the particles, and the lights among them.
+    /// What's to be drawn of the particles, and the lights among them. `light` says how bright it
+    /// is at a place, for those that take light from the level.
     #[must_use]
-    pub fn draws(&self) -> (Vec<EffectDraw>, Vec<EffectLight>) {
+    pub fn draws(&self, light: &dyn Fn(Vec3) -> [f32; 3]) -> (Vec<EffectDraw>, Vec<EffectLight>) {
         let mut draws = Vec::with_capacity(self.live.len());
         let mut lights = Vec::new();
         for particle in &self.live {
@@ -413,9 +442,30 @@ impl EffectSystem {
                 continue;
             };
             let at = particle.age / particle.life;
-            let color = emitter.color.at(at);
+            let mut color = emitter.color.at(at);
+            if emitter.lit {
+                let here = light(particle.origin);
+                for (part, light) in color.iter_mut().zip(here) {
+                    *part *= light;
+                }
+            }
             let size = emitter.size.at(at);
             let adds = emitter.blend == engine_map::ParticleBlend::Add;
+            let look = EffectDraw {
+                origin: particle.origin,
+                end: particle.origin,
+                color,
+                size,
+                kind: emitter.kind,
+                adds,
+                rotation: particle.rotation,
+                soft: emitter.soft,
+                picture: emitter.picture,
+                frame: frame_of(emitter, particle.age, at),
+                sheet: emitter.flipbook,
+                life: at,
+                shader: emitter.shader_number,
+            };
             match emitter.kind {
                 ParticleKind::Light => lights.push(EffectLight {
                     origin: particle.origin,
@@ -427,37 +477,29 @@ impl EffectSystem {
                         draws.push(EffectDraw {
                             origin: pair[0],
                             end: pair[1],
-                            color,
-                            size,
-                            kind: ParticleKind::Ribbon,
-                            adds,
+                            ..look
                         });
                     }
                 }
                 ParticleKind::Beam => draws.push(EffectDraw {
-                    origin: particle.origin,
                     end: particle.origin + emitter.direction.normalized() * emitter.reach,
-                    color,
-                    size,
-                    kind: ParticleKind::Beam,
-                    adds,
+                    ..look
                 }),
                 ParticleKind::Decal => draws.push(EffectDraw {
-                    origin: particle.origin,
                     end: particle.facing,
-                    color,
-                    size,
-                    kind: ParticleKind::Decal,
-                    adds,
+                    ..look
                 }),
-                ParticleKind::Sprite => draws.push(EffectDraw {
-                    origin: particle.origin,
-                    end: particle.origin,
-                    color,
-                    size,
-                    kind: ParticleKind::Sprite,
-                    adds,
-                }),
+                ParticleKind::Sprite if emitter.stretch > 0.0 => {
+                    // Drawn out along how it's moving, as a line through where it is.
+                    let along = particle.velocity * (emitter.stretch * 0.5);
+                    draws.push(EffectDraw {
+                        origin: particle.origin - along,
+                        end: particle.origin + along,
+                        kind: ParticleKind::Ribbon,
+                        ..look
+                    });
+                }
+                ParticleKind::Sprite => draws.push(look),
             }
         }
         (draws, lights)
@@ -500,10 +542,26 @@ impl EffectSystem {
                     end_color: emitter.color.at(1.0),
                     adds: emitter.blend == engine_map::ParticleBlend::Add,
                     radius,
+                    picture: emitter.picture,
+                    soft: emitter.soft,
                 });
             }
         }
         out
+    }
+}
+
+/// Which frame of its sheet a particle of `emitter` is on, `age` seconds in, and `share` of the way
+/// through its life.
+fn frame_of(emitter: &ParticleEmitter, age: f32, share: f32) -> f32 {
+    let [across, down] = emitter.flipbook;
+    #[expect(clippy::cast_precision_loss, reason = "a sheet has few frames")]
+    let frames = (across * down).max(1) as f32;
+    if emitter.flip_rate > 0.0 {
+        (age * emitter.flip_rate) % frames
+    } else {
+        // Over its life, ending on its last frame, with nothing past it to mix with.
+        (share * (frames - 1.0)).clamp(0.0, frames - 1.0)
     }
 }
 

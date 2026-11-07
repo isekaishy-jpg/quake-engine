@@ -4,19 +4,19 @@ use std::cell::Cell;
 
 use engine_core::math::Vec3;
 use engine_map::{Map, Shading, SharedPart};
-use vulkane::safe::{GraphicsPipeline, ShaderStageFlags};
+use vulkane::safe::{DescriptorSet, GraphicsPipeline, ShaderStageFlags};
 
 use super::clock::{GpuClock, Span};
 use super::deform::{MovingJob, bind_figure, bind_moving};
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuMesh, GpuSprite,
-    INDEX_TYPE_U32, Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene, SurfacePipelines,
+    INDEX_TYPE_U32, Layouts, MODEL_OFFSET_SIZE, ParticlePipelines, Pipelines, Scene,
+    SurfacePipelines,
 };
 use crate::instances::InstanceBatch;
 use crate::renderer::View;
 use crate::sprite::{
-    MAX_GPU_PARTICLE_DRAWS, MAX_PARTICLE_DRAWS, ViewAxes, gpu_particle_bytes, sprite_axes,
-    sprite_push_bytes,
+    MAX_GPU_PARTICLE_DRAWS, ViewAxes, gpu_particle_bytes, sprite_axes, sprite_push_bytes,
 };
 use crate::world::{Batch, BatchKind, batch_kind};
 
@@ -35,6 +35,10 @@ pub(super) struct Recorder<'a> {
     sprites: &'a [GpuSprite],
     /// The particles to draw.
     particles: &'a GpuBuffer,
+    /// What draws particles with no shader of their own.
+    default_particles: &'a ParticlePipelines,
+    /// The shader of each particle, in the order they're drawn.
+    particle_order: &'a [u32],
     /// The map.
     map: &'a GpuMap,
     /// Its visible indices, for this frame.
@@ -184,6 +188,8 @@ impl Backend {
             models: &self.models,
             sprites: &self.sprites,
             particles: &self.particles[self.slot],
+            default_particles: &self.particle_pipelines,
+            particle_order: &self.particle_order,
             map: self.map.as_ref()?,
             indices: &self.map.as_ref()?.indices[self.slot],
             instances: &self.map.as_ref()?.instances[self.slot],
@@ -269,8 +275,8 @@ impl Recorder<'_> {
         }
     }
 
-    /// Records everything in `scene`.
-    pub(super) fn record(
+    /// Records all that's solid in `scene`.
+    pub(super) fn record_solid(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: &Scene<'_>,
@@ -283,9 +289,18 @@ impl Recorder<'_> {
         self.record_meshes(rec, scene, view);
         self.record_land(rec, scene, false);
         self.record_models(rec);
+    }
+
+    /// Records what's see-through in `scene`, and sprites.
+    pub(super) fn record_see_through(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        view: &View,
+        size: (u32, u32),
+    ) {
         self.record_world(rec, scene, view, size, true);
         self.record_sprites(rec, scene, view);
-        self.record_particles(rec, scene);
     }
 
     /// Records the sky sphere, if there is one.
@@ -868,30 +883,66 @@ impl Recorder<'_> {
         }
     }
 
-    /// Records the particles.
+    /// Whether there are particles to draw.
+    pub(super) fn has_particles(&self, scene: &Scene<'_>) -> bool {
+        !scene.drawables.particles.is_empty()
+            || scene
+                .drawables
+                .gpu_particles
+                .iter()
+                .any(|batch| batch.count > 0)
+    }
+
+    /// Records `range` of the particles, in their own pass. They're in order, so each run of those
+    /// that have one shader is a draw.
     pub(super) fn record_particles(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
-        scene: &Scene<'_>,
+        _scene: &Scene<'_>,
+        size: (u32, u32),
+        depth: &DescriptorSet,
+        range: std::ops::Range<usize>,
     ) {
-        let count = scene.drawables.particles.len().min(MAX_PARTICLE_DRAWS);
-        if count > 0 {
-            // What covers comes first, as what adds doesn't care what's behind it.
-            let list = &scene.drawables.particles[..count];
-            let over = list.iter().take_while(|particle| !particle.adds).count();
-            let over = u32::try_from(over).unwrap_or(0);
-            let all = u32::try_from(count).unwrap_or(0);
-            rec.bind_graphics_descriptor_sets(&self.layouts.particle, 0, &[&self.map.frame_set]);
-            rec.bind_vertex_buffers(0, &[(&self.particles.buffer, 0)]);
-            if over > 0 {
-                rec.bind_graphics_pipeline(&self.pipelines.particle.over);
-                rec.draw(6, over, 0, 0);
-            }
-            if all > over {
-                rec.bind_graphics_pipeline(&self.pipelines.particle.add);
-                rec.draw(6, all - over, 0, over);
-            }
+        #[expect(
+            clippy::cast_precision_loss,
+            reason = "window sizes are far below 2^24"
+        )]
+        rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
+        rec.set_scissor(0, 0, size.0, size.1);
+        if range.is_empty() {
+            return;
         }
+        let sets = [&self.map.frame_set, depth, &self.map.particle_pictures.set];
+        rec.bind_graphics_descriptor_sets(&self.layouts.particle, 0, &sets);
+        rec.bind_vertex_buffers(0, &[(&self.particles.buffer, 0)]);
+        let mut first = range.start;
+        while first < range.end {
+            let shader = self.particle_order[first];
+            let run = self.particle_order[first..range.end]
+                .iter()
+                .take_while(|own| **own == shader)
+                .count();
+            let own = (shader as usize).checked_sub(1);
+            let pipelines = own.and_then(|at| self.map.particle_shaders.get(at));
+            let pipelines = pipelines.unwrap_or(self.default_particles);
+            rec.bind_graphics_pipeline(&pipelines.listed);
+            let (many, from) = (
+                u32::try_from(run).unwrap_or(0),
+                u32::try_from(first).unwrap_or(0),
+            );
+            rec.draw(6, many, 0, from);
+            first += run;
+        }
+    }
+
+    /// Records the batches of particles the GPU works out.
+    pub(super) fn record_worked_out(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        depth: &DescriptorSet,
+    ) {
+        let sets = [&self.map.frame_set, depth, &self.map.particle_pictures.set];
         let batches = scene
             .drawables
             .gpu_particles
@@ -899,13 +950,8 @@ impl Recorder<'_> {
             .take(MAX_GPU_PARTICLE_DRAWS);
         for batch in batches.filter(|batch| batch.count > 0) {
             let layout = &self.layouts.gpu_particle;
-            rec.bind_graphics_descriptor_sets(layout, 0, &[&self.map.frame_set]);
-            let pipelines = &self.pipelines.particle;
-            rec.bind_graphics_pipeline(if batch.adds {
-                &pipelines.gpu_add
-            } else {
-                &pipelines.gpu_over
-            });
+            rec.bind_graphics_descriptor_sets(layout, 0, &sets);
+            rec.bind_graphics_pipeline(&self.default_particles.worked_out);
             rec.push_constants(
                 layout,
                 ShaderStageFlags::VERTEX,

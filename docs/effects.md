@@ -41,8 +41,31 @@ emitter flame {
 | `reach` | How far a light reaches, or a beam goes |
 | `gpu` | `true` for great numbers. See below |
 | `on_death` | An emitter that starts where each one ends, by its `burst` |
+| `image` | A picture, in place of a soft dot. Its alpha is what shows |
+| `flipbook`, `flip_rate` | The columns and rows of frames in `image`, and frames a second, or 0 to go through them over a life |
+| `shader` | A shader of its own, with `shader_particle` |
+| `rotation`, `spin` | How far it starts turned, and how fast it turns, in degrees. A low and a high number |
+| `stretch` | Draws it out along how it moves, this long for each unit a second |
+| `soft` | How far it fades into what's behind it, in world units. Smoke wants 30 or so |
+| `lit` | `true` to take light from the level, which is what smoke wants and fire doesn't |
 
 An emitter another starts doesn't run by itself. That's how emitters join into a graph: sparks that burst into embers, or a shell that ends in a flash and smoke.
+
+## Pictures
+
+`image` can be any picture, and a level's all come to one size, up to 512. `tools/make_effect_pictures.py` makes those that are in `textures/fx_*`. A sheet of frames goes left to right and then down. Between two frames it's a mix of them, so it doesn't step.
+
+Everything's drawn far to near in one list, so what covers and what adds sort together. What's behind glass goes in ahead of the glass.
+
+A shader's one function:
+
+```wgsl
+fn shader_particle(look: ParticleLook) -> vec4<f32> {
+    return look.color * vec4<f32>(1.0, 1.0, 1.0, 1.0 - look.life);
+}
+```
+
+`look` has `color`, with its picture, `uv`, `life` from 0 to 1, and `world`. `shader_time` and `shader_noise` are there. A graph's output `particle` does the same, with `tinted` and `life` to read.
 
 ## Great numbers
 

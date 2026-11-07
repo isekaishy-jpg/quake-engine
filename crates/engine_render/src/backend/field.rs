@@ -1,7 +1,7 @@
 //! Fields on the GPU: pictures worked out a step at a time, by a level's own compute shaders
 //! (proposal 0145).
 
-use engine_map::{FieldDef, Map};
+use engine_map::{FieldDef, Map, SlotImage};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AccessFlags, BufferImageCopy, BufferUsage, ComputePipeline, DescriptorPool, DescriptorPoolSize,
@@ -11,7 +11,7 @@ use vulkane::safe::{
 };
 
 use super::upload::{device_image, host_buffer};
-use super::{Backend, GpuImage};
+use super::{Backend, GpuImage, ParticlePictures, ParticlePipelines};
 use crate::error::RenderError;
 
 /// The format of a field's images.
@@ -207,6 +207,70 @@ impl Backend {
             taken: 0,
             due: 0,
         }))
+    }
+
+    /// Puts what `map`'s effects show on the GPU.
+    pub(super) fn upload_particle_pictures(
+        &self,
+        map: &Map,
+    ) -> Result<ParticlePictures, RenderError> {
+        let pictures: Vec<&SlotImage> = map.effect_pictures.iter().collect();
+        let image = self.upload_array(&pictures, Format::R8G8B8A8_SRGB)?;
+        let pool = DescriptorPool::new(
+            &self.device,
+            1,
+            &[
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 1,
+                },
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLER,
+                    descriptor_count: 1,
+                },
+            ],
+        )?;
+        let set = pool.allocate(&self.particle_picture_layout)?;
+        set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        set.write_sampler(1, &self.particle_sampler);
+        Ok(ParticlePictures {
+            _image: image,
+            set,
+            _pool: pool,
+        })
+    }
+
+    /// The pipelines of each shader `map`'s effects have of their own. One that's wrong draws as
+    /// if it wasn't there, and says so.
+    pub(super) fn upload_particle_shaders(
+        &mut self,
+        map: &Map,
+    ) -> Result<Vec<ParticlePipelines>, RenderError> {
+        let mut out = Vec::with_capacity(map.effect_shaders.len());
+        for shader in &map.effect_shaders {
+            let made = Self::make_particle_pipelines(
+                &self.device,
+                &self.layouts,
+                &self.particle_pass,
+                self.samples,
+                &shader.code,
+            );
+            out.push(match made {
+                Ok(pipelines) => pipelines,
+                Err(problem) => {
+                    self.shader_problems
+                        .push(format!("{}: {}", shader.name, problem.0));
+                    Self::make_particle_pipelines(
+                        &self.device,
+                        &self.layouts,
+                        &self.particle_pass,
+                        self.samples,
+                        "",
+                    )?
+                }
+            });
+        }
+        Ok(out)
     }
 
     /// Puts `map`'s fields on the GPU.

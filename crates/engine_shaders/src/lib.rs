@@ -17,8 +17,8 @@ use std::sync::OnceLock;
 
 #[cfg(feature = "compiler")]
 pub use compiler::{
-    check_field_code, check_post_code, check_surface_code, compile, field_source, post_source,
-    surface_source,
+    check_field_code, check_particle_code, check_post_code, check_surface_code, compile,
+    field_source, particle_source, post_source, surface_source,
 };
 
 /// Changes when any of the engine's own shader code does, so that what was compiled from
@@ -44,8 +44,15 @@ pub enum Module<'a> {
     Canvas,
     /// Models.
     Alias,
-    /// Sprites and particles.
+    /// Sprites.
     Sprite,
+    /// Particles with this particle code, reading depth as it was drawn if `samples`.
+    Particle {
+        /// The particle code.
+        code: &'a str,
+        /// Whether the scene has samples.
+        samples: bool,
+    },
     /// Moving lights' shadows.
     Shadow,
     /// Edge smoothing.
@@ -75,6 +82,13 @@ impl Module<'_> {
             Self::Canvas => "canvas".to_owned(),
             Self::Alias => "alias".to_owned(),
             Self::Sprite => "sprite".to_owned(),
+            Self::Particle { code, samples } => {
+                format!(
+                    "particle{}_{:016x}",
+                    if *samples { "_samples" } else { "" },
+                    code_id(code)
+                )
+            }
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
             Self::Deform => "deform".to_owned(),
@@ -149,13 +163,14 @@ pub fn spirv(module: &Module<'_>) -> Result<Vec<u32>, String> {
     }
 }
 
-/// Every module a game could want, for `surfaces`, `posts` and `fields`, which are surface code,
-/// post code and field code. What's built in is always among them.
+/// Every module a game could want, for `surfaces`, `posts`, `fields` and `particles`, which are
+/// surface code, post code, field code and particle code. What's built in is always among them.
 #[must_use]
 pub fn all_modules<'a>(
     surfaces: &[&'a str],
     posts: &[&'a str],
     fields: &[&'a str],
+    particles: &[&'a str],
 ) -> Vec<Module<'a>> {
     let mut modules = vec![
         Module::Canvas,
@@ -171,6 +186,16 @@ pub fn all_modules<'a>(
     modules.extend(BUILT_IN.iter().map(|(_, code)| Module::Surface(code)));
     modules.extend(surfaces.iter().map(|code| Module::Surface(code)));
     modules.extend(fields.iter().map(|code| Module::Field(code)));
+    for code in std::iter::once(&"").chain(particles) {
+        modules.push(Module::Particle {
+            code,
+            samples: false,
+        });
+        modules.push(Module::Particle {
+            code,
+            samples: true,
+        });
+    }
     for code in std::iter::once(&"").chain(posts) {
         modules.push(Module::Post {
             code,

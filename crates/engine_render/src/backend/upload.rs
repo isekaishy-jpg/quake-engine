@@ -34,6 +34,7 @@ use crate::material::{
 use crate::matrix::{inverse, view_projection};
 use crate::renderer::{CapsuleDraw, PostSettings, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
+use crate::sprite::{MAX_PARTICLE_DRAWS, behind_first};
 use crate::surface::built_in_for;
 use crate::terrain::terrain_nodes;
 use crate::world::{BatchKind, batch_kind, uses_material};
@@ -702,6 +703,8 @@ impl Backend {
         let moving = self.upload_moving(map)?;
         let terrain = self.upload_terrain(map, mesh.chunk_lights.clone())?;
         let fields = self.upload_fields(map)?;
+        let particle_pictures = self.upload_particle_pictures(map)?;
+        let particle_shaders = self.upload_particle_shaders(map)?;
         let shadow_instances = map
             .mesh_instances
             .iter()
@@ -952,6 +955,8 @@ impl Backend {
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
             instance_centers: std::array::from_fn(|_| Vec::new()),
+            particle_pictures,
+            particle_shaders,
             fields,
             terrain,
             instance_levels: vec![0; map.mesh_instances.len()],
@@ -1307,9 +1312,18 @@ impl Backend {
         {
             let mut mapped = self.particles[slot].memory.map()?;
             let (target, _remainder) = mapped.as_slice_mut().as_chunks_mut::<PARTICLE_BYTES>();
-            for (particle, chunk) in scene.drawables.particles.iter().zip(target) {
+            let listed = &scene.drawables.particles;
+            let listed = &listed[..listed.len().min(MAX_PARTICLE_DRAWS)];
+            let (ordered, behind) =
+                behind_first(listed, view.origin, &scene.mesh.see_through_boxes);
+            for (particle, chunk) in ordered.iter().zip(target) {
                 write_particle(particle, chunk);
             }
+            self.particle_order = ordered.iter().map(|particle| particle.shader).collect();
+            self.particles_behind = behind;
+        } else {
+            self.particle_order.clear();
+            self.particles_behind = 0;
         }
         if let (Some(scene), Some(map)) = (scene, &mut self.map) {
             let angles = [view.yaw, view.pitch, view.roll];

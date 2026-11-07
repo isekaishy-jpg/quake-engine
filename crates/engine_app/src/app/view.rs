@@ -22,6 +22,9 @@ use super::World;
 use super::shading::{StencilMask, capsule_draws, live_lights, model_light};
 use crate::models::{DrawLists, Lighting};
 
+/// How bright a probe has to be for what takes light from the level to show its own colour.
+const PROBE_FULL: f32 = 128.0;
+
 /// A frame's picture.
 pub(crate) struct Picture {
     /// The view.
@@ -206,9 +209,17 @@ impl World {
             .collect()
     }
 
-    /// The particles to draw, in their colours: what covers first, then what
-    /// adds, as the renderer draws them in that order.
-    pub(super) fn particle_draws(&self) -> Vec<ParticleDraw> {
+    /// How bright it is at `at`, for what takes light from the level.
+    fn light_at(&self, at: Vec3) -> [f32; 3] {
+        let probes = self.map.as_ref().and_then(|map| map.probes.as_ref());
+        let sample = probes.and_then(|probes| probes.sample(at));
+        let level = sample.map_or(1.0, |sample| sample.brightness / PROBE_FULL);
+        [level; 3]
+    }
+
+    /// The particles to draw, in their colours, far to near, as what covers has to go over what's
+    /// behind it, and one blend does for all of them.
+    pub(super) fn particle_draws(&self, eye: Vec3) -> Vec<ParticleDraw> {
         let mut out = Vec::new();
         if let Some(palette) = &self.palette {
             out.extend(self.effects.particles().live().iter().map(|particle| {
@@ -220,9 +231,10 @@ impl World {
                 }
             }));
         }
-        let (authored, _) = self.effects.authored().draws();
+        let (authored, _) = self.effects.authored().draws(&|at| self.light_at(at));
         out.extend(authored.iter().map(authored_draw));
-        out.sort_by_key(|particle| particle.adds);
+        let away = |particle: &ParticleDraw| (particle.origin - eye).length();
+        out.sort_by(|a, b| away(b).total_cmp(&away(a)));
         out
     }
 
@@ -271,13 +283,15 @@ impl World {
                 radius: emitter.radius,
                 count: emitter.count,
                 adds: emitter.adds,
+                picture: emitter.picture,
+                soft: emitter.soft,
             })
             .collect()
     }
 
     /// The lights among effects.
     pub(super) fn effect_lights(&self) -> Vec<LiveLight> {
-        let (_, lights) = self.effects.authored().draws();
+        let (_, lights) = self.effects.authored().draws(&|_| [1.0; 3]);
         lights
             .iter()
             .map(|light| LiveLight {
@@ -492,7 +506,7 @@ impl World {
             moving: lists.moving,
             palette: lists.palette,
             morph_weights: lists.morph_weights,
-            particles: self.particle_draws(),
+            particles: self.particle_draws(view.origin),
             gpu_particles: self.gpu_particles(),
             lights,
             quads: Vec::new(),
@@ -546,5 +560,12 @@ fn authored_draw(draw: &EffectDraw) -> ParticleDraw {
         },
         glow,
         adds: draw.adds,
+        rotation: draw.rotation,
+        soft: draw.soft,
+        picture: draw.picture,
+        frame: draw.frame,
+        sheet: draw.sheet,
+        life: draw.life,
+        shader: draw.shader,
     }
 }

@@ -120,6 +120,8 @@ pub struct WorldMesh {
     pub batches: Vec<Batch>,
     /// Where each batch's faces are, for sorting what's see-through.
     pub batch_centers: Vec<Vec3>,
+    /// The bounds of each see-through face, for what's behind them to draw first.
+    pub see_through_boxes: Vec<(Vec3, Vec3)>,
     /// The triangles of every brush model, batch after batch.
     pub model_indices: Vec<u32>,
     /// Each model's batches, with their first index and count, by model
@@ -275,6 +277,24 @@ fn face_center(map: &Map, face: &Face) -> Vec3 {
     points
         .iter()
         .fold(Vec3::ZERO, |sum, point| sum + *point * share)
+}
+
+/// The bounds of `face`, a little wider than it, as a flat box has no inside.
+fn face_box(map: &Map, face: &Face) -> (Vec3, Vec3) {
+    let points = map.face_points(face);
+    let first = points.first().copied().unwrap_or(Vec3::ZERO);
+    let (low, high) = points.iter().fold((first, first), |(low, high), point| {
+        (
+            Vec3::new(low.x.min(point.x), low.y.min(point.y), low.z.min(point.z)),
+            Vec3::new(
+                high.x.max(point.x),
+                high.y.max(point.y),
+                high.z.max(point.z),
+            ),
+        )
+    });
+    let margin = Vec3::new(0.5, 0.5, 0.5);
+    (low - margin, high + margin)
 }
 
 /// Whether `face` samples the lightmap.
@@ -668,6 +688,7 @@ pub fn build_world(map: &Map) -> Option<WorldMesh> {
                 batch = u32::try_from(mesh.batches.len()).ok()?;
                 mesh.batches.push(shared);
                 mesh.batch_centers.push(face_center(map, face));
+                mesh.see_through_boxes.push(face_box(map, face));
                 per_batch.push(Vec::new());
             }
             let first = u32::try_from(mesh.vertices.len()).ok()?;

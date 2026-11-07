@@ -178,6 +178,16 @@ struct Attachments {
     _depth: GpuImage,
 }
 
+/// What particles show, as one array.
+struct ParticlePictures {
+    /// The array.
+    _image: GpuImage,
+    /// What reads it.
+    set: DescriptorSet,
+    /// Kept alive for the set.
+    _pool: DescriptorPool,
+}
+
 /// The window's swapchain and its per-image state.
 struct WindowTarget {
     /// The swapchain.
@@ -250,6 +260,10 @@ struct GpuMap {
     terrain: Option<GpuTerrain>,
     /// Pictures worked out a step at a time.
     fields: Vec<GpuField>,
+    /// What effects' particles show.
+    particle_pictures: ParticlePictures,
+    /// The pipelines of the shaders effects have of their own.
+    particle_shaders: Vec<ParticlePipelines>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -447,20 +461,14 @@ struct Pipelines {
     alias: GraphicsPipeline,
     /// Sprites.
     sprite: GraphicsPipeline,
-    /// Particles.
-    particle: ParticlePipelines,
 }
 
 /// What draws particles.
 struct ParticlePipelines {
-    /// Those in a list, over what's behind.
-    over: GraphicsPipeline,
-    /// Those in a list, adding to what's behind.
-    add: GraphicsPipeline,
-    /// Those the GPU works out, over what's behind.
-    gpu_over: GraphicsPipeline,
-    /// Those the GPU works out, adding to what's behind.
-    gpu_add: GraphicsPipeline,
+    /// Those in a list.
+    listed: GraphicsPipeline,
+    /// Those the GPU works out.
+    worked_out: GraphicsPipeline,
 }
 
 /// Everything Vulkan. Fields drop in order, so each comes before what it
@@ -579,6 +587,22 @@ pub(crate) struct Backend {
     deform: Deform,
     /// The layout of what land reads.
     terrain_set_layout: DescriptorSetLayout,
+    /// The layout of the scene's depth, as particles read it.
+    particle_depth_layout: DescriptorSetLayout,
+    /// The layout of the pictures of particles.
+    particle_picture_layout: DescriptorSetLayout,
+    /// Where particles are drawn.
+    particle_pass: RenderPass,
+    /// The scene's pass, carrying on after particles behind what's see-through.
+    scene_again_pass: RenderPass,
+    /// The shader of each particle this frame, in the order they're drawn.
+    particle_order: Vec<u32>,
+    /// How many of those are behind something see-through.
+    particles_behind: usize,
+    /// Particles with no shader of their own.
+    particle_pipelines: ParticlePipelines,
+    /// How pictures of particles are read.
+    particle_sampler: Sampler,
     /// What fields' steps are bound by.
     field_layout: FieldLayout,
     /// The time this frame's field steps are told.
@@ -791,6 +815,32 @@ impl Backend {
             descriptor_count: 1,
             stage_flags: ShaderStageFlags::FRAGMENT,
         };
+        let particle_depth_layout = DescriptorSetLayout::new(
+            &device,
+            &[DescriptorSetLayoutBinding {
+                binding: 2,
+                descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: 1,
+                stage_flags: ShaderStageFlags::FRAGMENT,
+            }],
+        )?;
+        let particle_picture_layout = DescriptorSetLayout::new(
+            &device,
+            &[
+                DescriptorSetLayoutBinding {
+                    binding: 0,
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 1,
+                    stage_flags: ShaderStageFlags::FRAGMENT,
+                },
+                DescriptorSetLayoutBinding {
+                    binding: 1,
+                    descriptor_type: DescriptorType::SAMPLER,
+                    descriptor_count: 1,
+                    stage_flags: ShaderStageFlags::FRAGMENT,
+                },
+            ],
+        )?;
         let terrain_set_layout = DescriptorSetLayout::new(
             &device,
             &[
@@ -826,10 +876,21 @@ impl Backend {
                 }],
             )?,
             sprite: textured_layout(SPRITE_PUSH_SIZE)?,
-            particle: PipelineLayout::new(&device, &[&frame_layout])?,
+            particle: PipelineLayout::new(
+                &device,
+                &[
+                    &frame_layout,
+                    &particle_depth_layout,
+                    &particle_picture_layout,
+                ],
+            )?,
             gpu_particle: PipelineLayout::with_push_constants(
                 &device,
-                &[&frame_layout],
+                &[
+                    &frame_layout,
+                    &particle_depth_layout,
+                    &particle_picture_layout,
+                ],
                 &[PushConstantRange {
                     stage_flags: ShaderStageFlags::VERTEX,
                     offset: 0,
@@ -839,6 +900,11 @@ impl Backend {
         };
         let saved_pipelines = pipeline_cache::open(&device, &physical, saved_pipelines.as_deref());
         let scene_pass = post::make_scene_pass(&device, 1)?;
+        let particle_pass = post::make_particle_pass(&device, 1)?;
+        let scene_again_pass = post::make_scene_again_pass(&device, 1)?;
+        let particle_pipelines =
+            Self::make_particle_pipelines(&device, &layouts, &particle_pass, 1, "")?;
+        let particle_sampler = Sampler::new_mipmapped(&device, SamplerCreateInfo::default(), 16.0)?;
         let pipelines = Self::make_pipelines(&device, &layouts, &scene_pass, 1)?;
         let texture_sampler = Sampler::new_mipmapped(
             &device,
@@ -962,6 +1028,14 @@ impl Backend {
             deform,
             clock,
             terrain_set_layout,
+            particle_depth_layout,
+            particle_picture_layout,
+            particle_pass,
+            scene_again_pass,
+            particle_order: Vec::new(),
+            particles_behind: 0,
+            particle_pipelines,
+            particle_sampler,
             field_layout,
             field_time: 0.0,
             moving_overflow: false,
@@ -1297,9 +1371,22 @@ impl Backend {
             ],
         );
         if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
-            recorder.record(rec, scene, view, size);
+            recorder.record_solid(rec, scene, view, size);
+            let behind = self.particles_behind;
+            if behind > 0 {
+                rec.end_render_pass();
+                self.record_particle_pass(rec, &recorder, scene, target, (size, 0..behind));
+                rec.begin_render_pass_ext(&self.scene_again_pass, &target.framebuffer, &[]);
+            }
+            recorder.record_see_through(rec, scene, view, size);
         }
         rec.end_render_pass();
+        if let (Some(scene), Some(recorder)) = (scene, self.recorder())
+            && recorder.has_particles(scene)
+        {
+            let rest = self.particles_behind..self.particle_order.len();
+            self.record_particle_pass(rec, &recorder, scene, target, (size, rest));
+        }
         self.clock.end(rec, self.slot, Span::Scene);
         // The final pass reads what this wrote.
         rec.memory_barrier(
@@ -1313,6 +1400,30 @@ impl Backend {
         if self.post.rays != 0 && !self.stencil_images.is_empty() {
             self.record_rays(rec, target);
         }
+    }
+
+    /// Records particles over what the scene has so far: they read its depth and add to its colour.
+    fn record_particle_pass(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        recorder: &record::Recorder<'_>,
+        scene: &Scene<'_>,
+        target: &post::SceneTarget,
+        (size, range): ((u32, u32), std::ops::Range<usize>),
+    ) {
+        rec.memory_barrier(
+            PipelineStage::ALL_GRAPHICS,
+            PipelineStage::ALL_GRAPHICS,
+            AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
+            AccessFlags::SHADER_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
+        );
+        rec.begin_render_pass_ext(&self.particle_pass, &target.particle_framebuffer, &[]);
+        let last = range.end == self.particle_order.len();
+        recorder.record_particles(rec, scene, size, &target.particle_set, range);
+        if last {
+            recorder.record_worked_out(rec, scene, &target.particle_set);
+        }
+        rec.end_render_pass();
     }
 
     /// What a shadow map draws: the world's opaque faces, then moving models',

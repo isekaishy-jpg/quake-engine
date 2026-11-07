@@ -24,6 +24,12 @@ pub(super) struct SceneTarget {
     _pool: DescriptorPool,
     /// Where the scene is drawn.
     pub(super) framebuffer: Framebuffer,
+    /// Where particles are drawn, over it.
+    pub(super) particle_framebuffer: Framebuffer,
+    /// The scene's depth, for particles.
+    pub(super) particle_set: DescriptorSet,
+    /// Kept alive for the set.
+    _particle_pool: DescriptorPool,
     /// Kept alive for the framebuffer.
     _color: GpuImage,
     /// Kept alive for the framebuffer.
@@ -98,6 +104,79 @@ pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPas
                 initial_layout: ImageLayout::UNDEFINED,
                 final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             }),
+        },
+        samples,
+        resolve,
+    )?)
+}
+
+/// The scene's pass again, carrying on from what it left, for what's see-through after particles
+/// behind it have gone in.
+pub(super) fn make_scene_again_pass(
+    device: &Device,
+    samples: u32,
+) -> Result<RenderPass, RenderError> {
+    let resolved = AttachmentDescription {
+        format: SCENE_FORMAT,
+        load_op: AttachmentLoadOp::DONT_CARE,
+        store_op: AttachmentStoreOp::STORE,
+        initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    };
+    let (color_end, resolve) = if samples > 1 {
+        (ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(resolved))
+    } else {
+        (ImageLayout::SHADER_READ_ONLY_OPTIMAL, None)
+    };
+    Ok(RenderPass::new_multisampled(
+        device,
+        RenderPassCreateInfo {
+            color_attachments: &[AttachmentDescription {
+                format: SCENE_FORMAT,
+                load_op: AttachmentLoadOp::LOAD,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: color_end,
+                final_layout: color_end,
+            }],
+            depth_attachment: Some(AttachmentDescription {
+                format: DEPTH_FORMAT,
+                load_op: AttachmentLoadOp::LOAD,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            }),
+        },
+        samples,
+        resolve,
+    )?)
+}
+
+/// The pass particles are drawn in: what the scene left, with nothing of its depth attached, as
+/// they read that.
+pub(super) fn make_particle_pass(device: &Device, samples: u32) -> Result<RenderPass, RenderError> {
+    let resolved = AttachmentDescription {
+        format: SCENE_FORMAT,
+        load_op: AttachmentLoadOp::DONT_CARE,
+        store_op: AttachmentStoreOp::STORE,
+        initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+    };
+    let (color_end, resolve) = if samples > 1 {
+        (ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(resolved))
+    } else {
+        (ImageLayout::SHADER_READ_ONLY_OPTIMAL, None)
+    };
+    Ok(RenderPass::new_multisampled(
+        device,
+        RenderPassCreateInfo {
+            color_attachments: &[AttachmentDescription {
+                format: SCENE_FORMAT,
+                load_op: AttachmentLoadOp::LOAD,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: color_end,
+                final_layout: color_end,
+            }],
+            depth_attachment: None,
         },
         samples,
         resolve,
@@ -236,6 +315,15 @@ impl Backend {
         self.samples = samples;
         self.scene_target = None;
         self.scene_pass = make_scene_pass(&self.device, samples)?;
+        self.particle_pass = make_particle_pass(&self.device, samples)?;
+        self.scene_again_pass = make_scene_again_pass(&self.device, samples)?;
+        self.particle_pipelines = Self::make_particle_pipelines(
+            &self.device,
+            &self.layouts,
+            &self.particle_pass,
+            samples,
+            "",
+        )?;
         // A map's textures know shaders by their place, so that has to stay.
         let surfaces = self.pipelines.surfaces.iter().skip(1);
         let codes: Vec<String> = surfaces.map(|surface| surface.code.clone()).collect();
@@ -380,6 +468,25 @@ impl Backend {
             0,
             FRAME_SIZE as u64,
         );
+        let mut drawn_over = vec![&color.view];
+        drawn_over.extend(resolved.as_ref().map(|image| &image.view));
+        let particle_framebuffer = Framebuffer::new(
+            &self.device,
+            &self.particle_pass,
+            &drawn_over,
+            size.0,
+            size.1,
+        )?;
+        let particle_pool = DescriptorPool::new(
+            &self.device,
+            1,
+            &[DescriptorPoolSize {
+                descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                descriptor_count: 1,
+            }],
+        )?;
+        let particle_set = particle_pool.allocate(&self.particle_depth_layout)?;
+        particle_set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let shown = resolved.as_ref().unwrap_or(&color);
         set.write_sampled_image(1, &shown.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -396,6 +503,9 @@ impl Backend {
         set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
+            particle_framebuffer,
+            particle_set,
+            _particle_pool: particle_pool,
             set,
             _pool: pool,
             framebuffer,

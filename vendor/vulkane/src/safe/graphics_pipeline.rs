@@ -181,6 +181,7 @@ pub struct GraphicsPipelineBuilder<'a> {
     blend_enable: bool,
     blend_adds: bool,
     blend_covers: bool,
+    blend_premultiplied: bool,
     samples: u32,
     depth_test: bool,
     depth_write: bool,
@@ -218,6 +219,7 @@ impl<'a> GraphicsPipelineBuilder<'a> {
             blend_enable: false,
             blend_adds: false,
             blend_covers: false,
+            blend_premultiplied: false,
             samples: 1,
             depth_test: false,
             depth_write: false,
@@ -303,6 +305,15 @@ impl<'a> GraphicsPipelineBuilder<'a> {
     pub fn covering_blending(mut self, enable: bool) -> Self {
         self.blend_enable = enable;
         self.blend_covers = enable;
+        self
+    }
+
+    /// Blending of colour that's already been multiplied by its alpha, so that alpha covers what's
+    /// there and with none it adds. Engine extension.
+    pub fn premultiplied_blending(mut self, enable: bool) -> Self {
+        self.blend_enable = enable;
+        self.blend_covers = enable;
+        self.blend_premultiplied = enable;
         self
     }
 
@@ -517,7 +528,11 @@ impl<'a> GraphicsPipelineBuilder<'a> {
 
         let single_blend = VkPipelineColorBlendAttachmentState {
             blendEnable: if self.blend_enable { 1 } else { 0 },
-            srcColorBlendFactor: VkBlendFactor::BLEND_FACTOR_SRC_ALPHA,
+            srcColorBlendFactor: if self.blend_premultiplied {
+                VkBlendFactor::BLEND_FACTOR_ONE
+            } else {
+                VkBlendFactor::BLEND_FACTOR_SRC_ALPHA
+            },
             dstColorBlendFactor: if self.blend_adds {
                 VkBlendFactor::BLEND_FACTOR_ONE
             } else {

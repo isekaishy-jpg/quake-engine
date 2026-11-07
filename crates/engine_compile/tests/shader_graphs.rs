@@ -7,7 +7,7 @@ use engine_compile::{
     GRAPH_KINDS, GraphInput, GraphNode, MaterialLibrary, ShaderGraph, graph_code, read_graph,
     write_graph,
 };
-use engine_shaders::{check_field_code, check_post_code, check_surface_code};
+use engine_shaders::{check_field_code, check_particle_code, check_post_code, check_surface_code};
 
 /// A node of `kind`, with `inputs` that name nodes.
 fn node(id: &str, kind: &str, inputs: &[(&str, &str)]) -> GraphNode {
@@ -118,7 +118,7 @@ fn a_graph_can_be_a_final_pass() {
 #[test]
 fn every_kind_compiles_where_it_can_be_read() {
     for kind in GRAPH_KINDS {
-        if matches!(kind.name, "color" | "cell" | "last") {
+        if matches!(kind.name, "color" | "cell" | "last" | "tinted" | "life") {
             continue;
         }
         let mut made = node("it", kind.name, &[]);
@@ -343,4 +343,23 @@ fn a_fields_step_goes_alone_and_only_it_reads_cells() {
     assert!(problems(&both).contains("field is for a field's step"));
     let misplaced = graph(vec![node("last", "last", &[])], &[("base", "last")]);
     assert!(problems(&misplaced).contains("last can't be read in surface"));
+}
+
+#[test]
+fn a_graph_can_be_what_a_particle_does() {
+    let made = graph(
+        vec![
+            node("tinted", "tinted", &[]),
+            node("life", "life", &[]),
+            node("noise", "noise", &[]),
+            node("fade", "one_minus", &[("a", "life")]),
+            node("both", "multiply", &[("a", "fade"), ("b", "noise")]),
+            node("all", "multiply", &[("a", "tinted"), ("b", "both")]),
+        ],
+        &[("particle", "all")],
+    );
+    let code = graph_code(&made).expect("it's right");
+    check_particle_code(&code).unwrap_or_else(|problem| panic!("{problem}\n{code}"));
+    let misplaced = graph(vec![node("life", "life", &[])], &[("base", "life")]);
+    assert!(problems(&misplaced).contains("life can't be read in surface"));
 }

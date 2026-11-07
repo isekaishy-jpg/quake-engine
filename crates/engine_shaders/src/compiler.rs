@@ -32,8 +32,14 @@ const ALIAS_SHADER: &str = concat!(
     include_str!("shaders/alias.wgsl"),
 );
 
-/// The shader of sprites and particles.
+/// The shader of sprites.
 const SPRITE_SHADER: &str = include_str!("shaders/sprite.wgsl");
+
+/// What particle code joins.
+const PARTICLE_SHADER: &str = concat!(
+    include_str!("shaders/noise.wgsl"),
+    include_str!("shaders/particle.wgsl"),
+);
 
 /// The canvas's shader.
 const CANVAS_SHADER: &str = include_str!("shaders/canvas.wgsl");
@@ -78,6 +84,23 @@ const FIELD_HOOK: (&str, &str) = (
     "fn shader_field",
     "fn shader_field(at: vec2<i32>, size: vec2<i32>) -> vec4<f32> { return field_read(at); }\n",
 );
+
+/// The hook of particles, and what it does if it's left alone.
+const PARTICLE_HOOK: (&str, &str) = (
+    "fn shader_particle",
+    "fn shader_particle(look: ParticleLook) -> vec4<f32> { return look.color; }\n",
+);
+
+/// The whole module of particles with `code`.
+pub fn particle_source(code: &str) -> String {
+    let (name, standing_in) = PARTICLE_HOOK;
+    let mut source = PARTICLE_SHADER.to_owned();
+    if !code.contains(name) {
+        source.push_str(standing_in);
+    }
+    source.push_str(code);
+    source
+}
 
 /// The whole module of a field with `code`.
 pub fn field_source(code: &str) -> String {
@@ -124,6 +147,14 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::Field(code) => field_source(code),
+        Module::Particle { code, samples } => {
+            let source = particle_source(code);
+            if *samples {
+                source.replace("texture_depth_2d", "texture_depth_multisampled_2d")
+            } else {
+                source
+            }
+        }
         Module::PlainSurface => {
             surface_source("").replace("const PLAIN: bool = false;", "const PLAIN: bool = true;")
         }
@@ -178,6 +209,15 @@ fn check_module(source: &str) -> Result<(), String> {
 /// Returns what the compiler said.
 pub fn check_surface_code(code: &str) -> Result<(), String> {
     check_module(&surface_source(code))
+}
+
+/// What's wrong with `code` as a particle's, if anything.
+///
+/// # Errors
+///
+/// Returns what the compiler said.
+pub fn check_particle_code(code: &str) -> Result<(), String> {
+    check_module(&particle_source(code))
 }
 
 /// What's wrong with `code` as a field's, if anything.

@@ -148,23 +148,39 @@ impl Backend {
             .map_err(RenderError::from)
     }
 
-    /// The pipelines of sprites and particles.
-    pub(super) fn make_effect_pipelines(
+    /// The pipeline of sprites.
+    pub(super) fn make_sprite_pipeline(
         device: &Device,
         layouts: &Layouts,
         pass: &RenderPass,
         samples: u32,
-    ) -> Result<(GraphicsPipeline, ParticlePipelines), RenderError> {
+    ) -> Result<GraphicsPipeline, RenderError> {
         let spirv = spirv(&Module::Sprite).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &spirv)?;
-        let sprite = GraphicsPipelineBuilder::new(&layouts.sprite, pass)
+        Ok(GraphicsPipelineBuilder::new(&layouts.sprite, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_sprite")
             .stage(GraphicsShaderStage::Fragment, &shader, "fs_sprite")
             .dynamic_viewport_scissor()
             .cull_mode(CullMode::NONE)
             .depth_test(true, true)
             .samples(samples)
-            .build(device)?;
+            .build(device)?)
+    }
+
+    /// The pipelines of particles with `code`, in their own pass.
+    pub(super) fn make_particle_pipelines(
+        device: &Device,
+        layouts: &Layouts,
+        pass: &RenderPass,
+        samples: u32,
+        code: &str,
+    ) -> Result<ParticlePipelines, RenderError> {
+        let module = Module::Particle {
+            code,
+            samples: samples > 1,
+        };
+        let spirv = spirv(&module).map_err(RenderError)?;
+        let shader = ShaderModule::from_spirv(device, &spirv)?;
         let attribute = |location, format, offset| VertexInputAttribute {
             location,
             binding: 0,
@@ -181,34 +197,29 @@ impl Backend {
             attribute(1, Format::R8G8B8A8_UNORM, 12),
             attribute(2, Format::R32_SFLOAT, 16),
             attribute(3, Format::R32G32B32_SFLOAT, 20),
-            attribute(4, Format::R32G32_SFLOAT, 32),
+            attribute(4, Format::R32G32B32_SFLOAT, 32),
+            attribute(5, Format::R32G32_SFLOAT, 44),
+            attribute(6, Format::R32G32B32A32_SFLOAT, 52),
+            attribute(7, Format::R32_SFLOAT, 68),
         ];
-        let listed = || {
-            GraphicsPipelineBuilder::new(&layouts.particle, pass)
-                .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
-                .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
-                .vertex_input(&bindings, &attributes)
-                .dynamic_viewport_scissor()
-                .cull_mode(CullMode::NONE)
-                .depth_test(true, false)
-                .samples(samples)
-        };
-        let worked_out = || {
-            GraphicsPipelineBuilder::new(&layouts.gpu_particle, pass)
-                .stage(GraphicsShaderStage::Vertex, &shader, "vs_gpu_particle")
-                .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
-                .dynamic_viewport_scissor()
-                .cull_mode(CullMode::NONE)
-                .depth_test(true, false)
-                .samples(samples)
-        };
-        let particle = ParticlePipelines {
-            over: listed().covering_blending(true).build(device)?,
-            add: listed().additive_blending(true).build(device)?,
-            gpu_over: worked_out().covering_blending(true).build(device)?,
-            gpu_add: worked_out().additive_blending(true).build(device)?,
-        };
-        Ok((sprite, particle))
+        let listed = GraphicsPipelineBuilder::new(&layouts.particle, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_particle")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+            .vertex_input(&bindings, &attributes)
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .samples(samples)
+            .premultiplied_blending(true)
+            .build(device)?;
+        let worked_out = GraphicsPipelineBuilder::new(&layouts.gpu_particle, pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_gpu_particle")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_particle")
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .samples(samples)
+            .premultiplied_blending(true)
+            .build(device)?;
+        Ok(ParticlePipelines { listed, worked_out })
     }
 
     /// What draws surfaces with `code`, if it compiles.
@@ -290,7 +301,7 @@ impl Backend {
         let surface_spirv = spirv(&Module::Surface("")).map_err(RenderError)?;
         let shader = ShaderModule::from_spirv(device, &surface_spirv)?;
         let (bindings, attributes) = world_vertices();
-        let (sprite, particle) = Self::make_effect_pipelines(device, layouts, pass, samples)?;
+        let sprite = Self::make_sprite_pipeline(device, layouts, pass, samples)?;
         let depth_only = GraphicsPipelineBuilder::new(&layouts.world, pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
             .stage(GraphicsShaderStage::Fragment, &shader, "fs_depth")
@@ -371,7 +382,6 @@ impl Backend {
             )?],
             alias: Self::make_alias_pipeline(device, &layouts.alias, pass, samples)?,
             sprite,
-            particle,
         })
     }
 

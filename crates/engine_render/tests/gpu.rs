@@ -3977,6 +3977,261 @@ fn a_broken_field_says_so_and_stays_still() {
     assert!(shade < 5, "{shade}");
 }
 
+/// A map with its square, and `pictures` for particles to show.
+fn map_with_pictures(pictures: Vec<Vec<MipLevel>>) -> Map {
+    let mut built = map(1);
+    built.effect_pictures = pictures.into_iter().map(Arc::new).collect();
+    built
+}
+
+/// The floor seen with `particles`, as a picture, with what's in the map loaded.
+fn floor_with(renderer: &mut Renderer, built: Map, particles: &[ParticleDraw]) -> Capture {
+    renderer.load_map(Arc::new(built)).expect("load");
+    let drawables = Drawables {
+        particles,
+        ..Drawables::default()
+    };
+    renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture")
+}
+
+/// A soft particle, of `color`, in the middle of the view, `high` above the floor.
+fn particle_over(high: f32, color: [u8; 3], size: f32) -> ParticleDraw {
+    ParticleDraw {
+        origin: Vec3::new(64.0, 64.0, high),
+        color: ParticleColor {
+            red: color[0],
+            green: color[1],
+            blue: color[2],
+        },
+        alpha: 255,
+        size,
+        shape: ParticleShape::Soft,
+        glow: 1.0,
+        ..ParticleDraw::default()
+    }
+}
+
+/// A particle shows its picture, not a soft dot.
+#[test]
+fn a_particle_shows_its_picture() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // White on its left, and nothing on its right.
+    let half = image_of(8, |x, _| {
+        if x < 4 {
+            [255, 255, 255, 255]
+        } else {
+            [255, 255, 255, 0]
+        }
+    });
+    let particle = ParticleDraw {
+        picture: 1,
+        ..particle_over(10.0, [0, 255, 0], 40.0)
+    };
+    let plain = floor_with(&mut renderer, map(1), &[]);
+    let shot = floor_with(&mut renderer, map_with_pictures(vec![half]), &[particle]);
+    let shows = (0..64)
+        .filter(|x| {
+            let (was, is) = (pixel_at(&plain, *x, 32), pixel_at(&shot, *x, 32));
+            was.iter().zip(is).any(|(a, b)| a.abs_diff(b) > 40)
+        })
+        .count();
+    // It's a quarter of the width of the view, and half of it is there.
+    assert!((6..=17).contains(&shows), "{shows}");
+}
+
+/// A sheet's frames are read by number, and between two it's a mix of them.
+#[test]
+fn a_particle_shows_the_frame_of_its_sheet() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // Two frames: red on its left, and blue on its right.
+    let sheet = || {
+        image_of(8, |x, _| {
+            if x < 4 {
+                [255, 0, 0, 255]
+            } else {
+                [0, 0, 255, 255]
+            }
+        })
+    };
+    let on_frame = |renderer: &mut Renderer, frame: f32| {
+        let particle = ParticleDraw {
+            picture: 1,
+            frame,
+            sheet: [2, 1],
+            ..particle_over(40.0, [255, 255, 255], 60.0)
+        };
+        centre(&floor_with(
+            renderer,
+            map_with_pictures(vec![sheet()]),
+            &[particle],
+        ))
+    };
+    let first = on_frame(&mut renderer, 0.0);
+    assert!(first[0] > 200 && first[2] < 30, "{first:?}");
+    let second = on_frame(&mut renderer, 1.0);
+    assert!(second[2] > 200 && second[0] < 30, "{second:?}");
+    let between = on_frame(&mut renderer, 0.5);
+    assert!(between[0] > 80 && between[2] > 80, "{between:?}");
+}
+
+/// What's behind a wall isn't drawn, though nothing's attached to test it.
+#[test]
+fn a_particle_behind_something_is_hidden() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let plain = floor_with(&mut renderer, map(1), &[]);
+    let under = particle_over(-40.0, [0, 0, 255], 40.0);
+    let shot = floor_with(&mut renderer, map(1), &[under]);
+    assert_eq!(centre(&shot), centre(&plain));
+}
+
+/// Where a particle meets a surface it fades, by `soft`, and with none it's cut off.
+#[test]
+fn a_soft_particle_fades_into_what_is_behind_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let blue_of = |renderer: &mut Renderer, soft: f32| {
+        let particle = ParticleDraw {
+            soft,
+            ..particle_over(10.0, [0, 0, 255], 60.0)
+        };
+        centre(&floor_with(renderer, map(1), &[particle]))[2]
+    };
+    let hard = blue_of(&mut renderer, 0.0);
+    let faded = blue_of(&mut renderer, 40.0);
+    let more = blue_of(&mut renderer, 400.0);
+    assert!(hard > faded + 40, "{hard} and {faded}");
+    assert!(faded > more, "{faded} and {more}");
+}
+
+/// In one list, what covers goes over what's behind it and what adds adds, in the order given.
+#[test]
+fn what_covers_and_what_adds_go_in_one_order() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let cover = particle_over(40.0, [255, 0, 0], 90.0);
+    let adding = ParticleDraw {
+        adds: true,
+        ..particle_over(40.0, [0, 0, 255], 90.0)
+    };
+    let adds_last = centre(&floor_with(&mut renderer, map(1), &[cover, adding]));
+    assert!(
+        adds_last[0] > 150 && adds_last[2] > 150,
+        "both: {adds_last:?}"
+    );
+    let covers_last = centre(&floor_with(&mut renderer, map(1), &[adding, cover]));
+    assert!(
+        covers_last[0] > 150 && covers_last[2] < 60,
+        "covered: {covers_last:?}"
+    );
+}
+
+/// A particle with a shader of its own goes through it, in its place in the list.
+#[test]
+fn a_shader_reaches_a_particle() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.effect_shaders.push(Arc::new(ShaderCode {
+        name: "greener".to_owned(),
+        code: "fn shader_particle(look: ParticleLook) -> vec4<f32> {
+    return vec4<f32>(0.0, 1.0, 0.0, look.color.a);
+}
+"
+        .to_owned(),
+    }));
+    let particle = ParticleDraw {
+        shader: 1,
+        ..particle_over(40.0, [255, 0, 0], 60.0)
+    };
+    let shown = centre(&floor_with(&mut renderer, built, &[particle]));
+    assert!(shown[1] > 200 && shown[0] < 60, "{shown:?}");
+    assert!(renderer.take_shader_problems().is_empty());
+}
+
+/// A map with a pane of red glass high over its floor, facing up.
+fn map_with_glass() -> Map {
+    let mut built = map(1);
+    let mut glass = built.textures[0].clone();
+    glass.name = "glass".to_owned();
+    glass.mips = image_of(2, |_, _| [255, 0, 0, 200]);
+    glass.material = Some(Arc::new(Material {
+        alpha: AlphaMode::Blend,
+        shading: Shading::Unlit,
+        ..Material::default()
+    }));
+    built.textures.push(glass);
+    let first = u32::try_from(built.points.len()).expect("few");
+    let pane = built.faces[0].point_count;
+    let points: Vec<Vec3> = built.face_points(&built.faces[0]).to_vec();
+    built
+        .points
+        .extend(points.iter().map(|point| Vec3::new(point.x, point.y, 40.0)));
+    let mut face = built.faces[0].clone();
+    face.first_point = first;
+    face.point_count = pane;
+    face.texture = 1;
+    built.faces.push(face);
+    let count = u32::try_from(built.faces.len()).expect("few");
+    built.tree.leaf_faces = (0..count).collect();
+    built.tree.leaves[1].face_count = count;
+    built.models[0].face_count = count;
+    built
+}
+
+/// What's behind glass is seen through it, and what's in front goes over it.
+#[test]
+fn glass_goes_over_what_is_behind_it_and_under_what_is_in_front() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let glass = centre(&floor_with(&mut renderer, map_with_glass(), &[]));
+    assert!(glass[0] > 100, "there's glass: {glass:?}");
+    let below = particle_over(20.0, [0, 0, 255], 60.0);
+    let through = centre(&floor_with(&mut renderer, map_with_glass(), &[below]));
+    assert!(through[0] > through[2], "red over it: {through:?}");
+    let above = particle_over(52.0, [0, 0, 255], 14.0);
+    let over = centre(&floor_with(&mut renderer, map_with_glass(), &[above]));
+    assert!(over[2] > over[0], "blue over the red: {over:?}");
+    let both = centre(&floor_with(
+        &mut renderer,
+        map_with_glass(),
+        &[below, above],
+    ));
+    assert!(both[2] > both[0], "and both at once: {both:?}");
+}
+
+/// A shader that won't compile doesn't stop what it's on from drawing, and says so.
+#[test]
+fn a_broken_particle_shader_says_so() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.effect_shaders.push(Arc::new(ShaderCode {
+        name: "wrong".to_owned(),
+        code: "fn shader_particle(look: ParticleLook) -> vec4<f32> { nonsense }".to_owned(),
+    }));
+    let particle = ParticleDraw {
+        shader: 1,
+        ..particle_over(40.0, [255, 0, 0], 60.0)
+    };
+    let shown = centre(&floor_with(&mut renderer, built, &[particle]));
+    assert!(shown[0] > 200, "{shown:?}");
+    let told = renderer.take_shader_problems().join(" ");
+    assert!(told.contains("wrong"), "{told}");
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

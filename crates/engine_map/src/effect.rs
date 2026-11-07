@@ -140,6 +140,29 @@ pub struct ParticleEmitter {
     pub gpu: bool,
     /// The emitter each one starts when it goes.
     pub on_death: Option<String>,
+    /// The picture each one shows, if it's not a soft dot.
+    pub image: Option<String>,
+    /// Which of [`crate::Map::effect_pictures`] that is, plus one, once a level's read it.
+    pub picture: u32,
+    /// The columns and rows of frames in its picture.
+    pub flipbook: [u32; 2],
+    /// How many frames a second, or 0 to go through them all over its life.
+    pub flip_rate: f32,
+    /// A shader of its own, by name.
+    pub shader: Option<String>,
+    /// Which of [`crate::Map::effect_shaders`] that is, plus one, once a level's read it.
+    pub shader_number: u32,
+    /// How far it starts turned, in degrees, from and to.
+    pub rotation: [f32; 2],
+    /// How fast it turns, in degrees a second, from and to.
+    pub spin: [f32; 2],
+    /// How far it's drawn out along how it's moving: its size, and this long for each unit a
+    /// second.
+    pub stretch: f32,
+    /// How far it fades into what's behind it, in world units.
+    pub soft: f32,
+    /// Whether it takes light from the level.
+    pub lit: bool,
 }
 
 impl Default for ParticleEmitter {
@@ -165,6 +188,17 @@ impl Default for ParticleEmitter {
             reach: 200.0,
             gpu: false,
             on_death: None,
+            image: None,
+            picture: 0,
+            flipbook: [1, 1],
+            flip_rate: 0.0,
+            shader: None,
+            shader_number: 0,
+            rotation: [0.0, 0.0],
+            spin: [0.0, 0.0],
+            stretch: 0.0,
+            soft: 0.0,
+            lit: false,
         }
     }
 }

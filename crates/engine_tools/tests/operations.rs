@@ -927,3 +927,35 @@ fn a_field_needs_a_shader_that_is_there_and_right() {
     ok(&mut session, "add_field", field);
     assert_eq!(count(&mut session), 1);
 }
+
+#[test]
+fn an_effect_that_names_what_is_not_there_is_found() {
+    let root = content("effect-names");
+    let mut session = Session::new(&root);
+    let text = "format 1 effect
+emitter a { image = textures/gone.png }
+";
+    ok(
+        &mut session,
+        "write_effect",
+        json!({ "name": "one", "text": text }),
+    );
+    let told = ok(&mut session, "check_effects", json!({}));
+    assert!(
+        told["one"].as_str().expect("said").contains("gone.png"),
+        "{told}"
+    );
+    let text = "format 1 effect
+emitter a { shader = gone }
+";
+    ok(
+        &mut session,
+        "write_effect",
+        json!({ "name": "one", "text": text }),
+    );
+    let told = ok(&mut session, "check_effects", json!({}));
+    assert!(
+        told["one"].as_str().expect("said").contains("gone"),
+        "{told}"
+    );
+}

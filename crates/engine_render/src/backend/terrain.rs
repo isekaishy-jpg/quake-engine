@@ -143,7 +143,7 @@ impl Backend {
 
     /// `pictures` as one array, which has at least two layers, as one layer wouldn't be seen as
     /// an array.
-    fn upload_array(
+    pub(super) fn upload_array(
         &self,
         pictures: &[&SlotImage],
         format: Format,

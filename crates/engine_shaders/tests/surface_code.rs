@@ -33,7 +33,11 @@ fn every_module_compiles() {
     return field_read(at);
 }
 ";
-    for module in all_modules(&[], &[], &[field]) {
+    let particle = "fn shader_particle(look: ParticleLook) -> vec4<f32> {
+    return look.color * shader_noise(look.uv);
+}
+";
+    for module in all_modules(&[], &[], &[field], &[particle]) {
         assert!(compile(&module).is_ok(), "{module:?}");
     }
 }

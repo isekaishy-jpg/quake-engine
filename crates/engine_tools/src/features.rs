@@ -2,7 +2,7 @@
 //! meshes, decals, stamps, paint, splines, and a map's own script and materials
 //! (proposal 0091).
 
-use engine_shaders::{check_field_code, check_post_code, check_surface_code};
+use engine_shaders::{check_field_code, check_particle_code, check_post_code, check_surface_code};
 use std::path::{Path, PathBuf};
 
 use engine_compile::{DeriveSettings, Repeat, check_picture, decode_png, derive_maps, encode_png};
@@ -733,6 +733,25 @@ pub(crate) fn import_gltf(session: &Session, args: &Json) -> Result<Json, String
 }
 
 /// `check_effects`: what's wrong with effects.
+/// The first picture or shader `effect` names that isn't there.
+fn missing_of_effect(session: &Session, effect: &engine_map::EffectDef) -> Option<String> {
+    effect.emitters.iter().find_map(|emitter| {
+        let picture = emitter
+            .image
+            .as_ref()
+            .filter(|path| !session.content.join(path).exists());
+        let shader = emitter.shader.as_ref().filter(|name| {
+            let shaders = session.content.join("shaders");
+            !["wgsl", "egraph"]
+                .iter()
+                .any(|kind| shaders.join(format!("{name}.{kind}")).exists())
+        });
+        picture
+            .map(|path| format!("{}: there's no picture {path}", emitter.name))
+            .or_else(|| shader.map(|name| format!("{}: there's no shader {name}", emitter.name)))
+    })
+}
+
 pub(crate) fn check_effects(session: &Session, _args: &Json) -> Result<Json, String> {
     let mut found = serde_json::Map::new();
     for name in names_in(session, "effects", ".eeffect") {
@@ -743,8 +762,15 @@ pub(crate) fn check_effects(session: &Session, _args: &Json) -> Result<Json, Str
         let bytes = std::fs::read(&path).map_err(|error| format!("{name}: {error}"))?;
         let read = engine_compile::document_of(&bytes)
             .and_then(|document| engine_compile::read_effect(&name, &document));
-        if let Err(problem) = read {
-            found.insert(name, json!(problem.to_string()));
+        match read {
+            Err(problem) => {
+                found.insert(name, json!(problem.to_string()));
+            }
+            Ok(effect) => {
+                if let Some(problem) = missing_of_effect(session, &effect) {
+                    found.insert(name, json!(problem));
+                }
+            }
         }
     }
     Ok(Json::Object(found))
@@ -846,6 +872,8 @@ pub(crate) fn write_shader(session: &Session, args: &Json) -> Result<Json, Strin
 fn check_code(code: &str) -> Result<(), String> {
     if code.contains("fn shader_field") {
         check_field_code(code)
+    } else if code.contains("fn shader_particle") {
+        check_particle_code(code)
     } else if code.contains("fn shader_post") {
         check_post_code(code)
     } else {

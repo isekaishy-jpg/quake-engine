@@ -5,14 +5,16 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_core::math::Vec3;
 use engine_format::Document;
-use engine_map::{EffectDef, EffectPoint, Entity, LandPicture, Map, Texture};
+use engine_map::{
+    EffectDef, EffectPoint, Entity, LandPicture, Map, ShaderCode, SlotImage, Texture, mip_chain,
+};
 
 use crate::bake::map_hash;
 use crate::build::{TextureSource, compile, compile_known};
 use crate::compiled::read_geometry;
 use crate::effect_read::read_effect;
 use crate::error::CompileError;
-use crate::land_pictures::plain_pictures;
+use crate::land_pictures::{plain_pictures, scaled};
 use crate::material::{MaterialLibrary, document_of};
 use crate::source::read_map;
 
@@ -73,6 +75,76 @@ fn effects_in(filesystem: &FileSystem) -> Result<Vec<Arc<EffectDef>>, CompileErr
     Ok(out)
 }
 
+/// The widest a picture of a particle gets.
+const WIDEST_PICTURE: u32 = 512;
+
+/// A level's effects, with what they show.
+struct EffectExtras {
+    /// The effects.
+    effects: Vec<Arc<EffectDef>>,
+    /// Their pictures.
+    pictures: Vec<SlotImage>,
+    /// Their shaders.
+    shaders: Vec<Arc<ShaderCode>>,
+}
+
+/// `effects`, with their emitters told where their pictures and shaders are, and those pictures
+/// and shaders, each once. Pictures come to one size, for one array.
+fn effect_extras(
+    library: &mut MaterialLibrary<'_>,
+    effects: Vec<Arc<EffectDef>>,
+) -> Result<EffectExtras, CompileError> {
+    let mut paths: Vec<String> = Vec::new();
+    let mut shaders: Vec<String> = Vec::new();
+    let mut out = Vec::with_capacity(effects.len());
+    for effect in effects {
+        let mut effect = EffectDef::clone(&effect);
+        for emitter in &mut effect.emitters {
+            if let Some(path) = &emitter.image {
+                let at = paths.iter().position(|known| known == path);
+                let at = at.unwrap_or_else(|| {
+                    paths.push(path.clone());
+                    paths.len() - 1
+                });
+                emitter.picture = u32::try_from(at + 1).unwrap_or(0);
+            }
+            if let Some(name) = &emitter.shader {
+                let at = shaders.iter().position(|known| known == name);
+                let at = at.unwrap_or_else(|| {
+                    shaders.push(name.clone());
+                    shaders.len() - 1
+                });
+                emitter.shader_number = u32::try_from(at + 1).unwrap_or(0);
+            }
+        }
+        out.push(Arc::new(effect));
+    }
+    let mut read = Vec::with_capacity(paths.len());
+    for path in &paths {
+        read.push(library.image_at(path)?);
+    }
+    let widest = read
+        .iter()
+        .filter_map(|image| image.first())
+        .map(|top| top.width.max(top.height));
+    let side = widest
+        .max()
+        .unwrap_or(1)
+        .next_power_of_two()
+        .min(WIDEST_PICTURE);
+    let pictures = read
+        .iter()
+        .filter_map(|image| image.first())
+        .map(|top| Arc::new(mip_chain(side, side, scaled(top, side))))
+        .collect();
+    let shaders = shaders.iter().map(|name| library.shader(name)).collect();
+    Ok(EffectExtras {
+        effects: out,
+        pictures,
+        shaders,
+    })
+}
+
 /// A level ready to play.
 #[derive(Debug)]
 pub struct PlayMap {
@@ -120,12 +192,15 @@ pub fn play_map(
     if let Some(error) = textures.failure {
         return Err(error);
     }
-    let pictures = textures.library.pixel_pictures();
     let mut map = map;
     let world = working.entities.iter().find(|e| e.kind == "worldspawn");
     let post = world.and_then(|world| world.text("post_shader"));
     map.post_shader = post.map(|name| textures.library.shader(name));
     map.effects = effects_in(filesystem)?;
+    let extras = effect_extras(&mut textures.library, std::mem::take(&mut map.effects))?;
+    map.effects = extras.effects;
+    map.effect_pictures = extras.pictures;
+    map.effect_shaders = extras.shaders;
     for entity in working.entities.iter().filter(|e| e.kind == "effect") {
         let name = entity.text("effect").unwrap_or_default();
         let [x, y, z] = entity.point("origin").unwrap_or([0.0; 3]);
@@ -140,6 +215,7 @@ pub fn play_map(
             model,
         });
     }
+    let pictures = textures.library.pixel_pictures();
     Ok(PlayMap {
         map,
         hash,

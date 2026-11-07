@@ -77,6 +77,19 @@ fn color_curve(block: &Block, key: &str) -> ColorCurve {
     }
 }
 
+/// The columns and rows of a sheet of frames.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "held to a sensible count"
+)]
+fn flipbook_of(block: &Block) -> [u32; 2] {
+    match *numbers(block, "flipbook").as_slice() {
+        [across, down, ..] => [across.clamp(1.0, 64.0) as u32, down.clamp(1.0, 64.0) as u32],
+        _ => [1, 1],
+    }
+}
+
 /// The emitter in `block`.
 fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
     let text = |key: &str| block.get(key).and_then(Value::text);
@@ -132,6 +145,16 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         reach: number(block, "reach", 200.0),
         gpu: block.get("gpu").and_then(Value::flag) == Some(true),
         on_death: text("on_death").map(str::to_owned),
+        image: text("image").map(str::to_owned),
+        flipbook: flipbook_of(block),
+        flip_rate: number(block, "flip_rate", 0.0),
+        shader: text("shader").map(str::to_owned),
+        rotation: range(block, "rotation", 0.0),
+        spin: range(block, "spin", 0.0),
+        stretch: number(block, "stretch", 0.0),
+        soft: number(block, "soft", 0.0),
+        lit: block.get("lit").and_then(Value::flag) == Some(true),
+        ..ParticleEmitter::default()
     })
 }
 

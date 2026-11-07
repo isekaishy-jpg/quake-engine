@@ -568,6 +568,10 @@ pub struct Map {
     pub terrain: Vec<crate::TerrainSheet>,
     /// Pictures worked out a step at a time.
     pub fields: Vec<crate::FieldDef>,
+    /// What effects' particles show, all of one size.
+    pub effect_pictures: Vec<crate::SlotImage>,
+    /// The shaders of effects' particles.
+    pub effect_shaders: Vec<Arc<crate::ShaderCode>>,
     /// What land's painted with, each picture once.
     pub land_pictures: Vec<crate::LandPicture>,
     /// Named places in the level, from `point` blocks and what placed meshes have.

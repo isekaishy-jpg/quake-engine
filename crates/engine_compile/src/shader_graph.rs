@@ -72,6 +72,8 @@ pub enum GraphHook {
     Post,
     /// A step of a field.
     Field,
+    /// A particle.
+    Particle,
 }
 
 impl GraphHook {
@@ -83,6 +85,7 @@ impl GraphHook {
             Self::Surface => "surface",
             Self::Post => "post",
             Self::Field => "field",
+            Self::Particle => "particle",
         }
     }
 }
@@ -153,7 +156,7 @@ const fn read(name: &'static str, gives: GraphType, code: &'static str) -> Graph
 }
 
 /// Every kind of node.
-pub const GRAPH_KINDS: [GraphKind; 36] = [
+pub const GRAPH_KINDS: [GraphKind; 38] = [
     read("uv", GraphType::Two, "uv"),
     read("world", GraphType::Three, "world"),
     read("normal", GraphType::Three, "surface.normal"),
@@ -161,6 +164,8 @@ pub const GRAPH_KINDS: [GraphKind; 36] = [
     read("color", GraphType::Three, "color"),
     read("time", GraphType::One, "shader_time()"),
     read("cell", GraphType::Two, "vec2<f32>(at)"),
+    read("tinted", GraphType::Four, "look.color"),
+    read("life", GraphType::One, "look.life"),
     GraphKind {
         name: "last",
         group: "there",
@@ -292,7 +297,7 @@ pub const GRAPH_KINDS: [GraphKind; 36] = [
 ];
 
 /// The outputs of a graph: the name, its hook, and how wide it has to be.
-pub const GRAPH_OUTPUTS: [(&str, GraphHook, GraphType); 7] = [
+pub const GRAPH_OUTPUTS: [(&str, GraphHook, GraphType); 8] = [
     ("vertex", GraphHook::Vertex, GraphType::Three),
     ("uv", GraphHook::Uv, GraphType::Two),
     ("base", GraphHook::Surface, GraphType::Four),
@@ -300,6 +305,7 @@ pub const GRAPH_OUTPUTS: [(&str, GraphHook, GraphType); 7] = [
     ("emissive", GraphHook::Surface, GraphType::Three),
     ("color", GraphHook::Post, GraphType::Three),
     ("field", GraphHook::Field, GraphType::Four),
+    ("particle", GraphHook::Particle, GraphType::Four),
 ];
 
 /// The kind called `name`.
@@ -310,14 +316,16 @@ pub fn graph_kind(name: &str) -> Option<&'static GraphKind> {
 
 /// Whether a kind can be read in `hook`.
 fn readable(kind: &str, hook: GraphHook) -> bool {
-    use GraphHook::{Field, Post, Surface, Uv, Vertex};
+    use GraphHook::{Field, Particle, Post, Surface, Uv, Vertex};
     match kind {
-        "uv" => matches!(hook, Uv | Post | Surface | Field),
-        "world" => matches!(hook, Vertex | Uv | Surface),
+        "uv" => matches!(hook, Uv | Post | Surface | Field | Particle),
+        "world" => matches!(hook, Vertex | Uv | Surface | Particle),
         "normal" | "base" => hook == Surface,
         "color" => hook == Post,
         "cell" | "last" => hook == Field,
-        "time" | "param" => hook != Post,
+        "tinted" | "life" => hook == Particle,
+        "time" => hook != Post,
+        "param" => !matches!(hook, Post | Particle),
         "image" => matches!(hook, Uv | Surface),
         "noise" => hook != Post,
         _ => true,
@@ -718,6 +726,20 @@ fn hook_lines(
     })
 }
 
+/// Adds what a particle does to `code`, if `graph` says.
+fn body_particle(graph: &ShaderGraph, code: &mut String, problems: &mut Vec<String>) {
+    if let Some(made) = hook_lines(graph, GraphHook::Particle, problems) {
+        code.push_str(&made.helpers);
+        let value = made.results.first().map_or("", |(_, value)| value.as_str());
+        let _ = write!(
+            code,
+            "fn shader_particle(look: ParticleLook) -> vec4<f32> {{\n    let uv = look.uv;\n    \
+             let world = look.world;\n{}    return {value};\n}}\n\n",
+            made.lines
+        );
+    }
+}
+
 /// Adds the step of a field to `code`, if `graph` has one.
 fn body_field(graph: &ShaderGraph, code: &mut String, problems: &mut Vec<String>) {
     if let Some(made) = hook_lines(graph, GraphHook::Field, problems) {
@@ -762,6 +784,9 @@ pub fn graph_code(graph: &ShaderGraph) -> Result<String, Vec<String>> {
     }
     if graph.outputs.contains_key("field") && graph.outputs.len() > 1 {
         problems.push("field is for a field's step, and goes alone".to_owned());
+    }
+    if graph.outputs.contains_key("particle") && graph.outputs.len() > 1 {
+        problems.push("particle is for a particle, and goes alone".to_owned());
     }
     let mut code = String::from("// Made from a graph. Change the graph, not this.\n\n");
     let mut body = |hook: GraphHook, (head, start): (&str, &str), tail: &HookTail<'_>| {
@@ -812,6 +837,7 @@ pub fn graph_code(graph: &ShaderGraph) -> Result<String, Vec<String>> {
         &last,
     );
     body_field(graph, &mut code, &mut problems);
+    body_particle(graph, &mut code, &mut problems);
     if problems.is_empty() {
         Ok(code)
     } else {
