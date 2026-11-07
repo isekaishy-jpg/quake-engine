@@ -2853,6 +2853,60 @@ fn a_moving_mesh_hides_what_is_drawn_after_it() {
     );
 }
 
+/// Far off, a mesh moves and draws only a coarser level, which is its first corners. Here that's
+/// half the square.
+#[test]
+fn a_moving_mesh_can_move_a_coarser_level() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut map = map_with_a_moving_square(false);
+    let mesh = &mut map.moving_meshes[0].mesh;
+    let half = SharedPart {
+        texture: 0,
+        first: 0,
+        count: 3,
+    };
+    mesh.levels.push(vec![half]);
+    renderer.load_map(Arc::new(map)).expect("load");
+    let empty = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let at_level = |renderer: &mut Renderer, level: u32, palette: &[Rows]| {
+        let draws = [MovingDraw {
+            rows: NO_MOVE,
+            joint_count: 2,
+            level,
+            center: Vec3::new(64.0, 64.0, 32.0),
+            radius: 200.0,
+            ..MovingDraw::default()
+        }];
+        let drawables = Drawables {
+            moving: &draws,
+            palette,
+            ..Drawables::default()
+        };
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture")
+    };
+    let finest = at_level(&mut renderer, 0, &[NO_MOVE, NO_MOVE]);
+    let coarse = at_level(&mut renderer, 1, &[NO_MOVE, NO_MOVE]);
+    let moved = at_level(&mut renderer, 1, &[along(8.0), NO_MOVE]);
+    let (_, _, finest_count) = middle_of_change(&finest, &empty);
+    let (x, y, coarse_count) = middle_of_change(&coarse, &empty);
+    let (a, b, moved_count) = middle_of_change(&moved, &empty);
+    assert!(
+        coarse_count * 3 < finest_count * 2,
+        "{coarse_count} of {finest_count}"
+    );
+    assert!(
+        coarse_count.abs_diff(moved_count) * 10 < coarse_count,
+        "it keeps its shape"
+    );
+    assert!((a - x).hypot(b - y) > 4.0, "and it moved");
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

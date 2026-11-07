@@ -36,7 +36,7 @@ pub use live::{
     cluster_masks, cube_face, slice_of,
 };
 pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
-pub use matrix::view_projection;
+pub use matrix::{height_scale, view_projection};
 pub use renderer::{
     CapsuleDraw, Capture, Drawables, PostSettings, Renderer, Statistics, Target, TextureFilter,
     View,

@@ -15,7 +15,7 @@ use engine_map::ParticleKind;
 use engine_map::{Contents, Rows, look_around};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
-    ParticleColor, ParticleDraw, ParticleShape, SpriteDraw, View,
+    ParticleColor, ParticleDraw, ParticleShape, SpriteDraw, View, height_scale,
 };
 
 use super::World;
@@ -408,6 +408,8 @@ impl World {
                     styles: &styles,
                     lights: &lighting_up,
                     time,
+                    eye: self.last_eye,
+                    height_scale: height_scale(self.fov),
                 };
                 for entity in &drawn {
                     let colors = wearing.get(&entity.state.id).copied();
@@ -462,6 +464,7 @@ impl World {
         self.view_tint
             .set_surroundings(look.map_or([0.0; 4], |look| look.tint));
         self.view_tint.pass(fade);
+        self.last_eye = origin;
         let view = View {
             origin,
             yaw: shot.yaw,

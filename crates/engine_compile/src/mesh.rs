@@ -696,6 +696,45 @@ fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
     }
 }
 
+/// Sorts a moving mesh's corners so that each level's are the first so many, coarsest first. The
+/// compute pass can then stop there, and far away a mesh moves fewer corners as well as drawing
+/// fewer triangles.
+pub(crate) fn coarsest_corners_first(shared: &mut SharedMesh) {
+    const UNSEEN: u32 = u32::MAX;
+    let mut became = vec![UNSEEN; shared.corners.len()];
+    let mut order = Vec::with_capacity(shared.corners.len());
+    for level in shared.levels.iter().rev() {
+        for part in level {
+            let first = part.first as usize;
+            for &corner in &shared.indices[first..first + part.count as usize] {
+                let at = &mut became[corner as usize];
+                if *at == UNSEEN {
+                    *at = u32::try_from(order.len()).unwrap_or(0);
+                    order.push(corner as usize);
+                }
+            }
+        }
+    }
+    // What no level uses still has a place, at the end.
+    for (corner, at) in became.iter_mut().enumerate() {
+        if *at == UNSEEN {
+            *at = u32::try_from(order.len()).unwrap_or(0);
+            order.push(corner);
+        }
+    }
+    for index in &mut shared.indices {
+        *index = became[*index as usize];
+    }
+    shared.corners = order.iter().map(|at| shared.corners[*at]).collect();
+    if !shared.joints.is_empty() {
+        shared.joints = order.iter().map(|at| shared.joints[*at]).collect();
+        shared.weights = order.iter().map(|at| shared.weights[*at]).collect();
+    }
+    if !shared.morph_heads.is_empty() {
+        shared.morph_heads = order.iter().map(|at| shared.morph_heads[*at]).collect();
+    }
+}
+
 /// `mesh` as its rest weights show it, for what's placed and doesn't move: a file's morph weights
 /// are part of how it looks. What's left has no morphs to carry.
 pub(crate) fn at_rest(mesh: &Mesh) -> Cow<'_, Mesh> {

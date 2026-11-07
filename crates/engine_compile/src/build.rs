@@ -21,7 +21,9 @@ use crate::geometry::{
     solid_corners, split,
 };
 use crate::light::light_tracks;
-use crate::mesh::{PlacedMesh, PlacedTriangle, at_rest, placement_rows, shared_mesh};
+use crate::mesh::{
+    PlacedMesh, PlacedTriangle, at_rest, coarsest_corners_first, placement_rows, shared_mesh,
+};
 use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
 };
@@ -660,7 +662,8 @@ impl Builder<'_> {
     /// Keeps the meshes that things in the level can show.
     fn keep_moving_meshes(&mut self, working: &WorkingMap) {
         for (name, mesh) in &working.moving {
-            let shared = shared_mesh(mesh, &mut |material| self.mesh_material(material));
+            let mut shared = shared_mesh(mesh, &mut |material| self.mesh_material(material));
+            coarsest_corners_first(&mut shared);
             self.map.moving_meshes.push(MovingMesh {
                 name: name.clone(),
                 mesh: shared,

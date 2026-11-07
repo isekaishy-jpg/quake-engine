@@ -73,3 +73,21 @@ The proving ground's faces went from 890 to 295, with five copies. Its barrels a
 
 Measured for a clip with every joint keyed: 2 µs for 20 joints, 6.6 µs for 60, and 11.8 µs for 120, sampling, placing and making a palette. So 100 characters of 60 joints are 0.66 ms a frame. That's fine for most scenes and matters in a crowd, so it's taken up with level of detail below.
 
+### Level of detail for what moves
+
+A moving mesh's corners are sorted when it's compiled, so that each level is the first so many, coarsest first. Levels are chosen by the same rule as copies, by the client, which keeps each entity's level from frame to frame, and the compute pass stops at that level's corners. Shadow maps use the same level, as what's past it hasn't moved. It needs no change to any file: the counts come from the indices when a level loads.
+
+Far things also pose less often, 30 times a second at the third level and 15 at the fourth, spread out by who they are so that a crowd doesn't pose all at once. What places them still changes every frame, so only limbs step, and a change of clip poses them at once. That's what comes off the CPU.
+
+96 of the test arm, made small with a wide view, as the proving ground isn't long enough to walk away from them:
+
+| | Near | Small |
+|---|---|---|
+| Corners worked out | 0.038 ms | 0.027 ms |
+| Drawn | 0.510 ms | 0.106 ms |
+
+Most of a coarse level's saving is here in drawing, as the test arm is small to begin with, and the fixed cost of the pass is about 0.011 ms.
+
+- **Three tests were checked by putting their bugs back** properly, on the second try: joints left behind by the sort, morphs left behind, and no sort at all. The first try proved nothing, as the test mesh had no levels and failed either way.
+- **How a change of level looks in motion** is for a person, with a real model, at stage 17.
+

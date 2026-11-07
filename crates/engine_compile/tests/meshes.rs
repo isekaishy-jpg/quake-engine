@@ -9,7 +9,7 @@ use engine_compile::{
     read_map_text, read_mesh, resolve_meshes, write_geometry, write_mesh,
 };
 use engine_format::from_text;
-use engine_map::{Map, Texture};
+use engine_map::{Map, SharedMesh, Texture};
 use std::sync::Arc;
 
 /// A level with nothing but a floor.
@@ -1134,4 +1134,101 @@ fn a_level_comes_back_from_what_is_left_of_its_copies() {
     assert_eq!(again.mesh_instances, map.mesh_instances);
     assert_eq!(again.shared_meshes, map.shared_meshes);
     assert!(copies_are_in_leaves(&again));
+}
+
+/// The corners that `level` of `mesh` uses.
+fn corners_of(mesh: &SharedMesh, level: usize) -> Vec<u32> {
+    let mut corners: Vec<u32> = mesh.levels[level]
+        .iter()
+        .flat_map(|part| {
+            let first = part.first as usize;
+            mesh.indices[first..first + part.count as usize]
+                .iter()
+                .copied()
+        })
+        .collect();
+    corners.sort_unstable();
+    corners.dedup();
+    corners
+}
+
+/// Every triangle of `mesh`'s finest level, as what its corners are, in a way that doesn't depend
+/// on how they're numbered.
+fn triangles_of(mesh: &SharedMesh) -> Vec<String> {
+    let mut found: Vec<String> = mesh.levels[0]
+        .iter()
+        .flat_map(|part| {
+            let first = part.first as usize;
+            mesh.indices[first..first + part.count as usize]
+                .as_chunks::<3>()
+                .0
+                .iter()
+                .map(|triangle| {
+                    let what = triangle.map(|corner| {
+                        let at = corner as usize;
+                        format!(
+                            "{:?}{:?}{:?}",
+                            mesh.corners[at], mesh.joints[at], mesh.weights[at]
+                        )
+                    });
+                    format!("{what:?}")
+                })
+                .collect::<Vec<_>>()
+        })
+        .collect();
+    found.sort();
+    found
+}
+
+/// A level of something that moves is the first so many corners, so that the compute pass can stop
+/// there, and sorting them changes nothing about what they are.
+#[test]
+fn a_moving_meshs_levels_are_its_first_corners() {
+    let mut mesh = rigged();
+    mesh.skeleton.as_mut().expect("it has one").rest_weights = vec![0.0];
+    // A real level isn't what this is about, so these are every other triangle, and then every
+    // fourth, which is enough to leave some corners out.
+    let part = &mut mesh.parts[0];
+    let some_of = |gap: usize| part.triangles.iter().step_by(gap).copied().collect();
+    part.levels = vec![some_of(2), some_of(4)];
+    let world = FLOOR.replace("type = worldspawn", "type = worldspawn meshes = test");
+    let text = format!("{world}\nmesh {{ source = test origin = [0 0 0] light = probe }}\n");
+    let mut working = read_map_text(&text).expect("reads");
+    let mesh = Arc::new(mesh);
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&mesh),
+            occluders: Vec::new(),
+        })
+    })
+    .expect("places");
+    let map = compile(&working, &mut Plain).expect("compiles");
+    let moving = &map.moving_meshes[0].mesh;
+    assert!(moving.levels.len() > 1, "it has levels");
+    let mut last = 0;
+    for level in (0..moving.levels.len()).rev() {
+        let corners = corners_of(moving, level);
+        let top = corners.last().copied().expect("it has some") + 1;
+        assert_eq!(top as usize, corners.len(), "level {level} leaves no gaps");
+        assert!(top >= last, "finer levels use more");
+        last = top;
+    }
+    assert!(
+        (corners_of(moving, moving.levels.len() - 1).len()) < moving.corners.len(),
+        "the coarsest saves something"
+    );
+    assert_eq!(triangles_of(moving), triangles_of(&map.shared_meshes[0]));
+    let moved: usize = moving.morph_heads.iter().map(|head| head[1] as usize).sum();
+    assert_eq!(moved, moving.morphs.len());
+    let part = &mesh.parts[0];
+    for change in &part.morphs[0] {
+        #[expect(clippy::cast_possible_truncation, reason = "meshes draw in f32")]
+        let [x, y, z] = part.points[change.corner as usize].map(|axis| axis as f32);
+        let held = moving
+            .corners
+            .iter()
+            .zip(&moving.morph_heads)
+            .any(|(corner, head)| corner.position == [x, y, z] && head[1] > 0);
+        assert!(held, "a corner keeps its morphs");
+    }
 }

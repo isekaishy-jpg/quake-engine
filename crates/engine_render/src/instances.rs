@@ -37,6 +37,8 @@ pub struct MovingDraw {
     pub weight_count: u32,
     /// Its light, as a colour.
     pub light: [f32; 3],
+    /// Which of its levels of detail to move and draw.
+    pub level: u32,
     /// Its middle, in the world, as it's posed.
     pub center: Vec3,
     /// How far it reaches from there.

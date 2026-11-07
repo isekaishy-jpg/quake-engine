@@ -523,7 +523,7 @@ impl Shadows {
                 continue;
             };
             self.push(rec, &multiply(&matrix, &job.placed), [0.0; 4]);
-            for part in &mesh.shadow_parts {
+            for part in mesh.shadow_parts(job.level) {
                 rec.draw_indexed(part.count, 1, part.first, 0, 0);
             }
         }

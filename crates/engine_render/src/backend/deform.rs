@@ -155,10 +155,41 @@ pub(super) struct GpuMovingMesh {
     corners: u32,
     /// Its triangles.
     pub(super) indices: GpuBuffer,
-    /// Its parts, by material.
-    pub(super) parts: Vec<SharedPart>,
-    /// Those that cast shadows.
-    pub(super) shadow_parts: Vec<SharedPart>,
+    /// Each level's parts, by material.
+    levels: Vec<Vec<SharedPart>>,
+    /// How many corners each level uses, which are the first so many.
+    level_corners: Vec<u32>,
+    /// Those that cast shadows, at each level.
+    shadow_levels: Vec<Vec<SharedPart>>,
+}
+
+impl GpuMovingMesh {
+    /// Its parts at `level`, or the coarsest it has.
+    pub(super) fn parts(&self, level: u32) -> &[SharedPart] {
+        Self::at(&self.levels, level)
+    }
+
+    /// Those of its parts at `level` that cast shadows.
+    pub(super) fn shadow_parts(&self, level: u32) -> &[SharedPart] {
+        Self::at(&self.shadow_levels, level)
+    }
+
+    /// `level` of `levels`, or the last.
+    fn at(levels: &[Vec<SharedPart>], level: u32) -> &[SharedPart] {
+        levels
+            .get(level as usize)
+            .or(levels.last())
+            .map_or(&[], Vec::as_slice)
+    }
+
+    /// How many corners have to be moved to draw `level`.
+    fn corners_at(&self, level: u32) -> u32 {
+        self.level_corners
+            .get(level as usize)
+            .or(self.level_corners.last())
+            .copied()
+            .unwrap_or(self.corners)
+    }
 }
 
 /// One mesh to move and draw this frame.
@@ -166,6 +197,8 @@ pub(super) struct GpuMovingMesh {
 pub(super) struct MovingJob {
     /// Which mesh.
     pub(super) mesh: u32,
+    /// Which of its levels.
+    pub(super) level: u32,
     /// Where its moved corners went, or `None` if it's drawn at rest.
     moved_to: Option<u32>,
     /// Its place in the instance buffer.
@@ -355,7 +388,8 @@ impl GpuMoving {
             };
             let first = draw.first_joint as usize;
             let own = palette.get(first..first + draw.joint_count as usize);
-            let fits = used_corners + mesh.corners as usize <= MOST_MOVED_CORNERS
+            let corners = mesh.corners_at(draw.level);
+            let fits = used_corners + corners as usize <= MOST_MOVED_CORNERS
                 && used_joints + draw.joint_count as usize <= MOST_JOINTS;
             let mut moved_to = None;
             let first_joint = u32::try_from(used_joints).unwrap_or(0);
@@ -371,7 +405,7 @@ impl GpuMoving {
                     }
                 }
                 moved_to = Some(u32::try_from(used_corners).unwrap_or(0));
-                used_corners += mesh.corners as usize;
+                used_corners += corners as usize;
                 used_joints += own.len();
             } else {
                 over = true;
@@ -390,7 +424,7 @@ impl GpuMoving {
             if let Some(first_out) = moved_to {
                 let words = [
                     mesh.first_corner,
-                    mesh.corners,
+                    corners,
                     first_out,
                     first_joint,
                     first_weight,
@@ -401,7 +435,7 @@ impl GpuMoving {
                     *chunk = word.to_le_bytes();
                 }
                 let job = u32::try_from(moved_jobs).unwrap_or(0);
-                for group in 0..mesh.corners.div_ceil(WORKGROUP) {
+                for group in 0..corners.div_ceil(WORKGROUP) {
                     groups[used_groups] = (job | group << JOB_BITS).to_le_bytes();
                     used_groups += 1;
                 }
@@ -416,6 +450,7 @@ impl GpuMoving {
             write_instance(&draw.rows, &light, instance.as_mut_slice());
             frame.jobs.push(MovingJob {
                 mesh: draw.mesh,
+                level: draw.level,
                 moved_to,
                 instance: u32::try_from(frame.jobs.len()).unwrap_or(0),
                 in_view,
@@ -576,17 +611,32 @@ impl Backend {
                 .iter()
                 .flat_map(|i| i.to_le_bytes())
                 .collect();
-            let parts = shared.levels.first().cloned().unwrap_or_default();
+            let casts = |parts: &Vec<SharedPart>| {
+                parts
+                    .iter()
+                    .filter(|part| super::upload::casts_shadow(map, part.texture))
+                    .copied()
+                    .collect()
+            };
+            // Levels are the first so many corners, and each uses all that the one after does.
+            let level_corners = shared
+                .levels
+                .iter()
+                .map(|parts| {
+                    let indices = parts.iter().flat_map(|part| {
+                        let first = part.first as usize;
+                        &shared.indices[first..first + part.count as usize]
+                    });
+                    indices.copied().max().map_or(0, |last| last + 1)
+                })
+                .collect();
             meshes.push(GpuMovingMesh {
                 first_corner,
                 corners: u32::try_from(shared.corners.len()).unwrap_or(0),
                 indices: self.device_buffer(&index_bytes, BufferUsage::INDEX_BUFFER)?,
-                shadow_parts: parts
-                    .iter()
-                    .filter(|part| super::upload::casts_shadow(map, part.texture))
-                    .copied()
-                    .collect(),
-                parts,
+                shadow_levels: shared.levels.iter().map(casts).collect(),
+                levels: shared.levels.clone(),
+                level_corners,
             });
             first_corner += u32::try_from(shared.corners.len()).unwrap_or(0);
         }

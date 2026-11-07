@@ -235,7 +235,7 @@ impl Recorder<'_> {
             if bind_moving(rec, moving, job, self.slot, true).is_none() {
                 continue;
             }
-            for part in &mesh.parts {
+            for part in mesh.parts(job.level) {
                 if self.part_depth_first(scene.map, part.texture) {
                     rec.draw_indexed(part.count, 1, part.first, 0, job.instance);
                 }
@@ -587,11 +587,11 @@ impl Recorder<'_> {
             if self.outline_hull && !see_through {
                 rec.bind_graphics_pipeline(&self.pipelines.mesh_hull);
                 rec.bind_graphics_descriptor_sets(&self.layouts.material, 0, &[&map.frame_set]);
-                for part in &mesh.shadow_parts {
+                for part in mesh.shadow_parts(job.level) {
                     rec.draw_indexed(part.count, 1, part.first, 0, job.instance);
                 }
             }
-            for part in &mesh.parts {
+            for part in mesh.parts(job.level) {
                 let texture = scene.map.textures.get(part.texture as usize);
                 let Some(kind) = texture.and_then(batch_kind) else {
                     continue;

@@ -65,6 +65,13 @@ pub fn view_projection(origin: Vec3, angles: [f32; 3], fov: f32, aspect: f32) ->
     ]
 }
 
+/// How much bigger something looks than it is, at a distance of 1, as a share of half the view's
+/// height, with `fov` as [`view_projection`] takes it.
+#[must_use]
+pub fn height_scale(fov: f32) -> f32 {
+    REFERENCE_ASPECT / (fov.to_radians() * 0.5).tan()
+}
+
 /// The inverse of a column-major 4 by 4 matrix, if it has one.
 #[must_use]
 pub(crate) fn inverse(m: &[f32; 16]) -> Option<[f32; 16]> {

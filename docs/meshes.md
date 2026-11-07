@@ -84,7 +84,7 @@ engine.set_model(id, "mesh:arm")
 engine.set_clip(id, "wave")
 ```
 
-`engine.set_clip` says if there's such a clip, and with no name it goes back to rest. Asking for what's playing leaves it playing. A clip goes round, and changing clip blends over a fifth of a second.
+`engine.set_clip` says if there's such a clip, and with no name it goes back to rest. Asking for what's playing leaves it playing. A clip goes round, and changing clip blends over a fifth of a second. Levels of detail work for what moves too: far off, it moves and draws fewer corners, and its limbs update less often.
 
 A shape key comes in as a morph target, by its name. A clip can move it, and a script can set it:
 

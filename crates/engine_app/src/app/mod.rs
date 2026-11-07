@@ -134,6 +134,8 @@ pub(crate) struct World {
     load_warning: Option<String>,
     /// The field of view in degrees, at 4:3.
     pub(crate) fov: f32,
+    /// Where the view was last, for how big things look.
+    pub(crate) last_eye: Vec3,
     /// Everything that sounds.
     pub(crate) audio: Audio,
     /// Sounds loaded so far.
@@ -660,6 +662,7 @@ impl Engine {
                 map_time: 0.0,
                 load_warning: None,
                 fov: DEFAULT_FOV,
+                last_eye: Vec3::ZERO,
                 audio: if options.no_sound {
                     Audio::silent()
                 } else {
