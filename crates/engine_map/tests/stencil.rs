@@ -90,6 +90,30 @@ fn a_light_moves_along_its_path() {
     assert_eq!(shape.light_at(2.0), Vec3::ZERO);
 }
 
+/// Light through a cell goes away from a lamp, and starts in the middle of the cell.
+#[test]
+fn a_cell_ray_runs_away_from_a_lamp() {
+    let shape = stencil(Vec::new());
+    let (start, end) = shape.cell_ray(0, Vec3::new(0.5, 64.0, -0.5));
+    assert_eq!(start, Vec3::new(0.5, 0.0, -0.5));
+    assert_eq!(end, Vec3::new(0.5, -256.0, -0.5));
+    assert_eq!(shape.cell_ray(1, shape.light).0, Vec3::new(1.5, 0.0, -0.5));
+    let last = STENCIL_GRID * STENCIL_GRID - 1;
+    assert_eq!(
+        shape.cell_ray(last, shape.light).0,
+        Vec3::new(15.5, 0.0, -15.5)
+    );
+}
+
+/// Light through a cell goes against a sun's direction, and each cell's goes the same way.
+#[test]
+fn a_cell_ray_runs_away_from_a_sun() {
+    let mut shape = stencil(Vec::new());
+    shape.sun = true;
+    let (start, end) = shape.cell_ray(3, Vec3::new(0.0, 0.0, 2.0));
+    assert_eq!(end - start, Vec3::new(0.0, 0.0, -256.0));
+}
+
 /// The test point of a box is its middle on the surface.
 #[test]
 fn a_box_has_a_point_on_the_surface() {

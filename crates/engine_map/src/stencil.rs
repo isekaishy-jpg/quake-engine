@@ -53,6 +53,22 @@ impl RayStencil {
         self.corner + self.across * across + self.down * down
     }
 
+    /// Where light through a cell of the grid starts, and where it'd end with nothing in the way.
+    #[must_use]
+    pub fn cell_ray(&self, cell: usize, light: Vec3) -> (Vec3, Vec3) {
+        #[expect(clippy::cast_precision_loss, reason = "a small grid")]
+        let at = |value: usize| (value as f32 + 0.5) / STENCIL_GRID as f32;
+        let across = at(cell % STENCIL_GRID);
+        let down = at(cell / STENCIL_GRID);
+        let start = self.corner + self.across * across + self.down * down;
+        let way = if self.sun {
+            light.normalized() * -1.0
+        } else {
+            (start - light).normalized()
+        };
+        (start, start + way * self.reach)
+    }
+
     /// Fills `mask` from how open each box is, leaving the rest open.
     pub fn fill_mask(&self, open: &[f32], mask: &mut [f32; STENCIL_GRID * STENCIL_GRID]) {
         mask.fill(1.0);

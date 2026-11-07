@@ -90,6 +90,8 @@ struct Frame {
     pool_edge: array<vec4<f32>, 8>,
     // Where the ripples are, and how wide, which is 0 with none.
     ripple_place: vec4<f32>,
+    // How far light gets past each cell of each stencil, four cells to an entry.
+    stencil_reach: array<vec4<f32>, 256>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

@@ -86,6 +86,8 @@ pub struct Drawables<'a> {
     pub stencil_lights: &'a [Vec3],
     /// How open each stencil's cells are.
     pub stencil_masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// How far light gets past each stencil's cells. With none, nothing's in its way.
+    pub stencil_reaches: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// Characters shading the light.
     pub capsules: &'a [CapsuleDraw],
     /// Moving meshes.

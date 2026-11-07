@@ -24,6 +24,13 @@ use crate::projectiles::{Blast, Flights, Launch, Timeline};
 use crate::shown_shot::ShownShot;
 use crate::view_clock::ViewClock;
 
+/// How far light can start inside something and still come out of it, as a window's glass is
+/// solid to everything else.
+const LIGHT_EMERGES: f32 = 48.0;
+
+/// How far apart it looks for the way out.
+const LIGHT_EMERGE_STEP: f32 = 4.0;
+
 /// Further than this in a tick is a teleport, and isn't blended.
 const MAX_BLENDED_MOVE: f32 = 200.0;
 
@@ -742,6 +749,24 @@ impl Client {
         }
         let beyond = trace.end + (end - start).normalized() * 2.0;
         to_sky && trace.model.is_none() && self.world.map_contents(beyond) == Contents::Sky
+    }
+
+    /// How far along a line light gets, past what it starts in, such as the glass of its window.
+    /// Characters don't stop it, as a beam is too rough for them to show.
+    #[must_use]
+    pub fn light_reach(&self, start: Vec3, end: Vec3) -> f32 {
+        let whole = (end - start).length();
+        let way = (end - start).normalized();
+        let collision = self.world.with(&self.instances);
+        let mut gone = 0.0;
+        while gone < LIGHT_EMERGES.min(whole) {
+            let trace = collision.trace(start + way * gone, end);
+            if !trace.start_solid {
+                return gone + trace.fraction * (whole - gone);
+            }
+            gone += LIGHT_EMERGE_STEP;
+        }
+        0.0
     }
 
     /// Works out what `blast` does to us, from `T_RadiusDamage`.

@@ -781,6 +781,32 @@ fn stencil_open(index: i32, uv: vec2<f32>) -> f32 {
     return frame.stencil_mask[index * 64 + at / 4][at % 4];
 }
 
+// How far light gets past one cell of a stencil.
+fn stencil_cell_reach(index: i32, cell: vec2<i32>) -> f32 {
+    let at = clamp(cell, vec2<i32>(0), vec2<i32>(15));
+    let entry = at.y * 16 + at.x;
+    return frame.stencil_reach[index * 64 + entry / 4][entry % 4];
+}
+
+// How far light gets past a stencil at `uv`. What's in the way is mostly flat, so that changes
+// evenly across the stencil, and going smoothly between cells follows it closely.
+fn stencil_reach_at(index: i32, uv: vec2<f32>) -> f32 {
+    let at = uv * 16.0 - vec2<f32>(0.5);
+    let cell = vec2<i32>(floor(at));
+    let part = at - floor(at);
+    let top = mix(
+        stencil_cell_reach(index, cell),
+        stencil_cell_reach(index, cell + vec2<i32>(1, 0)),
+        part.x,
+    );
+    let bottom = mix(
+        stencil_cell_reach(index, cell + vec2<i32>(0, 1)),
+        stencil_cell_reach(index, cell + vec2<i32>(1, 1)),
+        part.x,
+    );
+    return mix(top, bottom, part.y);
+}
+
 // Narrows `span` of a ray to the side of a plane that `inside` is on.
 fn clip_span(
     span: vec2<f32>,
@@ -824,6 +850,9 @@ fn clip_edge(
     }
     return clip_span(span, eye, ray, from_corner, normal);
 }
+
+// How soft a beam's end is, in world units each way.
+const STENCIL_STOP_SOFT: f32 = 6.0;
 
 // Light in the air, shaped by a stencil. The view ray is cut to the beam, and
 // each step looks towards the light and reads where that crosses the stencil.
@@ -885,7 +914,10 @@ fn stencil_rays(index: i32, eye: vec3<f32>, stop: vec3<f32>, jitter: f32) -> vec
             continue;
         }
         let distance_to = length(point - hit);
-        let fade = clamp(1.0 - distance_to / max(reach, 1.0), 0.0, 1.0);
+        // Whatever's in the way of the light stops it, and it's soft where it does.
+        let gets_to = stencil_reach_at(index, uv);
+        let stopped = 1.0 - smoothstep(gets_to - STENCIL_STOP_SOFT, gets_to + STENCIL_STOP_SOFT, distance_to);
+        let fade = clamp(1.0 - distance_to / max(reach, 1.0), 0.0, 1.0) * stopped;
         // Soft at the rim, so the beam has no hard outline.
         let rim = min(min(uv.x, 1.0 - uv.x), min(uv.y, 1.0 - uv.y));
         let soft = smoothstep(0.0, 0.06, rim);

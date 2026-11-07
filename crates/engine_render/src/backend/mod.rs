@@ -106,7 +106,8 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 4
     + FOG_LIGHTS * 8
     + MAX_POOLS * 16
-    + 4;
+    + 4
+    + 256 * 4;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;

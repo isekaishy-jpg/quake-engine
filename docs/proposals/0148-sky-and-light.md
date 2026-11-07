@@ -71,4 +71,11 @@ Each of those comes from the research, and none needs more for what the items as
 
 ## What came of it
 
+### Beams and floors (62)
+
+- **Tried in the game:** in Vesper Deep, the crypt under the Minster had coloured beams through its ceiling, and now it's dark. Up above they stop at the ground. In a two storey room, a beam stops at the upper floor and goes on past its edge.
+- **What it costs:** too little to tell from noise. The pass with rays took 0.18 to 0.25 ms before and about 0.25 ms after, at 1280 by 720, with a beam filling much of the view. There are 32 traces a frame.
+- **Light starts inside glass.** A stained window's glass is solid and its stencil is in the middle of it, so a trace starting there never got anywhere. It now looks for the way out, for up to 48 units.
+- **Characters don't stop a beam,** though they do close a box. A beam's cells are too coarse for one to show.
+
 Filled in as each part lands.

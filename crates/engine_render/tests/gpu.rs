@@ -891,6 +891,16 @@ fn stencil_map(left: [u8; 4]) -> Map {
 
 /// How bright the middle of a picture of `built` is, with `masks` on it.
 fn stencil_centre(built: Map, masks: &[[f32; 256]], rays: u8) -> Option<[u8; 4]> {
+    stencil_centre_reaching(built, masks, &[], rays)
+}
+
+/// How bright the middle of a picture of `built` is, with light stopped by `reaches`.
+fn stencil_centre_reaching(
+    built: Map,
+    masks: &[[f32; 256]],
+    reaches: &[[f32; 256]],
+    rays: u8,
+) -> Option<[u8; 4]> {
     let mut renderer = renderer()?;
     renderer.load_map(Arc::new(built)).expect("load");
     renderer.set_post(PostSettings {
@@ -899,6 +909,7 @@ fn stencil_centre(built: Map, masks: &[[f32; 256]], rays: u8) -> Option<[u8; 4]>
     });
     let drawables = Drawables {
         stencil_masks: masks,
+        stencil_reaches: reaches,
         ..Drawables::default()
     };
     let view = View {
@@ -938,6 +949,69 @@ fn a_closed_box_stops_its_rays() {
     let closed = stencil_centre(stencil_map(BLUE), &[[0.0; 256]], 3);
     if let (Some(plain), Some(closed)) = (plain, closed) {
         assert_eq!(plain, closed);
+    }
+}
+
+/// A beam stops where something's in its way, and the air past that has none of its light.
+#[test]
+fn a_floor_stops_a_beam() {
+    let plain = stencil_centre(stencil_map(BLUE), &[], 0);
+    let full = stencil_centre_reaching(stencil_map(BLUE), &[], &[[512.0; 256]], 3);
+    // The view looks down from 64 under the stencil, so it's all past this.
+    let stopped = stencil_centre_reaching(stencil_map(BLUE), &[], &[[32.0; 256]], 3);
+    if let (Some(plain), Some(full), Some(stopped)) = (plain, full, stopped) {
+        assert!(full[2] > plain[2] + 20, "{plain:?} {full:?}");
+        assert_eq!(plain, stopped);
+    }
+}
+
+/// A beam stopped short of where the view is still shows, for what's before that.
+#[test]
+fn a_beam_shows_up_to_where_it_stops() {
+    let full = stencil_centre_reaching(stencil_map(BLUE), &[], &[[512.0; 256]], 3);
+    let low = stencil_centre_reaching(stencil_map(BLUE), &[], &[[120.0; 256]], 3);
+    let plain = stencil_centre(stencil_map(BLUE), &[], 0);
+    if let (Some(full), Some(low), Some(plain)) = (full, low, plain) {
+        assert!(
+            low[2] > plain[2] && low[2] < full[2],
+            "{plain:?} {low:?} {full:?}"
+        );
+    }
+}
+
+/// Each stencil has its own reach, and one's doesn't stop another's.
+#[test]
+fn a_beam_stops_by_its_own_stencil() {
+    let two = || {
+        let mut built = stencil_map(BLUE);
+        let other = RayStencil {
+            corner: Vec3::new(4000.0, 0.0, 128.0),
+            ..built.stencils[0].clone()
+        };
+        built.stencils.insert(0, other);
+        built
+    };
+    let plain = stencil_centre(two(), &[], 0);
+    let shown = stencil_centre_reaching(two(), &[], &[[32.0; 256], [512.0; 256]], 3);
+    let stopped = stencil_centre_reaching(two(), &[], &[[512.0; 256], [32.0; 256]], 3);
+    if let (Some(plain), Some(shown), Some(stopped)) = (plain, shown, stopped) {
+        assert!(shown[2] > plain[2] + 20, "{plain:?} {shown:?}");
+        assert_eq!(stopped, plain);
+    }
+}
+
+/// Each part of a stencil has its own reach: the view's under the left half.
+#[test]
+fn a_beam_stops_by_the_cell_it_goes_through() {
+    let half = |left: f32, right: f32| -> [f32; 256] {
+        std::array::from_fn(|cell| if cell % 16 < 8 { left } else { right })
+    };
+    let plain = stencil_centre(stencil_map(BLUE), &[], 0);
+    let under = stencil_centre_reaching(stencil_map(BLUE), &[], &[half(32.0, 512.0)], 3);
+    let beside = stencil_centre_reaching(stencil_map(BLUE), &[], &[half(512.0, 32.0)], 3);
+    if let (Some(plain), Some(under), Some(beside)) = (plain, under, beside) {
+        assert_eq!(under, plain);
+        assert!(beside[2] > plain[2] + 20, "{plain:?} {beside:?}");
     }
 }
 

@@ -26,6 +26,10 @@ const TEST_START: f32 = 2.0;
 /// How far a sun's test looks for what's in the way.
 const SUN_REACH: f32 = 4096.0;
 
+/// How many cells a frame looks along. A beam a door has cut takes a few frames to catch up,
+/// which its fade hides.
+const REACHES_PER_FRAME: usize = 32;
+
 /// How wide the player's shade is.
 const CAPSULE_RADIUS: f32 = 22.0;
 
@@ -155,6 +159,12 @@ pub(super) struct StencilGates {
     lights: Vec<Vec3>,
     /// The next box to test, counting through all of them.
     next: usize,
+    /// How far light gets past each stencil's cells.
+    reaches: Vec<StencilMask>,
+    /// How far light should get, which `reaches` eases towards.
+    wanted_reaches: Vec<StencilMask>,
+    /// The next cell to look along, counting through all of them.
+    next_reach: usize,
 }
 
 impl StencilGates {
@@ -168,19 +178,34 @@ impl StencilGates {
         &self.masks
     }
 
+    /// How far light gets past stencils.
+    pub(super) fn reaches(&self) -> &[StencilMask] {
+        &self.reaches
+    }
+
     /// Starts again for `stencils`.
-    fn reset(&mut self, stencils: &[RayStencil]) {
+    fn reset(&mut self, stencils: &[RayStencil], client: &Client, time: f32) {
         self.wanted = stencils.iter().map(|s| vec![true; s.boxes.len()]).collect();
         self.open = stencils.iter().map(|s| vec![1.0; s.boxes.len()]).collect();
         self.masks = vec![[1.0; STENCIL_GRID * STENCIL_GRID]; stencils.len()];
         self.next = 0;
+        self.next_reach = 0;
+        // All at once, as there's no fade to hide a level starting with beams through its floors.
+        self.wanted_reaches = stencils
+            .iter()
+            .map(|stencil| {
+                let light = stencil.light_at(time);
+                std::array::from_fn(|cell| cell_reach(stencil, cell, light, client))
+            })
+            .collect();
+        self.reaches.clone_from(&self.wanted_reaches);
     }
 
     /// Tests some boxes against `client`'s collision, and eases all of them.
     pub(super) fn update(&mut self, map: &Map, client: &Client, time: f32, seconds: f32) {
         let stencils = &map.stencils;
         if self.open.len() != stencils.len() {
-            self.reset(stencils);
+            self.reset(stencils, client, time);
         }
         self.lights = stencils.iter().map(|s| s.light_at(time)).collect();
         let total: usize = stencils.iter().map(|s| s.boxes.len()).sum();
@@ -197,8 +222,16 @@ impl StencilGates {
                 left -= stencil.boxes.len();
             }
         }
+        self.look_along(stencils, client);
         let step = seconds / FADE_SECONDS;
         for (index, stencil) in stencils.iter().enumerate() {
+            let most = stencil.reach * step;
+            for (reach, wanted) in self.reaches[index]
+                .iter_mut()
+                .zip(&self.wanted_reaches[index])
+            {
+                *reach += (wanted - *reach).clamp(-most, most);
+            }
             for (open, wanted) in self.open[index].iter_mut().zip(&self.wanted[index]) {
                 let target = if *wanted { 1.0 } else { 0.0 };
                 *open += (target - *open).clamp(-step, step);
@@ -206,6 +239,27 @@ impl StencilGates {
             stencil.fill_mask(&self.open[index], &mut self.masks[index]);
         }
     }
+}
+
+impl StencilGates {
+    /// Looks along some cells for what's come into the way of their light.
+    fn look_along(&mut self, stencils: &[RayStencil], client: &Client) {
+        const CELLS: usize = STENCIL_GRID * STENCIL_GRID;
+        let total = stencils.len() * CELLS;
+        for _ in 0..REACHES_PER_FRAME.min(total) {
+            self.next_reach = (self.next_reach + 1) % total;
+            let (index, cell) = (self.next_reach / CELLS, self.next_reach % CELLS);
+            let stencil = &stencils[index];
+            self.wanted_reaches[index][cell] =
+                cell_reach(stencil, cell, self.lights[index], client);
+        }
+    }
+}
+
+/// How far light gets past a cell of a stencil.
+fn cell_reach(stencil: &RayStencil, cell: usize, light: Vec3, client: &Client) -> f32 {
+    let (start, end) = stencil.cell_ray(cell, light);
+    client.light_reach(start, end)
 }
 
 /// Whether light reaches a box of a stencil.

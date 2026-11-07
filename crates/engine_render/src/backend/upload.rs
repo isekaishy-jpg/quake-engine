@@ -286,6 +286,8 @@ pub(super) struct FrameExtras<'a> {
     lights: &'a [Vec3],
     /// How open their cells are.
     masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// How far light gets past their cells.
+    reaches: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
@@ -466,6 +468,14 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     }
     let base = base + MAX_POOLS * 16;
     out[base..base + 3].copy_from_slice(&extra.ripples);
+    let base = base + 4;
+    for (index, stencil) in stencils.iter().take(4).enumerate() {
+        let at = base + index * 256;
+        match extra.reaches.get(index) {
+            Some(reach) => out[at..at + 256].copy_from_slice(reach),
+            None => out[at..at + 256].fill(stencil.reach),
+        }
+    }
     out
 }
 
@@ -1397,6 +1407,7 @@ impl Backend {
             stencils: scene.map_or(&[][..], |scene| scene.map.stencils.as_slice()),
             lights: scene.map_or(&[][..], |scene| scene.drawables.stencil_lights),
             masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
+            reaches: scene.map_or(&[][..], |scene| scene.drawables.stencil_reaches),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             sheets: scene.map_or(&[][..], |scene| scene.map.water_sheets.as_slice()),

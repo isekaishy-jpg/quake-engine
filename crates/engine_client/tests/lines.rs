@@ -55,6 +55,50 @@ fn a_body_stops_a_line() {
     assert!(!client.line_is_clear(from, to, false));
 }
 
+/// With nothing in the way, light gets all the way along.
+#[test]
+fn light_reaches_the_end_of_open_air() {
+    let client = client_in(room());
+    let (from, to) = (Vec3::new(-100.0, 100.0, 0.0), Vec3::new(100.0, 100.0, 0.0));
+    assert!((client.light_reach(from, to) - 200.0).abs() < 0.5);
+}
+
+/// A wall stops light where it is.
+#[test]
+fn light_stops_at_a_wall() {
+    let client = client_in(room());
+    let to = Vec3::new(4000.0, 100.0, 0.0);
+    let reach = client.light_reach(Vec3::new(0.0, 100.0, 0.0), to);
+    let clear = client.light_reach(
+        Vec3::new(0.0, 100.0, 0.0),
+        Vec3::new(reach - 1.0, 100.0, 0.0),
+    );
+    assert!(reach > 0.0 && reach < 4000.0, "{reach}");
+    assert!((clear - (reach - 1.0)).abs() < 0.5, "{clear} {reach}");
+}
+
+/// Light that starts in a wall comes out of it, if it's thin.
+#[test]
+fn light_comes_out_of_what_it_starts_in() {
+    let client = client_in(room());
+    let reach = client.light_reach(Vec3::new(0.0, 100.0, 0.0), Vec3::new(4000.0, 100.0, 0.0));
+    // Just inside the wall, going back into the room.
+    let from = Vec3::new(reach + 8.0, 100.0, 0.0);
+    let back = client.light_reach(from, Vec3::new(0.0, 100.0, 0.0));
+    assert!((back - (reach + 8.0)).abs() < 0.5, "{back} {reach}");
+}
+
+/// Light that starts deep in something stays there.
+#[test]
+fn light_stays_in_what_is_too_thick() {
+    let client = client_in(room());
+    let reach = client.light_reach(Vec3::new(0.0, 100.0, 0.0), Vec3::new(4000.0, 100.0, 0.0));
+    // There's open room past all of this, but it's too far in to get to.
+    let from = Vec3::new(reach + 100.0, 100.0, 0.0);
+    let to = Vec3::new(0.0, 100.0, 0.0);
+    assert_eq!(client.light_reach(from, to), 0.0);
+}
+
 /// Sky is solid, but light comes from it.
 #[test]
 fn sky_is_clear_only_when_asked() {

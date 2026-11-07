@@ -50,6 +50,8 @@ pub(crate) struct Picture {
     stencil_lights: Vec<Vec3>,
     /// How open stencils are.
     stencil_masks: Vec<StencilMask>,
+    /// How far light gets past each stencil's cells.
+    stencil_reaches: Vec<StencilMask>,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
@@ -89,6 +91,7 @@ impl Picture {
             quads: &self.quads,
             stencil_lights: &self.stencil_lights,
             stencil_masks: &self.stencil_masks,
+            stencil_reaches: &self.stencil_reaches,
             capsules: &self.capsules,
             live_lights: &self.live_lights,
             moving: &self.moving,
@@ -579,6 +582,7 @@ impl World {
             quads: Vec::new(),
             stencil_lights: self.gates.lights().to_vec(),
             stencil_masks: self.gates.masks().to_vec(),
+            stencil_reaches: self.gates.reaches().to_vec(),
             capsules,
             live_lights: moving,
         }
