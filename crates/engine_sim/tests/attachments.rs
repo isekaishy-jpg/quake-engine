@@ -5,11 +5,11 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_map::{
-    AttachPoint, Channel, ChannelPath, Clip, ClipChild, Interpolation, Joint, Map, Model,
-    MovingMesh, NO_MOVE, Skeleton, SkeletonPlace,
+    AttachPoint, Channel, ChannelPath, Clip, ClipChild, HitCapsule, Interpolation, Joint, Map,
+    Model, MovingMesh, NO_MOVE, Skeleton, SkeletonPlace,
 };
 use engine_physics::CollisionWorld;
-use engine_sim::{EntityId, MoveType, Simulation, Solid};
+use engine_sim::{EntityId, MoveKind, MoveTrace, MoveType, Simulation, Solid};
 use engine_test_maps::room;
 
 /// One tick.
@@ -382,5 +382,106 @@ fn a_place_turns_with_its_model() {
     assert!(
         (turned.y.rem_euclid(360.0) - 180.0).abs() < 0.01,
         "{turned:?}"
+    );
+}
+
+/// A figure with a wide box and one thin capsule on its joint, from its middle along X, which the
+/// clip turns to point along Y after a second.
+fn thin_figure() -> (Simulation, Rc<CollisionWorld>, EntityId) {
+    let mut skeleton = turning_skeleton();
+    let (sine, cosine) = 45.0_f32.to_radians().sin_cos();
+    skeleton.clips[0].channels[0].values =
+        [[0.0, 0.0, 0.0, 1.0], [0.0, 0.0, sine, cosine]].concat();
+    skeleton.hit_capsules = vec![HitCapsule {
+        joint: 0,
+        ends: [Vec3::ZERO, Vec3::new(40.0, 0.0, 0.0)],
+        radius: 4.0,
+    }];
+    let mut map = Map::clone(&room());
+    map.moving_meshes.push(MovingMesh {
+        name: "arm".to_owned(),
+        skeleton,
+        ..MovingMesh::default()
+    });
+    let map = Arc::new(map);
+    let world = Rc::new(CollisionWorld::new(Arc::clone(&map)));
+    let mut simulation = Simulation::new(map, Vec3::new(200.0, 200.0, 0.0));
+    simulation.set_world(Rc::clone(&world));
+    let figure = simulation.spawn();
+    simulation.set_shape(figure, "mesh:arm");
+    let entity = simulation.entity_mut(figure).expect("there");
+    entity.origin = Vec3::new(100.0, 100.0, 40.0);
+    entity.solid = Solid::Bbox;
+    entity.mins = Vec3::new(-48.0, -48.0, -16.0);
+    entity.maxs = Vec3::new(48.0, 48.0, 16.0);
+    (simulation, world, figure)
+}
+
+/// A shot straight down at `x` and `y`.
+fn shot_down(simulation: &Simulation, x: f32, y: f32) -> MoveTrace {
+    simulation.trace_line(
+        Vec3::new(x, y, 80.0),
+        Vec3::new(x, y, 20.0),
+        MoveKind::Normal,
+        None,
+    )
+}
+
+/// A shot goes by the joints: past the arm it's inside the box and misses, and on the arm it hits.
+#[test]
+fn a_shot_hits_what_a_figure_is_doing_and_not_its_box() {
+    let (simulation, _world, figure) = thin_figure();
+    let on_arm = shot_down(&simulation, 120.0, 100.0);
+    assert_eq!(on_arm.entity, Some(figure));
+    assert_eq!(on_arm.joint, Some(0));
+    assert!((on_arm.end.z - 44.0).abs() < 0.1, "{:?}", on_arm.end);
+    let past_arm = shot_down(&simulation, 100.0, 130.0);
+    assert_eq!(past_arm.entity, None, "it's in the box, but off the arm");
+}
+
+/// What a shot hits goes with the clip.
+#[test]
+fn a_shot_follows_the_pose() {
+    let (mut simulation, _world, figure) = thin_figure();
+    assert!(simulation.set_clip(figure, "turn"));
+    simulation.end_tick(1.2);
+    let turned = shot_down(&simulation, 100.0, 120.0);
+    assert_eq!(turned.entity, Some(figure), "the arm's along Y now");
+    assert_eq!(shot_down(&simulation, 120.0, 100.0).entity, None);
+}
+
+/// Moving goes by the box as it always did.
+#[test]
+fn what_has_size_still_goes_by_the_box() {
+    let (simulation, world, figure) = thin_figure();
+    let path = (Vec3::new(100.0, 130.0, 80.0), Vec3::new(100.0, 130.0, 20.0));
+    let size = (Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0));
+    let trace = simulation.trace_move(path, size, MoveKind::Normal, None, &world);
+    assert_eq!(trace.entity, Some(figure));
+    assert_eq!(trace.joint, None);
+}
+
+/// A rewound shot goes by how the figure stood when the shooter saw it, not how it stands now.
+#[test]
+fn a_rewound_shot_hits_the_pose_the_shooter_saw() {
+    let (mut simulation, _world, figure) = thin_figure();
+    let shooter = simulation.add_player(Vec3::new(300.0, 300.0, 40.0));
+    assert!(simulation.set_clip(figure, "turn"));
+    simulation.end_tick(0.9);
+    simulation.end_tick(0.2);
+    assert!(
+        shot_down(&simulation, 100.0, 120.0).entity.is_some(),
+        "it's turned by now"
+    );
+    simulation.aim_player(shooter, 0.0, 0.0, 0.95);
+    simulation.rewind(shooter);
+    let seen = shot_down(&simulation, 120.0, 100.0);
+    assert_eq!(seen.entity, Some(figure), "it hadn't turned then");
+    assert_eq!(shot_down(&simulation, 100.0, 120.0).entity, None);
+    simulation.end_rewind();
+    assert_eq!(
+        shot_down(&simulation, 120.0, 100.0).entity,
+        None,
+        "and it has now"
     );
 }

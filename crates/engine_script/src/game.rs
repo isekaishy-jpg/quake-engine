@@ -643,12 +643,13 @@ impl Game {
                     } else {
                         MoveKind::Normal
                     };
-                    let trace = sim.borrow().trace_line(
-                        to_vec3(start),
-                        to_vec3(end),
-                        kind,
-                        pass.map(id_from),
-                    );
+                    let sim = sim.borrow();
+                    let trace =
+                        sim.trace_line(to_vec3(start), to_vec3(end), kind, pass.map(id_from));
+                    let joint = trace
+                        .entity
+                        .zip(trace.joint)
+                        .and_then(|(id, joint)| sim.joint_name(id, joint).map(str::to_owned));
                     Ok((
                         trace.fraction,
                         from_vec3(trace.end),
@@ -656,6 +657,7 @@ impl Game {
                         trace.entity.map(id_to),
                         trace.in_open,
                         trace.in_water,
+                        joint,
                     ))
                 },
             )?,

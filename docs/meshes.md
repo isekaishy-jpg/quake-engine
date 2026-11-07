@@ -105,3 +105,8 @@ A document, binary from import, and text if a script writes it. Each `part` has 
 ## Collision
 
 Convex pieces are fitted to a mesh for you, so a well can be stepped into and its walls stop you. A `hull` box in the file replaces that, if you'd rather choose. A placement with `only_seen = 1` has none.
+
+## What shots hit
+
+Something that moves has a capsule on each joint, worked out when a level compiles from the corners that joint carries. A shot goes by those, and anything with size goes by the entity's box. After `traceline`, `trace_joint` says which joint it hit, by name, or `nil` if it wasn't one.
+

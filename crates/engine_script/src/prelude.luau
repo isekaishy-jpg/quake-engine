@@ -251,6 +251,8 @@ trace_fraction = 1
 trace_endpos = vector.zero
 trace_plane_normal = vector.zero
 trace_ent = nil
+-- The joint it hit, on something that has them.
+trace_joint = nil
 
 trace_inopen = false
 trace_inwater = false
@@ -357,12 +359,13 @@ function rint(value)
 end
 
 function traceline(start, finish, nomonsters, ignore)
-	local fraction, endpos, normal, hit, inopen, inwater =
+	local fraction, endpos, normal, hit, inopen, inwater, joint =
 		engine.traceline(start, finish, nomonsters, ignore and rawget(ignore, "_id"))
 	trace_fraction = fraction
 	trace_endpos = endpos
 	trace_plane_normal = normal
 	trace_ent = hit and entities[hit] or ent(nil)
+	trace_joint = joint
 	trace_inopen = inopen
 	trace_inwater = inwater
 end

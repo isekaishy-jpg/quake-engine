@@ -8,8 +8,9 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, to_text};
 use engine_map::{
-    AttachPoint, Channel, ChannelPath, Clip, Contents, Interpolation, Joint, JointPose, MeshCorner,
-    NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedMorph, SharedPart, Skeleton, SkeletonPlace,
+    AttachPoint, Channel, ChannelPath, Clip, Contents, HitCapsule, Interpolation, Joint, JointPose,
+    MeshCorner, NO_MOVE, OccluderSphere, Rows, SharedMesh, SharedMorph, SharedPart, Skeleton,
+    SkeletonPlace, moved,
 };
 
 use crate::build::packed_normal;
@@ -430,6 +431,7 @@ fn read_skeleton_of(document: &Document) -> Option<Skeleton> {
         reach,
         morph_names: names.split_whitespace().map(str::to_owned).collect(),
         rest_weights: floats(settings, "rest_weights"),
+        hit_capsules: Vec::new(),
     })
 }
 
@@ -694,6 +696,93 @@ fn triangles_at(part: &MeshPart, level: usize) -> &[[u32; 3]] {
             .or(part.levels.last())
             .unwrap_or(&part.triangles),
     }
+}
+
+/// The longest way through `points`: what they spread out along most.
+fn longest_way(points: &[Vec3], middle: Vec3) -> Vec3 {
+    let spread = |axis: Vec3| {
+        points.iter().fold(Vec3::ZERO, |sum, point| {
+            let from = *point - middle;
+            sum + from * from.dot(axis)
+        })
+    };
+    let mut axis = Vec3::new(0.577, 0.577, 0.577);
+    for _ in 0..16 {
+        let next = spread(axis);
+        let length = next.length();
+        if length <= f32::EPSILON {
+            break;
+        }
+        axis = next * (1.0 / length);
+    }
+    axis
+}
+
+/// How far `point` is from the line between `ends`.
+fn from_line(point: Vec3, ends: [Vec3; 2]) -> f32 {
+    let spine = ends[1] - ends[0];
+    let length = spine.dot(spine).max(f32::EPSILON);
+    let down = ((point - ends[0]).dot(spine) / length).clamp(0.0, 1.0);
+    (point - (ends[0] + spine * down)).length()
+}
+
+/// The capsule that holds `points`, on `joint`.
+fn capsule_round(joint: u16, points: &[Vec3]) -> Option<HitCapsule> {
+    #[expect(clippy::cast_precision_loss, reason = "a count of corners")]
+    let share = 1.0 / points.len().max(1) as f32;
+    let middle = points.iter().fold(Vec3::ZERO, |sum, point| sum + *point) * share;
+    let axis = longest_way(points, middle);
+    let along = |point: &Vec3| (*point - middle).dot(axis);
+    let low = points.iter().map(along).fold(f32::MAX, f32::min);
+    let high = points.iter().map(along).fold(f32::MIN, f32::max);
+    let thick = |point: &Vec3| (*point - middle - axis * along(point)).length();
+    let round = points.iter().map(thick).fold(0.0, f32::max);
+    // Its ends come in by how round it is, or it would reach past what it's round.
+    let (low, high) = if high - low > round * 2.0 {
+        (low + round, high - round)
+    } else {
+        let centre = (low + high) * 0.5;
+        (centre, centre)
+    };
+    let ends = [middle + axis * low, middle + axis * high];
+    let radius = points
+        .iter()
+        .map(|point| from_line(*point, ends))
+        .fold(0.0, f32::max);
+    (radius > 0.0).then_some(HitCapsule {
+        joint,
+        ends,
+        radius,
+    })
+}
+
+/// `mesh`'s skeleton, with a capsule round the corners each joint carries most, for shots. An
+/// author has nothing to do for this, and a corner is in one capsule at most.
+pub(crate) fn with_hit_capsules(mesh: &Mesh) -> Skeleton {
+    let mut skeleton = mesh.skeleton.clone().unwrap_or_default();
+    let mut carried: Vec<Vec<Vec3>> = vec![Vec::new(); skeleton.joints.len()];
+    for part in &mesh.parts {
+        for ((point, joints), weights) in part.points.iter().zip(&part.joints).zip(&part.weights) {
+            let strongest = weights
+                .iter()
+                .enumerate()
+                .max_by_key(|(_, weight)| **weight)
+                .map_or(0, |(at, _)| at);
+            let joint = usize::from(joints[strongest]);
+            let Some(list) = carried.get_mut(joint) else {
+                continue;
+            };
+            #[expect(clippy::cast_possible_truncation, reason = "meshes draw in f32")]
+            let corner = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+            list.push(moved(&skeleton.joints[joint].inverse_bind, corner));
+        }
+    }
+    skeleton.hit_capsules = (0_u16..)
+        .zip(&carried)
+        .filter(|(_, points)| points.len() > 1)
+        .filter_map(|(joint, points)| capsule_round(joint, points))
+        .collect();
+    skeleton
 }
 
 /// Sorts a moving mesh's corners so that each level's are the first so many, coarsest first. The

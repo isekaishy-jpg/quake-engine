@@ -91,3 +91,14 @@ Most of a coarse level's saving is here in drawing, as the test arm is small to 
 - **Three tests were checked by putting their bugs back** properly, on the second try: joints left behind by the sort, morphs left behind, and no sort at all. The first try proved nothing, as the test mesh had no levels and failed either way.
 - **How a change of level looks in motion** is for a person, with a real model, at stage 17.
 
+### Hit volumes
+
+A moving mesh gets a capsule on each joint when a level compiles, round the corners that joint carries most, so an author has nothing to do. A line that reaches its box tests those, posed as it stood at the shot's time, and goes by them and not the box. What has size goes by the box as it always did, so moving is unchanged. A mesh with no capsules goes by its box too. `traceline` says which joint, and scripts have it as `trace_joint`, so a game can tell a head from a foot.
+
+Tried in the game, firing from a script at the Blender arm, which has a box 160 tall. Shots at three heights hit `root`, `middle` and `end`, stopping on its surface. Shots above it and beside it, inside the box, went through.
+
+- **Rewinding** goes by what proposal 0048 built. A rewound shot poses the figure at the rewound time. If its clip has changed since, that's taken from the start of the clip that's playing now, as only a clip's start is kept.
+- **A bug found by its test:** `end_rewind` left the rewound time set, so that every shot after the first would have gone by the old pose.
+- Four other bugs were put back, and each fails a test: joints ignored, things with size going by joints, the pose ignored, and a capsule too thin.
+- **A capsule's as wide as the widest of what it holds,** so a shot can hit just beside a thin part of a limb. Better that than a shot through a limb missing.
+

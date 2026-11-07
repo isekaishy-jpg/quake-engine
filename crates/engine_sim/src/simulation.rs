@@ -348,6 +348,8 @@ pub struct Simulation {
     force_retouch: u8,
     /// Where players are taken to be, while a shot looks into the past.
     rewound: Vec<(EntityId, Vec3)>,
+    /// When that is, for how things stood.
+    rewound_time: Option<f64>,
     /// Whether shots show the boxes they're judged against.
     showing_rewind: bool,
     /// The exact time of what scripts are running for.
@@ -385,6 +387,7 @@ impl Simulation {
             player_view: Vec::new(),
             force_retouch: 0,
             rewound: Vec::new(),
+            rewound_time: None,
             showing_rewind: false,
             event_time: None,
             things_past: VecDeque::new(),
@@ -457,6 +460,7 @@ impl Simulation {
             player_view,
             force_retouch,
             rewound: _,
+            rewound_time: _,
             showing_rewind: _,
             event_time: _,
             things_past: _,
@@ -507,6 +511,7 @@ impl Simulation {
             check_index: saved.check_index,
             player_view: saved.player_view,
             rewound: Vec::new(),
+            rewound_time: None,
             showing_rewind: false,
             event_time: None,
             things_past: VecDeque::new(),
@@ -824,6 +829,37 @@ impl Simulation {
             &placed_at(point.origin, point.angles),
         );
         Some((moved(&rows, Vec3::ZERO), angles_of_rows(&rows)))
+    }
+
+    /// What a line from `start` to `end` hits of `entity`'s joints, stood as it was when a rewound
+    /// shot says, with `entity` at `origin`. `None` if it has none to hit, and then it goes by its
+    /// box. A clip that's since changed is taken from its start.
+    pub(crate) fn line_on_joints(
+        &self,
+        entity: &Entity,
+        origin: Vec3,
+        start: Vec3,
+        end: Vec3,
+    ) -> Option<Option<(f32, Vec3, u16)>> {
+        let skeleton = &self.moving_mesh_of(entity)?.skeleton;
+        if skeleton.hit_capsules.is_empty() {
+            return None;
+        }
+        let clip = usize::from(entity.clip).checked_sub(1);
+        let when = self.rewound_time.unwrap_or(self.time);
+        #[expect(clippy::cast_possible_truncation, reason = "a clip's time")]
+        let time = (when - entity.clip_start).max(0.0) as f32;
+        let placed = skeleton.placed(&skeleton.pose(clip, time));
+        let rows = placed_at(origin, entity.angles);
+        Some(skeleton.line_hit((&rows, &placed), start, end))
+    }
+
+    /// What `joint` is called on `id`.
+    #[must_use]
+    pub fn joint_name(&self, id: EntityId, joint: u16) -> Option<&str> {
+        let mesh = self.moving_mesh_of(self.entities.get(id)?)?;
+        let found = mesh.skeleton.joints.get(usize::from(joint))?;
+        Some(&found.name)
     }
 
     /// The moving mesh `entity` shows, if it shows one.
@@ -1479,6 +1515,7 @@ impl Simulation {
         self.follow_attachments();
         self.time += seconds;
         self.rewound.clear();
+        self.rewound_time = None;
         let oldest = self.time - MAX_REWIND - 2.0 * seconds;
         let time = self.time;
         for player in &mut self.players {
@@ -1580,6 +1617,7 @@ impl Simulation {
         });
         rewound.extend(at);
         self.rewound = rewound;
+        self.rewound_time = Some(time);
     }
 
     /// Sets whether shots show the boxes they're judged against.
@@ -1607,6 +1645,7 @@ impl Simulation {
     /// Puts players back after a shot.
     pub fn end_rewind(&mut self) {
         self.rewound.clear();
+        self.rewound_time = None;
     }
 
     /// Touches from players since last asked: brush models hit, then triggers

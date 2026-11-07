@@ -9,7 +9,7 @@ use engine_compile::{
     read_map_text, read_mesh, resolve_meshes, write_geometry, write_mesh,
 };
 use engine_format::from_text;
-use engine_map::{Map, SharedMesh, Texture};
+use engine_map::{Map, SharedMesh, Texture, moved};
 use std::sync::Arc;
 
 /// A level with nothing but a floor.
@@ -779,7 +779,7 @@ fn tallest_skinned(mesh: &Mesh, palette: &[engine_map::Rows]) -> engine_core::ma
             engine_core::math::Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
         let mut skinned = engine_core::math::Vec3::ZERO;
         for (joint, weight) in joints.iter().zip(weights) {
-            let moved = engine_map::moved(&palette[usize::from(*joint)], corner);
+            let moved = moved(&palette[usize::from(*joint)], corner);
             skinned = skinned + moved * (f32::from(*weight) / 255.0);
         }
         if skinned.z > tallest.z {
@@ -883,7 +883,7 @@ fn a_place_on_a_bone_goes_with_it() {
     let tip = |seconds: f32| {
         let placed = skeleton.placed(&skeleton.pose(Some(0), seconds));
         let rows = skeleton.place("tip", &placed).expect("there");
-        engine_map::moved(&rows, engine_core::math::Vec3::ZERO)
+        moved(&rows, engine_core::math::Vec3::ZERO)
     };
     assert!(
         (tip(0.5) - tip(0.0)).length() > 10.0,
@@ -1230,5 +1230,45 @@ fn a_moving_meshs_levels_are_its_first_corners() {
             .zip(&moving.morph_heads)
             .any(|(corner, head)| corner.position == [x, y, z] && head[1] > 0);
         assert!(held, "a corner keeps its morphs");
+    }
+}
+
+/// Each joint gets a capsule that holds the corners it carries most, with no work for an author.
+#[test]
+fn a_moving_mesh_gets_capsules_round_its_joints() {
+    let mesh = rigged();
+    let world = FLOOR.replace("type = worldspawn", "type = worldspawn meshes = test");
+    let mut working = read_map_text(&world).expect("reads");
+    let shared = Arc::new(mesh.clone());
+    resolve_meshes(&mut working, &mut |_| {
+        Ok(LoadedMesh {
+            mesh: Arc::clone(&shared),
+            occluders: Vec::new(),
+        })
+    })
+    .expect("places");
+    let map = compile(&working, &mut Plain).expect("compiles");
+    let skeleton = &map.moving_meshes[0].skeleton;
+    assert!(
+        skeleton.hit_capsules.len() >= 2,
+        "{}",
+        skeleton.hit_capsules.len()
+    );
+    let part = &mesh.parts[0];
+    for ((point, joints), weights) in part.points.iter().zip(&part.joints).zip(&part.weights) {
+        let strongest = (0..4).max_by_key(|at| weights[*at]).expect("four");
+        let joint = u16::from(joints[strongest]);
+        let Some(capsule) = skeleton.hit_capsules.iter().find(|one| one.joint == joint) else {
+            continue;
+        };
+        #[expect(clippy::cast_possible_truncation, reason = "meshes draw in f32")]
+        let corner =
+            engine_core::math::Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
+        let local = moved(&skeleton.joints[usize::from(joint)].inverse_bind, corner);
+        let spine = capsule.ends[1] - capsule.ends[0];
+        let down =
+            ((local - capsule.ends[0]).dot(spine) / spine.dot(spine).max(0.0001)).clamp(0.0, 1.0);
+        let off = (local - (capsule.ends[0] + spine * down)).length();
+        assert!(off <= capsule.radius + 0.01, "{off} of {}", capsule.radius);
     }
 }

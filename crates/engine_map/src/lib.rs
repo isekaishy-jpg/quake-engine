@@ -47,8 +47,8 @@ pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{Pool, PoolLook, look_around};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
 pub use skeleton::{
-    Channel, ChannelPath, Clip, Interpolation, Joint, JointPose, NO_MOVE, Rows, Skeleton,
-    SkeletonPlace, after, angles_of_rows, blend_poses, moved, placed_at, turned,
+    Channel, ChannelPath, Clip, HitCapsule, Interpolation, Joint, JointPose, NO_MOVE, Rows,
+    Skeleton, SkeletonPlace, after, angles_of_rows, blend_poses, moved, placed_at, turned,
 };
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};

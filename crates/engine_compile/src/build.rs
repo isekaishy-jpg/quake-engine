@@ -23,6 +23,7 @@ use crate::geometry::{
 use crate::light::light_tracks;
 use crate::mesh::{
     PlacedMesh, PlacedTriangle, at_rest, coarsest_corners_first, placement_rows, shared_mesh,
+    with_hit_capsules,
 };
 use crate::source::{
     Brush, BrushFace, DecalSource, EntitySource, StampSource, WorkingMap, read_map,
@@ -667,7 +668,7 @@ impl Builder<'_> {
             self.map.moving_meshes.push(MovingMesh {
                 name: name.clone(),
                 mesh: shared,
-                skeleton: mesh.skeleton.clone().unwrap_or_default(),
+                skeleton: with_hit_capsules(mesh),
             });
         }
     }

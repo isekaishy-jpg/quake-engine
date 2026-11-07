@@ -59,6 +59,8 @@ pub struct MoveTrace {
     pub hit: bool,
     /// The entity it hit, if it wasn't the world.
     pub entity: Option<EntityId>,
+    /// Which of that entity's joints it hit, if it went by them.
+    pub joint: Option<u16>,
     /// Whether it passed through open air.
     pub in_open: bool,
     /// Whether it passed through liquid.
@@ -110,6 +112,7 @@ impl Simulation {
             all_solid: hull.all_solid,
             hit,
             entity: hull.model.and_then(|model| self.entity_of_model(model)),
+            joint: None,
             in_open: hull.in_open,
             in_water: hull.in_water,
         };
@@ -138,12 +141,30 @@ impl Simulation {
             let Some((fraction, normal, inside)) = enter_box(start, end, box_low, box_high) else {
                 continue;
             };
+            // The box is only the first test for a line, on something with joints to hit.
+            let on_joints = (mins == maxs && maxs == Vec3::ZERO)
+                .then(|| self.line_on_joints(entity, origin, start, end))
+                .flatten();
+            if let Some(found) = on_joints {
+                if let Some((share, facing, joint)) = found
+                    && share < best.fraction
+                {
+                    best.fraction = share;
+                    best.end = start.lerp(end, share);
+                    best.normal = facing;
+                    best.hit = true;
+                    best.entity = Some(id);
+                    best.joint = Some(joint);
+                }
+                continue;
+            }
             if inside {
                 best.start_solid = true;
                 best.hit = true;
                 best.fraction = 0.0;
                 best.end = start;
                 best.entity = Some(id);
+                best.joint = None;
                 continue;
             }
             if fraction < best.fraction {
@@ -154,6 +175,7 @@ impl Simulation {
                 best.normal = normal;
                 best.hit = true;
                 best.entity = Some(id);
+                best.joint = None;
             }
         }
         best
@@ -180,6 +202,7 @@ impl Simulation {
                 all_solid: false,
                 hit: false,
                 entity: None,
+                joint: None,
                 in_open: false,
                 in_water: false,
             },

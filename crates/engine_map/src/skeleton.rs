@@ -145,6 +145,77 @@ pub struct Joint {
     pub inverse_bind: Rows,
 }
 
+/// A shape on a joint that shots hit, in the joint's own space. What moves an entity about goes by
+/// its box, and this is only for lines.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct HitCapsule {
+    /// Which joint.
+    pub joint: u16,
+    /// The ends of the line down its middle.
+    pub ends: [Vec3; 2],
+    /// How far it reaches from that line.
+    pub radius: f32,
+}
+
+/// Where a line from `start` along `along` first meets a ball at `middle`, as a share of `along`.
+fn line_meets_ball(start: Vec3, along: Vec3, middle: Vec3, radius: f32) -> Option<f32> {
+    let from = start - middle;
+    let (a, b, c) = (
+        along.dot(along),
+        along.dot(from),
+        from.dot(from) - radius * radius,
+    );
+    let inside = b * b - a * c;
+    (inside >= 0.0 && a > 0.0).then(|| (-b - inside.sqrt()) / a)
+}
+
+/// Where a line from `start` along `along` first meets the sides of a capsule, as a share of
+/// `along`, if that's between its ends.
+fn line_meets_sides(start: Vec3, along: Vec3, ends: [Vec3; 2], radius: f32) -> Option<f32> {
+    let spine = ends[1] - ends[0];
+    let from = start - ends[0];
+    let length = spine.dot(spine);
+    let (spine_along, spine_from) = (spine.dot(along), spine.dot(from));
+    let a = length * along.dot(along) - spine_along * spine_along;
+    let b = length * along.dot(from) - spine_from * spine_along;
+    let c = length * from.dot(from) - spine_from * spine_from - radius * radius * length;
+    let inside = b * b - a * c;
+    if a <= f32::EPSILON || inside < 0.0 {
+        return None;
+    }
+    let share = (-b - inside.sqrt()) / a;
+    let height = spine_from + share * spine_along;
+    (height > 0.0 && height < length).then_some(share)
+}
+
+/// Where a line from `start` along `along` first meets a capsule, as a share of `along`, and
+/// which way that faces.
+fn line_meets_capsule(
+    start: Vec3,
+    along: Vec3,
+    ends: [Vec3; 2],
+    radius: f32,
+) -> Option<(f32, Vec3)> {
+    let spine = ends[1] - ends[0];
+    let hits = [
+        line_meets_sides(start, along, ends, radius),
+        line_meets_ball(start, along, ends[0], radius),
+        line_meets_ball(start, along, ends[1], radius),
+    ];
+    let share = hits
+        .into_iter()
+        .flatten()
+        .filter(|share| (0.0..=1.0).contains(share))
+        .fold(None, |best: Option<f32>, share| {
+            Some(best.map_or(share, |best| best.min(share)))
+        })?;
+    let at = start + along * share;
+    let length = spine.dot(spine).max(f32::EPSILON);
+    let down = ((at - ends[0]).dot(spine) / length).clamp(0.0, 1.0);
+    let facing = at - (ends[0] + spine * down);
+    Some((share, facing * (1.0 / facing.length().max(f32::EPSILON))))
+}
+
 /// What a channel of a clip moves.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ChannelPath {
@@ -362,9 +433,37 @@ pub struct Skeleton {
     pub morph_names: Vec<String>,
     /// How much of each shows with no clip saying otherwise.
     pub rest_weights: Vec<f32>,
+    /// What shots hit, if it's more than its entity's box.
+    pub hit_capsules: Vec<HitCapsule>,
 }
 
 impl Skeleton {
+    /// Where the line from `start` to `end` first hits this, placed by `rows` and stood as `placed`
+    /// says: how far along, which way that faces, and which joint.
+    #[must_use]
+    pub fn line_hit(
+        &self,
+        (rows, placed): (&Rows, &[Rows]),
+        start: Vec3,
+        end: Vec3,
+    ) -> Option<(f32, Vec3, u16)> {
+        let mut best: Option<(f32, Vec3, u16)> = None;
+        for capsule in &self.hit_capsules {
+            let Some(joint) = placed.get(usize::from(capsule.joint)) else {
+                continue;
+            };
+            let whole = after(rows, joint);
+            let ends = capsule.ends.map(|end| moved(&whole, end));
+            let found = line_meets_capsule(start, end - start, ends, capsule.radius);
+            if let Some((share, facing)) = found
+                && best.is_none_or(|(nearest, _, _)| share < nearest)
+            {
+                best = Some((share, facing, capsule.joint));
+            }
+        }
+        best
+    }
+
     /// The clip called `name`.
     #[must_use]
     pub fn clip_named(&self, name: &str) -> Option<usize> {
