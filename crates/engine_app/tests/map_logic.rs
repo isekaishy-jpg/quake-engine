@@ -55,6 +55,8 @@ struct Game {
     effects: Vec<Effect>,
     /// Commands for the client's console received.
     stuffed: Vec<String>,
+    /// The time of day the server last told of.
+    day: Option<(f32, f64)>,
     /// The last end of level screen asked for.
     intermission: u8,
     /// Damage reported to the player.
@@ -87,6 +89,7 @@ impl Game {
             music: None,
             effects: Vec::new(),
             stuffed: Vec::new(),
+            day: None,
             intermission: 0,
             damage: Vec::new(),
         }
@@ -126,6 +129,7 @@ impl Game {
                     ServerMessage::CenterPrint(text) => self.prints.push(text),
                     ServerMessage::Stuff(text) => self.stuffed.push(text),
                     ServerMessage::Intermission(kind) => self.intermission = kind,
+                    ServerMessage::Day { hour, at } => self.day = Some((hour, at)),
                     ServerMessage::Damage { armor, blood, from } => {
                         self.damage.push((armor, blood, from));
                     }
@@ -2256,6 +2260,39 @@ fn the_end_of_a_level_holds_the_player_at_the_camera_until_a_button() {
     game.run(2, attack());
     assert_eq!(game.server.take_next_level().as_deref(), Some("next"));
     assert!(game.server.take_parms().is_some());
+}
+
+/// A script can read the time of day, and set it, in a level that has a day.
+#[test]
+fn a_script_has_the_time_of_day() {
+    let mut built = (*level_with_an_exit(&[("classname", "worldspawn")])).clone();
+    built.day = Some(engine_map::DayCycle {
+        start: 9.0,
+        ..engine_map::DayCycle::default()
+    });
+    let map = Arc::new(built);
+    let mut game = Game::new(&map, at_floor(0.0, 0.0));
+    game.check(
+        r#"
+        assert(math.abs(engine.time_of_day() - 9) < 0.01, "starts at its hour")
+        engine.set_time_of_day(20)
+        assert(math.abs(engine.time_of_day() - 20) < 0.01, "set")
+    "#,
+    );
+    game.wait(0.1);
+    assert_eq!(
+        game.day.map(|(hour, _)| hour),
+        Some(20.0),
+        "everyone's told"
+    );
+}
+
+/// A level with no day has no time of day.
+#[test]
+fn a_level_with_no_day_has_no_time() {
+    let map = level_with_an_exit(&[("classname", "worldspawn")]);
+    let game = Game::new(&map, at_floor(0.0, 0.0));
+    game.check(r#"assert(engine.time_of_day() == nil, "no day")"#);
 }
 
 #[test]

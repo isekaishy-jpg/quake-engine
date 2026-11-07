@@ -111,6 +111,10 @@ fn messages_survive_the_round_trip() {
         }),
         ServerMessage::Music(6),
         ServerMessage::Gravity(100.0),
+        ServerMessage::Day {
+            hour: 17.5,
+            at: 1234.25,
+        },
         ServerMessage::Effect(Effect::Temp {
             kind: 3,
             origin: Vec3::new(1.0, 2.0, 3.0),

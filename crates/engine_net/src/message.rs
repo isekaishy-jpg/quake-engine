@@ -86,6 +86,9 @@ const TAG_OUTLINE: u8 = 25;
 /// The level's gravity.
 const TAG_GRAVITY: u8 = 26;
 
+/// The time of day.
+const TAG_DAY: u8 = 59;
+
 /// An effect an author described.
 const TAG_NAMED_EFFECT: u8 = 27;
 /// A named effect stopping.
@@ -226,6 +229,13 @@ pub enum ServerMessage {
     Music(u8),
     /// The level's gravity, in units a second each second.
     Gravity(f32),
+    /// The time of day was set to an hour at a game time, and goes on from there.
+    Day {
+        /// The hour.
+        hour: f32,
+        /// The game time it was set.
+        at: f64,
+    },
     /// Something short-lived happens.
     Effect(Effect),
     /// A model's number is given its name.
@@ -562,6 +572,11 @@ impl ServerMessage {
                 out.push(TAG_GRAVITY);
                 put_f32(&mut out, *gravity);
             }
+            Self::Day { hour, at } => {
+                out.push(TAG_DAY);
+                put_f32(&mut out, *hour);
+                out.extend_from_slice(&at.to_le_bytes());
+            }
             Self::Effect(Effect::Launch(launch)) => {
                 let flags = u8::from(launch.bounces) | u8::from(launch.blasts) << 1;
                 out.extend_from_slice(&[TAG_LAUNCH, flags]);
@@ -767,6 +782,12 @@ impl ServerMessage {
                 let number = reader.u16()?;
                 let name = reader.file_name()?;
                 Some(Self::ModelName { number, name })
+            }
+            TAG_DAY => {
+                let mut reader = Reader { bytes: rest };
+                let hour = reader.f32()?;
+                let at = reader.f64()?;
+                reader.finished().then_some(Self::Day { hour, at })
             }
             TAG_GRAVITY => {
                 let mut reader = Reader { bytes: rest };

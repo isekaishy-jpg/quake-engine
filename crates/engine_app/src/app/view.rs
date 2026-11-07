@@ -12,7 +12,7 @@ use engine_client::{
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
-use engine_map::{Contents, Rows, SunMode, WaterPush};
+use engine_map::{Contents, Map, Rows, Sky, SunMode, WaterPush};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
     ParticleDraw, ParticleSim, SkyRayFloor, SpriteDraw, SunDraw, View, height_scale,
@@ -54,10 +54,8 @@ pub(crate) struct Picture {
     stencil_reaches: Vec<StencilMask>,
     /// How low the sun's light gets near the view.
     sky_ray_floor: Option<SkyRayFloor>,
-    /// A sun that isn't baked.
-    sun: Option<SunDraw>,
-    /// Where the sun is now, for the sky.
-    sun_toward: Option<Vec3>,
+    /// What a day does to it.
+    day: DayNow,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
@@ -88,9 +86,61 @@ fn sun_reaches(sun: Option<SunDraw>, client: &engine_client::Client, at: Vec3) -
     (red + green + blue) / 3.0 * 255.0 * sun.toward.normalized().z.max(0.0)
 }
 
+/// What a day does to a frame, now.
+#[derive(Clone, Debug, Default)]
+pub(super) struct DayNow {
+    /// A sun that isn't baked, or at night the moon.
+    pub(super) sun: Option<SunDraw>,
+    /// Towards the sun.
+    pub(super) toward: Option<Vec3>,
+    /// The sky as it is now.
+    pub(super) sky: Option<Sky>,
+    /// What the sun's baked light is multiplied by.
+    pub(super) sun_tint: Option<[f32; 3]>,
+    /// Fog's colour.
+    pub(super) fog: Option<[f32; 3]>,
+    /// What water's colour is multiplied by.
+    pub(super) water: Option<[f32; 3]>,
+    /// Light added everywhere, and what highlights are multiplied by.
+    pub(super) light: Option<[f32; 4]>,
+}
+
+/// What a day in `map` is at `hour`, seen from `eye`, with the sun towards `toward` if something's
+/// put it there. Without a day there's only where the sun's been put.
+pub(super) fn day_now(map: &Map, hour: Option<f32>, toward: Option<Vec3>, eye: Vec3) -> DayNow {
+    let Some(day) = hour.and_then(|hour| map.day_at(hour, eye, toward)) else {
+        return DayNow {
+            sun: live_sun(map, toward),
+            toward,
+            ..DayNow::default()
+        };
+    };
+    let strength = map.sun_strength / 255.0;
+    let sun = (map.sun_mode == SunMode::Live)
+        .then(|| day.sky.sun_or_moon(day.toward, strength))
+        .flatten()
+        .map(|(toward, color)| SunDraw { toward, color });
+    let [red, green, blue] = day.look.shine;
+    let ambient = day.look.ambient;
+    DayNow {
+        sun,
+        toward: Some(day.toward),
+        sun_tint: Some(day.sun_tint),
+        fog: day.look.fog,
+        water: Some(day.look.water),
+        light: Some([
+            ambient[0],
+            ambient[1],
+            ambient[2],
+            (red + green + blue) / 3.0,
+        ]),
+        sky: Some(day.sky),
+    }
+}
+
 /// The sun of `map` as it's drawn, if it isn't baked, towards `toward`, or where the level put
 /// it. Once it's set, it's the moon, from the far side of the sky, if the level has one.
-pub(super) fn live_sun(map: &engine_map::Map, toward: Option<Vec3>) -> Option<SunDraw> {
+pub(super) fn live_sun(map: &Map, toward: Option<Vec3>) -> Option<SunDraw> {
     if map.sun_mode != SunMode::Live {
         return None;
     }
@@ -130,9 +180,13 @@ impl Picture {
             stencil_masks: &self.stencil_masks,
             stencil_reaches: &self.stencil_reaches,
             sky_ray_floor: self.sky_ray_floor.as_ref(),
-            sun_tint: None,
-            sun: self.sun,
-            sun_toward: self.sun_toward,
+            sun_tint: self.day.sun_tint,
+            sun: self.day.sun,
+            sun_toward: self.day.toward,
+            sky_now: self.day.sky.as_ref(),
+            fog_color: self.day.fog,
+            water_tint: self.day.water,
+            day_light: self.day.light,
             capsules: &self.capsules,
             live_lights: &self.live_lights,
             moving: &self.moving,
@@ -426,6 +480,7 @@ impl World {
         let mut moving = Vec::new();
         let mut water_pushes = Vec::new();
         let time = self.map_time as f32;
+        let mut day_seen = None;
         if let Some(client) = &mut self.client {
             let state = client.render_state(&command, leftover);
             let body = state.origin + client.ground_lag(&state, fraction);
@@ -490,10 +545,11 @@ impl World {
             self.glide.smooth(&mut drawn, frame_seconds);
             // A sun that isn't baked reaches models that can see the sky towards it. It's looked
             // for once for each, while collision's to hand.
-            let sun = self
-                .map
-                .as_deref()
-                .and_then(|map| live_sun(map, self.sun_toward));
+            let day = self.map.as_deref().map_or_else(DayNow::default, |map| {
+                day_now(map, client.time_of_day(map), self.sun_toward, origin)
+            });
+            let sun = day.sun;
+            day_seen = Some(day);
             let sunned: Vec<(Vec3, f32)> = drawn
                 .iter()
                 .map(|entity| {
@@ -647,11 +703,11 @@ impl World {
             stencil_masks: self.gates.masks().to_vec(),
             stencil_reaches: self.gates.reaches().to_vec(),
             sky_ray_floor: self.gates.sky_floor(),
-            sun: self
-                .map
-                .as_deref()
-                .and_then(|map| live_sun(map, self.sun_toward)),
-            sun_toward: self.sun_toward,
+            day: day_seen.unwrap_or_else(|| {
+                self.map.as_deref().map_or_else(DayNow::default, |map| {
+                    day_now(map, None, self.sun_toward, origin)
+                })
+            }),
             capsules,
             live_lights: moving,
         }

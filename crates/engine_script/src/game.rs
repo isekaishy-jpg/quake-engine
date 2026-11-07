@@ -591,6 +591,19 @@ impl Game {
             "time",
             lua.create_function(move |_, ()| Ok(sim.borrow().time()))?,
         )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "time_of_day",
+            lua.create_function(move |_, ()| Ok(sim.borrow().time_of_day()))?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
+            "set_time_of_day",
+            lua.create_function(move |_, hour: f32| {
+                sim.borrow_mut().set_time_of_day(hour);
+                Ok(())
+            })?,
+        )?;
         let out = Rc::clone(outbox);
         engine.set(
             "print",

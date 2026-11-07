@@ -734,6 +734,12 @@ pub struct Map {
     pub sun_mode: SunMode,
     /// How bright its sun is, as a light's intensity, for a sun that isn't baked.
     pub sun_strength: f32,
+    /// How its day goes, if it has one. Without, the sun stays where the sky puts it.
+    pub day: Option<crate::DayCycle>,
+    /// Its sets of light, for a day.
+    pub light_sets: Vec<crate::LightSet>,
+    /// The set the whole level has, by name. A level with a day and none has one from its sky.
+    pub light_set: Option<String>,
     /// Where each sample's light comes from, as bytes. Empty unless the map
     /// was baked with directions.
     pub light_directions: Vec<[u8; 3]>,

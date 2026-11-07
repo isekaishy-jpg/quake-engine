@@ -80,6 +80,46 @@ A live sun lights surfaces and their highlights, and models that can see the sky
 
 `sun_toward x y z` at the console moves it, to try a level, and on its own puts it back.
 
+## A day
+
+A level has a day if its world says when it starts or how long it takes:
+
+| Field | Means |
+|---|---|
+| `day_start` | The hour a level starts at, from 0 to 24. Noon unless it says |
+| `day_length` | How many seconds a whole day takes. 0, the usual, is a day that stands still |
+| `sun_heading` | Which way the sun comes up, in degrees round from `+x` |
+| `sun_height` | How high it gets at noon, in degrees |
+| `light_set` | The set of light the whole level has. Without one, it has one made from its sky |
+
+The sun comes up at six, is highest at noon and goes down at six, and the moon has the night. Everyone in a game has the same time, which the server keeps. `time_of_day 18` at the console sets it, as do `engine.set_time_of_day(18)` and `engine.time_of_day()` in a game's scripts.
+
+A sky has `stars`, which show only where it's dark, from 0 for none.
+
+### Sets of light
+
+```text
+light_set autumn {
+    key 6 { zenith = 0.3 0.2 0.3 horizon = 1 0.6 0.4 sun = 1 0.55 0.3 }
+    key 12 { zenith = 0.1 0.3 0.6 sun = 1 0.95 0.85 fog = 0.6 0.65 0.7 }
+    key 20 { zenith = 0.02 0.03 0.08 sun = 0 0 0 clouds = 0.1 ambient = 0.02 }
+}
+```
+
+A key is named by its hour, and keys go round, so what's after the last blends into the first. What a key leaves out comes from the keys that have it, and what no key has from the sky. One number is all three colours.
+
+| In a key | Means |
+|---|---|
+| `zenith`, `horizon`, `ground` | The sky's colours |
+| `sun`, `moon` | Their colours, and their light |
+| `clouds` | What the clouds' colours are multiplied by |
+| `fog` | Fog's colour |
+| `water` | What water's colour is multiplied by |
+| `ambient` | Light added everywhere, on the scale of a sample of baked light |
+| `shine` | What highlights are multiplied by |
+
+A zone can have its own with `light_set`, and `light_blend` says how far in it takes for it to be all there is, 256 unless it says. A zone inside another goes over it. A sun that's baked on its own layers, or live, goes with the day, and what it bounced goes down with it. A fixed sun can't, as it's baked in with everything else.
+
 ## How light comes out
 
 These go in the world, not the sky. See [proposal 0150](proposals/0150-light-on-screen.md).

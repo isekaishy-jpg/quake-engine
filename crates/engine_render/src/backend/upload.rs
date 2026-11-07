@@ -297,6 +297,10 @@ pub(super) struct FrameExtras<'a> {
     sun_tint: [f32; 3],
     /// Towards the sun, where a day has it.
     sun_toward: Option<Vec3>,
+    /// What water's colour is multiplied by.
+    water_tint: [f32; 3],
+    /// Light added everywhere, and what highlights are multiplied by.
+    day_light: [f32; 4],
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
@@ -422,7 +426,9 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
             pool.look.caustics,
         ]);
         let at = base + MAX_POOLS * 8 + index * 4;
-        out[at..at + 3].copy_from_slice(&pool.look.color.map(linear));
+        let tinted: [f32; 3] =
+            std::array::from_fn(|part| pool.look.color[part] * extra.water_tint[part]);
+        out[at..at + 3].copy_from_slice(&tinted.map(linear));
         out[at + 3] = pool.look.reflect;
         let at = base + MAX_POOLS * 12 + index * 4;
         out[at] = pool.look.waves;
@@ -493,6 +499,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     sky_ray_values(&mut out[base + 1024..], extra, post.rays != 0);
     let base = base + 1024 + 12 + 256;
     out[base..base + 3].copy_from_slice(&extra.sun_tint);
+    out[base + 4..base + 8].copy_from_slice(&extra.day_light);
     out
 }
 
@@ -657,6 +664,7 @@ fn sky_values(sky: Option<&Sky>, sun_toward: Option<Vec3>) -> [f32; SKY_BYTES / 
     let at = 20 + MOST_CLOUDS * 12;
     out[at + 3] = sky.moon_size;
     out[at + 4..at + 7].copy_from_slice(&sky.moon_color);
+    out[at + 7] = sky.stars;
     out[16..19].copy_from_slice(&sky.sun_color);
     let mut picture = 0.0;
     for (index, clouds) in sky.clouds.iter().take(MOST_CLOUDS).enumerate() {
@@ -1461,8 +1469,15 @@ impl Backend {
     ) -> Result<(), RenderError> {
         self.plan_fields(view.time);
         let lights = scene.map_or(&[][..], |scene| scene.drawables.lights);
-        let sky = scene.and_then(|scene| scene.map.sky.as_ref());
-        let fog = scene.and_then(|scene| scene.map.fog.as_ref());
+        let sky = scene.and_then(|scene| scene.drawables.sky_now.or(scene.map.sky.as_ref()));
+        // A day changes fog's colour, and nothing else of it.
+        let day_fog = scene.and_then(|scene| {
+            let color = scene.drawables.fog_color?;
+            scene.map.fog.map(|fog| Fog { color, ..fog })
+        });
+        let fog = day_fog
+            .as_ref()
+            .or_else(|| scene.and_then(|scene| scene.map.fog.as_ref()));
         let extra = FrameExtras {
             stencils: scene.map_or(&[][..], |scene| scene.map.stencils.as_slice()),
             lights: scene.map_or(&[][..], |scene| scene.drawables.stencil_lights),
@@ -1471,6 +1486,12 @@ impl Backend {
             sky,
             sky_floor: scene.and_then(|scene| scene.drawables.sky_ray_floor),
             sun_toward: scene.and_then(|scene| scene.drawables.sun_toward),
+            water_tint: scene
+                .and_then(|scene| scene.drawables.water_tint)
+                .unwrap_or([1.0; 3]),
+            day_light: scene
+                .and_then(|scene| scene.drawables.day_light)
+                .unwrap_or([0.0, 0.0, 0.0, 1.0]),
             sun_tint: scene
                 .and_then(|scene| scene.drawables.sun_tint)
                 .unwrap_or([1.0; 3]),

@@ -5,7 +5,9 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Fog, FogVolume, MOST_CLOUDS, Sky, SkyRays, Spline};
+use engine_map::{
+    Clouds, Contents, Fog, FogVolume, LightKey, LightSet, MOST_CLOUDS, Sky, SkyRays, Spline,
+};
 
 use crate::error::CompileError;
 use crate::field::{FieldSource, read_field};
@@ -211,6 +213,8 @@ pub struct WorkingMap {
     pub fog: Option<Fog>,
     /// Fog in places.
     pub fog_volumes: Vec<FogVolume>,
+    /// Sets of light, for a day.
+    pub light_sets: Vec<LightSet>,
 }
 
 /// A map's sky, as written.
@@ -725,6 +729,7 @@ fn read_sky(block: &Block) -> Result<SkySource, CompileError> {
             sun_size: number(block, "sun_size", defaults.sun_size),
             moon_color: color_of(block, "moon_color", defaults.moon_color),
             moon_size: number(block, "moon_size", defaults.moon_size),
+            stars: number(block, "stars", defaults.stars).max(0.0),
             clouds,
             rays,
         },
@@ -963,5 +968,55 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
         shared: HashMap::new(),
         moving: Vec::new(),
         water: document.blocks_of("water").map(read_water).collect(),
+        light_sets: document
+            .blocks_of("light_set")
+            .map(read_light_set)
+            .collect::<Result<Vec<_>, _>>()?,
     })
+}
+
+/// Reads a `light_set` block: keys through a day, each named by its hour.
+fn read_light_set(block: &Block) -> Result<LightSet, CompileError> {
+    let name = block
+        .name
+        .clone()
+        .ok_or_else(|| CompileError::Bad("a light_set needs a name".to_owned()))?;
+    let mut keys = Vec::new();
+    for key in block.children_of("key") {
+        let hour = key
+            .name
+            .as_deref()
+            .and_then(|hour| hour.parse::<f32>().ok());
+        let hour = hour
+            .filter(|hour| (0.0..=24.0).contains(hour))
+            .ok_or_else(|| {
+                CompileError::Bad(format!("{name}: a key's name is its hour, from 0 to 24"))
+            })?;
+        #[expect(clippy::cast_possible_truncation, reason = "colours store f32")]
+        let color = |field: &str| -> Option<[f32; 3]> {
+            let value = key.get(field)?;
+            match value.number() {
+                Some(all) => Some([all as f32; 3]),
+                None => point_of(value).map(|point| point.map(|part| part as f32)),
+            }
+        };
+        keys.push(LightKey {
+            hour,
+            zenith: color("zenith"),
+            horizon: color("horizon"),
+            ground: color("ground"),
+            sun: color("sun"),
+            moon: color("moon"),
+            clouds: color("clouds"),
+            fog: color("fog"),
+            water: color("water"),
+            ambient: color("ambient"),
+            shine: color("shine"),
+        });
+    }
+    if keys.is_empty() {
+        return Err(CompileError::Bad(format!("{name} has no keys")));
+    }
+    keys.sort_by(|a, b| a.hour.total_cmp(&b.hour));
+    Ok(LightSet { name, keys })
 }

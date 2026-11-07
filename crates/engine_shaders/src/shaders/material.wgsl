@@ -258,7 +258,7 @@ fn shine_at(
         let strength = dot(baked, vec3<f32>(0.333));
         shine = shine + pow(max(dot(normal, half_vector), 0.0), gloss) * strength;
     }
-    return shine;
+    return shine * frame.day_light.w;
 }
 
 // Hard bands from smooth light, from the ramp if there is one.

@@ -32,11 +32,28 @@ pub struct Zone {
     pub music: Option<String>,
     /// A sound that goes round and round in it.
     pub sound: Option<String>,
+    /// A set of light of its own, by name, for a day in it.
+    pub light_set: Option<String>,
+    /// How far in it takes for its set to be all there is.
+    pub light_blend: f32,
     /// How much light reaches the eye in it, as a share of each colour.
     pub light: Option<[f32; 3]>,
 }
 
 impl Zone {
+    /// How far into it `point` is, from its nearest side, or `None` outside it.
+    #[must_use]
+    pub fn depth_of(&self, point: Vec3) -> Option<f32> {
+        let depths = self.shapes.iter().map(|shape| {
+            shape
+                .iter()
+                .map(|plane| plane.distance - plane.normal.dot(point))
+                .fold(f32::INFINITY, f32::min)
+        });
+        let deepest = depths.fold(f32::NEG_INFINITY, f32::max);
+        (deepest >= 0.0).then_some(deepest)
+    }
+
     /// Whether `point` is in it.
     #[must_use]
     pub fn holds(&self, point: Vec3) -> bool {

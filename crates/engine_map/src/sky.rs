@@ -145,6 +145,8 @@ pub struct Sky {
     pub moon_color: [f32; 3],
     /// How large the moon looks, as a cosine distance.
     pub moon_size: f32,
+    /// How bright the stars are, with 0 for none. They show only where the sky's dark.
+    pub stars: f32,
     /// The layers of cloud, up to `MOST_CLOUDS`. The first is the lowest, so it's in front.
     pub clouds: Vec<Clouds>,
     /// Rays coming down through it, if an author wants them.
@@ -188,6 +190,7 @@ impl Default for Sky {
             sun_size: 0.002,
             moon_color: [0.0, 0.0, 0.0],
             moon_size: 0.0015,
+            stars: 0.0,
             clouds: Vec::new(),
             rays: None,
         }

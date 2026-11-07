@@ -29,6 +29,8 @@ The brushes are the zone's shape, as many as it takes. They're never seen or tou
 | `sound` | A sound that goes round and round in it |
 | `light` | How much light reaches the eye: one number, or `[red green blue]` |
 | `priority` | What wins where zones overlap. Without it, the smaller does |
+| `light_set` | A [set of light](sky.md#sets-of-light) of its own, for a day |
+| `light_blend` | How far in it takes for that to be all there is, 256 unless it says |
 
 A sub zone is a zone inside another. Going in shows its title, and coming back out to the zone round it doesn't show that zone's again. What a sub zone doesn't set comes from its parent. Going from a zone to nowhere leaves its music playing, and light goes back to as it was, over a second and a half.
 

@@ -111,6 +111,22 @@ fn sky_color(direction_in: vec3<f32>) -> vec3<f32> {
     let moon = smoothstep(1.0 - moon_size * 1.2, 1.0 - moon_size, moon_toward);
     let moon_glow = pow(max(moon_toward, 0.0), 256.0) * 0.2;
     color = color + frame.sky_moon_color.rgb * (moon + moon_glow);
+    let stars = frame.sky_moon_color.w;
+    // A point now and then on a grid over the sky, seen only where it's dark. How big a pixel is
+    // on it is worked out for every pixel, as a derivative has to be.
+    let place = direction.xy / (max(height, 0.0) + 0.3) * 70.0;
+    let pixel = max(length(fwidth(place)), 0.0001);
+    if stars > 0.0 && height > 0.0 {
+        let cell = floor(place);
+        let chance = sky_hash(cell);
+        let spot = vec2<f32>(sky_hash(cell + vec2<f32>(17.0, 3.0)), sky_hash(cell + vec2<f32>(5.0, 29.0)));
+        // At least a pixel or so across, however big the view is, or most would fall between.
+        let radius = max(0.04, pixel * 0.7);
+        let near_spot = 1.0 - smoothstep(radius, radius + pixel, length(place - cell - spot));
+        let dark = 1.0 - smoothstep(0.02, 0.12, dot(color, vec3<f32>(0.333)));
+        let shown = step(0.985, chance) * near_spot * dark * stars;
+        color = color + vec3<f32>(shown);
+    }
     let size = frame.sky_sun.w;
     let disc = smoothstep(1.0 - size * 1.2, 1.0 - size, toward);
     let glow = pow(max(toward, 0.0), 64.0) * 0.35;

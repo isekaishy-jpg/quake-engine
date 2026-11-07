@@ -553,7 +553,8 @@ fn light(in: VertexOut) -> vec3<f32> {
         + sun_on(in.world, in.normal.xyz);
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
-    return pow(keep_hue(2.0 * (shaded + moving), 2.0), vec3<f32>(frame.color_params.x));
+    let lit = shaded + moving + frame.day_light.rgb;
+    return pow(keep_hue(2.0 * lit, 2.0), vec3<f32>(frame.color_params.x));
 }
 
 // A colour on its way into the scene, which holds linear light, and has room for

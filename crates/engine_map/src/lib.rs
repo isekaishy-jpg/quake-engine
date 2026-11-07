@@ -6,6 +6,7 @@
 //! May depend on `engine_core`. See proposal 0008.
 
 mod alias;
+mod day;
 mod effect;
 mod emitter;
 mod light;
@@ -28,6 +29,7 @@ mod tree;
 mod zone;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
+pub use day::{DAY_HOURS, DayCycle, DayLook, DayState, LightKey, LightSet};
 pub use effect::{
     ColorCurve, Curve, EffectDef, EffectDraw, EffectMesh, EffectPoint, EffectSettings,
     EmitterShape, GpuEmitter, ParticleBlend, ParticleCollide, ParticleEmitter, ParticleForce,

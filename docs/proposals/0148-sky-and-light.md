@@ -119,4 +119,14 @@ Each of those comes from the research, and none needs more for what the items as
 - **A shadow from straight up is under what casts it,** which is right, and it's what made a test look wrong at first.
 - **What isn't done yet is day's:** the sky's colour, and turning down what a sun bounced as it sets, are item 66. `sun_toward` is for trying it, and a day drives it.
 
+### A day, and sets of light (66, 67)
+
+- **Tried in the game:** one level through a day with a live sun and the set made from its sky. Morning is warm with long shadows, noon is bright, evening golden, dusk dark blue with the clouds still lit, night the moon's, with stars, and dawn has the sun on the horizon.
+- **One way of doing it.** A day is a set of light, and a level with a day and no set of its own gets one made from its sky: as it is at noon, warm low down at dawn and dusk, and dark at night. Its colours hold from an hour and a half after sunrise to an hour and a half before sunset, as at first a morning looked like an evening until late.
+- **The server keeps the time,** as it does gravity. Game time is the same for everyone, so a day follows from it, and the server only says when a script or the console sets it. A saved game keeps it.
+- **Zones blend in by how far in,** from their nearest side, the one round the others first.
+- **Stars are at least a pixel across,** however big the view. At first most were a quarter of one, and fell between.
+- **The console needed telling.** `time_of_day` went nowhere at first, as only the server knew it, so the game's own console passes it on.
+- **What a key's ambient adds is on surfaces,** not on models, which have their own light.
+
 Filled in as each part lands.

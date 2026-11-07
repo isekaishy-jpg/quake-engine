@@ -2900,6 +2900,156 @@ fn a_shadow_moves_with_the_sun() {
     }
 }
 
+/// The centre of a picture of `built`, seen from `view`, with `drawables`.
+fn centre_of(built: Map, view: &View, drawables: Drawables<'_>) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer.capture(view, drawables, 32, 32).expect("capture");
+    Some(centre(&capture))
+}
+
+/// A day changes water's colour, by what it multiplies it by.
+#[test]
+fn a_day_water_tint_changes_water() {
+    let look = PoolLook {
+        color: [0.0, 0.0, 1.0],
+        absorption: 0.2,
+        caustics: 0.0,
+        reflect: 0.0,
+        waves: 0.0,
+        refraction: 0.0,
+        tint: [0.0; 4],
+        deep: 0.0,
+        view_effect: 0,
+        overlays: [WaterOverlay::NONE; 2],
+        foam: 0.0,
+        foam_look: WaterOverlay::NONE,
+        shore: 0.0,
+        splash: 0,
+        spray: 0,
+        splash_sound: 0,
+        trail: 0,
+        trail_size: 28.0,
+        rain_rings: 0.0,
+    };
+    let plain = centre_of(pool_map(look), &view_from_above(), Drawables::default());
+    let drawables = Drawables {
+        water_tint: Some([1.0, 1.0, 0.2]),
+        ..Drawables::default()
+    };
+    let tinted = centre_of(pool_map(look), &view_from_above(), drawables);
+    if let (Some(plain), Some(tinted)) = (plain, tinted) {
+        assert!(tinted[2] + 30 < plain[2], "{plain:?} {tinted:?}");
+    }
+}
+
+/// A day changes fog's colour, and not how thick it is.
+#[test]
+fn a_day_fog_colour_changes_fog() {
+    let plain = centre_of(fog_map(0), &view_from_above(), Drawables::default());
+    let drawables = Drawables {
+        fog_color: Some([1.0, 0.0, 0.0]),
+        ..Drawables::default()
+    };
+    let red = centre_of(fog_map(0), &view_from_above(), drawables);
+    if let (Some(plain), Some(red)) = (plain, red) {
+        assert!(red[2] + 30 < plain[2], "{plain:?} {red:?}");
+        assert!(red[0].saturating_add(10) >= plain[0], "{plain:?} {red:?}");
+    }
+}
+
+/// A day's sky is drawn in place of the level's.
+#[test]
+fn a_days_sky_is_drawn() {
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 1.0],
+        horizon: [0.0, 0.0, 1.0],
+        sun_size: 0.0,
+        ..Sky::default()
+    });
+    let now = Sky {
+        zenith: [1.0, 0.0, 0.0],
+        horizon: [1.0, 0.0, 0.0],
+        ..built.sky.clone().expect("a sky")
+    };
+    let view = View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    };
+    let as_level = centre_of(built.clone(), &view, Drawables::default());
+    let drawables = Drawables {
+        sky_now: Some(&now),
+        ..Drawables::default()
+    };
+    let as_day = centre_of(built, &view, drawables);
+    if let (Some(as_level), Some(as_day)) = (as_level, as_day) {
+        assert!(as_level[2] > 200 && as_level[0] < 30, "{as_level:?}");
+        assert!(as_day[0] > 200 && as_day[2] < 30, "{as_day:?}");
+    }
+}
+
+/// Light a day adds shows on surfaces, and its highlights can be turned down.
+#[test]
+fn a_days_light_is_added() {
+    let built = map(1);
+    let plain = centre_of(built.clone(), &view_from_above(), Drawables::default());
+    let drawables = Drawables {
+        day_light: Some([0.0, 0.0, 0.3, 1.0]),
+        ..Drawables::default()
+    };
+    let lit = centre_of(built, &view_from_above(), drawables);
+    if let (Some(plain), Some(lit)) = (plain, lit) {
+        assert!(lit[2] > plain[2].saturating_add(20), "{plain:?} {lit:?}");
+    }
+}
+
+/// Stars show where the sky's dark, and not in daylight.
+#[test]
+fn stars_show_at_night() {
+    let sky = |zenith: [f32; 3], stars: f32| {
+        let mut built = map(1);
+        built.sky = Some(Sky {
+            zenith,
+            horizon: zenith,
+            sun_size: 0.0,
+            sun_color: [0.0; 3],
+            stars,
+            ..Sky::default()
+        });
+        built
+    };
+    let lit_pixels = |built: Map| -> Option<usize> {
+        let mut renderer = renderer()?;
+        renderer.load_map(Arc::new(built)).expect("load");
+        let view = View {
+            origin: UNDER,
+            pitch: -89.0,
+            ..view_from_above()
+        };
+        let capture = renderer
+            .capture(&view, Drawables::default(), 128, 128)
+            .expect("capture");
+        Some(
+            (0..128)
+                .flat_map(|y| (0..128).map(move |x| (x, y)))
+                .filter(|(x, y)| pixel(&capture, *x, *y)[0] > 120)
+                .count(),
+        )
+    };
+    let (night, none, day) = (
+        lit_pixels(sky([0.0; 3], 1.0)),
+        lit_pixels(sky([0.0; 3], 0.0)),
+        lit_pixels(sky([0.3, 0.4, 0.8], 1.0)),
+    );
+    if let (Some(night), Some(none), Some(day)) = (night, none, day) {
+        // What's lit with no stars is the rest of the view, and stars add to it.
+        assert!(night > none + 3, "{night} {none}");
+        assert!(day < night, "{day} {night}");
+    }
+}
+
 /// The sky's sun is where a day has it, and the moon on the far side.
 #[test]
 fn the_sky_shows_the_sun_and_moon_where_they_are() {

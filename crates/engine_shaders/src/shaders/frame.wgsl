@@ -25,7 +25,8 @@ struct Frame {
     sky_cloud_params: array<vec4<f32>, 4>,
     // x how high in the world, y how curved, z how lit, w which picture.
     sky_cloud_shape: array<vec4<f32>, 4>,
-    // w how large the moon looks, and its colour, which is black for none.
+    // w how large the moon looks, and its colour, which is black for none, with w how bright the
+    // stars are.
     sky_moon: vec4<f32>,
     sky_moon_color: vec4<f32>,
     // Back from clip space to the world.
@@ -109,6 +110,8 @@ struct Frame {
     sky_ray_floor: array<vec4<f32>, 64>,
     // What the sun's baked light is multiplied by, as a day goes.
     sun_tint: vec4<f32>,
+    // Light a day adds everywhere, and w what it multiplies highlights by.
+    day_light: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

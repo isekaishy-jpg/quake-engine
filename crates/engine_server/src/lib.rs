@@ -77,6 +77,9 @@ struct Told {
     /// The gravity last told of, which saves from before it was kept lack.
     #[serde(default)]
     gravity: Option<f32>,
+    /// The time of day last told of, as an hour and the game time it was set.
+    #[serde(default)]
+    day: Option<(f32, f64)>,
 }
 
 /// A game, written down (proposal 0044).
@@ -315,6 +318,9 @@ impl Server {
         if let Some(gravity) = told.gravity {
             seat.send(&ServerMessage::Gravity(gravity));
         }
+        if let Some((hour, at)) = told.day {
+            seat.send(&ServerMessage::Day { hour, at });
+        }
         if let Some(player) = seat.player {
             let (yaw, pitch) = self.simulation.borrow().view(player);
             seat.send(&ServerMessage::SetView { yaw, pitch });
@@ -536,6 +542,17 @@ impl Server {
         }
     }
 
+    /// Tells everyone if the time of day's been set, so that everyone has the same sky.
+    fn tell_day(&mut self) {
+        let day = self.simulation.borrow().day_set();
+        if day.is_some() && self.told.day != day {
+            self.told.day = day;
+            if let Some((hour, at)) = day {
+                self.broadcast(&ServerMessage::Day { hour, at });
+            }
+        }
+    }
+
     /// Tells everyone if gravity has changed, since prediction runs on it.
     fn tell_gravity(&mut self) {
         let gravity = self.simulation.borrow().gravity();
@@ -667,6 +684,7 @@ impl Server {
         }
         self.simulation.borrow_mut().end_tick(self.seconds);
         self.tell_gravity();
+        self.tell_day();
         let stats: Vec<Vec<i32>> = self
             .seats
             .iter()
@@ -968,6 +986,12 @@ impl Server {
                     self.simulation
                         .borrow_mut()
                         .teleport(id, Vec3::new(x, y, z));
+                }
+            }
+            Some("time_of_day") if host => {
+                if let Some(hour) = words.next().and_then(|word| word.parse::<f32>().ok()) {
+                    self.simulation.borrow_mut().set_time_of_day(hour);
+                    self.tell_day();
                 }
             }
             Some("status") => {

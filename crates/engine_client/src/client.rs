@@ -11,7 +11,7 @@ use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PlayerState, UserCommand};
 use engine_core::sound::{SoundStart, StaticSound};
 use engine_core::time::TICK_SECONDS;
-use engine_map::Contents;
+use engine_map::{Contents, Map};
 use engine_movement::{MoveVars, player_move};
 use engine_net::{
     ClientMessage, FireCommand, PlayerInfo, PlayerScore, ServerMessage, Snapshot, Transport,
@@ -145,6 +145,8 @@ pub struct Client {
     static_sounds: Vec<StaticSound>,
     /// A music track waiting to be played.
     music: Option<u8>,
+    /// The hour a day was set to, and the game time then, if it's been set.
+    day: Option<(f32, f64)>,
     /// Game time in the latest snapshot.
     time: f64,
     /// The game's numbers for its status display.
@@ -204,6 +206,7 @@ impl Client {
             tick: 0,
             weapon: (0, 0),
             player_entity: 0,
+            day: None,
             player_effects: 0,
             punch: Vec3::ZERO,
             previous_punch: Vec3::ZERO,
@@ -765,6 +768,20 @@ impl Client {
         collision.trace(place, place - toward_sun * SUN_LOOKS).end.z
     }
 
+    /// The hour a day was last set to, and the game time then, if it's been set in this level.
+    #[must_use]
+    pub const fn day_set(&self) -> Option<(f32, f64)> {
+        self.day
+    }
+
+    /// The time of day in `map` now, if it has a day.
+    #[must_use]
+    pub fn time_of_day(&self, map: &Map) -> Option<f32> {
+        let day = map.day?;
+        let (hour, at) = self.day.unwrap_or((day.start, 0.0));
+        Some(day.hour_after(hour, self.time() - at))
+    }
+
     /// Works out what `blast` does to us, from `T_RadiusDamage`.
     fn take_blast(&mut self, rule: &BlastRule, blast: &Blast) {
         let middle = self.predicted.origin + Vec3::new(0.0, 0.0, 4.0);
@@ -968,7 +985,11 @@ impl Client {
             match ServerMessage::decode(&bytes) {
                 Some(ServerMessage::Snapshot(snapshot)) => self.take_snapshot(snapshot),
                 Some(ServerMessage::SnapshotDelta(delta)) => self.take_delta(&delta),
-                Some(ServerMessage::Level(name)) => self.level = Some(name),
+                Some(ServerMessage::Level(name)) => {
+                    self.level = Some(name);
+                    self.day = None;
+                }
+                Some(ServerMessage::Day { hour, at }) => self.day = Some((hour, at)),
                 Some(ServerMessage::Scores(scores)) => self.scores = scores,
                 Some(ServerMessage::LightStyle { index, pattern }) => {
                     self.styles.set(index, &pattern);

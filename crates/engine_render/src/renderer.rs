@@ -7,7 +7,7 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sprite, TileLight, WaterPush};
+use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sky, Sprite, TileLight, WaterPush};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, GpuTimes, Scene};
@@ -136,6 +136,14 @@ pub struct Drawables<'a> {
     pub sun: Option<SunDraw>,
     /// Towards the sun, where it is now, for the sky, with none being where the level says.
     pub sun_toward: Option<Vec3>,
+    /// The sky as a day has it now, with none being as the level has it.
+    pub sky_now: Option<&'a Sky>,
+    /// Fog's colour as a day has it now.
+    pub fog_color: Option<[f32; 3]>,
+    /// What water's colour is multiplied by now.
+    pub water_tint: Option<[f32; 3]>,
+    /// Light added everywhere, and what highlights are multiplied by, as a day has them now.
+    pub day_light: Option<[f32; 4]>,
     /// Characters shading the light.
     pub capsules: &'a [CapsuleDraw],
     /// Moving meshes.

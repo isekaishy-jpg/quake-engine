@@ -8,8 +8,8 @@ use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
-    MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
+    AttachPoint, ClipChild, ClipNode, Contents, DayCycle, Entity, Face, LandPicture, Leaf, Look,
+    Map, MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
     OccluderSphere, Plane, Pool, PoolLook, SunMode, TerrainSheet, TexelAxis, Texture, TextureKind,
     ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
@@ -92,8 +92,16 @@ fn read_zone(entity: &EntitySource) -> Zone {
         music,
         sound: text("sound"),
         light: light.or(brightness),
+        light_set: text("light_set"),
+        #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+        light_blend: entity
+            .number("light_blend")
+            .map_or(ZONE_LIGHT_BLEND, |far| far as f32),
     }
 }
+
+/// How far into a zone it takes for its set of light to be all there is, unless it says.
+const ZONE_LIGHT_BLEND: f32 = 256.0;
 
 /// The most cells a map with land is cut into, unless it says otherwise.
 const MOST_LAND_CELLS: f64 = 4096.0;
@@ -1501,6 +1509,23 @@ fn compile_with(
         .and_then(|world| world.number("sun_intensity"))
         .unwrap_or(0.0) as f32;
     builder.map.sun_strength = strength;
+    builder.map.day = day_of(working);
+    builder.map.light_sets.clone_from(&working.light_sets);
+    builder.map.light_set = world
+        .and_then(|world| world.text("light_set"))
+        .map(str::to_owned);
+    let named = builder
+        .map
+        .zones
+        .iter()
+        .filter_map(|zone| zone.light_set.as_deref());
+    for name in builder.map.light_set.as_deref().into_iter().chain(named) {
+        if !working.light_sets.iter().any(|set| set.name == name) {
+            return Err(CompileError::Bad(format!(
+                "there's no light_set called {name}"
+            )));
+        }
+    }
     builder.map.live_lights = working
         .entities
         .iter()
@@ -1565,6 +1590,25 @@ fn usual_cell(map: &Map) -> f64 {
         size *= 2.0;
     }
     size
+}
+
+/// How a working map's day goes, if it says it has one.
+fn day_of(working: &WorkingMap) -> Option<DayCycle> {
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn")?;
+    let usual = DayCycle::default();
+    #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+    let number = |key: &str| world.number(key).map(|value| value as f32);
+    if number("day_start").is_none() && number("day_length").is_none() {
+        return None;
+    }
+    Some(DayCycle {
+        start: number("day_start").unwrap_or(usual.start).rem_euclid(24.0),
+        length: number("day_length").unwrap_or(usual.length).max(0.0),
+        heading: number("sun_heading").unwrap_or(usual.heading),
+        height: number("sun_height")
+            .unwrap_or(usual.height)
+            .clamp(1.0, 90.0),
+    })
 }
 
 /// How a working map says its sun works.

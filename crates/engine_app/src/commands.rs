@@ -43,6 +43,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("gpu_times", gpu_times);
     console.register("setpos", setpos);
     console.register("sun_toward", sun_toward);
+    console.register("time_of_day", time_of_day);
     console.register("camera", camera);
     console.register("noclip", noclip);
     console.register("changelevel", changelevel);
@@ -776,6 +777,17 @@ fn sun_toward(console: &mut Console<World>, world: &mut World, args: &Args) {
             None
         }
     };
+}
+
+/// `time_of_day`: sets the hour, from 0 to 24, for everyone, in a level with a day.
+fn time_of_day(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let Ok(hour) = args.get(1).parse::<f32>() else {
+        console.print("time_of_day <hour>, from 0 to 24");
+        return;
+    };
+    if let Some(client) = &mut world.client {
+        client.send_console(&format!("time_of_day {hour}"));
+    }
 }
 
 /// `impulse`: sends a number to the game with the next command.

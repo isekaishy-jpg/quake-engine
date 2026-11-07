@@ -7,7 +7,7 @@ use std::sync::Arc;
 use engine_core::entity::{EFFECT_MUZZLE_FLASH, EntityState, MOST_SET_MORPHS, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY, PlayerState, UserCommand};
-use engine_map::{Map, MovingMesh, after, angles_of_rows, moved, placed_at};
+use engine_map::{DAY_HOURS, Map, MovingMesh, after, angles_of_rows, moved, placed_at};
 use engine_movement::{MoveVars, player_move};
 use engine_physics::CollisionWorld;
 use serde::{Deserialize, Serialize};
@@ -292,6 +292,9 @@ pub struct SavedSimulation {
     players: Vec<Player>,
     /// Game time in seconds.
     time: f64,
+    /// The hour a day was set to, and the game time then, if a script or the console has.
+    #[serde(default)]
+    day_set: Option<(f32, f64)>,
     /// Model names, where a shape's number is its place here plus one.
     shapes: Vec<String>,
     /// The state of `rand`.
@@ -318,6 +321,8 @@ fn usual_gravity() -> f32 {
 /// The game's state.
 #[derive(Clone, Debug)]
 pub struct Simulation {
+    /// The hour a day was set to, and the game time then, if a script or the console has.
+    day_set: Option<(f32, f64)>,
     /// The map.
     map: Arc<Map>,
     /// Every entity.
@@ -373,6 +378,7 @@ impl Simulation {
     #[must_use]
     pub fn new(map: Arc<Map>, origin: Vec3) -> Self {
         let mut simulation = Self {
+            day_set: None,
             map,
             entities: SlotTable::new(),
             players: Vec::new(),
@@ -464,11 +470,13 @@ impl Simulation {
             showing_rewind: _,
             event_time: _,
             things_past: _,
+            day_set,
         } = self;
         SavedSimulation {
             entities: entities.clone(),
             players: players.clone(),
             time: *time,
+            day_set: *day_set,
             shapes: shapes.clone(),
             seed: *seed,
             last_check: *last_check,
@@ -495,6 +503,7 @@ impl Simulation {
             .collect();
         Self {
             map,
+            day_set: saved.day_set,
             brushes,
             entities: saved.entities,
             players,
@@ -752,6 +761,25 @@ impl Simulation {
     #[must_use]
     pub fn last_command(&self, id: EntityId) -> u32 {
         self.slot(id).map_or(0, |player| player.last_command)
+    }
+
+    /// Sets the time of day to `hour`, from now.
+    pub fn set_time_of_day(&mut self, hour: f32) {
+        self.day_set = Some((hour.rem_euclid(DAY_HOURS), self.time()));
+    }
+
+    /// The hour a day was set to, and the game time then, if it's been set.
+    #[must_use]
+    pub const fn day_set(&self) -> Option<(f32, f64)> {
+        self.day_set
+    }
+
+    /// The time of day, if the level has a day.
+    #[must_use]
+    pub fn time_of_day(&self) -> Option<f32> {
+        let day = self.map.day?;
+        let (hour, at) = self.day_set.unwrap_or((day.start, 0.0));
+        Some(day.hour_after(hour, self.time() - at))
     }
 
     /// Game time in seconds, which is exact while something's thinking.
