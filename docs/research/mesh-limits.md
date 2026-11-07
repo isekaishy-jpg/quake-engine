@@ -131,16 +131,24 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 
 The human's rule: research decides if it's needed, and what's likely to be wanted later gets done now.
 
-### Real tangents: yes
+### Real tangents: no, and a bug fixed instead
 
-The engine works a surface's tangents out per pixel, from screen derivatives. That's right for the world, whose faces are flat and whose normal maps are painted. It's wrong for what a mesh is for.
+The engine works a surface's tangents out per pixel, from screen derivatives. glTF [expects MikkTSpace](https://convert3d.org/supported-features/normal-maps), and [a mismatch between baker and renderer shows as seams](https://wiki.blender.jp/Dev:Shading/Tangent_Space_Normal_Maps), so this note first said yes, with a real bake to confirm it. No source compared the two directly, so it was measured.
 
-- A normal map baked in Blender is baked against a particular frame, and [a mismatch between baker and renderer shows as seams](https://wiki.blender.jp/Dev:Shading/Tangent_Space_Normal_Maps), most of all where a vertex normal is shared across faces. That's a smooth surface, which is most of a mesh.
-- [glTF expects MikkTSpace](https://convert3d.org/supported-features/normal-maps), and a client [should work it out where a file doesn't have it](https://docs.rs/crate/awsm-renderer/0.1.7/source/src/gltf/buffers/tangents.rs), which is how another renderer does it, only for what has a normal map.
-- [The `w` carries handedness](https://pub.dev/documentation/flutter3d_core/0.8.1/flutter3d_core/MeshTangents/withGeneratedTangents.html), which is what gets mirrored UVs right. A derivative frame gets that free.
-- [Engines have had seams from getting this wrong](https://forums.unrealengine.com/t/fbx-static-mesh-incorrect-blending-of-tangents/297058), so it's worth testing with a real bake.
+A sum stood in for a bake: a ball of so many triangles, with a sculpted true surface, its normals stored against an interpolated frame as a baker does, then read back by the engine's frame. It's a ball and one pattern, so it shows how big this is and no more. Mean error, in degrees:
 
-No source compared the two directly, so this comes from what each is. Stage 17 is about new assets made in Blender, which is where this would show, so it's likely to be wanted. It's better done now, while streams are being settled, and tangents have to turn with a skeleton, so they go through the compute pass too. A real bake will show if it's worth it.
+| Triangles | As it was | Each its own length |
+|---|---|---|
+| 80 | 2.2 to 3.9 | 1.6 |
+| 288 | 2.0 to 3.5 | 0.8 |
+| 1216 | 2.0 to 3.4 | 0.4 |
+| 4992 | 2.0 to 3.3 | 0.2 |
+
+**The error as it was didn't go down with more triangles, which showed a bug and not a limit.** `surface_frame` scaled tangent and bitangent together, by the longer one, so a stretched texture squashed one way of its bumps. Scaling each on its own is two lines, and then the error fades with detail, to under a degree at ordinary counts.
+
+Real tangents would be a stream that has to turn with joints, two more values from every vertex shader to every pixel, and a change to the mesh file, to save less than a degree. So no. A derivative frame also gets mirrored UVs right with nothing stored, and [that takes care in a stored one](https://pub.dev/documentation/flutter3d_core/0.8.1/flutter3d_core/MeshTangents/withGeneratedTangents.html). If a real bake at stage 17 shows seams, this is the place to come back to.
+
+The first two runs of the sum were wrong, and worth knowing about: they gave 11 degrees everywhere, as the baker's handedness was fixed at +1 when this ball's V runs down. An error that doesn't change with anything is a fault in the measuring.
 
 ### Vertex colours: yes
 
@@ -162,5 +170,5 @@ It's there for boxes, as above, so hit volumes go by the rewound time from the s
 - **Measure, then decide:** a copy's triangles on the CPU, and what posing costs the CPU.
 - **Building:** a coarse level moving fewer corners, hit volumes on joints, sorting what's see-through.
 - **Trying:** clips on a bad network.
-- **What we don't have:** real tangents, vertex colours, and UV and colour targets, all yes, as above. Hit volumes go by the rewind that's there.
+- **What we don't have:** vertex colours, and UV and colour targets, are yes, as above. Real tangents are no, as a bug fix does nearly all of it. Hit volumes go by the rewind that's there.
 - **Item 12:** with this done the human moved the fixture's models over, in [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). So the comparison above, of two paths, is history now.

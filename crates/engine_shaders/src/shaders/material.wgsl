@@ -156,9 +156,10 @@ fn surface_frame(world: vec3<f32>, uv: vec2<f32>, smooth_normal: vec3<f32>) -> S
     let perp1 = cross(normal, dp1);
     let tangent = perp2 * duv1.x + perp1 * duv2.x;
     let bitangent = perp2 * duv1.y + perp1 * duv2.y;
-    let scale = inverseSqrt(max(max(dot(tangent, tangent), dot(bitangent, bitangent)), 1e-12));
-    out.tangent = tangent * scale;
-    out.bitangent = bitangent * scale;
+    // Each its own length: a bake's frame is square, and a stretched texture isn't a shallower
+    // bump. Scaling them together squashed one, however fine the mesh.
+    out.tangent = tangent * inverseSqrt(max(dot(tangent, tangent), 1e-12));
+    out.bitangent = bitangent * inverseSqrt(max(dot(bitangent, bitangent), 1e-12));
     return out;
 }
 

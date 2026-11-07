@@ -2907,6 +2907,61 @@ fn a_moving_mesh_can_move_a_coarser_level() {
     assert!((a - x).hypot(b - y) > 4.0, "and it moved");
 }
 
+/// What a matcap shows of a floor whose normal map leans `slope` along V, with its texture squeezed
+/// `stretch` times along U. A matcap goes straight by which way a surface faces, so it shows a lean
+/// as a colour, red across it and green up it.
+fn matcap_on_a_slope(stretch: f32, slope: u8) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    // The texture and not its light, which is where it was.
+    built.faces[0].light_axes = Some(built.faces[0].axes);
+    built.faces[0].axes[0].axis = Vec3::new(stretch, 0.0, 0.0);
+    built.textures[0].material = Some(Arc::new(Material {
+        shading: Shading::Matcap,
+        normal: Some(1),
+        matcap: Some(2),
+        slots: vec![
+            Arc::new(image_of(2, |_, _| [128, slope, 0, 255])),
+            Arc::new(image_of(64, |x, y| {
+                [
+                    u8::try_from(x * 4).expect("small"),
+                    u8::try_from(y * 4).expect("small"),
+                    0,
+                    255,
+                ]
+            })),
+        ],
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    let capture = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// How a texture is stretched mustn't change which way a normal map leans. A bake's frame is
+/// square, so tangent and bitangent are each a unit long, and scaling them together squashed one.
+#[test]
+fn a_stretched_normal_map_leans_as_far() {
+    let Some(flat) = matcap_on_a_slope(1.0, 128) else {
+        return;
+    };
+    let leaning = matcap_on_a_slope(1.0, 220).expect("it drew");
+    let stretched = matcap_on_a_slope(4.0, 220).expect("it drew");
+    let other_way = matcap_on_a_slope(0.25, 220).expect("it drew");
+    let apart = |a: [u8; 4], b: [u8; 4]| (0..3).map(|at| a[at].abs_diff(b[at])).max().unwrap_or(0);
+    assert!(apart(leaning, flat) > 10, "{flat:?} and {leaning:?}");
+    assert!(
+        apart(stretched, leaning) <= 3,
+        "{leaning:?} and {stretched:?}"
+    );
+    assert!(
+        apart(other_way, leaning) <= 3,
+        "{leaning:?} and {other_way:?}"
+    );
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

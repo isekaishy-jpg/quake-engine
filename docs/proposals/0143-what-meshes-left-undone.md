@@ -30,7 +30,6 @@ A copy's triangles on the CPU, and what posing costs the CPU.
 - **Sorting what's see-through:** with the world's, in its far to near list, which is there already.
 - **Vertex colours:** `COLOR_0`, in the stream that doesn't move, multiplying the base colour, and open to surface shaders.
 - **UV and colour targets:** that stream moved too, for only the meshes that have them.
-- **Real tangents:** MikkTSpace, from the file or worked out when a mesh is imported, turned with its joints. Faces keep what they have.
 - **Hit volumes go by the rewound time,** through what proposal 0048 built.
 
 ### Trying
@@ -101,4 +100,8 @@ Tried in the game, firing from a script at the Blender arm, which has a box 160 
 - **A bug found by its test:** `end_rewind` left the rewound time set, so that every shot after the first would have gone by the old pose.
 - Four other bugs were put back, and each fails a test: joints ignored, things with size going by joints, the pose ignored, and a capsule too thin.
 - **A capsule's as wide as the widest of what it holds,** so a shot can hit just beside a thin part of a limb. Better that than a shot through a limb missing.
+
+### Tangents
+
+Not built, as [the research](../research/mesh-limits.md) measured that they aren't worth it. What it found was a bug: `surface_frame` scaled tangent and bitangent together, so a stretched texture's bumps leaned less one way. Each has its own length now. `a_stretched_normal_map_leans_as_far` goes through a matcap, which shows a lean as a colour, and fails on the old shader, where the same map read 34 and 86. Two earlier tries at that test proved nothing: a moving light doesn't go by a normal map, and squeezing a texture also moved its light off the map.
 
