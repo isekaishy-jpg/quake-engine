@@ -18,6 +18,7 @@ struct LandSheet {
     origin: vec4<f32>,
     shape: vec4<u32>,
     uv: vec4<f32>,
+    paint: vec4<u32>,
 }
 
 @group(0) @binding(0) var<storage, read> land_sheets: array<LandSheet>;

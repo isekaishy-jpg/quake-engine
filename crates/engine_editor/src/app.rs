@@ -15,8 +15,8 @@ use engine_core::math::Vec3;
 use engine_editor::camera::{Camera, FOV, Keys};
 use engine_format::from_text;
 use engine_map::{
-    Map, SideFiles, Spline, TerrainBrush, TerrainData, TerrainSheet, TerrainStroke, Texture,
-    stroke_land,
+    Map, SideFiles, Spline, TerrainBrush, TerrainData, TerrainLayer, TerrainSheet, TerrainStroke,
+    Texture, stroke_land,
 };
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
@@ -103,6 +103,8 @@ pub(crate) enum TerrainTool {
     Hole,
     /// Fills a hole.
     Fill,
+    /// Paints the layer that's chosen.
+    Paint,
 }
 
 impl TerrainTool {
@@ -115,6 +117,7 @@ impl TerrainTool {
             Self::Smooth => "smooth",
             Self::Hole => "hole",
             Self::Fill => "fill",
+            Self::Paint => "paint",
         }
     }
 
@@ -125,17 +128,24 @@ impl TerrainTool {
 }
 
 /// Every land tool.
-const LAND_TOOLS: [TerrainTool; 6] = [
+const LAND_TOOLS: [TerrainTool; 7] = [
     TerrainTool::Raise,
     TerrainTool::Lower,
     TerrainTool::Flatten,
     TerrainTool::Smooth,
     TerrainTool::Hole,
     TerrainTool::Fill,
+    TerrainTool::Paint,
 ];
 
 /// How far a brush goes in a step of a stroke, at full strength.
 const LAND_STEP: f32 = 4.0;
+
+/// How much of a layer a step of a stroke brings in, at full strength.
+const PAINT_STEP: f32 = 0.2;
+
+/// How wide a layer's repeat is, until it's said.
+const USUAL_LAYER_SIZE: f32 = 512.0;
 
 /// A sheet of land being shaped, and what it's called.
 struct LandSheet {
@@ -248,6 +258,12 @@ pub(crate) struct Editor {
     land: Vec<LandSheet>,
     /// How much of a land brush fades, and how strong it is.
     land_brush: (f32, f32),
+    /// The sheet whose layers are shown, which is the one last touched.
+    land_chosen: usize,
+    /// The layer that's painted with.
+    land_layer: usize,
+    /// The material of the next layer.
+    new_layer: String,
     /// What a stroke of land changed, newest last, to go back to.
     land_undo: Vec<(usize, TerrainData)>,
     /// The height a stroke of flattening began at.
@@ -460,6 +476,9 @@ impl Editor {
             press: (64.0, 8.0),
             land: Vec::new(),
             land_brush: (0.6, 1.0),
+            land_chosen: 0,
+            land_layer: 0,
+            new_layer: String::new(),
             land_undo: Vec::new(),
             land_level: None,
             script: String::new(),
@@ -667,6 +686,9 @@ impl Editor {
                 if let Some(size) = args.get("size").and_then(Value::as_f64) {
                     self.press.0 = size;
                 }
+                if args.get("layer").is_some() {
+                    self.land_layer = usize::try_from(layer).unwrap_or(0);
+                }
                 self.set_tool(match args.get("kind").and_then(Value::as_str) {
                     Some("mesh") => name.map(Tool::Mesh),
                     Some("decal") => name.map(Tool::Decal),
@@ -683,6 +705,11 @@ impl Editor {
                     self.params = params.to_string();
                 }
                 emit(&json!({ "tool": self.tool.as_ref().map(Tool::describe) }));
+            }
+            "land_layer" => {
+                let material = args.get("material").and_then(Value::as_str).unwrap_or("");
+                self.add_land_layer(material);
+                emit(&json!({ "layers": self.land_layers().len() }));
             }
             "pointer" => {
                 #[expect(clippy::cast_possible_truncation, reason = "pixels fit f32")]
@@ -781,6 +808,7 @@ impl Editor {
             TerrainTool::Smooth => TerrainStroke::Smooth(strength.min(1.0) * 0.5),
             TerrainTool::Hole => TerrainStroke::Hole(true),
             TerrainTool::Fill => TerrainStroke::Hole(false),
+            TerrainTool::Paint => TerrainStroke::Paint(self.land_layer, strength * PAINT_STEP),
         };
         stroke_land(&mut land.sheet.data, &brush, stroke);
         if let Some(renderer) = &mut self.renderer
@@ -798,6 +826,7 @@ impl Editor {
             && let Some(land) = self.land.get(number)
         {
             self.land_undo.push((number, land.sheet.data.clone()));
+            self.land_chosen = number;
         }
     }
 
@@ -811,6 +840,37 @@ impl Editor {
             }
         }
         self.stale = true;
+    }
+
+    /// What the chosen sheet's painted with.
+    fn land_layers(&self) -> Vec<String> {
+        self.land
+            .get(self.land_chosen)
+            .map_or_else(Vec::new, |land| {
+                let layers = land.sheet.data.layers.iter();
+                layers.map(|layer| layer.material.clone()).collect()
+            })
+    }
+
+    /// Paints the land with `material` too, and builds the map again so that its pictures load.
+    fn add_land_layer(&mut self, material: &str) {
+        let Some(land) = self.land.get_mut(self.land_chosen) else {
+            self.note("there's no land to paint".to_owned());
+            return;
+        };
+        let data = &mut land.sheet.data;
+        let next = data.layers.len();
+        let layer = TerrainLayer {
+            material: material.to_owned(),
+            size: USUAL_LAYER_SIZE,
+            hex: false,
+        };
+        if material.is_empty() || !data.set_layer(next, layer) {
+            self.note("that can't be a layer: name a material, up to eight of them".to_owned());
+            return;
+        }
+        self.land_layer = next;
+        self.land_stroke_ends();
     }
 
     /// Goes back on the last stroke of land.
@@ -1478,6 +1538,32 @@ impl Editor {
         if ui.button("undo land").clicked() {
             self.undo_land();
         }
+        if self.land.len() > 1 {
+            ui.label("sheet");
+            let names: Vec<String> = self.land.iter().map(|land| land.source.clone()).collect();
+            for (number, name) in names.into_iter().enumerate() {
+                if ui
+                    .selectable_label(self.land_chosen == number, name)
+                    .clicked()
+                {
+                    self.land_chosen = number;
+                }
+            }
+        }
+        ui.label("layers");
+        for (number, material) in self.land_layers().into_iter().enumerate() {
+            let chosen = self.land_layer == number;
+            if ui.selectable_label(chosen, material).clicked() {
+                self.land_layer = number;
+            }
+        }
+        ui.horizontal(|ui| {
+            ui.text_edit_singleline(&mut self.new_layer);
+            if ui.button("add").clicked() {
+                let material = std::mem::take(&mut self.new_layer);
+                self.add_land_layer(&material);
+            }
+        });
         ui.label(RichText::new("PAINT LAYER").color(ACCENT));
         ui.horizontal(|ui| {
             for layer in 0..3 {

@@ -277,9 +277,10 @@ pub fn grid_indices(size: u32) -> Vec<u32> {
 /// What the shader's told of each sheet: its origin and spacing, where its samples are, and how a
 /// place becomes a place on its texture.
 pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
-    let mut bytes = Vec::with_capacity(map.terrain.len() * 48);
+    let mut bytes = Vec::with_capacity(map.terrain.len() * 64);
     let mut first_sample = 0_u32;
     let mut first_hole = 0_u32;
+    let (mut first_layer, mut first_paint) = (0_u32, 0_u32);
     for sheet in &map.terrain {
         let origin = [
             sheet.origin.x,
@@ -300,8 +301,46 @@ pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
         let size = texture.map_or([1.0, 1.0], texture_size);
         let uv = [1.0 / size[0], 1.0 / size[1], 0.0, 0.0];
         bytes.extend(uv.iter().flat_map(|part: &f32| part.to_le_bytes()));
+        let layers = u32::try_from(sheet.pictures.len()).unwrap_or(0);
+        let paint = [first_layer, layers, first_paint, sheet.data.cells[1]];
+        bytes.extend(paint.iter().flat_map(|part| part.to_le_bytes()));
         first_sample += u32::try_from(sheet.data.heights.len()).unwrap_or(0);
         first_hole += u32::try_from(sheet.data.holes.len().div_ceil(4)).unwrap_or(0);
+        first_layer += layers;
+        first_paint += u32::try_from(sheet.data.paint.len() * 2).unwrap_or(0);
+    }
+    bytes
+}
+
+/// Every sheet's paint, as two words a sample.
+pub(crate) fn paint_bytes(map: &Map) -> Vec<u8> {
+    let painted = map
+        .terrain
+        .iter()
+        .filter(|sheet| !sheet.pictures.is_empty());
+    painted
+        .flat_map(|sheet| sheet.data.paint.as_flattened())
+        .copied()
+        .collect()
+}
+
+/// Bytes in what's told of a layer.
+const LAYER_BYTES: usize = 16;
+
+/// What's told of every sheet's layers, in order.
+pub(crate) fn layer_bytes(map: &Map) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(LAYER_BYTES * 8);
+    for sheet in &map.terrain {
+        for (layer, picture) in sheet.data.layers.iter().zip(&sheet.pictures) {
+            let gloss = map
+                .land_pictures
+                .get(*picture as usize)
+                .map_or(32.0, |found| found.gloss);
+            bytes.extend((1.0 / layer.size.max(1.0)).to_le_bytes());
+            bytes.extend(gloss.to_le_bytes());
+            bytes.extend(picture.to_le_bytes());
+            bytes.extend(u32::from(layer.hex).to_le_bytes());
+        }
     }
     bytes
 }

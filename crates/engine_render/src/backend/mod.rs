@@ -773,8 +773,25 @@ impl Backend {
             descriptor_count: 1,
             stage_flags: ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT,
         };
-        let terrain_set_layout =
-            DescriptorSetLayout::new(&device, &[0, 1, 2, 3].map(land_binding))?;
+        let land_picture = |binding| DescriptorSetLayoutBinding {
+            binding,
+            descriptor_type: DescriptorType::SAMPLED_IMAGE,
+            descriptor_count: 1,
+            stage_flags: ShaderStageFlags::FRAGMENT,
+        };
+        let terrain_set_layout = DescriptorSetLayout::new(
+            &device,
+            &[
+                land_binding(0),
+                land_binding(1),
+                land_binding(2),
+                land_binding(3),
+                land_binding(4),
+                land_binding(5),
+                land_picture(6),
+                land_picture(7),
+            ],
+        )?;
         let layouts = Layouts {
             world: textured_layout(MODEL_OFFSET_SIZE)?,
             material: PipelineLayout::with_push_constants(

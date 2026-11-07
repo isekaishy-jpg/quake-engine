@@ -9,6 +9,7 @@ use engine_map::{MipLevel, PixelForm};
 use rusty_dds::{Dds, DecodeContent, EncodeLayout};
 
 use crate::error::CompileError;
+use crate::land_pictures::pack_land;
 use crate::light::in_parallel;
 use crate::material::decode_png;
 
@@ -357,5 +358,6 @@ pub fn pack_textures(root: &Path) -> Result<(usize, usize), CompileError> {
     for result in done {
         compiled += usize::from(result?);
     }
-    Ok((compiled, wanted.len()))
+    let (land, all_land) = pack_land(root)?;
+    Ok((compiled + land, wanted.len() + all_land))
 }

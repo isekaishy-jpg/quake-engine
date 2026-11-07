@@ -1,17 +1,19 @@
 //! Land on the GPU (proposal 0144).
 
 use engine_core::math::Vec3;
-use engine_map::{Map, TerrainSheet};
+use engine_map::{Map, MipLevel, PixelForm, SlotImage, TerrainSheet};
 use vulkane::safe::{
-    BufferCopy, BufferUsage, DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType,
+    AccessFlags, BufferCopy, BufferImageCopy, BufferUsage, DescriptorPool, DescriptorPoolSize,
+    DescriptorSet, DescriptorType, Format, Image, Image2dCreateInfo, ImageBarrier, ImageLayout,
+    ImageUsage, PipelineStage,
 };
 
-use super::upload::host_buffer;
-use super::{Backend, FRAMES, GpuBuffer};
+use super::upload::{compiled_format, device_image, host_buffer};
+use super::{Backend, FRAMES, GpuBuffer, GpuImage};
 use crate::error::RenderError;
 use crate::terrain::{
     ChunkLight, GRIDS, NODE_BYTES, TerrainBatch, chunk_list, grid_indices, height_bytes,
-    hole_bytes, normal_bytes, sheet_bytes, sheet_normals,
+    hole_bytes, layer_bytes, normal_bytes, paint_bytes, sheet_bytes, sheet_normals,
 };
 
 /// Parts of the land in a frame. Past this, what's furthest goes undrawn.
@@ -27,8 +29,16 @@ pub(super) struct GpuTerrain {
     normals: GpuBuffer,
     /// Its holes.
     holes: GpuBuffer,
-    /// Where each sheet's heights and holes start, in samples and in bytes.
-    firsts: Vec<(u64, u64)>,
+    /// What it's painted with.
+    paint: GpuBuffer,
+    /// Each layer, kept alive for the set.
+    _layers: GpuBuffer,
+    /// The colour of what it's painted with, kept alive for the set.
+    _colors: GpuImage,
+    /// The bumps, height and shine of what it's painted with, kept alive for the set.
+    _surfaces: GpuImage,
+    /// Where each sheet's heights, holes and paint start, in samples and in bytes.
+    firsts: Vec<(u64, u64, u64)>,
     /// What reads those.
     pub(super) set: DescriptorSet,
     /// Kept alive for the set.
@@ -90,7 +100,7 @@ impl Backend {
         let Some(land) = self.map.as_ref().and_then(|map| map.terrain.as_ref()) else {
             return Ok(());
         };
-        let Some(&(samples, holes)) = land.firsts.get(number) else {
+        let Some(&(samples, holes, paint)) = land.firsts.get(number) else {
             return Ok(());
         };
         let heights: Vec<u8> = sheet
@@ -103,7 +113,114 @@ impl Backend {
         self.write_into(&land.normals, samples * 4, &sheet_normals(sheet))?;
         let mut hole_data = sheet.data.holes.clone();
         hole_data.resize(hole_data.len().next_multiple_of(4), 0);
-        self.write_into(&land.holes, holes, &hole_data)
+        self.write_into(&land.holes, holes, &hole_data)?;
+        // Paint that wasn't there when the map loaded comes with the next build of it.
+        if !sheet.pictures.is_empty() {
+            self.write_into(&land.paint, paint, sheet.data.paint.as_flattened())?;
+        }
+        Ok(())
+    }
+
+    /// `pictures` as one array, which has at least two layers, as one layer wouldn't be seen as
+    /// an array.
+    fn upload_array(
+        &self,
+        pictures: &[&SlotImage],
+        format: Format,
+    ) -> Result<GpuImage, RenderError> {
+        let plain = std::sync::Arc::new(vec![MipLevel {
+            width: 1,
+            height: 1,
+            rgba: vec![255; 4],
+            form: PixelForm::Rgba,
+        }]);
+        let mut layers: Vec<&SlotImage> = pictures.to_vec();
+        while layers.len() < 2 {
+            layers.push(layers.first().copied().unwrap_or(&plain));
+        }
+        let first = layers.first().map_or(&[][..], |layer| &layer[..]);
+        let top = first
+            .first()
+            .ok_or_else(|| RenderError("a picture for land with no pixels".to_owned()))?;
+        let image = Image::new_2d_array(
+            &self.device,
+            Image2dCreateInfo {
+                format,
+                width: top.width,
+                height: top.height,
+                usage: ImageUsage::SAMPLED | ImageUsage::TRANSFER_DST,
+            },
+            u32::try_from(layers.len()).unwrap_or(1),
+            u32::try_from(first.len()).unwrap_or(1),
+        )?;
+        let image = device_image(&self.device, &self.physical, image, false)?;
+        let mut pixels = Vec::new();
+        let mut regions = Vec::new();
+        for (number, layer) in layers.iter().enumerate() {
+            for (level, mip) in layer.iter().enumerate() {
+                let mut copy = BufferImageCopy::full_2d(mip.width, mip.height);
+                copy.buffer_offset = pixels.len() as u64;
+                copy.mip_level = u32::try_from(level).unwrap_or(0);
+                copy.base_array_layer = u32::try_from(number).unwrap_or(0);
+                regions.push(copy);
+                pixels.extend_from_slice(&mip.rgba);
+            }
+        }
+        let mut staging = host_buffer(
+            &self.device,
+            &self.physical,
+            pixels.len(),
+            BufferUsage::TRANSFER_SRC,
+        )?;
+        staging.memory.map()?.as_slice_mut()[..pixels.len()].copy_from_slice(&pixels);
+        self.queue
+            .one_shot(&self.device, self.queue_family, |rec| {
+                rec.image_barrier(
+                    PipelineStage::TOP_OF_PIPE,
+                    PipelineStage::TRANSFER,
+                    ImageBarrier::color(
+                        &image.image,
+                        ImageLayout::UNDEFINED,
+                        ImageLayout::TRANSFER_DST_OPTIMAL,
+                        AccessFlags::NONE,
+                        AccessFlags::TRANSFER_WRITE,
+                    ),
+                );
+                rec.copy_buffer_to_image(
+                    &staging.buffer,
+                    &image.image,
+                    ImageLayout::TRANSFER_DST_OPTIMAL,
+                    &regions,
+                );
+                rec.image_barrier(
+                    PipelineStage::TRANSFER,
+                    PipelineStage::FRAGMENT_SHADER,
+                    ImageBarrier::color(
+                        &image.image,
+                        ImageLayout::TRANSFER_DST_OPTIMAL,
+                        ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                        AccessFlags::TRANSFER_WRITE,
+                        AccessFlags::SHADER_READ,
+                    ),
+                );
+                Ok(())
+            })?;
+        Ok(image)
+    }
+
+    /// What `map`'s land is painted with: its colours and its surfaces.
+    fn upload_land_pictures(&self, map: &Map) -> Result<(GpuImage, GpuImage), RenderError> {
+        let colors: Vec<&SlotImage> = map.land_pictures.iter().map(|p| &p.color).collect();
+        let surfaces: Vec<&SlotImage> = map.land_pictures.iter().map(|p| &p.surface).collect();
+        let format_of = |list: &[&SlotImage], plain: Format| {
+            list.first()
+                .and_then(|mips| compiled_format(mips))
+                .unwrap_or(plain)
+        };
+        Ok((
+            self.upload_array(&colors, format_of(&colors, Format::R8G8B8A8_SRGB))?,
+            self.upload_array(&surfaces, format_of(&surfaces, Format::R8G8B8A8_UNORM))?,
+        ))
     }
 
     /// Puts `map`'s land on the GPU, if it has any.
@@ -124,13 +241,27 @@ impl Backend {
         let normals = self.device_buffer(&normal_data, storage)?;
         let hole_data = hole_bytes(map);
         let holes = self.device_buffer(&hole_data, storage)?;
+        // A buffer can't be bound with nothing in it.
+        let mut paint_data = paint_bytes(map);
+        paint_data.resize(paint_data.len().max(4), 0);
+        let paint = self.device_buffer(&paint_data, storage)?;
+        let mut layer_data = layer_bytes(map);
+        layer_data.resize(layer_data.len().max(16), 0);
+        let layers = self.device_buffer(&layer_data, storage)?;
+        let (colors, surfaces) = self.upload_land_pictures(map)?;
         let pool = DescriptorPool::new(
             &self.device,
             1,
-            &[DescriptorPoolSize {
-                descriptor_type: DescriptorType::STORAGE_BUFFER,
-                descriptor_count: 4,
-            }],
+            &[
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::STORAGE_BUFFER,
+                    descriptor_count: 6,
+                },
+                DescriptorPoolSize {
+                    descriptor_type: DescriptorType::SAMPLED_IMAGE,
+                    descriptor_count: 2,
+                },
+            ],
         )?;
         let set = pool.allocate(&self.terrain_set_layout)?;
         let kind = DescriptorType::STORAGE_BUFFER;
@@ -138,6 +269,11 @@ impl Backend {
         set.write_buffer(1, kind, &heights.buffer, 0, height_data.len() as u64);
         set.write_buffer(2, kind, &normals.buffer, 0, normal_data.len() as u64);
         set.write_buffer(3, kind, &holes.buffer, 0, hole_data.len() as u64);
+        set.write_buffer(4, kind, &paint.buffer, 0, paint_data.len() as u64);
+        set.write_buffer(5, kind, &layers.buffer, 0, layer_data.len() as u64);
+        let shown = ImageLayout::SHADER_READ_ONLY_OPTIMAL;
+        set.write_sampled_image(6, &colors.view, shown);
+        set.write_sampled_image(7, &surfaces.view, shown);
         let mut index_bytes = Vec::new();
         let mut grids = Vec::with_capacity(GRIDS.len());
         for size in GRIDS {
@@ -157,11 +293,14 @@ impl Backend {
             )?);
         }
         let mut firsts = Vec::with_capacity(map.terrain.len());
-        let (mut samples, mut hole_at) = (0_u64, 0_u64);
+        let (mut samples, mut hole_at, mut paint_at) = (0_u64, 0_u64, 0_u64);
         for sheet in &map.terrain {
-            firsts.push((samples, hole_at));
+            firsts.push((samples, hole_at, paint_at));
             samples += sheet.data.heights.len() as u64;
             hole_at += sheet.data.holes.len().next_multiple_of(4) as u64;
+            if !sheet.pictures.is_empty() {
+                paint_at += (sheet.data.paint.len() * 8) as u64;
+            }
         }
         let (whole_bytes, whole_bounds) = chunk_list(map);
         let whole = self.device_buffer(&whole_bytes, BufferUsage::VERTEX_BUFFER)?;
@@ -170,6 +309,10 @@ impl Backend {
             heights,
             normals,
             holes,
+            paint,
+            _layers: layers,
+            _colors: colors,
+            _surfaces: surfaces,
             firsts,
             set,
             _pool: pool,

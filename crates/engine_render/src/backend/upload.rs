@@ -118,7 +118,7 @@ pub(super) fn host_buffer(
 }
 
 /// The format of compiled `mips`, if that's what they are.
-fn compiled_format(mips: &[MipLevel]) -> Option<Format> {
+pub(super) fn compiled_format(mips: &[MipLevel]) -> Option<Format> {
     match mips.first()?.form {
         PixelForm::Rgba => None,
         PixelForm::Bc7Srgb => Some(Format::BC7_SRGB),

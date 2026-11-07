@@ -55,7 +55,10 @@ pub use skeleton::{
 pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
-pub use terrain::{CHUNK_CELLS, TerrainData, TerrainSheet, USUAL_CELL};
+pub use terrain::{
+    CHUNK_CELLS, LandPaint, LandPicture, MOST_LAND_LAYERS, TerrainData, TerrainLayer, TerrainSheet,
+    USUAL_CELL,
+};
 pub use terrain_edit::{
     TerrainBrush, TerrainStroke, copy_land, splat_land, stamp_land, stroke_land,
 };

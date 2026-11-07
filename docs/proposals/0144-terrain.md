@@ -105,4 +105,17 @@ Five bugs were put back, and each fails a test: light ignoring holes, land left 
 - **Every land operation has been failed on purpose:** with lower going up, an unknown source let through and copying doing nothing, the test says so. Flatten now needs its height, and won't guess.
 - **The Terrain tab,** item 44, is still at stage 15, with the other tabs. For now the tools are under Surfaces.
 
+### Painting (128, 132, and land's part of 131)
+
+- **A pixel reads two pictures a layer, not four.** Each layer's material becomes a colour and a surface, which is bumps in red and green, height in blue and shine in alpha, at compile. A map's go in two arrays. `engine-compile --textures` compiles them to `compiled/land`, and pixels stand in where that's missing or behind.
+- **Weights sit by the heights,** in a buffer, two words a sample, not the two images the proposal said. It's a texel a cell, as Unreal's is, and height blending gives the edge its detail. A brush writes it in place, with no image to bind for each sheet.
+- **Height blending is one sum.** A layer's share is its weight times two to the ten times its height, so it needs no second pass over what's been read.
+- **Far land has no bake.** The proposal baked a colour for each chunk. Past 6000 units a layer reads its own last mip, which is the mean of the picture. That costs next to nothing, and it can't go out of date as paint changes.
+- **Cliffs are read from the side.** The proposal left this out, and the first picture showed why it can't be: a picture drawn out down a cliff. Where land's steep each layer reads along the side too. What a vertex says of a cliff can be far from true on a coarser level, and the test for this caught that, so the triangle's own slope has the last word.
+- **Tiling:** each layer has its own world size, a soft colour change from noise goes over all land, painted or not, and hexagon tiles are there for a layer that asks, up to 2400 units away.
+- **A bake lasts through paint,** as it goes by the land's shape. A sheet's painted without light being baked again.
+- **Tools and editor:** `set_terrain_layer` and `paint_terrain`, and a paint tool beside the other land tools, with a list of the layers of the sheet last touched. `validate` says if a layer has no material.
+- **What it costs,** with every layer on every pixel of a full-screen view, which is the worst there can be: lowest of two rounds, in ms for the scene. None 1.07, one 1.01, two 1.17, four 1.47, eight 2.04. So a layer is about 0.14 ms at worst, and most pixels have one or two. One with hexagon tiles is 1.17, and four 2.15, so hexagon tiles cost about twice as much as plain layers, as they're near the view. The GPU's clock moves a scene by more than that between runs, which is why it's the lowest.
+- **Every test here was seen failing:** with height blending off, one picture for all, paint not sent, far land never plain, hexagon tiles never and always, no side reading, and no triangle slope. The far land test passed with its bug at first, since a picture's own mips came to the same thing. It now has a repeat too wide for that.
+
 Filled in as each part lands.

@@ -470,6 +470,49 @@ pub const OPERATIONS: &[OperationInfo] = &[
         ],
     },
     OperationInfo {
+        name: "set_terrain_layer",
+        help: "Sets one of the eight layers land is painted with. The first starts out everywhere.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet, by name"),
+            needs(
+                "layer",
+                ArgKind::Number,
+                "Which layer: one that's there, or the next",
+            ),
+            needs("material", ArgKind::Text, "Its material"),
+            may(
+                "size",
+                ArgKind::Number,
+                "How wide one repeat is, 512 if not said",
+            ),
+            may(
+                "hex",
+                ArgKind::Flag,
+                "Breaks up its repeats, for three times the reading near the view",
+            ),
+        ],
+    },
+    OperationInfo {
+        name: "paint_terrain",
+        help: "Paints a layer onto land with a circle.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet, by name"),
+            needs("layer", ArgKind::Number, "Which layer"),
+            needs(
+                "at",
+                ArgKind::Point,
+                "The circle's middle, from the sheet's low corner",
+            ),
+            needs("radius", ArgKind::Number, "How far it reaches"),
+            may("soft", ArgKind::Number, "How much of it fades, from 0 to 1"),
+            may(
+                "amount",
+                ArgKind::Number,
+                "How much of the layer comes in at the middle, from 0 to 1, or all of it",
+            ),
+        ],
+    },
+    OperationInfo {
         name: "stamp_terrain",
         help: "Presses one sheet's shape into another, or scatters it over a circle with count.",
         args: &[
@@ -710,6 +753,8 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "make_terrain" => features::make_terrain(session, args),
         "add_terrain" => features::add_terrain(session, args),
         "shape_terrain" => features::shape_terrain(session, args),
+        "set_terrain_layer" => features::set_terrain_layer(session, args),
+        "paint_terrain" => features::paint_terrain(session, args),
         "stamp_terrain" => features::stamp_terrain(session, args),
         "copy_terrain" => features::copy_terrain(session, args),
         "check_effects" => features::check_effects(session, args),
@@ -997,6 +1042,12 @@ fn validate(session: &Session) -> Result<Json, String> {
         .map(|texture| texture.name.clone())
         .collect();
     problems.extend(missing.iter().map(|name| format!("no material {name}")));
+    let layers = map.terrain.iter().flat_map(|sheet| &sheet.data.layers);
+    let unpainted = layers.filter(|layer| {
+        let file = format!("{}.emat", layer.material);
+        !session.content.join("materials").join(file).exists()
+    });
+    problems.extend(unpainted.map(|layer| format!("land has no material {}", layer.material)));
     let starts = map
         .entities
         .iter()

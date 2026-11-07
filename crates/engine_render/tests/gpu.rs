@@ -9,11 +9,12 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
-    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
-    Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE,
-    PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
-    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
-    SpriteFrame, SpriteImage, TerrainData, TerrainSheet, Texture, TextureKind, TileLight,
+    AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LandPicture,
+    LightTiles, Map, Material, MaterialLayer, MeshCorner, MeshInstance, MetalRough, MipLevel,
+    MovingMesh, NO_MOVE, PAINT_MASK, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil,
+    Rows, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky,
+    Sprite, SpriteFacing, SpriteFrame, SpriteImage, TerrainData, TerrainLayer, TerrainSheet,
+    Texture, TextureKind, TileLight, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -3411,6 +3412,221 @@ fn a_picture_has_the_scene_where_the_window_has_it() {
     let at = |x: usize| shot.rgba[(32 * 64 + x) * 4];
     assert!(at(16) < 50, "nothing left of the view: {}", at(16));
     assert!(at(48) > 200, "and the land's in it: {}", at(48));
+}
+
+/// A picture for land of one colour, standing as high as `height` says.
+fn land_picture(name: &str, color: [u8; 3], height: u8) -> LandPicture {
+    let pixels = |pixel: [u8; 4]| pixel.repeat(16);
+    LandPicture {
+        material: name.to_owned(),
+        color: Arc::new(mip_chain(4, 4, pixels([color[0], color[1], color[2], 255]))),
+        surface: Arc::new(mip_chain(4, 4, pixels([128, 128, height, 0]))),
+        gloss: 32.0,
+    }
+}
+
+/// Flat land painted red on its low half along X, and blue on the other, from layers that stand
+/// as high as `heights` says, under `paint`.
+fn painted_land(heights: [u8; 2], paint: impl Fn(u32) -> [u8; 2]) -> Map {
+    let mut built = map_with_land();
+    let sheet = &mut built.terrain[0];
+    sheet.data.heights.fill(0.0);
+    for (number, material) in ["red", "blue"].iter().enumerate() {
+        let layer = TerrainLayer {
+            material: (*material).to_owned(),
+            size: 256.0,
+            hex: false,
+        };
+        assert!(sheet.data.set_layer(number, layer));
+    }
+    let across = sheet.data.across();
+    for (at, weights) in (0_u32..).zip(&mut sheet.data.paint) {
+        let [first, second] = paint(at % across);
+        weights[..2].copy_from_slice(&[first, second]);
+    }
+    sheet.pictures = vec![0, 1];
+    built.land_pictures = vec![
+        land_picture("red", [255, 0, 0], heights[0]),
+        land_picture("blue", [0, 0, 255], heights[1]),
+    ];
+    built
+}
+
+/// The land looked down on from `height`, as a picture.
+fn painted_from_above(renderer: &mut Renderer, built: Map, height: f32) -> Capture {
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, height),
+        ..view_from_above()
+    };
+    renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture")
+}
+
+/// A pixel's colour.
+fn pixel_at(shot: &Capture, x: u32, y: u32) -> [u8; 3] {
+    let at = ((y * shot.width + x) * 4) as usize;
+    [shot.rgba[at], shot.rgba[at + 1], shot.rgba[at + 2]]
+}
+
+#[test]
+fn paint_shows_each_layer_where_it_is() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let half = |x: u32| if x < 64 { [255, 0] } else { [0, 255] };
+    let shot = painted_from_above(&mut renderer, painted_land([128, 128], half), 300.0);
+    // Up the middle of the view, as that's along X, one end is one colour and the other's the
+    // other.
+    let [low, high] = [(32, 8), (32, 56)].map(|(x, y)| pixel_at(&shot, x, y));
+    let reddest = if low[0] > low[2] { low } else { high };
+    let bluest = if low[0] > low[2] { high } else { low };
+    assert!(reddest[0] > 150 && reddest[2] < 40, "{low:?} {high:?}");
+    assert!(bluest[2] > 150 && bluest[0] < 40, "{low:?} {high:?}");
+}
+
+#[test]
+fn where_layers_are_even_the_one_that_stands_higher_shows() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let even = |_| [128, 127];
+    let shot = painted_from_above(&mut renderer, painted_land([230, 40], even), 300.0);
+    let red = centre(&shot);
+    assert!(red[0] > 150 && red[2] < 30, "the red's higher: {red:?}");
+    let shot = painted_from_above(&mut renderer, painted_land([40, 230], even), 300.0);
+    let blue = centre(&shot);
+    assert!(
+        blue[2] > 150 && blue[0] < 30,
+        "and now the blue is: {blue:?}"
+    );
+    let shot = painted_from_above(&mut renderer, painted_land([128, 128], even), 300.0);
+    let both = centre(&shot);
+    assert!(
+        both[0] > 100 && both[2] > 100,
+        "and level, they mix: {both:?}"
+    );
+}
+
+#[test]
+fn paint_changes_while_it_is_drawn() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let built = painted_land([128, 128], |_| [255, 0]);
+    let mut sheet = built.terrain[0].clone();
+    let shot = painted_from_above(&mut renderer, built, 300.0);
+    assert!(centre(&shot)[0] > 150 && centre(&shot)[2] < 40, "red");
+    for paint in &mut sheet.data.paint {
+        paint[..2].copy_from_slice(&[0, 255]);
+    }
+    renderer.update_land(0, &sheet).expect("it changes");
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, 300.0),
+        ..view_from_above()
+    };
+    let shot = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
+    assert!(centre(&shot)[2] > 150 && centre(&shot)[0] < 40, "blue");
+}
+
+/// Far off, a layer's the mean of its picture, not a pattern. So that a picture's own mips can't
+/// come to the same thing, its top differs from its last, and a repeat's so wide that it would
+/// read its top from there.
+#[test]
+fn far_land_reads_the_mean_of_a_picture() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = painted_land([128, 128], |_| [255, 0]);
+    let mut mips = built.land_pictures[0].color.as_ref().clone();
+    for mip in mips.iter_mut().take(1) {
+        mip.rgba = [0, 255, 0, 255].repeat(mip.rgba.len() / 4);
+    }
+    built.land_pictures[0].color = Arc::new(mips);
+    built.terrain[0].data.layers[0].size = 200_000.0;
+    let near = painted_from_above(&mut renderer, built.clone(), 300.0);
+    assert!(centre(&near)[1] > 150, "the top of it: {:?}", centre(&near));
+    let far = painted_from_above(&mut renderer, built, 9000.0);
+    assert!(centre(&far)[0] > 150, "the last of it: {:?}", centre(&far));
+}
+
+/// A picture red in its low rows and blue in its high ones, which shows which way it lies.
+fn striped_picture() -> LandPicture {
+    let rows = |top: [u8; 4], bottom: [u8; 4]| [top.repeat(32), bottom.repeat(32)].concat();
+    let color = rows([255, 0, 0, 255], [0, 0, 255, 255]);
+    let surface = [128, 128, 128, 0].repeat(64);
+    LandPicture {
+        material: "striped".to_owned(),
+        color: Arc::new(mip_chain(8, 8, color)),
+        surface: Arc::new(mip_chain(8, 8, surface)),
+        gloss: 32.0,
+    }
+}
+
+/// How many times the colour turns from red to blue or back along `pixels`.
+fn colour_changes(pixels: impl Iterator<Item = [u8; 3]>) -> usize {
+    let sides: Vec<bool> = pixels.map(|pixel| pixel[0] > pixel[2]).collect();
+    sides.windows(2).filter(|pair| pair[0] != pair[1]).count()
+}
+
+/// A cliff's picture stands up on it, and isn't drawn out down it from the top of the land.
+#[test]
+fn a_cliff_has_its_picture_on_its_side() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = painted_land([128, 128], |_| [255, 0]);
+    built.land_pictures[0] = striped_picture();
+    built.land_pictures[1] = striped_picture();
+    let sheet = &mut built.terrain[0];
+    let across = sheet.data.across();
+    for (at, height) in (0_u32..).zip(&mut sheet.data.heights) {
+        *height = if at % across >= 64 { 3000.0 } else { 0.0 };
+    }
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(-300.0, 0.0, 1500.0),
+        pitch: 0.0,
+        ..view_from_above()
+    };
+    let shot = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
+    let down = colour_changes((0..64).map(|y| pixel_at(&shot, 32, y)));
+    let along = colour_changes((0..64).map(|x| pixel_at(&shot, x, 32)));
+    assert!(down >= 2, "stripes go up it: {down}");
+    assert_eq!(along, 0, "and not across it");
+}
+
+/// Hexagon tiles break up a repeat near the view, and stop further off.
+#[test]
+fn hexagon_tiles_are_for_a_layer_that_asks_near_the_view() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let striped = |hex: bool| {
+        let mut built = painted_land([128, 128], |_| [255, 0]);
+        built.land_pictures[0] = striped_picture();
+        built.terrain[0].data.layers[0].hex = hex;
+        built
+    };
+    let rows = |shot: &Capture| {
+        (0..64)
+            .map(|x| colour_changes((0..64).map(|y| pixel_at(shot, x, y))))
+            .collect::<Vec<usize>>()
+    };
+    // Plain stripes run straight across, so every column is the same.
+    let plain = painted_from_above(&mut renderer, striped(false), 300.0);
+    let shots = rows(&plain);
+    assert!(shots.iter().all(|count| *count == shots[0]), "{shots:?}");
+    let broken = painted_from_above(&mut renderer, striped(true), 300.0);
+    assert_ne!(plain.rgba, broken.rgba, "tiles move them");
+    let far_plain = painted_from_above(&mut renderer, striped(false), 2600.0);
+    let far_hex = painted_from_above(&mut renderer, striped(true), 2600.0);
+    assert_eq!(far_plain.rgba, far_hex.rgba, "and they stop");
 }
 
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:

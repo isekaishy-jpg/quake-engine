@@ -6,17 +6,19 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
-    AlphaMode, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough, MipLevel,
-    PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, Texture, TextureKind, mip_chain,
+    AlphaMode, LandPicture, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough,
+    MipLevel, PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, TerrainData, Texture,
+    TextureKind, mip_chain,
 };
 
 use crate::convex::fit_convex;
 use crate::error::CompileError;
+use crate::land_pictures::packed_pictures;
 use crate::mesh::{LoadedMesh, read_mesh, read_occlusion, resolve_meshes};
 use crate::source::{WorkingMap, read_map};
-use crate::terrain::read_terrain_data;
+use crate::terrain::{read_terrain_data, write_terrain};
 use crate::texture::placeholder_texture;
-use crate::texture_pack::{bytes_hash, packed_path, read_packed};
+use crate::texture_pack::{bytes_hash, packed_path, picture_roles, read_packed};
 use crate::tiles::{check_tiles, merge_tile};
 
 /// Decodes a PNG into RGBA bytes.
@@ -389,7 +391,13 @@ impl<'a> MaterialLibrary<'a> {
                 .read(&path)
                 .map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
             sheet.data = read_terrain_data(&bytes)?;
-            read.push_str(&String::from_utf8_lossy(&bytes));
+            // Light goes by the land's shape, so a bake lasts through paint.
+            let shape = TerrainData {
+                layers: Vec::new(),
+                paint: Vec::new(),
+                ..sheet.data.clone()
+            };
+            read.push_str(&String::from_utf8_lossy(&write_terrain(&shape)));
         }
         resolve_meshes(working, &mut |name| self.mesh(name))?;
         Ok(read)
@@ -425,6 +433,38 @@ impl<'a> MaterialLibrary<'a> {
         };
         self.meshes.insert(name.to_owned(), loaded.clone());
         Ok(loaded)
+    }
+
+    /// A hash of what `material`'s pictures for land are made from.
+    pub(crate) fn land_hash(&self, material: &str) -> Option<u64> {
+        let document = self.document_named(material, 0).ok()??;
+        let mut bytes = self
+            .filesystem
+            .read(&format!("materials/{material}.emat"))
+            .ok()?;
+        for (picture, _) in picture_roles(&document) {
+            bytes.extend(self.filesystem.read(&picture).ok()?);
+        }
+        Some(bytes_hash(&bytes))
+    }
+
+    /// What `materials` are to land, as they were compiled, if that's there and up to date.
+    pub(crate) fn packed_land(&mut self, materials: &[String]) -> Option<Vec<LandPicture>> {
+        let filesystem = self.filesystem;
+        let hashes: Vec<Option<u64>> = materials.iter().map(|m| self.land_hash(m)).collect();
+        let mut asked = hashes.into_iter();
+        let mut glosses = Vec::with_capacity(materials.len());
+        for material in materials {
+            let texture = self.load(material).ok()?;
+            glosses.push(texture.material.map_or(32.0, |material| material.gloss));
+        }
+        let mut gloss = glosses.into_iter();
+        packed_pictures(
+            filesystem,
+            materials,
+            &mut |_| asked.next().flatten(),
+            &mut |_| gloss.next().unwrap_or(32.0),
+        )
     }
 
     /// The pictures read so far as plain pixels.

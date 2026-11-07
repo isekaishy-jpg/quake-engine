@@ -2,7 +2,7 @@
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value, from_binary, to_binary};
-use engine_map::{Face, TerrainData, TerrainSheet, TexelAxis};
+use engine_map::{Face, MOST_LAND_LAYERS, TerrainData, TerrainLayer, TerrainSheet, TexelAxis};
 
 use crate::error::CompileError;
 
@@ -56,8 +56,33 @@ pub fn write_terrain(data: &TerrainData) -> Vec<u8> {
     let bytes = data.heights.iter().flat_map(|height| height.to_le_bytes());
     block.set("heights", Value::Bytes(bytes.collect()));
     block.set("holes", Value::Bytes(data.holes.clone()));
+    block.set("paint", Value::Bytes(data.paint.as_flattened().to_vec()));
     document.blocks.push(block);
+    for layer in &data.layers {
+        let mut block = Block::new("layer");
+        block.set("material", Value::Text(layer.material.clone()));
+        block.set("size", Value::Number(f64::from(layer.size)));
+        block.set("hex", Value::Flag(layer.hex));
+        document.blocks.push(block);
+    }
     to_binary(&document)
+}
+
+/// The layers in a land file.
+fn read_layers(document: &Document) -> Vec<TerrainLayer> {
+    document
+        .blocks_of("layer")
+        .map(|block| TerrainLayer {
+            material: block
+                .get("material")
+                .and_then(Value::text)
+                .unwrap_or_default()
+                .to_owned(),
+            #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+            size: block.get("size").and_then(Value::number).unwrap_or(512.0) as f32,
+            hex: block.get("hex").and_then(Value::flag).unwrap_or(false),
+        })
+        .collect()
 }
 
 /// The land in a file.
@@ -95,11 +120,22 @@ pub fn read_terrain_data(bytes: &[u8]) -> Result<TerrainData, CompileError> {
     #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
     let cell = number("cell").unwrap_or(32.0) as f32;
     let holes = block.get("holes").and_then(Value::bytes).unwrap_or(&[]);
+    let layers = read_layers(&document);
+    let paint = block.get("paint").and_then(Value::bytes).unwrap_or(&[]);
+    let (paint, rest) = paint.as_chunks::<MOST_LAND_LAYERS>();
+    if !rest.is_empty() || (!layers.is_empty() && paint.len() != heights.len()) {
+        return Err(bad("has the wrong amount of paint"));
+    }
+    if layers.len() > MOST_LAND_LAYERS {
+        return Err(bad("has too many layers"));
+    }
     Ok(TerrainData {
         cell,
         cells,
         heights,
         holes: holes.to_vec(),
+        layers,
+        paint: paint.to_vec(),
     })
 }
 

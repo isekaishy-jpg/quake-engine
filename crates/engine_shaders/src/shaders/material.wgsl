@@ -91,9 +91,15 @@ fn hash2(cell: vec2<f32>) -> vec2<f32> {
     return fract(sin(p) * 43758.5453);
 }
 
-// The slot's texel, broken up by three overlapping hexagon tiles with random
-// offsets, so that large walls don't show their repeat.
-fn read_hex(slot: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+// Where three overlapping hexagon tiles read from, and how much of each.
+struct HexTaps {
+    first: vec2<f32>,
+    second: vec2<f32>,
+    third: vec2<f32>,
+    shares: vec3<f32>,
+}
+
+fn hex_taps(uv: vec2<f32>) -> HexTaps {
     let skewed = vec2<f32>(uv.x + uv.y * 0.57735, uv.y * 1.1547) * 3.0;
     let base = floor(skewed);
     let local = fract(skewed);
@@ -105,12 +111,19 @@ fn read_hex(slot: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32>
         a = base + vec2<f32>(1.0, 1.0);
         weights = vec3<f32>(-weights.x, 1.0 - local.y, 1.0 - local.x);
     }
-    let first = read_slot(slot, uv + hash2(a), dx, dy);
-    let second = read_slot(slot, uv + hash2(b), dx, dy);
-    let third = read_slot(slot, uv + hash2(c), dx, dy);
     let sharp = pow(max(weights, vec3<f32>(0.0)), vec3<f32>(5.0));
     let total = max(sharp.x + sharp.y + sharp.z, 0.0001);
-    return (first * sharp.x + second * sharp.y + third * sharp.z) / total;
+    return HexTaps(uv + hash2(a), uv + hash2(b), uv + hash2(c), sharp / total);
+}
+
+// The slot's texel, broken up by three overlapping hexagon tiles with random
+// offsets, so that large walls don't show their repeat.
+fn read_hex(slot: i32, uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
+    let taps = hex_taps(uv);
+    let first = read_slot(slot, taps.first, dx, dy);
+    let second = read_slot(slot, taps.second, dx, dy);
+    let third = read_slot(slot, taps.third, dx, dy);
+    return first * taps.shares.x + second * taps.shares.y + third * taps.shares.z;
 }
 
 // Texture coordinates after scrolling and flipbook frames.
@@ -263,6 +276,26 @@ fn flowing(uv: vec2<f32>, dx: vec2<f32>, dy: vec2<f32>) -> vec4<f32> {
     return mix(one, two, abs(first * 2.0 - 1.0));
 }
 
+// What painted land has worked out for a pixel, for `material_color` to light. A surface that
+// isn't land leaves it alone.
+struct Ground {
+    painted: bool,
+    base: vec3<f32>,
+    normal: vec3<f32>,
+    shine: f32,
+    gloss: f32,
+    tint: vec3<f32>,
+}
+
+var<private> ground: Ground = Ground(
+    false,
+    vec3<f32>(0.0),
+    vec3<f32>(0.0, 0.0, 1.0),
+    0.0,
+    0.0,
+    vec3<f32>(1.0),
+);
+
 fn material_color(in: VertexOut) -> vec4<f32> {
     var uv0 = shader_uv(in.uv, in.world);
     if !PLAIN {
@@ -280,7 +313,9 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     }
 
     var base: vec4<f32>;
-    if PLAIN {
+    if ground.painted {
+        base = vec4<f32>(ground.base, 1.0);
+    } else if PLAIN {
         base = read_slot(0, uv, dx, dy);
     } else if (features & 1) != 0 {
         // Project from the world along each axis, and blend by the normal.
@@ -302,7 +337,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     // Layers over the base, each joining along the height of what's below.
     var height_slot = -1;
     var layers = 0;
-    if !PLAIN {
+    if !PLAIN && !ground.painted {
         height_slot = material.slots_a.w;
         layers = material.flags.w;
     }
@@ -325,7 +360,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         base = vec4<f32>(mix(base.rgb, color.rgb, share), base.a);
     }
 
-    if !PLAIN && material.slots_b.w >= 0 {
+    if !PLAIN && !ground.painted && material.slots_b.w >= 0 {
         let scale = material.more.x;
         let detail = read_slot(material.slots_b.w, uv * scale, dx * scale, dy * scale);
         base = vec4<f32>(base.rgb * detail.rgb * 2.0, base.a);
@@ -333,9 +368,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
 
     // As glTF has it: a corner's colour multiplies the surface, and white leaves it alone.
     base = base * in.color;
+    base = vec4<f32>(base.rgb * ground.tint, base.a);
 
     var normal = surface_at.normal;
-    if material.slots_a.x >= 0 {
+    if ground.painted {
+        normal = ground.normal;
+    } else if material.slots_a.x >= 0 {
         // Compiled normal maps hold two channels, and the third follows from them.
         var coded_bump = vec4<f32>(0.0);
         if (features & 2) != 0 {
@@ -402,7 +440,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         shading = material.flags.x;
     }
     var baked = vec3<f32>(0.0);
-    if shading != 3 || material.slots_a.y >= 0 || described {
+    if shading != 3 || material.slots_a.y >= 0 || described || ground.painted {
         baked = light(in);
     }
     if shading != 3 {
@@ -435,7 +473,12 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         }
     }
 
-    if material.slots_a.y >= 0 {
+    if ground.painted {
+        if ground.shine > 0.0 {
+            let lit_shine = shine_at(in, normal, to_eye, ground.gloss, baked, baked_from, has_direction);
+            color = color + vec3<f32>(ground.shine) * lit_shine;
+        }
+    } else if material.slots_a.y >= 0 {
         let specular = read_slot(material.slots_a.y, uv, dx, dy);
         let gloss = material.values.y * max(specular.a, 0.05);
         color = color + specular.rgb * shine_at(in, normal, to_eye, gloss, baked, baked_from, has_direction) * material.values.x;
@@ -515,11 +558,180 @@ fn fs_material(in: VertexOut) -> @location(0) vec4<f32> {
     return shader_whole(in);
 }
 
+// Past this, land's the plain colour of its layers, and reads next to nothing.
+const LAND_FAR: f32 = 6000.0;
+// Hexagon tiles stop here, as what they hide has gone by then, and they're three times the reading.
+const LAND_HEX_REACH: f32 = 2400.0;
+// How much more a layer shows for standing higher: a whole picture's height is this many doublings.
+const LAND_HEIGHT_DOUBLINGS: f32 = 10.0;
+
+// Soft noise from 0 to 1, for what doesn't want to show a repeat.
+fn land_noise(at: vec2<f32>) -> f32 {
+    let cell = floor(at);
+    let inside = fract(at);
+    let smooth_at = inside * inside * (vec2<f32>(3.0) - inside * 2.0);
+    let low = mix(hash2(cell).x, hash2(cell + vec2<f32>(1.0, 0.0)).x, smooth_at.x);
+    let high = mix(hash2(cell + vec2<f32>(0.0, 1.0)).x, hash2(cell + vec2<f32>(1.0, 1.0)).x, smooth_at.x);
+    return mix(low, high, smooth_at.y);
+}
+
+// A large soft change of colour over the land, which is nearly free, and hides a repeat that a
+// pixel would need many more reads to hide.
+fn land_tint(world: vec3<f32>) -> vec3<f32> {
+    let wide = land_noise(world.xy / 1900.0);
+    let close = land_noise(world.xy / 430.0 + vec2<f32>(17.0, 5.0));
+    let light = 0.84 + wide * 0.22 + close * 0.1;
+    let warm = (land_noise(world.xy / 2700.0 + vec2<f32>(3.0, 11.0)) - 0.5) * 0.08;
+    return vec3<f32>(light + warm, light, light - warm);
+}
+
+// How much of four layers is at sample `at`: the first four, or with `half` 1, the last.
+fn land_paint_at(first: u32, across: u32, at: vec2<u32>, half: u32) -> vec4<f32> {
+    return unpack4x8unorm(land_paint[first + (at.y * across + at.x) * 2u + half]);
+}
+
+// A picture read in one of a layer's places, with hexagon tiles if `hex` says so.
+struct LandRead {
+    color: vec4<f32>,
+    surface: vec4<f32>,
+}
+
+fn land_read(uv: vec2<f32>, picture: u32, dx: vec2<f32>, dy: vec2<f32>, hex: bool) -> LandRead {
+    var out: LandRead;
+    if hex {
+        let taps = hex_taps(uv);
+        out.color = textureSampleGrad(land_colors, surface_sampler, taps.first, picture, dx, dy) * taps.shares.x
+            + textureSampleGrad(land_colors, surface_sampler, taps.second, picture, dx, dy) * taps.shares.y
+            + textureSampleGrad(land_colors, surface_sampler, taps.third, picture, dx, dy) * taps.shares.z;
+        out.surface = textureSampleGrad(land_surfaces, surface_sampler, taps.first, picture, dx, dy) * taps.shares.x
+            + textureSampleGrad(land_surfaces, surface_sampler, taps.second, picture, dx, dy) * taps.shares.y
+            + textureSampleGrad(land_surfaces, surface_sampler, taps.third, picture, dx, dy) * taps.shares.z;
+    } else {
+        out.color = textureSampleGrad(land_colors, surface_sampler, uv, picture, dx, dy);
+        out.surface = textureSampleGrad(land_surfaces, surface_sampler, uv, picture, dx, dy);
+    }
+    return out;
+}
+
+// Works out painted land for a pixel. It reads only the layers that are there: the top of a
+// picture along the land, and where land's steep, along the side too, so a cliff isn't smeared.
+fn paint_ground(in: VertexOut, sheet: LandSheet, along_x: vec3<f32>, along_y: vec3<f32>) {
+    let cell = (in.world.xy - sheet.origin.xy) / sheet.origin.w;
+    let across = sheet.shape.x;
+    let low = vec2<u32>(max(cell, vec2<f32>(0.0)));
+    let high = min(low + vec2<u32>(1u), vec2<u32>(across - 1u, sheet.paint.w));
+    let inside = clamp(cell - vec2<f32>(low), vec2<f32>(0.0), vec2<f32>(1.0));
+    let first = sheet.paint.z;
+    var weights: array<vec4<f32>, 2>;
+    for (var half = 0u; half < 2u; half = half + 1u) {
+        let below = mix(
+            land_paint_at(first, across, low, half),
+            land_paint_at(first, across, vec2<u32>(high.x, low.y), half),
+            inside.x,
+        );
+        let above = mix(
+            land_paint_at(first, across, vec2<u32>(low.x, high.y), half),
+            land_paint_at(first, across, high, half),
+            inside.x,
+        );
+        weights[half] = mix(below, above, inside.y);
+    }
+
+    let facing = normalize(in.normal.xyz);
+    let distance = length(frame.eye.xyz - in.world);
+    let far = smoothstep(LAND_FAR * 0.6, LAND_FAR, distance);
+    let near_hex = distance < LAND_HEX_REACH;
+    // Up to here it's the top of a picture, and past it the side as well. Land further off has
+    // fewer corners, so what they say of a cliff can be far from true, and the triangle's own
+    // slope has the last word where it's steeper.
+    let flat_facing = normalize(cross(along_y, along_x));
+    let slope = select(facing, flat_facing, abs(flat_facing.z) < abs(facing.z));
+    let side_share = 1.0 - smoothstep(0.5, 0.8, abs(slope.z));
+    let on_x = abs(slope.x) > abs(slope.y);
+    let side_uv = select(in.world.xz, in.world.yz, on_x);
+    let side_dx = select(along_x.xz, along_x.yz, on_x);
+    let side_dy = select(along_y.xz, along_y.yz, on_x);
+
+    var near_color = vec3<f32>(0.0);
+    var plain_color = vec3<f32>(0.0);
+    var bump_top = vec2<f32>(0.0);
+    var bump_side = vec2<f32>(0.0);
+    var shine = 0.0;
+    var gloss = 0.0;
+    var near_total = 0.0;
+    var plain_total = 0.0;
+    for (var number = 0u; number < sheet.paint.y; number = number + 1u) {
+        let weight = weights[number / 4u][number % 4u];
+        if weight < 0.004 {
+            continue;
+        }
+        let layer = land_layers[sheet.paint.x + number];
+        if far > 0.0 {
+            // The last of its mips is the mean of the whole picture.
+            let mean = textureSampleLevel(land_colors, surface_sampler, vec2<f32>(0.5), layer.picture, 16.0);
+            plain_color = plain_color + mean.rgb * weight;
+            plain_total = plain_total + weight;
+        }
+        if far >= 1.0 {
+            continue;
+        }
+        let scale = layer.per_unit;
+        var read: LandRead;
+        var side_read: LandRead;
+        if side_share < 1.0 {
+            read = land_read(
+                in.world.xy * scale,
+                layer.picture,
+                along_x.xy * scale,
+                along_y.xy * scale,
+                near_hex && layer.hex != 0u,
+            );
+        }
+        if side_share > 0.0 {
+            side_read = land_read(side_uv * scale, layer.picture, side_dx * scale, side_dy * scale, false);
+        }
+        let color = mix(read.color, side_read.color, side_share);
+        let surface = mix(read.surface, side_read.surface, side_share);
+        let share = weight * exp2(surface.z * LAND_HEIGHT_DOUBLINGS);
+        near_color = near_color + color.rgb * share;
+        bump_top = bump_top + (read.surface.xy * 2.0 - vec2<f32>(1.0)) * share;
+        bump_side = bump_side + (side_read.surface.xy * 2.0 - vec2<f32>(1.0)) * share;
+        shine = shine + surface.w * share;
+        gloss = gloss + layer.gloss * share;
+        near_total = near_total + share;
+    }
+
+    let near_scale = 1.0 / max(near_total, 0.0001);
+    let top = bump_top * near_scale * (1.0 - side_share);
+    let side = bump_side * near_scale * side_share;
+    // Bumps go on the way a picture lies on the land.
+    var turned = vec3<f32>(top, 0.0);
+    if on_x {
+        turned = turned + vec3<f32>(0.0, side.x, side.y);
+    } else {
+        turned = turned + vec3<f32>(side.x, 0.0, side.y);
+    }
+    let plain = plain_color / max(plain_total, 0.0001);
+    ground.painted = true;
+    ground.base = mix(near_color * near_scale, plain, far);
+    ground.normal = normalize(facing + turned * (1.0 - far));
+    ground.shine = shine * near_scale * (1.0 - far);
+    ground.gloss = gloss * near_scale;
+}
+
 // Land, with its holes left out.
 @fragment
 fn fs_land(in: VertexOut) -> @location(0) vec4<f32> {
+    // Ahead of the hole, as a pixel gone from its neighbours would leave them nothing to compare.
+    let along_x = dpdx(in.world);
+    let along_y = dpdy(in.world);
     if in_land_hole(in.land - 1u, in.world) {
         discard;
+    }
+    let sheet = land_sheets[in.land - 1u];
+    ground.tint = land_tint(in.world);
+    if sheet.paint.y > 0u {
+        paint_ground(in, sheet, along_x, along_y);
     }
     return shader_whole(in);
 }

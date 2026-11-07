@@ -2,11 +2,30 @@
 
 use engine_core::math::Vec3;
 
+use crate::SlotImage;
+
 /// Cells along a side of a chunk, which is a tile of 2048 units at the usual spacing.
 pub const CHUNK_CELLS: u32 = 64;
 
 /// How far apart heights are unless a sheet says, which is a player's width.
 pub const USUAL_CELL: f32 = 32.0;
+
+/// The most layers a sheet can be painted with.
+pub const MOST_LAND_LAYERS: usize = 8;
+
+/// How much of each layer is at a sample, out of 255 between them.
+pub type LandPaint = [u8; MOST_LAND_LAYERS];
+
+/// One of the materials land is painted with.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct TerrainLayer {
+    /// The material.
+    pub material: String,
+    /// How wide one repeat of it is, in world units.
+    pub size: f32,
+    /// Whether its repeats are broken up by hexagon tiles, which takes three times the reading.
+    pub hex: bool,
+}
 
 /// The heights of some land, with nothing about where it goes.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -19,6 +38,10 @@ pub struct TerrainData {
     pub heights: Vec<f32>,
     /// A bit for each cell, row by row, set where there's a hole.
     pub holes: Vec<u8>,
+    /// What it's painted with. With none, it's its sheet's material all over.
+    pub layers: Vec<TerrainLayer>,
+    /// How much of each layer is at each sample, row by row, if it has layers.
+    pub paint: Vec<LandPaint>,
 }
 
 impl TerrainData {
@@ -32,6 +55,8 @@ impl TerrainData {
             cells,
             heights: vec![0.0; samples],
             holes: vec![0; (cells[0] as usize * cells[1] as usize).div_ceil(8)],
+            layers: Vec::new(),
+            paint: Vec::new(),
         }
     }
 
@@ -70,6 +95,25 @@ impl TerrainData {
         }
     }
 
+    /// Makes layer `number` `layer`, among what's there or as the next. The first layer starts
+    /// out everywhere. Says if that could be done.
+    pub fn set_layer(&mut self, number: usize, layer: TerrainLayer) -> bool {
+        if number >= MOST_LAND_LAYERS || number > self.layers.len() {
+            return false;
+        }
+        if number == self.layers.len() {
+            self.layers.push(layer);
+        } else {
+            self.layers[number] = layer;
+        }
+        if self.paint.len() != self.heights.len() {
+            let mut all_first = [0; MOST_LAND_LAYERS];
+            all_first[0] = 255;
+            self.paint = vec![all_first; self.heights.len()];
+        }
+        true
+    }
+
     /// How many chunks there are each way.
     #[must_use]
     pub const fn chunks(&self) -> [u32; 2] {
@@ -96,6 +140,22 @@ pub struct TerrainSheet {
     pub texture: u32,
     /// The first of its chunks' faces in [`crate::Map::faces`], row by row.
     pub first_face: u32,
+    /// Which of [`crate::Map::land_pictures`] each of its layers is.
+    pub pictures: Vec<u32>,
+}
+
+/// What a material is to land: two pictures of one size, so that they can go in one array.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LandPicture {
+    /// The material.
+    pub material: String,
+    /// Its colour.
+    pub color: SlotImage,
+    /// Its bumps across and down in red and green, how high it stands in blue, and how much it
+    /// shines in alpha.
+    pub surface: SlotImage,
+    /// How tight its shine is.
+    pub gloss: f32,
 }
 
 impl TerrainSheet {

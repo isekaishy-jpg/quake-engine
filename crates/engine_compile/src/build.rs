@@ -7,9 +7,9 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
-    AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup,
-    MeshInstance, Model, ModelOccluder, MovingMesh, Node, NodeChild, OccluderSphere, Plane, Pool,
-    PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
+    AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
+    MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, Node, NodeChild, OccluderSphere,
+    Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -20,6 +20,7 @@ use crate::geometry::{
     Plane3, Point, Polygon, Split, add_scaled, clip_behind, cross, dot, normalized, plane_polygon,
     solid_corners, split,
 };
+use crate::land_pictures::plain_pictures;
 use crate::light::light_tracks;
 use crate::mesh::{
     PlacedMesh, PlacedTriangle, WHITE_CORNERS, at_rest, coarsest_corners_first, placement_rows,
@@ -99,6 +100,12 @@ pub trait TextureSource {
     /// by the GPU. A game's textures can be compiled (proposal 0106).
     fn pixels(&mut self, material: &str) -> Texture {
         self.texture(material)
+    }
+
+    /// What `materials` are to land.
+    fn land_pictures(&mut self, materials: &[String]) -> Vec<LandPicture> {
+        let textures: Vec<Texture> = materials.iter().map(|name| self.pixels(name)).collect();
+        plain_pictures(materials, &textures)
     }
 }
 
@@ -678,6 +685,15 @@ impl Builder<'_> {
     /// Adds each sheet of land, and a face for each of its chunks to the world, or finds them
     /// where `known` says they are.
     fn add_terrain(&mut self, working: &WorkingMap, known: Option<&[u32]>) {
+        let mut painted: Vec<String> = Vec::new();
+        for layer in working.terrain.iter().flat_map(|sheet| &sheet.data.layers) {
+            if !painted.contains(&layer.material) {
+                painted.push(layer.material.clone());
+            }
+        }
+        if !painted.is_empty() {
+            self.map.land_pictures = self.source.land_pictures(&painted);
+        }
         for (at, source) in working.terrain.iter().enumerate() {
             let texture = self.texture_of(&source.material);
             #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
@@ -690,6 +706,13 @@ impl Builder<'_> {
                 thickness: source.thickness as f32,
                 texture,
                 first_face: u32::try_from(self.map.faces.len()).unwrap_or(0),
+                pictures: source
+                    .data
+                    .layers
+                    .iter()
+                    .filter_map(|layer| painted.iter().position(|name| *name == layer.material))
+                    .filter_map(|at| u32::try_from(at).ok())
+                    .collect(),
             };
             if let Some(known) = known {
                 sheet.first_face = known.get(at).copied().unwrap_or(0);

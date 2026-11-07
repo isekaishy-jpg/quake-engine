@@ -1,7 +1,7 @@
 //! Shaping land, by a circle with a soft edge (proposal 0144). The tools and the editor's brush both
 //! come here, so that land shapes the same whichever does it.
 
-use crate::TerrainData;
+use crate::{LandPaint, TerrainData};
 
 /// A circle on the land, in world units from a sheet's low corner.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -43,6 +43,8 @@ pub enum TerrainStroke {
     Smooth(f32),
     /// Cuts a hole, or fills one with `false`.
     Hole(bool),
+    /// Brings in this layer, by this share at the brush's middle.
+    Paint(usize, f32),
 }
 
 /// The samples within reach of `brush`, as low and high columns and rows.
@@ -104,9 +106,36 @@ pub fn stroke_land(data: &mut TerrainData, brush: &TerrainBrush, stroke: Terrain
                         data.set_hole(x, y, hole);
                     }
                 }
+                TerrainStroke::Paint(layer, share) => {
+                    if let Some(paint) = data.paint.get_mut(at) {
+                        paint_towards(paint, layer, share.clamp(0.0, 1.0) * weight);
+                    }
+                }
             }
         }
     }
+}
+
+/// Moves `paint` towards all of `layer`, by `share`. What it has always comes to 255, so a layer
+/// comes in by what the others give up, and the last of it doesn't get lost to rounding.
+fn paint_towards(paint: &mut LandPaint, layer: usize, share: f32) {
+    if layer >= paint.len() {
+        return;
+    }
+    let mut left = 255_i32;
+    for (number, part) in paint.iter_mut().enumerate() {
+        if number != layer {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a share of a byte"
+            )]
+            let kept = (f32::from(*part) * (1.0 - share)).floor() as u8;
+            *part = kept;
+            left -= i32::from(kept);
+        }
+    }
+    paint[layer] = u8::try_from(left).unwrap_or(255);
 }
 
 /// The mean of the heights round sample `x`, `y`, in `heights`.

@@ -542,6 +542,63 @@ pub(crate) fn shape_terrain(session: &Session, args: &Json) -> Result<Json, Stri
     keep_land(&data, &file)
 }
 
+/// `set_terrain_layer`.
+pub(crate) fn set_terrain_layer(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let material = args
+        .get("material")
+        .and_then(Json::as_str)
+        .ok_or("material is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a small count"
+    )]
+    let number = wanted_number(args, "layer")? as usize;
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let size = args.get("size").and_then(Json::as_f64).unwrap_or(512.0) as f32;
+    let layer = engine_map::TerrainLayer {
+        material: material.to_owned(),
+        size,
+        hex: args.get("hex").and_then(Json::as_bool).unwrap_or(false),
+    };
+    if !data.set_layer(number, layer) {
+        return Err(format!(
+            "layer {number} can't be set: it has {} of {}, and they go in order",
+            data.layers.len(),
+            engine_map::MOST_LAND_LAYERS
+        ));
+    }
+    keep_land(&data, &file)
+}
+
+/// `paint_terrain`.
+pub(crate) fn paint_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a small count"
+    )]
+    let layer = wanted_number(args, "layer")? as usize;
+    if layer >= data.layers.len() {
+        return Err(format!("{name} has {} layers", data.layers.len()));
+    }
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let amount = args.get("amount").and_then(Json::as_f64).unwrap_or(1.0) as f32;
+    let stroke = engine_map::TerrainStroke::Paint(layer, amount);
+    engine_map::stroke_land(&mut data, &land_brush(args)?, stroke);
+    keep_land(&data, &file)
+}
+
 /// `stamp_terrain`.
 pub(crate) fn stamp_terrain(session: &Session, args: &Json) -> Result<Json, String> {
     let name = args

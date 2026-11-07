@@ -796,3 +796,55 @@ fn land_is_shaped_stamped_and_copied_in_its_file() {
     );
     assert_eq!(count(&mut session), 1);
 }
+
+#[test]
+fn land_is_painted_in_its_file() {
+    let root = content("paint");
+    let mut session = Session::new(&root);
+    ok(
+        &mut session,
+        "make_terrain",
+        json!({ "name": "hills", "chunks": 1, "hills": 0 }),
+    );
+    let paint = json!({ "name": "hills", "layer": 0, "at": [100, 100], "radius": 300 });
+    assert!(
+        run(&mut session, "paint_terrain", &paint).is_err(),
+        "there's no layer yet"
+    );
+    let skipping = json!({ "name": "hills", "layer": 1, "material": "moss" });
+    assert!(
+        run(&mut session, "set_terrain_layer", &skipping).is_err(),
+        "layers go in order"
+    );
+    for (layer, material) in ["rock", "moss"].iter().enumerate() {
+        ok(
+            &mut session,
+            "set_terrain_layer",
+            json!({ "name": "hills", "layer": layer, "material": material, "size": 300, "hex": layer == 1 }),
+        );
+    }
+    ok(
+        &mut session,
+        "paint_terrain",
+        json!({ "name": "hills", "layer": 1, "at": [100, 100], "radius": 300, "soft": 0 }),
+    );
+    let bytes = fs::read(root.join("terrain").join("hills.eterrain")).expect("land");
+    let data = engine_compile::read_terrain_data(&bytes).expect("reads");
+    assert_eq!(data.layers.len(), 2);
+    assert_eq!(data.layers[1].material, "moss");
+    assert!((data.layers[1].size - 300.0).abs() < 0.01);
+    assert!(data.layers[1].hex && !data.layers[0].hex);
+    let at = 3 * data.across() as usize + 3;
+    assert_eq!(data.paint[at][..2], [0, 255], "painted there");
+    assert_eq!(
+        *data.paint.last().expect("paint"),
+        [255, 0, 0, 0, 0, 0, 0, 0]
+    );
+    ok(
+        &mut session,
+        "add_terrain",
+        json!({ "source": "hills", "material": "rock" }),
+    );
+    let told = problems(&mut session);
+    assert!(told.contains("land has no material moss"), "{told}");
+}

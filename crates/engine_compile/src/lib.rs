@@ -17,6 +17,7 @@ mod error;
 mod geometry;
 mod gltf_import;
 mod gltf_skin;
+mod land_pictures;
 mod light;
 mod material;
 mod mega;
@@ -49,6 +50,7 @@ pub use effect_read::read_effect;
 pub use error::CompileError;
 pub use geometry::{Plane3, Point};
 pub use gltf_import::{ImportedModel, import_gltf, write_mesh};
+pub use land_pictures::pack_land;
 pub use light::{BakeInput, ImageReader, bake_light, light_tracks};
 pub use material::{MaterialLibrary, decode_png, document_of};
 pub use mesh::{

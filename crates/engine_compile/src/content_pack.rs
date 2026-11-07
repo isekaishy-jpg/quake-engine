@@ -5,13 +5,14 @@ use std::sync::Arc;
 use engine_assets::FileSystem;
 use engine_core::math::Vec3;
 use engine_format::Document;
-use engine_map::{EffectDef, EffectPoint, Entity, Map, Texture};
+use engine_map::{EffectDef, EffectPoint, Entity, LandPicture, Map, Texture};
 
 use crate::bake::map_hash;
 use crate::build::{TextureSource, compile, compile_known};
 use crate::compiled::read_geometry;
 use crate::effect_read::read_effect;
 use crate::error::CompileError;
+use crate::land_pictures::plain_pictures;
 use crate::material::{MaterialLibrary, document_of};
 use crate::source::read_map;
 
@@ -43,6 +44,14 @@ impl TextureSource for PlayTextures<'_> {
     fn pixels(&mut self, material: &str) -> Texture {
         let result = self.library.load_pixels(material);
         self.kept(result)
+    }
+
+    fn land_pictures(&mut self, materials: &[String]) -> Vec<LandPicture> {
+        if let Some(pictures) = self.library.packed_land(materials) {
+            return pictures;
+        }
+        let textures: Vec<Texture> = materials.iter().map(|name| self.pixels(name)).collect();
+        plain_pictures(materials, &textures)
     }
 }
 

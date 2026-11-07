@@ -98,12 +98,30 @@ struct LandSheet {
     shape: vec4<u32>,
     // What makes a place a place on its texture.
     uv: vec4<f32>,
+    // Its first layer, how many it has, where its paint starts, in words, and its last row.
+    paint: vec4<u32>,
+}
+
+// A layer land's painted with.
+struct LandLayer {
+    // One over how wide a repeat is.
+    per_unit: f32,
+    // How tight its shine is.
+    gloss: f32,
+    // Which of the pictures it is.
+    picture: u32,
+    // Whether its repeats are broken up by hexagon tiles.
+    hex: u32,
 }
 
 @group(2) @binding(0) var<storage, read> land_sheets: array<LandSheet>;
 @group(2) @binding(1) var<storage, read> land_heights: array<f32>;
 @group(2) @binding(2) var<storage, read> land_normals: array<u32>;
 @group(2) @binding(3) var<storage, read> land_holes: array<u32>;
+@group(2) @binding(4) var<storage, read> land_paint: array<u32>;
+@group(2) @binding(5) var<storage, read> land_layers: array<LandLayer>;
+@group(2) @binding(6) var land_colors: texture_2d_array<f32>;
+@group(2) @binding(7) var land_surfaces: texture_2d_array<f32>;
 
 // Whether `world` is over a hole in sheet `sheet`, which is a bit for each cell.
 fn in_land_hole(number: u32, world: vec3<f32>) -> bool {

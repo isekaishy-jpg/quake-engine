@@ -1,7 +1,8 @@
 //! Shaping land (proposal 0144).
 
 use engine_map::{
-    TerrainBrush, TerrainData, TerrainStroke, copy_land, splat_land, stamp_land, stroke_land,
+    TerrainBrush, TerrainData, TerrainLayer, TerrainStroke, copy_land, splat_land, stamp_land,
+    stroke_land,
 };
 
 /// A chunk of flat land at height 0.
@@ -152,4 +153,76 @@ fn copying_moves_the_shape_of_one_place_to_another() {
     copy_land(&mut land, [512.0, 512.0], &here);
     assert_eq!(land.height(48, 48), 40.0);
     assert_eq!(land.height(16, 16), 40.0, "and the first stays");
+}
+
+/// Land with `count` layers, all of the first.
+fn layered(count: usize) -> TerrainData {
+    let mut data = flat();
+    for number in 0..count {
+        let layer = TerrainLayer {
+            material: format!("layer{number}"),
+            size: 256.0,
+            hex: false,
+        };
+        assert!(data.set_layer(number, layer));
+    }
+    data
+}
+
+#[test]
+fn layers_go_in_order_and_stop_at_eight() {
+    let mut data = layered(8);
+    assert_eq!(data.paint.len(), data.heights.len());
+    assert!(data.paint.iter().all(|paint| paint[0] == 255));
+    assert!(!data.set_layer(8, TerrainLayer::default()), "one too many");
+    let mut data = layered(1);
+    assert!(!data.set_layer(3, TerrainLayer::default()), "with a gap");
+    assert!(data.set_layer(0, TerrainLayer::default()), "one can change");
+    assert_eq!(data.layers.len(), 1);
+}
+
+#[test]
+fn paint_comes_in_by_what_the_others_give_up_and_always_comes_to_all_of_it() {
+    let mut data = layered(4);
+    let brush = TerrainBrush {
+        middle: [320.0, 320.0],
+        radius: 200.0,
+        soft: 0.5,
+    };
+    for (number, share) in [(1, 0.5), (2, 0.3), (3, 0.77), (1, 0.01), (0, 0.33)] {
+        stroke_land(&mut data, &brush, TerrainStroke::Paint(number, share));
+    }
+    for paint in &data.paint {
+        let sum: u32 = paint.iter().copied().map(u32::from).sum();
+        assert_eq!(sum, 255, "{paint:?}");
+    }
+    let middle = (10 * data.across() + 10) as usize;
+    assert!(data.paint[middle][1..4].iter().all(|part| *part > 0));
+    assert_eq!(data.paint[0][0], 255, "and it's only in the circle");
+}
+
+#[test]
+fn enough_paint_covers_what_was_there() {
+    let mut data = layered(2);
+    let brush = TerrainBrush {
+        middle: [320.0, 320.0],
+        radius: 200.0,
+        soft: 0.0,
+    };
+    stroke_land(&mut data, &brush, TerrainStroke::Paint(1, 1.0));
+    let middle = (10 * data.across() + 10) as usize;
+    assert_eq!(data.paint[middle][..2], [0, 255]);
+}
+
+#[test]
+fn a_layer_that_is_not_there_paints_nothing() {
+    let mut data = layered(2);
+    let before = data.paint.clone();
+    let brush = TerrainBrush {
+        middle: [320.0, 320.0],
+        radius: 200.0,
+        soft: 0.0,
+    };
+    stroke_land(&mut data, &brush, TerrainStroke::Paint(9, 1.0));
+    assert_eq!(data.paint, before);
 }
