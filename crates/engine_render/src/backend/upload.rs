@@ -34,7 +34,7 @@ use crate::material::{
     MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params as material_params_of,
 };
 use crate::matrix::{inverse, view_projection};
-use crate::renderer::{CapsuleDraw, PostSettings, View};
+use crate::renderer::{CapsuleDraw, PostSettings, SkyRayFloor, View};
 use crate::sprite::{LightDraw, MAX_LIGHT_DRAWS, PARTICLE_BYTES, write_particle};
 use crate::sprite::{MAX_PARTICLE_DRAWS, behind_first};
 use crate::surface::built_in_for;
@@ -289,6 +289,10 @@ pub(super) struct FrameExtras<'a> {
     masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// How far light gets past their cells.
     reaches: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// The sky, for its rays.
+    sky: Option<&'a Sky>,
+    /// How low the sun's light gets near the view.
+    sky_floor: Option<&'a SkyRayFloor>,
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
@@ -477,6 +481,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
             None => out[at..at + 256].fill(stencil.reach),
         }
     }
+    sky_ray_values(&mut out[base + 1024..], extra, post.rays != 0);
     out
 }
 
@@ -587,6 +592,34 @@ fn post_values(
     out[30] = post.outline_fade;
     out[31] = post.rounded_edges;
     out
+}
+
+/// What a frame says of rays from the sky: how bright and what from, how a picture goes, and
+/// what's known of where light gets to.
+fn sky_ray_values(out: &mut [f32], extra: &FrameExtras<'_>, wanted: bool) {
+    let rays = extra
+        .sky
+        .and_then(|sky| sky.rays.as_ref())
+        .filter(|_| wanted);
+    let Some(rays) = rays else {
+        return;
+    };
+    let lowest = extra.sky.iter().flat_map(|sky| &sky.clouds);
+    let lowest = lowest
+        .map(|clouds| clouds.height)
+        .filter(|height| *height > 0.0);
+    let top = lowest.fold(f32::INFINITY, f32::min);
+    out[0] = rays.strength;
+    out[1] = if rays.picture.is_some() { 2.0 } else { 1.0 };
+    out[2] = f32::from(u8::from(rays.into_level));
+    out[3] = if top.is_finite() { top } else { 0.0 };
+    out[4] = rays.size;
+    out[5..7].copy_from_slice(&rays.speed);
+    out[7] = rays.flare;
+    if let Some(floor) = extra.sky_floor {
+        out[8..12].copy_from_slice(&floor.area);
+        out[12..12 + 256].copy_from_slice(&floor.heights);
+    }
 }
 
 /// The sky's part of the frame uniforms.
@@ -1064,25 +1097,17 @@ impl Backend {
             textures.push(image);
             textures.extend(uploaded);
         }
+        self.upload_sky_pictures(map)?;
         let sky_set = match &map.sky {
-            Some(sky) => {
+            Some(_) => {
                 let set = pool.allocate(&self.material_layout)?;
-                let images = sky.clouds.iter().filter_map(|clouds| clouds.image.as_ref());
-                let mut pictures = Vec::new();
-                for cloud in images.take(MOST_CLOUDS) {
-                    let levels: Vec<(u32, u32, &[u8])> = cloud
-                        .iter()
-                        .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
-                        .collect();
-                    pictures.push(self.upload_image(&levels, Format::R8G8B8A8_UNORM)?);
-                }
                 // The set's first picture, then its first three slots, which are the same for
                 // every sky, so that one with fewer has something there.
                 for (index, binding) in [0, 2, 3, 4].into_iter().enumerate() {
-                    let view = pictures.get(index).map_or(&blank.view, |image| &image.view);
+                    let image = self.cloud_pictures.get(index);
+                    let view = image.map_or(&blank.view, |image| &image.view);
                     set.write_sampled_image(binding, view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
                 }
-                textures.extend(pictures);
                 set.write_sampler(1, &self.material_sampler);
                 Some(set)
             }
@@ -1419,6 +1444,8 @@ impl Backend {
             lights: scene.map_or(&[][..], |scene| scene.drawables.stencil_lights),
             masks: scene.map_or(&[][..], |scene| scene.drawables.stencil_masks),
             reaches: scene.map_or(&[][..], |scene| scene.drawables.stencil_reaches),
+            sky,
+            sky_floor: scene.and_then(|scene| scene.drawables.sky_ray_floor),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             sheets: scene.map_or(&[][..], |scene| scene.map.water_sheets.as_slice()),
@@ -1436,6 +1463,7 @@ impl Backend {
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
             light_shift: view.light_shift,
         };
+        self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);
         let pushes = scene.map_or(&[][..], |scene| scene.drawables.water_pushes);
         self.plan_ripples(view.time, view.origin, pushes, self.slot)?;

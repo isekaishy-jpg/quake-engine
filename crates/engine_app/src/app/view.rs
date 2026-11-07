@@ -15,7 +15,7 @@ use engine_core::math::{Vec3, view_axes};
 use engine_map::{Contents, Rows, WaterPush};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
-    ParticleDraw, ParticleSim, SpriteDraw, View, height_scale,
+    ParticleDraw, ParticleSim, SkyRayFloor, SpriteDraw, View, height_scale,
 };
 
 use super::World;
@@ -52,6 +52,8 @@ pub(crate) struct Picture {
     stencil_masks: Vec<StencilMask>,
     /// How far light gets past each stencil's cells.
     stencil_reaches: Vec<StencilMask>,
+    /// How low the sun's light gets near the view.
+    sky_ray_floor: Option<SkyRayFloor>,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
@@ -92,6 +94,7 @@ impl Picture {
             stencil_lights: &self.stencil_lights,
             stencil_masks: &self.stencil_masks,
             stencil_reaches: &self.stencil_reaches,
+            sky_ray_floor: self.sky_ray_floor.as_ref(),
             capsules: &self.capsules,
             live_lights: &self.live_lights,
             moving: &self.moving,
@@ -531,7 +534,8 @@ impl World {
             }
         }
         if let (Some(map), Some(client)) = (&self.map, &self.client) {
-            self.gates.update(map, client, time, frame_seconds);
+            self.gates
+                .update(map, client, (origin, time), frame_seconds);
         }
         let contents = self.contents_at(origin);
         let fade = if self.is_running() {
@@ -584,6 +588,7 @@ impl World {
             stencil_lights: self.gates.lights().to_vec(),
             stencil_masks: self.gates.masks().to_vec(),
             stencil_reaches: self.gates.reaches().to_vec(),
+            sky_ray_floor: self.gates.sky_floor(),
             capsules,
             live_lights: moving,
         }

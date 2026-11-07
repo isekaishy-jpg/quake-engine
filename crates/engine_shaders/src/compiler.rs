@@ -11,12 +11,14 @@ const WORLD_SHADER: &str = concat!(
     include_str!("shaders/world.wgsl"),
     include_str!("shaders/noise.wgsl"),
     include_str!("shaders/material.wgsl"),
+    include_str!("shaders/sky_noise.wgsl"),
     include_str!("shaders/sky.wgsl"),
 );
 
 /// The final pass, which post code joins.
 const POST_SHADER: &str = concat!(
     include_str!("shaders/frame.wgsl"),
+    include_str!("shaders/sky_noise.wgsl"),
     include_str!("shaders/post.wgsl"),
 );
 

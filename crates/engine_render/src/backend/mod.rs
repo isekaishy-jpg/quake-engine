@@ -107,7 +107,9 @@ const EXTRA_FLOATS: usize = 4 * 16
     + FOG_LIGHTS * 8
     + MAX_POOLS * 16
     + 4
-    + 256 * 4;
+    + 256 * 4
+    + 12
+    + 256;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -650,6 +652,14 @@ pub(crate) struct Backend {
     fog_marched: bool,
     /// What's over water's surfaces, as an array.
     water_pictures: Option<GpuImage>,
+    /// The pictures of a sky's layers of cloud.
+    cloud_pictures: Vec<GpuImage>,
+    /// The picture of a sky's rays.
+    sky_ray_picture: Option<GpuImage>,
+    /// What the final pass reads in place of a picture a sky hasn't got.
+    sky_blank: Option<GpuImage>,
+    /// Whether this frame has rays from the sky.
+    sky_rays_shown: bool,
     /// What ripples are stepped by.
     ripple_layout: RippleLayout,
     /// What the final pass reads with no ripples.
@@ -850,6 +860,11 @@ impl Backend {
                 image_binding(12, DescriptorType::SAMPLED_IMAGE),
                 image_binding(13, DescriptorType::SAMPLER),
                 image_binding(14, DescriptorType::SAMPLED_IMAGE),
+                image_binding(15, DescriptorType::SAMPLED_IMAGE),
+                image_binding(16, DescriptorType::SAMPLED_IMAGE),
+                image_binding(17, DescriptorType::SAMPLED_IMAGE),
+                image_binding(18, DescriptorType::SAMPLED_IMAGE),
+                image_binding(19, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -1120,6 +1135,10 @@ impl Backend {
             sim_blank: None,
             fog_marched: false,
             water_pictures: None,
+            cloud_pictures: Vec::new(),
+            sky_ray_picture: None,
+            sky_blank: None,
+            sky_rays_shown: false,
             ripple_layout,
             ripple_blank: None,
             water_pass,
@@ -1490,7 +1509,10 @@ impl Backend {
         );
         let wanted = self.post.edge_smoothing >= SMAA_SETTING;
         self.smaa.record(rec, &target.smaa, target.size, wanted);
-        if self.fog_marched || (self.post.rays != 0 && !self.stencil_images.is_empty()) {
+        if self.fog_marched
+            || self.sky_rays_shown
+            || (self.post.rays != 0 && !self.stencil_images.is_empty())
+        {
             self.record_rays(rec, target);
         }
     }

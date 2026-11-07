@@ -85,6 +85,64 @@ fn a_layer_keeps_its_own_picture() {
     assert!(clouds[3].image.is_none());
 }
 
+/// Rays are for an author to ask for.
+#[test]
+fn a_sky_has_no_rays_unless_asked() {
+    assert!(sky("clouds { }").rays.is_none());
+}
+
+/// Rays by the clouds have no picture, and stay in the sky unless told.
+#[test]
+fn rays_can_go_by_the_clouds() {
+    let rays = sky("rays = clouds clouds { }").rays.expect("rays");
+    assert!(rays.picture.is_none());
+    assert!(!rays.into_level);
+    assert!((rays.strength - 1.0).abs() < 0.0001);
+}
+
+/// Anything else is a picture, and needs no clouds.
+#[test]
+fn rays_can_go_by_a_picture() {
+    let rays = sky(
+        "rays = shafts rays_size = 512 rays_speed = 0.5 0.25 rays_strength = 2 rays_flare = 0.5",
+    )
+    .rays
+    .expect("rays");
+    assert!(rays.picture.is_some());
+    assert!((rays.size - 512.0).abs() < 0.0001);
+    assert!((rays.flare - 0.5).abs() < 0.0001);
+    assert_eq!(rays.speed, [0.5, 0.25]);
+    assert!((rays.strength - 2.0).abs() < 0.0001);
+}
+
+/// They come into the level if an author says so.
+#[test]
+fn rays_can_reach_the_level() {
+    let reach = |text: &str| sky(text).rays.expect("rays").into_level;
+    assert!(reach("rays = shafts rays_reach = level"));
+    assert!(!reach("rays = shafts rays_reach = sky"));
+}
+
+/// What can't mean anything is the author's to hear about.
+#[test]
+fn rays_that_make_no_sense_are_errors() {
+    let error = level("rays = clouds").expect_err("no clouds");
+    assert!(error.to_string().contains("clouds"), "{error}");
+    let error = level("rays = shafts rays_reach = moon").expect_err("no such reach");
+    assert!(error.to_string().contains("moon"), "{error}");
+}
+
+/// What's out of range is brought into it.
+#[test]
+fn rays_are_kept_in_range() {
+    let rays = sky("rays = shafts rays_strength = -1 rays_size = 0 rays_flare = -1")
+        .rays
+        .expect("rays");
+    assert!(rays.strength.abs() < 0.0001);
+    assert!((rays.size - 1.0).abs() < 0.0001);
+    assert!(rays.flare.abs() < 0.0001);
+}
+
 /// Four is the most, and more is the author's to hear about.
 #[test]
 fn too_many_layers_is_an_error() {

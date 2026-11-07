@@ -26,7 +26,7 @@ One block with no new fields looks much as it did.
 
 ### Rays from the sky (64)
 
-`sky_rays` in a sky says what shapes them: `clouds` for the generated clouds' own gaps, or a picture. `sky_rays_reach = level` lets them in, past the sky. It's a stencil that follows the view, on one more slot, and it uses the grid from 62.
+`rays` in a sky says what shapes them: `clouds` for the clouds' own gaps, or a picture. `rays_reach = level` lets them in, past the sky. They have a march of their own, and a grid like the one from 62, of how low the sun gets.
 
 ### How a sun works (65, 68)
 
@@ -86,5 +86,14 @@ Each of those comes from the research, and none needs more for what the items as
 - **A shell does both shapes.** Where a ray meets a shell round a world gives a plane for a big world and a dome for none, with one number between them. It's arranged so a flat plane doesn't lose its precision.
 - **Pictures go in material slots,** so a sky uses the layout materials do, and has room for four of them.
 - **A fifth layer is an error,** and doesn't vanish.
+
+### Rays from the sky (64)
+
+- **It isn't a stencil after all.** One high up would have needed a picture of the clouds made every frame. Reading the clouds where a ray goes needs none, and it's the same noise the sky uses, so they match. It needs a cheaper version of it, with less detail, as rays are soft.
+- **Tried in the game, and the first try was wrong.** Marching every pixel of sky turned all of it a lilac haze. Away from the sun, what's along a view is spread over a lot of sky and averages out. Near it, gaps stay lined up along the view, and that's what a shaft is. So rays gather round the sun, and pixels looking away cost nothing.
+- **The flare came from the human.** A version that was too strong blew out round the sun, and the human liked how that looked, looking right at it. So it stayed as `rays_flare`, tighter than the rays.
+- **A grid can't go down from the sky.** Outside a level is solid, so looking from up there finds nothing. Each cell looks both ways from the height of the view: up to see if the sun gets there, and down to see where it lands. Under a roof it's the roof.
+- **What it costs:** about 1 ms at 1280 by 720, looking towards the sun with the sky filling the view, and nothing looking away. It's taken half the steps a window's rays take to get there. That's a lot for what it is, and it's for the performance sweep to look at again.
+- **Light bleeds a little over edges.** Rays are worked out in big pixels, so bright sky shows a short way over what's in front of it. It looks like glare, so it stays.
 
 Filled in as each part lands.

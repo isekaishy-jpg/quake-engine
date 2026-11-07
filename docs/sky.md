@@ -36,3 +36,27 @@ A sky has up to four `clouds` blocks. The first is the lowest, so it's in front 
 | `lit` | How much they take the sun's colour, go dark where they're thick, and shine where they're thin near the sun, from 0 to 1 |
 
 Layers that are made up cost the most, as each is six layers of noise for each pixel of sky. Pictures are nearly free.
+
+## Rays
+
+Rays come down through the sky if `rays` says so. They gather round the sun, and looking away from it there are none. They're seen with the rays setting on, like a window's.
+
+```text
+sky {
+    sun_direction = 0.5 0.1 0.6
+    rays = clouds
+    rays_reach = level
+    clouds { coverage = 0.55 scale = 1.4 height = 2500 lit = 0.7 }
+}
+```
+
+| Field | Means |
+|---|---|
+| `rays` | `clouds` to come through the gaps in the clouds the sky shows, or the name of a picture, bright where light gets through, for a cheap sky |
+| `rays_reach` | `sky` to stay in the sky, which is what's usual, or `level` to come down over what's in the level. A roof stops them |
+| `rays_strength` | How bright they are |
+| `rays_flare` | How much the sun flares when it's looked at, and 0 for none. What's in front of it dims it |
+| `rays_size` | How wide a repeat of a picture is, in world units |
+| `rays_speed` | How a picture drifts, in repeats a second, as two numbers |
+
+`rays = clouds` with no clouds is an error. They cost about 1 ms at 1280 by 720, looking towards the sun with the sky filling the view, and nothing looking away.

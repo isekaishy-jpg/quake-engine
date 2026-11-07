@@ -19,6 +19,12 @@
 @group(0) @binding(13) var water_sampler: sampler;
 // How high ripples near the view are.
 @group(0) @binding(14) var ripples: texture_2d<f32>;
+// A sky's layers of cloud, and what its rays go by, if it's a picture.
+@group(0) @binding(15) var cloud_picture_0: texture_2d<f32>;
+@group(0) @binding(16) var cloud_picture_1: texture_2d<f32>;
+@group(0) @binding(17) var cloud_picture_2: texture_2d<f32>;
+@group(0) @binding(18) var cloud_picture_3: texture_2d<f32>;
+@group(0) @binding(19) var sky_ray_picture: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -928,6 +934,150 @@ fn stencil_rays(index: i32, eye: vec3<f32>, stop: vec3<f32>, jitter: f32) -> vec
     return total * corner.w * path / (f32(steps) * 256.0);
 }
 
+// How high rays start, over the eye, where a sky has no layer of cloud with a height.
+const SKY_RAY_TOP: f32 = 3000.0;
+
+// How far along a view they're looked for.
+const SKY_RAY_RANGE: f32 = 2400.0;
+
+// How much a view has to look towards the sun for rays to show. Away from it, what's along a view
+// is spread over a lot of sky, and it averages out to a haze, so there's nothing to work out.
+const SKY_RAY_FACING: f32 = 0.3;
+
+// How far through the air it takes for rays to be at their brightest.
+const SKY_RAY_LENGTH: f32 = 6000.0;
+
+// How tightly the sun's flare gathers round it.
+const SKY_FLARE_GATHER: f32 = 40.0;
+
+// How tightly rays gather round the sun.
+const SKY_RAY_GATHER: f32 = 16.0;
+
+// How little of the clouds' detail rays have, which are soft anyway.
+const SKY_RAY_DETAIL: f32 = 0.34;
+
+// How much of a layer of cloud's own picture is at `at`.
+fn ray_cloud_picture(picture: i32, at: vec2<f32>) -> f32 {
+    switch picture {
+        case 0: { return textureSampleLevel(cloud_picture_0, water_sampler, at, 0.0).r; }
+        case 1: { return textureSampleLevel(cloud_picture_1, water_sampler, at, 0.0).r; }
+        case 2: { return textureSampleLevel(cloud_picture_2, water_sampler, at, 0.0).r; }
+        default: { return textureSampleLevel(cloud_picture_3, water_sampler, at, 0.0).r; }
+    }
+}
+
+// How much of the sun a layer of cloud lets down to `point`. It's the same cloud the sky shows
+// there, as a layer with a height is fixed to the world, and one without goes with the eye.
+fn cloud_lets_through(layer: i32, point: vec3<f32>, sun: vec3<f32>) -> f32 {
+    let params = frame.sky_cloud_params[layer];
+    if params.w < 0.5 {
+        return 1.0;
+    }
+    let shape = frame.sky_cloud_shape[layer];
+    var plane = vec2<f32>(0.0);
+    if shape.x > 0.0 {
+        let along = (shape.x - point.z) / sun.z;
+        plane = (point.xy + sun.xy * along) / shape.x;
+    } else {
+        let along = (frame.eye.z + SKY_RAY_TOP - point.z) / sun.z;
+        plane = (point.xy + sun.xy * along - frame.eye.xy) / SKY_RAY_TOP;
+    }
+    let at = plane * params.z + params.xy * frame.params.x;
+    var density = 0.0;
+    if params.w > 1.5 {
+        density = ray_cloud_picture(i32(shape.w), at);
+    } else {
+        density = sky_fractal(at * 3.0, SKY_RAY_DETAIL);
+    }
+    return 1.0 - cloud_cover(density, frame.sky_cloud[layer].w);
+}
+
+// How much of the sun comes down to `point`, by the clouds or a picture.
+fn sky_lets_through(point: vec3<f32>, sun: vec3<f32>, top: f32) -> f32 {
+    if frame.sky_rays.y > 1.5 {
+        let hit = point + sun * ((top - point.z) / sun.z);
+        let look = frame.sky_ray_look;
+        let at = hit.xy / look.x + look.yz * frame.params.x;
+        return textureSampleLevel(sky_ray_picture, water_sampler, at, 0.0).r;
+    }
+    var open = 1.0;
+    for (var layer = 0; layer < 4; layer = layer + 1) {
+        open = open * cloud_lets_through(layer, point, sun);
+    }
+    return open;
+}
+
+// How low the sun gets in one cell.
+fn sky_floor_cell(cell: vec2<i32>) -> f32 {
+    let at = clamp(cell, vec2<i32>(0), vec2<i32>(15));
+    let entry = at.y * 16 + at.x;
+    return frame.sky_ray_floor[entry / 4][entry % 4];
+}
+
+// Whether the sun gets to `point`, from what's known near the view. Light comes along its
+// direction, so it's the cell that line goes through.
+fn sun_gets_here(point: vec3<f32>, sun: vec3<f32>) -> f32 {
+    let area = frame.sky_ray_area;
+    if area.z <= 0.0 {
+        return 1.0;
+    }
+    let through = point.xy + sun.xy * ((area.w - point.z) / sun.z);
+    let at = (through - area.xy) / area.z - vec2<f32>(0.5);
+    let cell = vec2<i32>(floor(at));
+    let part = at - floor(at);
+    let top = mix(sky_floor_cell(cell), sky_floor_cell(cell + vec2<i32>(1, 0)), part.x);
+    let bottom = mix(
+        sky_floor_cell(cell + vec2<i32>(0, 1)),
+        sky_floor_cell(cell + vec2<i32>(1, 1)),
+        part.x,
+    );
+    return smoothstep(-STENCIL_STOP_SOFT, STENCIL_STOP_SOFT, point.z - mix(top, bottom, part.y));
+}
+
+// Light from the sky in the air. `whole` goes from the eye to what's seen, and rays stay in the
+// sky unless they're told to come into the level.
+fn sky_rays(whole: vec3<f32>, in_sky: bool, jitter: f32) -> vec3<f32> {
+    let into_level = frame.sky_rays.z > 0.5;
+    if frame.sky_rays.y < 0.5 || (!in_sky && !into_level) {
+        return vec3<f32>(0.0);
+    }
+    let sun = normalize(frame.sky_sun.xyz);
+    if sun.z < 0.05 {
+        return vec3<f32>(0.0);
+    }
+    let facing = dot(normalize(whole), sun);
+    if facing < SKY_RAY_FACING {
+        return vec3<f32>(0.0);
+    }
+    let gathered = pow(facing * 0.5 + 0.5, SKY_RAY_GATHER);
+    var top = frame.sky_rays.w;
+    if top <= 0.0 {
+        top = frame.eye.z + SKY_RAY_TOP;
+    }
+    var share = min(1.0, SKY_RAY_RANGE / max(length(whole), 1.0));
+    if whole.z > 0.0 {
+        share = min(share, max(top - frame.eye.z, 0.0) / whole.z);
+    }
+    let ray = whole * share;
+    // Half of what a window's rays take, as there's a lot more sky than window.
+    let steps = max(i32(frame.stencil_params.y) / 2, 4);
+    var total = 0.0;
+    for (var step = 0; step < steps; step = step + 1) {
+        let point = frame.eye.xyz + ray * ((f32(step) + jitter) / f32(steps));
+        var open = sky_lets_through(point, sun, top);
+        if into_level {
+            open = open * sun_gets_here(point, sun);
+        }
+        total = total + open;
+    }
+    let strength = frame.sky_rays.x * gathered * length(ray) / SKY_RAY_LENGTH;
+    // Squared, so that gaps stand out from what's round them, or they'd all come to an even glow.
+    let open = total / f32(steps);
+    // Looking right at it, the sun flares, as far as what's in front of it lets it.
+    let flare = frame.sky_ray_look.w * pow(facing * 0.5 + 0.5, SKY_FLARE_GATHER) * open;
+    return frame.sky_sun_color.rgb * (open * open * strength + flare);
+}
+
 @fragment
 fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
@@ -951,7 +1101,7 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     color = mix(color, frame.outline.rgb, edge);
     color = in_pools(color, in.uv, depth);
     color = fogged(color, in.uv, depth, noise);
-    if frame.stencil_params.x > 0.5 || frame.fog_counts.w > 0.5 {
+    if frame.stencil_params.x > 0.5 || frame.fog_counts.w > 0.5 || frame.sky_rays.y > 0.5 {
         let air = textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0);
         color = color * air.a + air.rgb;
     }
@@ -972,6 +1122,7 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
         color = color + stencil_rays(index, frame.eye.xyz, stop, noise);
     }
     let whole = stop - frame.eye.xyz;
+    color = color + sky_rays(whole, load_depth(at) >= 1.0, noise);
     let ray = whole * share_in_air(whole, in.uv);
     let fog = volumes_marched(ray, noise);
     // Rays show up in what's in the air.

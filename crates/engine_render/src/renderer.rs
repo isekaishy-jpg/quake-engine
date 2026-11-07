@@ -34,6 +34,37 @@ pub enum Target {
     Offscreen,
 }
 
+/// How low the sun's light gets, in cells round the view.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyRayFloor {
+    /// The cells' low corner, how wide each is, and the height they're at. Light goes along the
+    /// sun's direction, so the cell for a place is the one its line to the sun goes through there.
+    pub area: [f32; 4],
+    /// How low it gets in each cell, row by row.
+    pub heights: [f32; STENCIL_GRID * STENCIL_GRID],
+}
+
+impl SkyRayFloor {
+    /// Moves the cells to `area`, a whole number of them away, keeping what's still in it. What's
+    /// new starts as the nearest there was, until someone looks.
+    #[expect(
+        clippy::cast_possible_truncation,
+        reason = "whole cells, and only a few of them"
+    )]
+    pub fn move_to(&mut self, area: [f32; 4]) {
+        let by = |to: f32, from: f32| ((to - from) / self.area[2]).round() as isize;
+        let (x, y) = (by(area[0], self.area[0]), by(area[1], self.area[1]));
+        let was = self.heights;
+        let last = STENCIL_GRID - 1;
+        for (cell, height) in self.heights.iter_mut().enumerate() {
+            let from_x = (cell % STENCIL_GRID).saturating_add_signed(x).min(last);
+            let from_y = (cell / STENCIL_GRID).saturating_add_signed(y).min(last);
+            *height = was[from_y * STENCIL_GRID + from_x];
+        }
+        self.area = area;
+    }
+}
+
 /// What to draw.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct View {
@@ -88,6 +119,8 @@ pub struct Drawables<'a> {
     pub stencil_masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// How far light gets past each stencil's cells. With none, nothing's in its way.
     pub stencil_reaches: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
+    /// How low the sun's light gets near the view, for a sky's rays that come into the level.
+    pub sky_ray_floor: Option<&'a SkyRayFloor>,
     /// Characters shading the light.
     pub capsules: &'a [CapsuleDraw],
     /// Moving meshes.

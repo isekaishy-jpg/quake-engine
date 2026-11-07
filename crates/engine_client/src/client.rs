@@ -28,6 +28,9 @@ use crate::view_clock::ViewClock;
 /// solid to everything else.
 const LIGHT_EMERGES: f32 = 48.0;
 
+/// How far it looks for what's between the sun and a place.
+const SUN_LOOKS: f32 = 8192.0;
+
 /// How far apart it looks for the way out.
 const LIGHT_EMERGE_STEP: f32 = 4.0;
 
@@ -745,6 +748,21 @@ impl Client {
             gone += LIGHT_EMERGE_STEP;
         }
         0.0
+    }
+
+    /// How low the sun's light gets, along a line through `place` from the way it comes.
+    /// Under a roof that's the roof, and in the open it's whatever it lands on.
+    #[must_use]
+    pub fn sun_gets_to(&self, place: Vec3, toward_sun: Vec3) -> f32 {
+        let collision = self.world.with(&self.instances);
+        let up = place + toward_sun * SUN_LOOKS;
+        let looked = collision.trace(place, up);
+        let way = toward_sun * 2.0;
+        let sky = self.world.map_contents(looked.end + way) == Contents::Sky;
+        if looked.fraction < 1.0 && (looked.model.is_some() || !sky) {
+            return looked.end.z;
+        }
+        collision.trace(place, place - toward_sun * SUN_LOOKS).end.z
     }
 
     /// Works out what `blast` does to us, from `T_RadiusDamage`.

@@ -5,7 +5,7 @@ use engine_client::Client;
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{Map, OccluderSphere, RayStencil, STENCIL_GRID};
-use engine_render::{CapsuleDraw, LightDraw, LiveLight, MAX_LIVE_LIGHTS};
+use engine_render::{CapsuleDraw, LightDraw, LiveLight, MAX_LIVE_LIGHTS, SkyRayFloor};
 
 /// A ball of shade: where it is, and how big.
 type Sphere = (Vec3, f32);
@@ -29,6 +29,13 @@ const SUN_REACH: f32 = 4096.0;
 /// How many cells a frame looks along. A beam a door has cut takes a few frames to catch up,
 /// which its fade hides.
 const REACHES_PER_FRAME: usize = 32;
+
+/// How wide each cell of what the sun gets to is. They're a long way apart, as there's a lot of
+/// sky to cover and rays are soft.
+const SKY_CELL: f32 = 192.0;
+
+/// How finely the height it's worked out at follows the view.
+const SKY_LEVEL_STEP: f32 = 64.0;
 
 /// How wide the player's shade is.
 const CAPSULE_RADIUS: f32 = 22.0;
@@ -165,6 +172,10 @@ pub(super) struct StencilGates {
     wanted_reaches: Vec<StencilMask>,
     /// The next cell to look along, counting through all of them.
     next_reach: usize,
+    /// How low the sun's light gets near the view, for rays from the sky.
+    sky: Option<SkyRayFloor>,
+    /// The next cell of that to look at.
+    next_sky: usize,
 }
 
 impl StencilGates {
@@ -181,6 +192,11 @@ impl StencilGates {
     /// How far light gets past stencils.
     pub(super) fn reaches(&self) -> &[StencilMask] {
         &self.reaches
+    }
+
+    /// How low the sun's light gets near the view.
+    pub(super) fn sky_floor(&self) -> Option<SkyRayFloor> {
+        self.sky
     }
 
     /// Starts again for `stencils`.
@@ -202,7 +218,13 @@ impl StencilGates {
     }
 
     /// Tests some boxes against `client`'s collision, and eases all of them.
-    pub(super) fn update(&mut self, map: &Map, client: &Client, time: f32, seconds: f32) {
+    pub(super) fn update(
+        &mut self,
+        map: &Map,
+        client: &Client,
+        (eye, time): (Vec3, f32),
+        seconds: f32,
+    ) {
         let stencils = &map.stencils;
         if self.open.len() != stencils.len() {
             self.reset(stencils, client, time);
@@ -223,6 +245,7 @@ impl StencilGates {
             }
         }
         self.look_along(stencils, client);
+        self.follow_sky(map, client, eye);
         let step = seconds / FADE_SECONDS;
         for (index, stencil) in stencils.iter().enumerate() {
             let most = stencil.reach * step;
@@ -242,6 +265,43 @@ impl StencilGates {
 }
 
 impl StencilGates {
+    /// Keeps what the sun gets to round the view, if a sky's rays come into the level.
+    fn follow_sky(&mut self, map: &Map, client: &Client, eye: Vec3) {
+        const CELLS: usize = STENCIL_GRID * STENCIL_GRID;
+        let wanted = map.sky.as_ref().filter(|sky| {
+            sky.sun_direction.z > 0.0 && sky.rays.as_ref().is_some_and(|rays| rays.into_level)
+        });
+        let Some(sky) = wanted else {
+            self.sky = None;
+            return;
+        };
+        let toward_sun = sky.sun_direction.normalized();
+        let area = sky_area(eye);
+        let at = |cell: usize, area: [f32; 4]| {
+            #[expect(clippy::cast_precision_loss, reason = "a small grid")]
+            let middle = |value: usize| (value as f32 + 0.5) * area[2];
+            let (x, y) = (cell % STENCIL_GRID, cell / STENCIL_GRID);
+            Vec3::new(area[0] + middle(x), area[1] + middle(y), area[3])
+        };
+        let fresh = self.sky.is_none_or(|floor| floor.area[3] != area[3]);
+        let floor = self.sky.get_or_insert(SkyRayFloor {
+            area,
+            heights: [0.0; CELLS],
+        });
+        if fresh {
+            floor.area = area;
+            for cell in 0..CELLS {
+                floor.heights[cell] = client.sun_gets_to(at(cell, area), toward_sun);
+            }
+        } else if floor.area != area {
+            floor.move_to(area);
+        }
+        for _ in 0..REACHES_PER_FRAME {
+            self.next_sky = (self.next_sky + 1) % CELLS;
+            floor.heights[self.next_sky] = client.sun_gets_to(at(self.next_sky, area), toward_sun);
+        }
+    }
+
     /// Looks along some cells for what's come into the way of their light.
     fn look_along(&mut self, stencils: &[RayStencil], client: &Client) {
         const CELLS: usize = STENCIL_GRID * STENCIL_GRID;
@@ -254,6 +314,19 @@ impl StencilGates {
                 cell_reach(stencil, cell, self.lights[index], client);
         }
     }
+}
+
+/// Where the cells of what the sun gets to are, round `eye`: their low corner, how wide each is,
+/// and the height they're worked out at.
+fn sky_area(eye: Vec3) -> [f32; 4] {
+    #[expect(clippy::cast_precision_loss, reason = "a small grid")]
+    let half = SKY_CELL * (STENCIL_GRID / 2) as f32;
+    [
+        (eye.x / SKY_CELL).floor() * SKY_CELL - half,
+        (eye.y / SKY_CELL).floor() * SKY_CELL - half,
+        SKY_CELL,
+        (eye.z / SKY_LEVEL_STEP).floor() * SKY_LEVEL_STEP,
+    ]
 }
 
 /// How far light gets past a cell of a stencil.

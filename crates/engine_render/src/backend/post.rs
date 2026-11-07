@@ -8,7 +8,7 @@ use vulkane::safe::{
     ImageLayout, ImageUsage, PipelineLayout, RenderPass, RenderPassCreateInfo, ShaderModule,
 };
 
-use engine_map::{Map, ProbeGrid, ShaderCode};
+use engine_map::{MOST_CLOUDS, Map, ProbeGrid, ShaderCode, SlotImage};
 use engine_shaders::{Module, spirv};
 
 use super::smaa::SmaaTarget;
@@ -275,6 +275,45 @@ impl Backend {
     }
 
     /// Uploads `map`'s stencils.
+    /// Puts a sky's pictures on the GPU, for the sky and for the final pass.
+    pub(super) fn upload_sky_pictures(&mut self, map: &Map) -> Result<(), RenderError> {
+        let mut upload = |image: &SlotImage| {
+            let levels: Vec<(u32, u32, &[u8])> = image
+                .iter()
+                .map(|mip| (mip.width, mip.height, mip.rgba.as_slice()))
+                .collect();
+            self.upload_image(&levels, Format::R8G8B8A8_UNORM)
+        };
+        let sky = map.sky.as_ref();
+        let clouds = sky.iter().flat_map(|sky| &sky.clouds);
+        let images = clouds.filter_map(|clouds| clouds.image.as_ref());
+        let mut pictures = Vec::new();
+        for image in images.take(MOST_CLOUDS) {
+            pictures.push(upload(image)?);
+        }
+        let rays = sky.and_then(|sky| sky.rays.as_ref());
+        let ray_picture = rays.and_then(|rays| rays.picture.as_ref());
+        let ray_picture = ray_picture.map(&mut upload).transpose()?;
+        self.cloud_pictures = pictures;
+        self.sky_ray_picture = ray_picture;
+        Ok(())
+    }
+
+    /// Tells the final pass of a sky's pictures.
+    pub(super) fn write_sky_pictures(&self, set: &DescriptorSet) {
+        let Some(blank) = &self.sky_blank else {
+            return;
+        };
+        for binding in 0..MOST_CLOUDS {
+            let image = self.cloud_pictures.get(binding).unwrap_or(blank);
+            #[expect(clippy::cast_possible_truncation, reason = "four of them")]
+            let at = 15 + binding as u32;
+            set.write_sampled_image(at, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
+        let rays = self.sky_ray_picture.as_ref().unwrap_or(blank);
+        set.write_sampled_image(19, &rays.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+    }
+
     pub(super) fn load_stencils(&mut self, map: &Map) -> Result<(), RenderError> {
         let mut images = Vec::new();
         for stencil in map.stencils.iter().take(4) {
@@ -295,6 +334,7 @@ impl Backend {
         };
         if let Some(target) = self.scene_target.take() {
             self.write_stencils(&target.set)?;
+            self.write_sky_pictures(&target.set);
             self.scene_target = Some(target);
         }
         Ok(())
@@ -517,6 +557,11 @@ impl Backend {
             self.ripple_blank = Some(self.field_image(1)?);
         }
         self.write_ripples(&set);
+        if self.sky_blank.is_none() {
+            let white = [255_u8; 4];
+            self.sky_blank = Some(self.upload_image(&[(1, 1, &white)], Format::R8G8B8A8_UNORM)?);
+        }
+        self.write_sky_pictures(&set);
         self.write_stencils(&set)?;
         self.scene_target = Some(SceneTarget {
             particle_framebuffer,

@@ -5,7 +5,7 @@ use std::sync::Arc;
 
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
-use engine_map::{Clouds, Contents, Fog, FogVolume, MOST_CLOUDS, Sky, Spline};
+use engine_map::{Clouds, Contents, Fog, FogVolume, MOST_CLOUDS, Sky, SkyRays, Spline};
 
 use crate::error::CompileError;
 use crate::field::{FieldSource, read_field};
@@ -220,6 +220,8 @@ pub struct SkySource {
     pub sky: Sky,
     /// An image for each layer of clouds that isn't procedural.
     pub cloud_images: Vec<Option<String>>,
+    /// A picture for rays, if they don't go by the clouds.
+    pub ray_image: Option<String>,
 }
 
 /// A field's three numbers.
@@ -709,7 +711,8 @@ fn read_sky(block: &Block) -> Result<SkySource, CompileError> {
         lit: number(clouds, "lit", usual.lit).clamp(0.0, 1.0),
         image: None,
     });
-    let clouds = clouds.collect();
+    let clouds: Vec<Clouds> = clouds.collect();
+    let (rays, ray_image) = read_sky_rays(block, !clouds.is_empty())?;
     let [x, y, z] = color_of(block, "sun_direction", [0.4, 0.3, 0.8]);
     Ok(SkySource {
         sky: Sky {
@@ -721,12 +724,57 @@ fn read_sky(block: &Block) -> Result<SkySource, CompileError> {
             sun_color: color_of(block, "sun_color", defaults.sun_color),
             sun_size: number(block, "sun_size", defaults.sun_size),
             clouds,
+            rays,
         },
         cloud_images: cloud_blocks
             .iter()
             .map(|clouds| clouds.get("image").and_then(Value::text).map(str::to_owned))
             .collect(),
+        ray_image,
     })
+}
+
+/// Reads what a `sky` block says of rays, and the picture they want. They come from `clouds`, or
+/// from a picture of that name.
+fn read_sky_rays(
+    block: &Block,
+    has_clouds: bool,
+) -> Result<(Option<SkyRays>, Option<String>), CompileError> {
+    let Some(from) = block.get("rays").and_then(Value::text) else {
+        return Ok((None, None));
+    };
+    if from == "clouds" && !has_clouds {
+        return Err(CompileError::Bad(
+            "a sky's rays go by its clouds, and it has none".to_owned(),
+        ));
+    }
+    let into_level = match block.get("rays_reach").and_then(Value::text) {
+        None | Some("sky") => false,
+        Some("level") => true,
+        Some(other) => {
+            return Err(CompileError::Bad(format!(
+                "a sky's rays reach the sky or the level, not {other}"
+            )));
+        }
+    };
+    #[expect(clippy::cast_possible_truncation, reason = "skies store f32")]
+    let number = |key: &str, default: f32| {
+        block
+            .get(key)
+            .and_then(Value::number)
+            .map_or(default, |value| value as f32)
+    };
+    let usual = SkyRays::default();
+    let rays = SkyRays {
+        picture: None,
+        strength: number("rays_strength", usual.strength).max(0.0),
+        into_level,
+        size: number("rays_size", usual.size).max(1.0),
+        speed: two_of(block, "rays_speed", usual.speed),
+        flare: number("rays_flare", usual.flare).max(0.0),
+    };
+    let image = (from != "clouds").then(|| from.to_owned());
+    Ok((Some(rays), image))
 }
 
 /// A picture over a surface, from its block.

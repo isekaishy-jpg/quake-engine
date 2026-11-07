@@ -13,14 +13,14 @@ use engine_map::{
     FieldDef, Fog, FogVolume, LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner,
     MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter,
     ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
-    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing,
-    SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture,
-    TextureKind, TileLight, WaterOverlay, WaterPush, WaterSheet, mip_chain,
+    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, SkyRays, Sprite,
+    SpriteFacing, SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet,
+    Texture, TextureKind, TileLight, WaterOverlay, WaterPush, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
     MovingDraw, ParticleColor, ParticleDraw, ParticleShape, ParticleSim, PostSettings, Renderer,
-    SimForce, SpriteDraw, Target, TileStreamer, View, build_world,
+    SimForce, SkyRayFloor, SpriteDraw, Target, TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -1970,6 +1970,398 @@ fn only_lit_clouds_shine_round_the_sun() {
     let plain = shot(vec![thin(0.0)]);
     let lit = shot(vec![thin(1.0)]);
     assert!(lit[0] > plain[0] + 20, "{lit:?} {plain:?}");
+}
+
+/// What a sky's rays are looked at under.
+#[derive(Clone)]
+struct RayShot {
+    /// The rays.
+    rays: Option<SkyRays>,
+    /// The sky's clouds.
+    clouds: Vec<Clouds>,
+    /// Towards the sun.
+    sun: Vec3,
+    /// How low the sun's light gets.
+    floor: Option<SkyRayFloor>,
+    /// How much rays are drawn.
+    quality: u8,
+}
+
+impl Default for RayShot {
+    fn default() -> Self {
+        Self {
+            rays: None,
+            clouds: Vec::new(),
+            sun: Vec3::new(0.6, 0.0, 0.8),
+            floor: None,
+            quality: 3,
+        }
+    }
+}
+
+/// What the middle of a picture from `view` is, under `shot`.
+fn ray_picture(shot: RayShot, view: View) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.0, 0.0, 0.0],
+        horizon: [0.0, 0.0, 0.0],
+        sun_size: 0.0,
+        sun_direction: shot.sun,
+        sun_color: [1.0, 1.0, 1.0],
+        clouds: shot.clouds,
+        rays: shot.rays,
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        rays: shot.quality,
+        ..PostSettings::default()
+    });
+    let drawables = Drawables {
+        sky_ray_floor: shot.floor.as_ref(),
+        ..Drawables::default()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    Some(centre(&capture))
+}
+
+/// Looking up, with only sky to see.
+fn looking_up() -> View {
+    View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    }
+}
+
+/// Rays by a picture of `value` all over.
+fn rays_by(value: u8) -> SkyRays {
+    SkyRays {
+        picture: Some(cloud_picture(value)),
+        ..SkyRays::default()
+    }
+}
+
+/// Rays by the clouds.
+fn rays_by_clouds() -> SkyRays {
+    SkyRays::default()
+}
+
+/// Rays show in the sky, as far as their picture lets them.
+#[test]
+fn a_picture_lets_rays_down() {
+    let plain = ray_picture(RayShot::default(), looking_up());
+    let open = RayShot {
+        rays: Some(rays_by(255)),
+        ..RayShot::default()
+    };
+    let shut = RayShot {
+        rays: Some(rays_by(0)),
+        ..RayShot::default()
+    };
+    let (open, shut) = (
+        ray_picture(open, looking_up()),
+        ray_picture(shut, looking_up()),
+    );
+    if let (Some(plain), Some(open), Some(shut)) = (plain, open, shut) {
+        assert!(open[0] > plain[0] + 40, "{plain:?} {open:?}");
+        assert_eq!(shut, plain);
+    }
+}
+
+/// How bright they are is the author's.
+#[test]
+fn rays_are_as_strong_as_asked() {
+    let at = |strength| RayShot {
+        rays: Some(SkyRays {
+            strength,
+            ..rays_by(255)
+        }),
+        ..RayShot::default()
+    };
+    let (weak, strong) = (
+        ray_picture(at(0.25), looking_up()),
+        ray_picture(at(1.0), looking_up()),
+    );
+    if let (Some(weak), Some(strong)) = (weak, strong) {
+        assert!(strong[0] > weak[0] + 20, "{weak:?} {strong:?}");
+    }
+}
+
+/// Rays by the clouds come through their gaps, and not through them.
+#[test]
+fn rays_come_through_gaps_in_clouds() {
+    let black = |image: u8| Clouds {
+        coverage: 1.0,
+        image: Some(cloud_picture(image)),
+        ..solid_cloud([0.0, 0.0, 0.0])
+    };
+    let through = |image| RayShot {
+        rays: Some(rays_by_clouds()),
+        clouds: vec![black(image)],
+        ..RayShot::default()
+    };
+    let (gap, solid) = (
+        ray_picture(through(0), looking_up()),
+        ray_picture(through(255), looking_up()),
+    );
+    if let (Some(gap), Some(solid)) = (gap, solid) {
+        assert!(gap[0] > solid[0] + 40, "{gap:?} {solid:?}");
+    }
+}
+
+/// Every layer has its say: any that's solid stops them, whichever it is.
+#[test]
+fn any_layer_of_cloud_stops_rays() {
+    let black = |image: u8| Clouds {
+        coverage: 1.0,
+        image: Some(cloud_picture(image)),
+        ..solid_cloud([0.0, 0.0, 0.0])
+    };
+    for layer in 0..3 {
+        let mut clouds = vec![black(0); 3];
+        clouds[layer] = black(255);
+        let shot = RayShot {
+            rays: Some(rays_by_clouds()),
+            clouds,
+            ..RayShot::default()
+        };
+        if let Some(shown) = ray_picture(shot, looking_up()) {
+            assert!(shown[0] < 20, "layer {layer}: {shown:?}");
+        }
+    }
+}
+
+/// Looking down on the square, towards a low sun, and well clear of the horizon, as rays are
+/// worked out in big pixels, and bright sky bleeds a little way over what's in front of it.
+fn down_on_the_square() -> View {
+    View {
+        origin: Vec3::new(-140.0, 64.0, 120.0),
+        pitch: 30.0,
+        ..view_from_above()
+    }
+}
+
+/// A sun low down, ahead of `down_on_the_square`.
+const LOW_SUN: Vec3 = Vec3::new(0.98, 0.0, 0.2);
+
+/// Rays strong enough to see over the short way to something close.
+fn strong_rays(into_level: bool) -> SkyRays {
+    SkyRays {
+        into_level,
+        strength: 200.0,
+        ..rays_by(255)
+    }
+}
+
+/// Unless they're told, rays don't come over what's in the level.
+#[test]
+fn rays_stay_in_the_sky_unless_told() {
+    let plain = RayShot {
+        sun: LOW_SUN,
+        ..RayShot::default()
+    };
+    let shot = RayShot {
+        rays: Some(strong_rays(false)),
+        ..plain.clone()
+    };
+    let plain = ray_picture(plain, down_on_the_square());
+    if let (Some(plain), Some(shown)) = (plain, ray_picture(shot, down_on_the_square())) {
+        assert_eq!(plain, shown);
+    }
+}
+
+/// Told, they do.
+#[test]
+fn rays_can_come_into_the_level() {
+    let plain = RayShot {
+        sun: LOW_SUN,
+        ..RayShot::default()
+    };
+    let shot = RayShot {
+        rays: Some(strong_rays(true)),
+        ..plain.clone()
+    };
+    let plain = ray_picture(plain, down_on_the_square());
+    if let (Some(plain), Some(shown)) = (plain, ray_picture(shot, down_on_the_square())) {
+        assert!(
+            shown[2] > plain[2].saturating_add(20),
+            "{plain:?} {shown:?}"
+        );
+    }
+}
+
+/// The sun flares when it's looked at, by as much as the sky says, and clouds can hide it.
+#[test]
+fn the_sun_flares_when_looked_at() {
+    let shot = |flare, image| RayShot {
+        rays: Some(SkyRays {
+            flare,
+            strength: 0.0,
+            ..rays_by(image)
+        }),
+        // Near it, and not on it, which would be bright with or without.
+        sun: Vec3::new(0.3, 0.0, 0.95),
+        ..RayShot::default()
+    };
+    let view = looking_up();
+    let (none, full) = (
+        ray_picture(shot(0.0, 255), view),
+        ray_picture(shot(1.0, 255), view),
+    );
+    let hidden = ray_picture(shot(1.0, 0), view);
+    if let (Some(none), Some(full), Some(hidden)) = (none, full, hidden) {
+        assert!(full[0] > none[0] + 40, "{none:?} {full:?}");
+        assert_eq!(hidden, none);
+    }
+}
+
+/// Further from the sun the flare has gone, though rays are still there.
+#[test]
+fn the_flare_is_tighter_than_the_rays() {
+    let shot = |flare| RayShot {
+        rays: Some(SkyRays {
+            flare,
+            ..rays_by(255)
+        }),
+        sun: Vec3::new(0.7, 0.0, 0.7),
+        ..RayShot::default()
+    };
+    let (none, full) = (
+        ray_picture(shot(0.0), looking_up()),
+        ray_picture(shot(1.0), looking_up()),
+    );
+    if let (Some(none), Some(full)) = (none, full) {
+        assert!(full[0] < none[0] + 16, "{none:?} {full:?}");
+    }
+}
+
+/// Rays gather round the sun, and looking away from it there are none.
+#[test]
+fn rays_gather_round_the_sun() {
+    // What they add, as the sky has a glow round the sun of its own.
+    let added = |sun: Vec3| {
+        let plain = RayShot {
+            sun,
+            ..RayShot::default()
+        };
+        let shot = RayShot {
+            rays: Some(SkyRays {
+                flare: 0.0,
+                ..rays_by(255)
+            }),
+            ..plain.clone()
+        };
+        let plain = ray_picture(plain, looking_up())?;
+        let shown = ray_picture(shot, looking_up())?;
+        Some(i32::from(shown[0]) - i32::from(plain[0]))
+    };
+    let near = added(Vec3::new(0.3, 0.0, 0.95));
+    let further = added(Vec3::new(0.8, 0.0, 0.6));
+    let away = added(Vec3::new(0.98, 0.0, 0.2));
+    if let (Some(near), Some(further), Some(away)) = (near, further, away) {
+        assert!(near > further + 10, "{near} {further}");
+        assert_eq!(away, 0);
+    }
+}
+
+/// A floor with each cell's own number for a height.
+fn numbered_floor() -> SkyRayFloor {
+    #[expect(clippy::cast_precision_loss, reason = "a small grid")]
+    let heights = std::array::from_fn(|cell| cell as f32);
+    SkyRayFloor {
+        area: [0.0, 0.0, 10.0, 0.0],
+        heights,
+    }
+}
+
+/// As the view moves, what's known of each place stays with that place.
+#[test]
+fn what_the_sun_gets_to_stays_where_it_is() {
+    let mut floor = numbered_floor();
+    floor.move_to([20.0, 10.0, 10.0, 0.0]);
+    // Two across and one up, so the first cell is what was at (2, 1).
+    assert!(
+        (floor.heights[0] - 18.0).abs() < 0.001,
+        "{}",
+        floor.heights[0]
+    );
+    assert!(
+        (floor.heights[17] - 35.0).abs() < 0.001,
+        "{}",
+        floor.heights[17]
+    );
+    assert!((floor.area[0] - 20.0).abs() < 0.001);
+}
+
+/// Going the other way works too.
+#[test]
+fn what_the_sun_gets_to_goes_back() {
+    let mut floor = numbered_floor();
+    floor.move_to([-10.0, 0.0, 10.0, 0.0]);
+    assert!((floor.heights[1]).abs() < 0.001, "{}", floor.heights[1]);
+    assert!(
+        (floor.heights[2] - 1.0).abs() < 0.001,
+        "{}",
+        floor.heights[2]
+    );
+}
+
+/// What's come into the grid starts as the nearest there was, and not as nothing.
+#[test]
+fn what_is_new_to_the_grid_takes_the_nearest() {
+    let mut floor = numbered_floor();
+    floor.move_to([10.0, 0.0, 10.0, 0.0]);
+    assert!(
+        (floor.heights[15] - 15.0).abs() < 0.001,
+        "{}",
+        floor.heights[15]
+    );
+    assert!(
+        (floor.heights[14] - 15.0).abs() < 0.001,
+        "{}",
+        floor.heights[14]
+    );
+    let mut far = numbered_floor();
+    far.move_to([-10000.0, 0.0, 10.0, 0.0]);
+    assert!((far.heights[5]).abs() < 0.001, "{}", far.heights[5]);
+}
+
+/// With the sun down there's none, even looking right at where it is.
+#[test]
+fn rays_go_with_the_sun() {
+    let sun = Vec3::new(0.6, 0.0, -0.8);
+    let view = View {
+        origin: UNDER,
+        pitch: 53.0,
+        ..view_from_above()
+    };
+    let plain = RayShot {
+        sun,
+        ..RayShot::default()
+    };
+    let shot = RayShot {
+        rays: Some(rays_by(255)),
+        ..plain.clone()
+    };
+    if let (Some(plain), Some(shown)) = (ray_picture(plain, view), ray_picture(shot, view)) {
+        assert_eq!(plain, shown);
+    }
+}
+
+/// A player who's turned rays off gets none from the sky.
+#[test]
+fn rays_can_be_turned_off() {
+    let plain = ray_picture(RayShot::default(), looking_up());
+    let off = RayShot {
+        rays: Some(rays_by(255)),
+        quality: 0,
+        ..RayShot::default()
+    };
+    if let (Some(plain), Some(off)) = (plain, ray_picture(off, looking_up())) {
+        assert_eq!(plain, off);
+    }
 }
 
 /// Clouds drift smoothly. A hash of `sin` broke them into blocks with hard edges,

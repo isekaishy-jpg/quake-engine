@@ -94,6 +94,15 @@ struct Frame {
     ripple_place: vec4<f32>,
     // How far light gets past each cell of each stencil, four cells to an entry.
     stencil_reach: array<vec4<f32>, 256>,
+    // Rays from the sky: x how bright, y 0 for none, 1 by the clouds, 2 by a picture, z 1 if they
+    // come into the level, and w how high they start, with 0 for wherever suits.
+    sky_rays: vec4<f32>,
+    // x how wide a repeat of the picture is, yz how it drifts, and w how much the sun flares.
+    sky_ray_look: vec4<f32>,
+    // The low corner of the cells of what the sun gets to, how wide each is, and their height.
+    sky_ray_area: vec4<f32>,
+    // How low the sun gets in each cell, four to an entry.
+    sky_ray_floor: array<vec4<f32>, 64>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

@@ -1516,6 +1516,9 @@ fn compile_with(
                 clouds.image = Some(Arc::new(builder.source.pixels(image).mips));
             }
         }
+        if let (Some(rays), Some(image)) = (&mut built.rays, &sky.ray_image) {
+            rays.picture = Some(Arc::new(builder.source.pixels(image).mips));
+        }
         builder.map.sky = Some(built);
     }
     if let Some(tree) = known {

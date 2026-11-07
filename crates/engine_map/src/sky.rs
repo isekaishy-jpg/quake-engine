@@ -49,6 +49,36 @@ impl Default for Clouds {
     }
 }
 
+/// Rays of light coming down through a sky.
+#[derive(Clone, Debug, PartialEq)]
+pub struct SkyRays {
+    /// A picture of what lets light through, or `None` to go by the sky's own clouds.
+    pub picture: Option<SlotImage>,
+    /// How bright they are.
+    pub strength: f32,
+    /// Whether they come down into the level, past what's in the sky.
+    pub into_level: bool,
+    /// How wide a repeat of the picture is, in world units.
+    pub size: f32,
+    /// How the picture drifts, in repeats a second.
+    pub speed: [f32; 2],
+    /// How much the sun flares, looking right at it.
+    pub flare: f32,
+}
+
+impl Default for SkyRays {
+    fn default() -> Self {
+        Self {
+            picture: None,
+            strength: 1.0,
+            into_level: false,
+            size: 2048.0,
+            speed: [0.01, 0.003],
+            flare: 1.0,
+        }
+    }
+}
+
 /// Fog through a map, thinning with height.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Fog {
@@ -112,6 +142,8 @@ pub struct Sky {
     pub sun_size: f32,
     /// The layers of cloud, up to `MOST_CLOUDS`. The first is the lowest, so it's in front.
     pub clouds: Vec<Clouds>,
+    /// Rays coming down through it, if an author wants them.
+    pub rays: Option<SkyRays>,
 }
 
 impl Default for Sky {
@@ -125,6 +157,7 @@ impl Default for Sky {
             sun_color: [1.0, 0.95, 0.8],
             sun_size: 0.002,
             clouds: Vec::new(),
+            rays: None,
         }
     }
 }

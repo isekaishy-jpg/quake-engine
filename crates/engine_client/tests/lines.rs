@@ -99,6 +99,48 @@ fn light_stays_in_what_is_too_thick() {
     assert_eq!(client.light_reach(from, to), 0.0);
 }
 
+/// In the open, the sun gets down to the ground, whatever height it's asked about.
+#[test]
+fn the_sun_gets_to_the_ground_in_the_open() {
+    let client = client_in(room_over_sky());
+    // Upside down, as the room's sky is under its floor, so "up" is down here.
+    let down = Vec3::new(0.0, 0.0, -1.0);
+    let place = Vec3::new(-100.0, 100.0, 0.0);
+    let ceiling = client.light_reach(place, Vec3::new(-100.0, 100.0, 4000.0));
+    let gets_to = client.sun_gets_to(place, down);
+    assert!((gets_to - ceiling).abs() < 1.0, "{gets_to} {ceiling}");
+}
+
+/// A roof keeps the sun off, so it gets no lower than the roof.
+#[test]
+fn a_roof_stops_the_sun() {
+    let client = client_in(room());
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    let place = Vec3::new(-100.0, 100.0, 0.0);
+    let roof = client.light_reach(place, Vec3::new(-100.0, 100.0, 4000.0));
+    assert!((client.sun_gets_to(place, up) - roof).abs() < 1.0);
+}
+
+/// A slanting sun is stopped by what's along its line, not what's straight up.
+#[test]
+fn the_sun_goes_along_its_own_line() {
+    let client = client_in(room_over_sky());
+    let place = Vec3::new(-100.0, 100.0, 0.0);
+    let slant = Vec3::new(0.6, 0.0, -0.8);
+    let lands = client.light_reach(place, place - slant * 4000.0);
+    let expected = place.z + 0.8 * lands;
+    let gets_to = client.sun_gets_to(place, slant);
+    assert!((gets_to - expected).abs() < 1.0, "{gets_to} {expected}");
+}
+
+/// A place in something solid has only what's above it to go on.
+#[test]
+fn the_sun_stops_at_what_it_starts_in() {
+    let client = client_in(room());
+    let place = Vec3::new(9000.0, 100.0, 40.0);
+    assert!((client.sun_gets_to(place, Vec3::new(0.0, 0.0, 1.0)) - 40.0).abs() < 0.01);
+}
+
 /// Sky is solid, but light comes from it.
 #[test]
 fn sky_is_clear_only_when_asked() {
