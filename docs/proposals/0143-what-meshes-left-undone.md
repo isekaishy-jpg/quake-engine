@@ -27,12 +27,11 @@ A copy's triangles on the CPU, and what posing costs the CPU.
 
 - **A coarse level moves fewer corners:** corners sorted coarsest level first, so that a level is the first so many, and the compute pass stops there.
 - **Hit volumes on joints:** capsules named on joints, tested by `traceline` after the box says it's near. Movement keeps its box.
-- **UV targets:** the UV stream moved for the meshes that have them.
 - **Sorting what's see-through:** with the world's, in its far to near list, which is there already.
-
-### Research still to do
-
-Tangents, vertex colours, colour targets, and rewinding for shots. Each gets a decision from research.
+- **Vertex colours:** `COLOR_0`, in the stream that doesn't move, multiplying the base colour, and open to surface shaders.
+- **UV and colour targets:** that stream moved too, for only the meshes that have them.
+- **Real tangents:** MikkTSpace, from the file or worked out when a mesh is imported, turned with its joints. Faces keep what they have.
+- **Hit volumes go by the rewound time,** through what proposal 0048 built.
 
 ### Trying
 

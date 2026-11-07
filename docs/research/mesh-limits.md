@@ -75,7 +75,7 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 
 - **Now:** a moving mesh has its entity's box, as an alias model does. A shot that passes through the gap under an arm hits.
 - **What's known:** games keep [a simple shape for moving, and per-bone shapes for shots](https://counterstrike.fandom.com/wiki/Hitbox), which [follow the bones after animation](https://github.com/shadow-kernel/Vortex-Engine/issues/212). [A cheap broad test comes first](https://github.com/shadow-kernel/Vortex-Engine/issues/213). Online, a server [keeps a short history of poses to rewind](https://github.com/SoftHamzzi/UE5-EmploymentProj/pull/2), [with a limit on how far back](https://steamcommunity.com/app/1245620/discussions/0/3279192886584619380). These are a wiki, project issues and a forum. One [is a vendor's page](https://www.fab.com/listings/0a897de8-58de-48f6-bc8a-cc343fdb5483?lang=en), and another [a project's plan](https://github.com/MatthewLacerda2/rusty/issues/464), so they show the shape of it and no more.
-- **For us:** movement keeps its box. A mesh can name capsules on joints, and `traceline` tests them after the box says it's near. The server already works out poses for what's held, with the same shared code, so it needs no new way of doing that. The engine has no rewinding of any kind, for boxes either, so that's its own question, and it's for all entities and not for meshes.
+- **For us:** movement keeps its box. A mesh can name capsules on joints, and `traceline` tests them after the box says it's near. The server already works out poses for what's held, with the same shared code, so it needs no new way of doing that. Rewinding is there already: [proposal 0048](../proposals/0048-seeing-the-past.md) moves players, doors and monsters to what the shooter saw, capped at 250 ms. This note first said the engine had none, which was wrong, and came of not looking. So hit volumes only have to go by the rewound time. [Source does the same](https://developer.valvesoftware.com/wiki/Lag_Compensation): it rewinds hitboxes as well as places, and has a mode that only rewinds them when a ray reaches the entity, which is the broad test again.
 
 ## Static copies and morphs
 
@@ -127,12 +127,40 @@ That's a very different picture from the test, whose meshes are tiny on the scre
 - **What's known:** sending [which clip began when](https://www.gamedev.net/forums/topic/601271-coordinated-animations-in-fps-networked-game/) and letting clients work out the time is the usual way, as [ours is](https://www.gamedev.net/forums/topic/708635-interpolating-between-fsm-states/). [Late joiners need putting right](https://forums.unrealengine.com/t/persistent-animation-replication-on-multiplayer/1638908), which state sent in full does for free. [Clocks drift and need setting again](https://doc.photonengine.com/fusion/current/technical-samples/animations), and [one guide](https://mocaponline.com/blogs/mocap-news/multiplayer-animation-sync-guide) and [Unreal's documents](https://dev.epicgames.com/documentation/en-us/unreal-engine/networked-physics-overview) say the same of buffering. Those are forums, a vendor's blog and engine documents.
 - **For us:** it just wants trying, with `net_fake_loss` at 2%, and a client joining part-way through a clip. If it holds, that's the end of it.
 
+## What we don't have
+
+The human's rule: research decides if it's needed, and what's likely to be wanted later gets done now.
+
+### Real tangents: yes
+
+The engine works a surface's tangents out per pixel, from screen derivatives. That's right for the world, whose faces are flat and whose normal maps are painted. It's wrong for what a mesh is for.
+
+- A normal map baked in Blender is baked against a particular frame, and [a mismatch between baker and renderer shows as seams](https://wiki.blender.jp/Dev:Shading/Tangent_Space_Normal_Maps), most of all where a vertex normal is shared across faces. That's a smooth surface, which is most of a mesh.
+- [glTF expects MikkTSpace](https://convert3d.org/supported-features/normal-maps), and a client [should work it out where a file doesn't have it](https://docs.rs/crate/awsm-renderer/0.1.7/source/src/gltf/buffers/tangents.rs), which is how another renderer does it, only for what has a normal map.
+- [The `w` carries handedness](https://pub.dev/documentation/flutter3d_core/0.8.1/flutter3d_core/MeshTangents/withGeneratedTangents.html), which is what gets mirrored UVs right. A derivative frame gets that free.
+- [Engines have had seams from getting this wrong](https://forums.unrealengine.com/t/fbx-static-mesh-incorrect-blending-of-tangents/297058), so it's worth testing with a real bake.
+
+No source compared the two directly, so this comes from what each is. Stage 17 is about new assets made in Blender, which is where this would show, so it's likely to be wanted. It's better done now, while streams are being settled, and tangents have to turn with a skeleton, so they go through the compute pass too. A real bake will show if it's worth it.
+
+### Vertex colours: yes
+
+They're [blend weights between materials](https://www.strayspark.studio/blog/blender-vertex-colors-game-engine-workflows), [a tint so that a repeated texture looks less so](https://www.strayspark.studio/blog/blender-vertex-colors-game-engine-workflows), and [ambient occlusion at no cost in textures](https://superhivemarket.com/products/vertex-color-octopus). Those are tutorials and tool pages, but the uses aren't in doubt. glTF defines `COLOR_0` as multiplying the base colour. It costs four bytes a corner in the stream that doesn't move. A surface shader can read it too, so blending by it is open to a material.
+
+### UV and colour targets: yes, as one thing
+
+The note above said colour targets weren't agreed. Looking closer, the disagreement was [a tool's fault](https://forum.nomadsculpt.com/t/morph-target-colors-arent-additive-but-replacing/6430): glTF's targets are [differences](https://github.com/mrdoob/three.js/issues/17608), and [three.js reads colour targets](https://pub.dev/documentation/three_js_advanced_loaders/latest/gltf_gltf_helper/addMorphTargets.html). [Babylon had UV targets as a draft](https://forum.babylonjs.com/t/uv-morphing-results-in-two-textures-of-different-types-use-the-same-sampler-location/55346). A use is easy to see: a blush, a wound, a scrolling mouth. UV and colour live in the same stream, so moving one moves both, for only the meshes that have such targets, and it's cheaper to do the two together than either alone.
+
+### Rewinding hit volumes: yes
+
+It's there for boxes, as above, so hit volumes go by the rewound time from the start.
+
 ## What this means for the design
+
 
 - **The depth pass** comes first. It's the largest cost measured.
 - **Fixes with no open question:** static copies with rest weights, parents before children, the turn in places and effects, eight morphs.
 - **Measure, then decide:** a copy's triangles on the CPU, and what posing costs the CPU.
-- **Building:** a coarse level moving fewer corners, hit volumes on joints, UV targets, vertex colours, sorting what's see-through.
+- **Building:** a coarse level moving fewer corners, hit volumes on joints, sorting what's see-through.
 - **Trying:** clips on a bad network.
-- **What we don't have:** tangents, vertex colours, colour targets, and rewinding for shots. The human's rule is that research decides if they're needed, and what's likely to be wanted later gets done now. None of them goes to another list.
+- **What we don't have:** real tangents, vertex colours, and UV and colour targets, all yes, as above. Hit volumes go by the rewind that's there.
 - **Item 12:** with this done the human moved the fixture's models over, in [proposal 0142](../proposals/0142-the-fixtures-models-on-the-mesh-path.md). So the comparison above, of two paths, is history now.
