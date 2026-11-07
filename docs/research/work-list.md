@@ -421,3 +421,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 11: 7ef5130
 - Item 12, alias models stay: c90dd80
 - Item 12 reversed, on the human's decision: what moving meshes cost, 2e2190d, and the fixture's models moved over, 4cccc4e
+- What meshes left undone, proposal 0143: depth pass 37577d5, rest weights and the like a659311, a copy's triangles 27edc1e, levels for what moves 8d99720, hit volumes d9dd133, a normal map's lean 9620995, vertex colours 09855dd, see-through meshes 5c8448f, clips online 54eb373
