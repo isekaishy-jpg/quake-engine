@@ -422,3 +422,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 12, alias models stay: c90dd80
 - Item 12 reversed, on the human's decision: what moving meshes cost, 2e2190d, and the fixture's models moved over, 4cccc4e
 - What meshes left undone, proposal 0143: depth pass 37577d5, rest weights and the like a659311, a copy's triangles 27edc1e, levels for what moves 8d99720, hit volumes d9dd133, a normal map's lean 9620995, vertex colours 09855dd, see-through meshes 5c8448f, clips online 54eb373
+- Stage 8, terrain, proposal 0144. Items 43, 125, 126 and 129: 534b356, a68c660. Items 127 and 45: 7aba6c2. Items 128 and 132, and item 131 for land: c9ca88e. Item 131 for materials: f2fbd89. Tiles and scale: e98e57c. Item 130 waits on item 17, at stage 11, and item 44 is at stage 15, as the Order has them
