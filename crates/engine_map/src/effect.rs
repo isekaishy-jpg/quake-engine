@@ -40,6 +40,14 @@ pub enum EmitterShape {
     Point,
     /// Anywhere in a ball of this radius.
     Ball(f32),
+    /// Round a ring this wide, flat on the ground.
+    Ring(f32),
+    /// Over a flat circle this wide.
+    Disc(f32),
+    /// Through a cone this wide at its top, and this tall, with its point at the middle.
+    Cone(f32, f32),
+    /// Along a line, this far each way from its middle.
+    Line(Vec3),
     /// Anywhere in a box of these half sizes.
     Box(Vec3),
 }
@@ -163,6 +171,109 @@ pub struct ParticleEmitter {
     pub soft: f32,
     /// Whether it takes light from the level.
     pub lit: bool,
+    /// What happens when it hits something.
+    pub collide: ParticleCollide,
+    /// How much of its speed it keeps when it bounces.
+    pub bounce: f32,
+    /// The emitter each one starts when it hits something.
+    pub on_hit: Option<String>,
+    /// What pushes it about.
+    pub forces: Vec<ParticleForce>,
+    /// Whether it heads out from the middle of its shape, and not along `direction`.
+    pub outward: bool,
+    /// How far from the view it thins out to nothing, or 0 for no limit.
+    pub far: f32,
+}
+
+/// What a particle does when it hits something.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ParticleCollide {
+    /// Nothing: it goes through.
+    #[default]
+    None,
+    /// It comes off.
+    Bounce,
+    /// It stays where it hit.
+    Stick,
+    /// It goes.
+    Die,
+}
+
+/// Something that pushes particles about, in units a second, each second.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ParticleForce {
+    /// Towards a place, from the effect's middle, within a reach. Below 0 pushes away.
+    Attract {
+        /// Where, from the effect's middle.
+        at: Vec3,
+        /// How hard.
+        strength: f32,
+        /// How far it reaches, or 0 for as far as there is.
+        reach: f32,
+    },
+    /// Round a line through a place, from the effect's middle.
+    Vortex {
+        /// Where, from the effect's middle.
+        at: Vec3,
+        /// Which way the line goes.
+        axis: Vec3,
+        /// How hard.
+        strength: f32,
+        /// How hard it draws them in as well.
+        inward: f32,
+    },
+    /// A steady push, which comes and goes.
+    Wind {
+        /// Which way and how hard.
+        blowing: Vec3,
+        /// How much it comes and goes, from 0 to 1.
+        gusts: f32,
+    },
+}
+
+impl ParticleForce {
+    /// How this pushes something at `place`, `time` seconds in, on an effect at `middle`.
+    #[must_use]
+    pub fn push(&self, place: Vec3, middle: Vec3, time: f32) -> Vec3 {
+        match *self {
+            Self::Attract {
+                at,
+                strength,
+                reach,
+            } => {
+                let toward = middle + at - place;
+                let distance = toward.length();
+                if distance < 1.0 || (reach > 0.0 && distance > reach) {
+                    return Vec3::ZERO;
+                }
+                let share = if reach > 0.0 {
+                    1.0 - distance / reach
+                } else {
+                    1.0
+                };
+                toward * (strength * share / distance)
+            }
+            Self::Vortex {
+                at,
+                axis,
+                strength,
+                inward,
+            } => {
+                let line = axis.normalized();
+                let from = place - (middle + at);
+                let out = from - line * from.dot(line);
+                let distance = out.length();
+                if distance < 1.0 {
+                    return Vec3::ZERO;
+                }
+                line.cross(out) * (strength / distance) - out * (inward / distance)
+            }
+            Self::Wind { blowing, gusts } => {
+                let wave = (time * 0.7).sin() * 0.6 + (time * 1.9 + 1.3).sin() * 0.4;
+                blowing * (1.0 + wave * gusts)
+            }
+        }
+    }
 }
 
 impl Default for ParticleEmitter {
@@ -199,6 +310,12 @@ impl Default for ParticleEmitter {
             stretch: 0.0,
             soft: 0.0,
             lit: false,
+            collide: ParticleCollide::None,
+            bounce: 0.4,
+            on_hit: None,
+            forces: Vec::new(),
+            outward: false,
+            far: 0.0,
         }
     }
 }
@@ -210,6 +327,8 @@ pub struct EffectDef {
     pub name: String,
     /// Its emitters.
     pub emitters: Vec<ParticleEmitter>,
+    /// Emitters that go off at set times, as seconds from its start and a name.
+    pub timeline: Vec<(f32, String)>,
 }
 
 /// An effect a level has in it.

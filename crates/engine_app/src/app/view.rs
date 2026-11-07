@@ -6,7 +6,8 @@ use crate::game_screen::Intermission;
 use engine_audio::Listener;
 use engine_client::{CameraKind, CameraOrder, CameraShot, CameraSubject, followed_model};
 use engine_client::{
-    DrawnEntity, EffectDraw, EffectSource, ScreenEvent, VIEW_HEIGHT, dead_roll, view_bob, view_roll,
+    DrawnEntity, EffectDraw, EffectSource, EffectWorld, ScreenEvent, VIEW_HEIGHT, dead_roll,
+    view_bob, view_roll,
 };
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
@@ -186,7 +187,16 @@ impl World {
                 .map(|instance| instance.origin),
             None => client.and_then(|client| client.entity_origin(follows)),
         };
-        self.effects.authored_mut().update(seconds, &place);
+        let eye = self.last_eye;
+        let authored = self.effects.authored_mut();
+        authored.set_eye(eye);
+        authored.set_budget(self.effect_budget);
+        let hit = |from: Vec3, to: Vec3| client.and_then(|client| client.line_hit(from, to));
+        let world = EffectWorld {
+            place: &place,
+            hit: &hit,
+        };
+        self.effects.authored_mut().update(seconds, &world);
         let mut sources: Vec<EffectSource> = drawn
             .iter()
             .map(|entity| EffectSource {

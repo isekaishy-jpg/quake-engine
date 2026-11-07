@@ -32,7 +32,7 @@ emitter flame {
 | `blend` | `over`, as smoke, or `add`, as fire |
 | `rate`, `burst` | How many a second, and how many at once when it starts |
 | `duration`, `delay` | How long it runs, 0 for ever, and how long it waits |
-| `shape` | `point`, `ball` with `radius`, or `box` with `half_size` |
+| `shape` | `point`, `ball`, `ring` and `disc` with `radius`, `cone` with `radius` and `height`, `box` and `line` with `half_size` |
 | `life`, `speed` | One number, or the lowest and highest |
 | `direction`, `spread` | Which way they head, and how far from it, in degrees |
 | `gravity`, `drag`, `turbulence` | What moves them |
@@ -48,8 +48,39 @@ emitter flame {
 | `stretch` | Draws it out along how it moves, this long for each unit a second |
 | `soft` | How far it fades into what's behind it, in world units. Smoke wants 30 or so |
 | `lit` | `true` to take light from the level, which is what smoke wants and fire doesn't |
+| `collide` | `bounce`, `stick` or `die` when it hits something, with `bounce` for how much speed it keeps |
+| `on_hit` | An emitter that starts where it hits, by its `burst` |
+| `outward` | `true` to head away from the middle of its shape, for shock waves |
+| `far` | How far from the view it thins out to nothing |
 
 An emitter another starts doesn't run by itself. That's how emitters join into a graph: sparks that burst into embers, or a shell that ends in a flash and smoke.
+
+## Forces and timelines
+
+An emitter can have `force` blocks:
+
+```text
+force { kind = attract at = 0 0 64 strength = 300 reach = 400 }
+force { kind = vortex axis = 0 0 1 strength = 200 inward = 40 }
+force { kind = wind blowing = 80 0 0 gusts = 0.6 }
+```
+
+Below 0, `attract` pushes away. `at` is from the effect's middle.
+
+An effect can have `timeline { at = 0.5 start = sparks }`, which starts that emitter's `burst` at that time. An emitter that a timeline, `on_hit` or `on_death` starts doesn't run by itself.
+
+## From a script
+
+```lua
+local fire = engine.effect("campfire", origin, nil, { color = { 0.4, 0.6, 1 }, size = 1.5, strength = 2 })
+engine.effect_stop(fire, 2)
+```
+
+`engine.effect` gives back a handle. `engine.effect_stop` ends it: it makes no more, and what it's made fades over that many seconds. Its last argument is what this one is of its own: `color` multiplies its colour, `size` its size, and `strength` how many it makes.
+
+## How many
+
+`r_effect_budget` is how many particles can be going, up to 8192. Past about half of it, what's far from the view makes less, so what's near keeps its look.
 
 ## Pictures
 

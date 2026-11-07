@@ -2,7 +2,7 @@
 
 use engine_compile::read_effect;
 use engine_format::from_text;
-use engine_map::{EmitterShape, ParticleBlend, ParticleKind};
+use engine_map::{EmitterShape, ParticleBlend, ParticleCollide, ParticleForce, ParticleKind};
 
 /// The effect in `text`.
 fn read(text: &str) -> Result<engine_map::EffectDef, engine_compile::CompileError> {
@@ -154,4 +154,61 @@ brush { material = rock cuboid = -64 -64 -96 64 64 -64 }
         "a pack keeps it"
     );
     let _gone = std::fs::remove_dir_all(&root);
+}
+
+#[test]
+fn an_emitter_says_what_moves_it_and_what_it_does() {
+    let effect = read(
+        "format 1 effect
+timeline { at = 1.5 start = bang }
+timeline { at = 0.5 start = bang }
+emitter drop {
+    shape = ring
+    radius = 40
+    outward = true
+    collide = bounce
+    bounce = 0.7
+    on_hit = bang
+    far = 2000
+    force { kind = attract at = 0 0 50 strength = 200 reach = 300 }
+    force { kind = vortex axis = 0 1 0 strength = 90 inward = 10 }
+    force { kind = wind blowing = 10 20 0 gusts = 0.5 }
+}
+emitter bang {
+    shape = cone
+    radius = 10
+    height = 30
+    burst = 4
+}
+",
+    )
+    .expect("it reads");
+    let emitter = &effect.emitters[0];
+    assert_eq!(emitter.shape, EmitterShape::Ring(40.0));
+    assert!(emitter.outward);
+    assert_eq!(emitter.collide, ParticleCollide::Bounce);
+    assert!((emitter.bounce - 0.7).abs() < f32::EPSILON);
+    assert_eq!(emitter.on_hit.as_deref(), Some("bang"));
+    assert!((emitter.far - 2000.0).abs() < f32::EPSILON);
+    assert_eq!(emitter.forces.len(), 3);
+    assert!(matches!(emitter.forces[0], ParticleForce::Attract { reach, .. } if reach == 300.0));
+    assert!(matches!(emitter.forces[1], ParticleForce::Vortex { inward, .. } if inward == 10.0));
+    assert!(matches!(emitter.forces[2], ParticleForce::Wind { gusts, .. } if gusts == 0.5));
+    assert_eq!(effect.emitters[1].shape, EmitterShape::Cone(10.0, 30.0));
+    let times: Vec<f32> = effect.timeline.iter().map(|(at, _)| *at).collect();
+    assert_eq!(times, [0.5, 1.5], "in order");
+}
+
+#[test]
+fn what_starts_what_has_to_be_there() {
+    for text in [
+        "format 1 effect\nemitter a { on_hit = gone }\n",
+        "format 1 effect\nemitter a { on_death = gone }\n",
+        "format 1 effect\nemitter a { }\ntimeline { at = 1 start = gone }\n",
+        "format 1 effect\nemitter a { }\ntimeline { at = 1 }\n",
+        "format 1 effect\nemitter a { collide = wobble }\n",
+        "format 1 effect\nemitter a { force { kind = wobble } }\n",
+    ] {
+        assert!(read(text).is_err(), "{text}");
+    }
 }

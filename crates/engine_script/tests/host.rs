@@ -436,3 +436,50 @@ fn attaching_to_what_is_not_there_says_so() {
     let said = prints(&game);
     assert!(said.iter().any(|line| line.contains("nobody")), "{said:?}");
 }
+
+#[test]
+fn a_script_starts_an_effect_with_its_own_settings_and_stops_it() {
+    let (game, _simulation) = game("");
+    game.exec(
+        r#"
+        local first = engine.effect("smoke", vector.create(1, 2, 3))
+        local second = engine.effect("smoke", vector.create(4, 5, 6), nil, {
+            color = { 1, 0.5, 0.25 },
+            size = 2,
+            strength = 3,
+        })
+        engine.effect_stop(second, 1.5)
+        print(first ~= second and "different" or "same")
+        "#,
+    )
+    .expect("runs");
+    let outbox = game.take_outbox();
+    assert_eq!(outbox.effects.len(), 3);
+    let engine_core::entity::Effect::Named {
+        handle: first,
+        settings,
+        ..
+    } = outbox.effects[0]
+    else {
+        panic!("{:?}", outbox.effects[0]);
+    };
+    assert_eq!(settings, [1.0; 5], "with nothing said");
+    let engine_core::entity::Effect::Named {
+        handle: second,
+        settings,
+        ..
+    } = outbox.effects[1]
+    else {
+        panic!("{:?}", outbox.effects[1]);
+    };
+    assert_eq!(settings, [1.0, 0.5, 0.25, 2.0, 3.0]);
+    assert_ne!(first, second);
+    assert_ne!(first, 0);
+    assert_eq!(
+        outbox.effects[2],
+        engine_core::entity::Effect::NamedStops {
+            handle: second,
+            seconds: 1.5
+        }
+    );
+}

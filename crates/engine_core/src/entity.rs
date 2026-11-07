@@ -140,6 +140,17 @@ pub enum Effect {
         origin: Vec3,
         /// The entity it follows, or 0 for none.
         entity: u64,
+        /// What a script calls it, or 0.
+        handle: u32,
+        /// Its own colour, size and strength, which multiply what its effect says.
+        settings: [f32; 5],
+    },
+    /// A named effect stopping.
+    NamedStops {
+        /// What a script calls it.
+        handle: u32,
+        /// How long what it's made takes to fade.
+        seconds: f32,
     },
     /// A puff of particles.
     Particles {

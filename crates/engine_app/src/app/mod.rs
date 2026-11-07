@@ -123,6 +123,8 @@ pub(crate) struct World {
     flames: Flames,
     /// How many moving lights a frame can have.
     live_light_budget: usize,
+    /// How many of effects' particles can be going.
+    effect_budget: usize,
     /// The movement buttons held.
     pub(crate) buttons: Buttons,
     /// Key bindings.
@@ -593,6 +595,7 @@ impl Engine {
         console.register_cvar("r_rays", "3", saved);
         console.register_cvar("r_detail_distance", "3000", saved);
         console.register_cvar("r_live_lights", "32", saved);
+        console.register_cvar("r_effect_budget", "8192", saved);
         console.register_cvar("r_live_shadows", "1", saved);
         console.register_cvar("r_msaa", "1", saved);
         console.register_cvar("r_edges", "0", saved);
@@ -657,6 +660,7 @@ impl Engine {
                 gates: StencilGates::default(),
                 flames: Flames::default(),
                 live_light_budget: 32,
+                effect_budget: 8192,
                 buttons: Buttons::default(),
                 bindings: Bindings::new(),
                 map_time: 0.0,
@@ -795,6 +799,13 @@ impl Engine {
         )]
         let live_budget = self.cvar_number("r_live_lights").clamp(0.0, 64.0) as usize;
         self.world.live_light_budget = live_budget;
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "clamped to a count of particles"
+        )]
+        let effect_budget = self.cvar_number("r_effect_budget").clamp(1.0, 8192.0) as usize;
+        self.world.effect_budget = effect_budget;
         if let Some(renderer) = &mut self.world.renderer {
             renderer.set_post(post);
             if let Err(error) = renderer.set_antialiasing(samples) {

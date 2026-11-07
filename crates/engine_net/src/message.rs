@@ -88,6 +88,8 @@ const TAG_GRAVITY: u8 = 26;
 
 /// An effect an author described.
 const TAG_NAMED_EFFECT: u8 = 27;
+/// A named effect stopping.
+const TAG_NAMED_STOPS: u8 = 58;
 /// Changes camera.
 const TAG_CAMERA: u8 = 28;
 
@@ -601,11 +603,22 @@ impl ServerMessage {
                 effect,
                 origin,
                 entity,
+                handle,
+                settings,
             }) => {
                 out.push(TAG_NAMED_EFFECT);
                 out.extend_from_slice(&effect.to_le_bytes());
                 put_vec3(&mut out, *origin);
                 out.extend_from_slice(&entity.to_le_bytes());
+                out.extend_from_slice(&handle.to_le_bytes());
+                for part in settings {
+                    out.extend_from_slice(&part.to_le_bytes());
+                }
+            }
+            Self::Effect(Effect::NamedStops { handle, seconds }) => {
+                out.push(TAG_NAMED_STOPS);
+                out.extend_from_slice(&handle.to_le_bytes());
+                out.extend_from_slice(&seconds.to_le_bytes());
             }
             Self::ModelName { number, name } => {
                 out.push(TAG_MODEL_NAME);
@@ -730,6 +743,22 @@ impl ServerMessage {
                     effect: reader.u32()?,
                     origin: reader.vec3()?,
                     entity: reader.u64()?,
+                    handle: reader.u32()?,
+                    settings: [
+                        reader.f32()?,
+                        reader.f32()?,
+                        reader.f32()?,
+                        reader.f32()?,
+                        reader.f32()?,
+                    ],
+                };
+                reader.finished().then_some(Self::Effect(effect))
+            }
+            TAG_NAMED_STOPS => {
+                let mut reader = Reader { bytes: rest };
+                let effect = Effect::NamedStops {
+                    handle: reader.u32()?,
+                    seconds: reader.f32()?,
                 };
                 reader.finished().then_some(Self::Effect(effect))
             }

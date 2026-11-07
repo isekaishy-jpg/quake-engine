@@ -3,7 +3,8 @@
 use engine_core::math::Vec3;
 use engine_format::{Block, Document, Value};
 use engine_map::{
-    ColorCurve, Curve, EffectDef, EmitterShape, ParticleBlend, ParticleEmitter, ParticleKind,
+    ColorCurve, Curve, EffectDef, EmitterShape, ParticleBlend, ParticleCollide, ParticleEmitter,
+    ParticleForce, ParticleKind,
 };
 
 use crate::error::CompileError;
@@ -90,6 +91,30 @@ fn flipbook_of(block: &Block) -> [u32; 2] {
     }
 }
 
+/// The force in `block`.
+fn read_force(block: &Block) -> Result<ParticleForce, CompileError> {
+    let at = vector(block, "at", Vec3::ZERO);
+    let strength = number(block, "strength", 100.0);
+    match block.get("kind").and_then(Value::text).unwrap_or("") {
+        "attract" => Ok(ParticleForce::Attract {
+            at,
+            strength,
+            reach: number(block, "reach", 0.0),
+        }),
+        "vortex" => Ok(ParticleForce::Vortex {
+            at,
+            axis: vector(block, "axis", Vec3::new(0.0, 0.0, 1.0)),
+            strength,
+            inward: number(block, "inward", 0.0),
+        }),
+        "wind" => Ok(ParticleForce::Wind {
+            blowing: vector(block, "blowing", Vec3::new(100.0, 0.0, 0.0)),
+            gusts: number(block, "gusts", 0.0),
+        }),
+        other => Err(CompileError::Bad(format!("no force is called {other:?}"))),
+    }
+}
+
 /// The emitter in `block`.
 fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
     let text = |key: &str| block.get(key).and_then(Value::text);
@@ -110,6 +135,10 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         "point" => EmitterShape::Point,
         "ball" => EmitterShape::Ball(number(block, "radius", 16.0)),
         "box" => EmitterShape::Box(vector(block, "half_size", Vec3::new(16.0, 16.0, 16.0))),
+        "ring" => EmitterShape::Ring(number(block, "radius", 16.0)),
+        "disc" => EmitterShape::Disc(number(block, "radius", 16.0)),
+        "cone" => EmitterShape::Cone(number(block, "radius", 16.0), number(block, "height", 32.0)),
+        "line" => EmitterShape::Line(vector(block, "half_size", Vec3::new(16.0, 0.0, 0.0))),
         other => return Err(CompileError::Bad(format!("no shape is called {other}"))),
     };
     let life = range(block, "life", 1.0);
@@ -154,6 +183,21 @@ fn read_emitter(block: &Block) -> Result<ParticleEmitter, CompileError> {
         stretch: number(block, "stretch", 0.0),
         soft: number(block, "soft", 0.0),
         lit: block.get("lit").and_then(Value::flag) == Some(true),
+        collide: match text("collide").unwrap_or("none") {
+            "none" => ParticleCollide::None,
+            "bounce" => ParticleCollide::Bounce,
+            "stick" => ParticleCollide::Stick,
+            "die" => ParticleCollide::Die,
+            other => return Err(CompileError::Bad(format!("no collide is called {other}"))),
+        },
+        bounce: number(block, "bounce", 0.4),
+        on_hit: text("on_hit").map(str::to_owned),
+        forces: block
+            .children_of("force")
+            .map(read_force)
+            .collect::<Result<Vec<_>, _>>()?,
+        outward: block.get("outward").and_then(Value::flag) == Some(true),
+        far: number(block, "far", 0.0),
         ..ParticleEmitter::default()
     })
 }
@@ -173,10 +217,23 @@ pub fn read_effect(name: &str, document: &Document) -> Result<EffectDef, Compile
             read_emitter(block).map_err(|error| CompileError::Bad(format!("{name}: {error}")))?,
         );
     }
-    for emitter in &emitters {
-        if let Some(next) = &emitter.on_death
-            && emitters.iter().all(|other| other.name != *next)
-        {
+    let mut timeline = Vec::new();
+    for block in document.blocks_of("timeline") {
+        let at = number(block, "at", 0.0);
+        let start = block.get("start").and_then(Value::text);
+        let start = start.ok_or_else(|| {
+            CompileError::Bad(format!("{name}: a timeline has to say what it starts"))
+        })?;
+        timeline.push((at, start.to_owned()));
+    }
+    timeline.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let started = emitters
+        .iter()
+        .flat_map(|emitter| [&emitter.on_death, &emitter.on_hit])
+        .flatten()
+        .chain(timeline.iter().map(|(_, start)| start));
+    for next in started {
+        if emitters.iter().all(|other| other.name != *next) {
             return Err(CompileError::Bad(format!(
                 "{name}: no emitter is called {next}"
             )));
@@ -185,5 +242,6 @@ pub fn read_effect(name: &str, document: &Document) -> Result<EffectDef, Compile
     Ok(EffectDef {
         name: name.to_owned(),
         emitters,
+        timeline,
     })
 }

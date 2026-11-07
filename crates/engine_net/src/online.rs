@@ -23,7 +23,7 @@ use crate::transport::Transport;
 
 /// Tells this game apart from others on the same port. It changes when the
 /// messages do.
-const PROTOCOL_ID: u64 = 0x5155_414B_4531_0007;
+const PROTOCOL_ID: u64 = 0x5155_414B_4531_0008;
 
 /// The port used when none is given, from `DEFAULTnet_hostport`.
 pub const DEFAULT_PORT: u16 = 26000;

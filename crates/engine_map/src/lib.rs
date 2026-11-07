@@ -29,8 +29,8 @@ mod zone;
 
 pub use alias::{AliasCorner, AliasFrame, AliasModel, AliasVertex};
 pub use effect::{
-    ColorCurve, Curve, EffectDef, EffectPoint, EmitterShape, ParticleBlend, ParticleEmitter,
-    ParticleKind,
+    ColorCurve, Curve, EffectDef, EffectPoint, EmitterShape, ParticleBlend, ParticleCollide,
+    ParticleEmitter, ParticleForce, ParticleKind,
 };
 pub use emitter::Emitter;
 pub use live::{LiveLightSource, along_path};

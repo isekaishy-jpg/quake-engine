@@ -11,7 +11,7 @@ use engine_core::math::{Vec3, view_axes};
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS};
 use engine_core::sound::SoundStart;
 
-use crate::effect_system::EffectSystem;
+use crate::effect_system::{EffectSettings, EffectSystem};
 use crate::particles::{Particles, Trail};
 
 /// The most dynamic lights at once.
@@ -326,10 +326,20 @@ impl Effects {
                 effect,
                 origin,
                 entity,
+                handle,
+                settings,
             } => {
                 let follows = (entity != 0).then_some(entity);
-                self.authored.start(effect, origin, follows, false);
+                let [red, green, blue, size, strength] = settings;
+                let own = EffectSettings {
+                    color: [red, green, blue],
+                    size,
+                    strength,
+                };
+                self.authored
+                    .start_as(effect, origin, follows, false, (handle, own));
             }
+            Effect::NamedStops { handle, seconds } => self.authored.stop(handle, seconds),
             Effect::Outline { low, high } => self.particles.outline(low, high, REWOUND_COLOR),
             Effect::Particles {
                 origin,

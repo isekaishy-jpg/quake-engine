@@ -145,6 +145,27 @@ impl From<mlua::Error> for ScriptError {
     }
 }
 
+/// What one instance of an effect says of itself, from a script's table: `color`, as three
+/// numbers from 0 to 1, `size` and `strength`.
+fn effect_settings(own: Option<&Table>) -> mlua::Result<[f32; 5]> {
+    let mut settings = [1.0_f32; 5];
+    let Some(own) = own else {
+        return Ok(settings);
+    };
+    if let Some(color) = own.get::<Option<Table>>("color")? {
+        for (at, slot) in settings.iter_mut().take(3).enumerate() {
+            *slot = color.get::<f32>(at + 1)?;
+        }
+    }
+    if let Some(size) = own.get::<Option<f32>>("size")? {
+        settings[3] = size;
+    }
+    if let Some(strength) = own.get::<Option<f32>>("strength")? {
+        settings[4] = strength;
+    }
+    Ok(settings)
+}
+
 /// What scripts asked for, for the server to pass on.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct Outbox {
@@ -925,18 +946,46 @@ impl Game {
             )?,
         )?;
         let out = Rc::clone(outbox);
+        let handles = Rc::new(Cell::new(0_u32));
         engine.set(
             "effect",
             lua.create_function(
-                move |_, (name, origin, entity): (String, Vector, Option<f64>)| {
+                move |_,
+                      (name, origin, entity, own): (
+                    String,
+                    Vector,
+                    Option<f64>,
+                    Option<Table>,
+                )| {
+                    handles.set(handles.get().wrapping_add(1).max(1));
                     out.borrow_mut().effects.push(Effect::Named {
                         effect: effect_id(&name),
                         origin: to_vec3(origin),
                         entity: entity.map_or(0, |id| id_from(id).to_bits()),
+                        handle: handles.get(),
+                        settings: effect_settings(own.as_ref())?,
                     });
-                    Ok(())
+                    Ok(f64::from(handles.get()))
                 },
             )?,
+        )?;
+        let out = Rc::clone(outbox);
+        engine.set(
+            "effect_stop",
+            lua.create_function(move |_, (handle, seconds): (f64, Option<f64>)| {
+                #[expect(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "it came from engine.effect"
+                )]
+                let handle = handle as u32;
+                #[expect(clippy::cast_possible_truncation, reason = "seconds fit f32")]
+                let seconds = seconds.unwrap_or(0.0) as f32;
+                out.borrow_mut()
+                    .effects
+                    .push(Effect::NamedStops { handle, seconds });
+                Ok(())
+            })?,
         )?;
         let out = Rc::clone(outbox);
         engine.set(

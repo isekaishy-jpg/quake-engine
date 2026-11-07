@@ -707,6 +707,14 @@ impl Client {
         self.shows_self = shows;
     }
 
+    /// What the line from `from` to `to` hits first, as a place and which way it faces, for what
+    /// a client draws and nothing depends on.
+    #[must_use]
+    pub fn line_hit(&self, from: Vec3, to: Vec3) -> Option<(Vec3, Vec3)> {
+        let trace = self.world.with(&self.instances).trace(from, to);
+        (trace.fraction < 1.0 && !trace.start_solid).then_some((trace.end, trace.normal))
+    }
+
     /// How far a line from `start` along `way` gets, up to `most`, past the world and moving
     /// models.
     #[must_use]

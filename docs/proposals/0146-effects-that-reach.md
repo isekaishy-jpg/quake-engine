@@ -71,4 +71,12 @@ Status: proposed, 2026-11-07, the [work list](../research/work-list.md), items 7
 - **Graphs** gained `particle`, with `tinted` and `life`. `vendor/vulkane` gained `premultiplied_blending`, as its other blends are engine extensions.
 - **Every test here was seen failing** with its bug put back, fourteen in all.
 
+### What moves them, and control (86 to 89, 91 to 93)
+
+- **Collision** is a line trace for each particle that asks for it, with land, doors and all, through `Client::line_hit`. A mark that `stick`s faces what it hit, so `kind = decal` with `collide = stick` is a mark on any wall.
+- **Forces** live in `engine_map`, so compute can be held to the same sums.
+- **A handle** comes from the script's side and goes in the message, as an effect starts on every client. `Effect::Named` carries it and the settings, so the protocol's gone up by one.
+- **The budget** starts to bite past 60%. What's within 2048 units keeps most of its rate, and what's further gives way first.
+- **Mesh shapes** come with mesh particles.
+
 Filled in as each part lands.

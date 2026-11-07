@@ -262,6 +262,13 @@ fn a_named_effect_comes_through() {
         effect: 1234,
         origin: Vec3::new(1.0, 2.0, 3.0),
         entity: 9,
+        handle: 77,
+        settings: [0.25, 0.5, 0.75, 2.0, 3.0],
     });
     assert_eq!(ServerMessage::decode(&message.encode()), Some(message));
+    let stopping = ServerMessage::Effect(Effect::NamedStops {
+        handle: 77,
+        seconds: 1.5,
+    });
+    assert_eq!(ServerMessage::decode(&stopping.encode()), Some(stopping));
 }

@@ -6,10 +6,42 @@ use std::sync::Arc;
 
 use engine_core::entity::effect_id;
 use engine_core::math::Vec3;
-use engine_map::{EffectDef, EmitterShape, ParticleEmitter, ParticleKind};
+use engine_map::{EffectDef, EmitterShape, ParticleCollide, ParticleEmitter, ParticleKind};
 
 /// The most particles the CPU looks after.
 pub const MAX_EFFECT_PARTICLES: usize = 8192;
+
+/// How much of the budget can go before what's far off starts to make less.
+const BUDGET_EASY: f32 = 0.6;
+
+/// What effects need of the world around them.
+pub struct EffectWorld<'a> {
+    /// Where an entity is now.
+    pub place: &'a dyn Fn(u64) -> Option<Vec3>,
+    /// What a line hits first, as a place and which way it faces.
+    pub hit: &'a dyn Fn(Vec3, Vec3) -> Option<(Vec3, Vec3)>,
+}
+
+/// One instance's own settings, which multiply what its effect says.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct EffectSettings {
+    /// Its colour.
+    pub color: [f32; 3],
+    /// Its size.
+    pub size: f32,
+    /// How many it makes.
+    pub strength: f32,
+}
+
+impl Default for EffectSettings {
+    fn default() -> Self {
+        Self {
+            color: [1.0; 3],
+            size: 1.0,
+            strength: 1.0,
+        }
+    }
+}
 
 /// The most effects going at once.
 const MAX_EFFECTS: usize = 256;
@@ -119,6 +151,16 @@ struct Live {
     rotation: f32,
     /// How fast it turns, in radians a second.
     spin: f32,
+    /// The handle of what started it, or 0.
+    owner: u32,
+    /// The middle of what started it, when it did, for forces to go by.
+    middle: Vec3,
+    /// What that instance says.
+    settings: EffectSettings,
+    /// How long it has left, and how long it had, once it's fading.
+    fading: Option<(f32, f32)>,
+    /// Whether it has stuck to something.
+    stuck: bool,
 }
 
 /// An effect that's going.
@@ -143,6 +185,14 @@ struct Going {
     seed: u32,
     /// Whether it goes on until it's told to stop.
     lasting: bool,
+    /// What a script calls it, or 0.
+    handle: u32,
+    /// What this one says of itself.
+    settings: EffectSettings,
+    /// Whether it's been told to stop, so that it makes no more.
+    stopped: bool,
+    /// How many of its timeline have gone off.
+    timeline_done: usize,
 }
 
 /// What an effect follows to go with `model`. A model isn't an entity, so it has numbers of its
@@ -176,6 +226,12 @@ pub struct EffectSystem {
     seed: u32,
     /// The world's gravity.
     gravity: f32,
+    /// Where the view is, for what thins out with distance.
+    eye: Vec3,
+    /// How many particles can be going before what's far off makes less.
+    budget: usize,
+    /// How long it's been going, for what comes and goes.
+    time: f32,
 }
 
 impl Default for EffectSystem {
@@ -186,6 +242,9 @@ impl Default for EffectSystem {
             live: Vec::new(),
             seed: 0x2545_f491,
             gravity: 800.0,
+            eye: Vec3::ZERO,
+            budget: MAX_EFFECT_PARTICLES,
+            time: 0.0,
         }
     }
 }
@@ -215,6 +274,40 @@ impl EffectSystem {
     /// Sets the world's gravity.
     pub const fn set_gravity(&mut self, gravity: f32) {
         self.gravity = gravity;
+    }
+
+    /// Says where the view is, which is what's near.
+    pub const fn set_eye(&mut self, eye: Vec3) {
+        self.eye = eye;
+    }
+
+    /// Sets how many particles can be going, from 1 to the most there can be.
+    pub fn set_budget(&mut self, budget: usize) {
+        self.budget = budget.clamp(1, MAX_EFFECT_PARTICLES);
+    }
+
+    /// How many effects are going.
+    #[must_use]
+    pub const fn going(&self) -> usize {
+        self.going.len()
+    }
+
+    /// Stops the effect called `handle`: it makes no more, and what it's made fades over `seconds`.
+    pub fn stop(&mut self, handle: u32, seconds: f32) {
+        if handle == 0 {
+            return;
+        }
+        for effect in self.going.iter_mut().filter(|e| e.handle == handle) {
+            effect.stopped = true;
+            effect.lasting = false;
+        }
+        if seconds <= 0.0 {
+            self.live.retain(|particle| particle.owner != handle);
+            return;
+        }
+        for particle in self.live.iter_mut().filter(|p| p.owner == handle) {
+            particle.fading = Some((seconds, seconds));
+        }
     }
 
     /// How many particles are alive.
@@ -248,6 +341,19 @@ impl EffectSystem {
     /// or goes on until the level does if `lasting`. With `follows`, it goes where
     /// that entity does.
     pub fn start(&mut self, id: u32, origin: Vec3, follows: Option<u64>, lasting: bool) {
+        self.start_as(id, origin, follows, lasting, (0, EffectSettings::default()));
+    }
+
+    /// Starts the effect with the hash `id`, as [`Self::start`] does, with a handle to stop it by
+    /// and settings of its own.
+    pub fn start_as(
+        &mut self,
+        id: u32,
+        origin: Vec3,
+        follows: Option<u64>,
+        lasting: bool,
+        (handle, settings): (u32, EffectSettings),
+    ) {
         let Some(def) = self.known.get(&id).cloned() else {
             return;
         };
@@ -266,11 +372,21 @@ impl EffectSystem {
             rest: None,
             seed: self.seed,
             lasting,
+            handle,
+            settings,
+            stopped: false,
+            timeline_done: 0,
         });
     }
 
-    /// Starts one particle of `emitter`.
-    fn spawn(&mut self, effect: &Arc<EffectDef>, number: usize, origin: Vec3) {
+    /// Starts one particle of `emitter`, for an instance with this `owner` and these settings.
+    fn spawn(
+        &mut self,
+        effect: &Arc<EffectDef>,
+        number: usize,
+        origin: Vec3,
+        (owner, settings): (u32, EffectSettings),
+    ) {
         if self.live.len() >= MAX_EFFECT_PARTICLES {
             return;
         }
@@ -286,8 +402,14 @@ impl EffectSystem {
             emitter.kind,
         );
         let (rotation, spin) = (emitter.rotation, emitter.spin);
-        let start = origin + self.shape_offset(shape);
-        let heading = self.heading(direction, spread);
+        let outward = emitter.outward;
+        let offset = self.shape_offset(shape);
+        let start = origin + offset;
+        let heading = if outward && offset.length() > 0.001 {
+            offset.normalized()
+        } else {
+            self.heading(direction, spread)
+        };
         let speed = self.between(speed);
         let life = self.between(life);
         let rotation = self.between(rotation).to_radians();
@@ -307,6 +429,11 @@ impl EffectSystem {
             facing: Vec3::new(0.0, 0.0, 1.0),
             rotation,
             spin,
+            owner,
+            middle: origin,
+            settings,
+            fading: None,
+            stuck: false,
         });
     }
 
@@ -318,6 +445,23 @@ impl EffectSystem {
                 let direction = self.heading(Vec3::new(0.0, 0.0, 1.0), 180.0);
                 direction * (radius * self.random().cbrt())
             }
+            EmitterShape::Ring(radius) => {
+                let angle = self.random() * std::f32::consts::TAU;
+                Vec3::new(angle.cos() * radius, angle.sin() * radius, 0.0)
+            }
+            EmitterShape::Disc(radius) => {
+                let angle = self.random() * std::f32::consts::TAU;
+                let out = radius * self.random().sqrt();
+                Vec3::new(angle.cos() * out, angle.sin() * out, 0.0)
+            }
+            EmitterShape::Cone(radius, height) => {
+                let angle = self.random() * std::f32::consts::TAU;
+                // Evenly by volume, which there's more of towards the top.
+                let up = self.random().cbrt();
+                let out = radius * up * self.random().sqrt();
+                Vec3::new(angle.cos() * out, angle.sin() * out, height * up)
+            }
+            EmitterShape::Line(half) => half * (self.random() * 2.0 - 1.0),
             EmitterShape::Box(half) => Vec3::new(
                 half.x * (self.random() * 2.0 - 1.0),
                 half.y * (self.random() * 2.0 - 1.0),
@@ -345,28 +489,55 @@ impl EffectSystem {
 
     /// Moves everything on by `seconds`. `place` says where an entity is now, and
     /// `ground` how far down something is from a point, for a mark to land on.
-    pub fn update(&mut self, seconds: f32, place: &dyn Fn(u64) -> Option<Vec3>) {
+    pub fn update(&mut self, seconds: f32, world: &EffectWorld<'_>) {
+        self.time += seconds;
         let mut going = std::mem::take(&mut self.going);
         for effect in &mut going {
-            if let Some(origin) = effect.follows.and_then(place) {
+            if let Some(origin) = effect.follows.and_then(world.place) {
                 effect.origin = effect.rest.map_or(origin, |rest| rest + origin);
             }
             effect.age += seconds;
             let def = Arc::clone(&effect.def);
+            if effect.stopped {
+                continue;
+            }
             for (number, emitter) in def.emitters.iter().enumerate() {
                 self.run_emitter(effect, &def, number, emitter, seconds);
             }
+            self.run_timeline(effect, &def);
         }
-        going.retain(|effect| effect.lasting || !effect_is_over(effect));
+        going.retain(|effect| effect.lasting || !(effect.stopped || effect_is_over(effect)));
         self.going = going;
         let gravity = self.gravity;
         let mut ended = Vec::new();
         let time_seed = self.seed;
+        let time = self.time;
         for (number, particle) in (0_u32..).zip(self.live.iter_mut()) {
             let Some(emitter) = particle.effect.emitters.get(particle.emitter) else {
                 continue;
             };
             particle.age += seconds;
+            if let Some((left, _)) = &mut particle.fading {
+                *left -= seconds;
+            }
+            if particle.stuck {
+                if particle.age >= particle.life
+                    && let Some(next) = &emitter.on_death
+                {
+                    let from = (particle.owner, particle.settings);
+                    ended.push((
+                        Arc::clone(&particle.effect),
+                        next.clone(),
+                        particle.origin,
+                        from,
+                    ));
+                }
+                continue;
+            }
+            for force in &emitter.forces {
+                let push = force.push(particle.origin, particle.middle, time);
+                particle.velocity = particle.velocity + push * seconds;
+            }
             particle.velocity.z -= gravity * emitter.gravity * seconds;
             particle.velocity = particle.velocity * (1.0 - emitter.drag * seconds).max(0.0);
             if emitter.turbulence > 0.0 {
@@ -376,8 +547,38 @@ impl EffectSystem {
                 let push = Vec3::new(noise(1), noise(2), noise(3));
                 particle.velocity = particle.velocity + push * (emitter.turbulence * seconds * 8.0);
             }
+            let was = particle.origin;
             particle.origin = particle.origin + particle.velocity * seconds;
             particle.rotation += particle.spin * seconds;
+            if emitter.collide != ParticleCollide::None
+                && let Some((at, normal)) = (world.hit)(was, particle.origin)
+            {
+                // A touch off the surface, so that it isn't in it.
+                particle.origin = at + normal * 0.25;
+                particle.facing = normal;
+                match emitter.collide {
+                    ParticleCollide::Bounce => {
+                        let into = particle.velocity.dot(normal);
+                        particle.velocity =
+                            (particle.velocity - normal * (into * 2.0)) * emitter.bounce;
+                    }
+                    ParticleCollide::Stick => {
+                        particle.velocity = Vec3::ZERO;
+                        particle.stuck = true;
+                    }
+                    ParticleCollide::Die => particle.age = particle.life,
+                    ParticleCollide::None => {}
+                }
+                if let Some(next) = &emitter.on_hit {
+                    let from = (particle.owner, particle.settings);
+                    ended.push((
+                        Arc::clone(&particle.effect),
+                        next.clone(),
+                        particle.origin,
+                        from,
+                    ));
+                }
+            }
             if emitter.kind == ParticleKind::Ribbon {
                 particle.trail.push(particle.origin);
                 if particle.trail.len() > RIBBON_POINTS {
@@ -387,19 +588,67 @@ impl EffectSystem {
             if particle.age >= particle.life
                 && let Some(next) = &emitter.on_death
             {
-                ended.push((Arc::clone(&particle.effect), next.clone(), particle.origin));
+                let from = (particle.owner, particle.settings);
+                ended.push((
+                    Arc::clone(&particle.effect),
+                    next.clone(),
+                    particle.origin,
+                    from,
+                ));
             }
         }
-        self.live.retain(|particle| particle.age < particle.life);
-        for (effect, name, origin) in ended {
-            let found = effect.emitters.iter().position(|e| e.name == name);
-            if let Some(number) = found {
-                let burst = effect.emitters[number].burst.max(1);
-                for _ in 0..burst {
-                    self.spawn(&effect, number, origin);
-                }
+        self.live.retain(|particle| {
+            particle.age < particle.life && particle.fading.is_none_or(|(left, _)| left > 0.0)
+        });
+        for (effect, name, origin, from) in ended {
+            self.burst_of(&effect, &name, origin, from);
+        }
+    }
+
+    /// Starts `name`'s burst, or one of it if it has none.
+    fn burst_of(
+        &mut self,
+        effect: &Arc<EffectDef>,
+        name: &str,
+        origin: Vec3,
+        from: (u32, EffectSettings),
+    ) {
+        let found = effect.emitters.iter().position(|e| e.name == name);
+        if let Some(number) = found {
+            let burst = effect.emitters[number].burst.max(1);
+            for _ in 0..burst {
+                self.spawn(effect, number, origin, from);
             }
         }
+    }
+
+    /// Sets off what `effect`'s timeline has come to.
+    fn run_timeline(&mut self, effect: &mut Going, def: &Arc<EffectDef>) {
+        while let Some((at, name)) = def.timeline.get(effect.timeline_done) {
+            if *at > effect.age {
+                break;
+            }
+            effect.timeline_done += 1;
+            self.burst_of(def, name, effect.origin, (effect.handle, effect.settings));
+        }
+    }
+
+    /// How much of what `emitter` would make it makes, at `origin`: it thins out towards `far`,
+    /// and with the budget going, what's far off gives way first.
+    fn share_made(&self, emitter: &ParticleEmitter, origin: Vec3) -> f32 {
+        let away = (origin - self.eye).length();
+        let mut share = 1.0;
+        if emitter.far > 0.0 {
+            share *= (1.0 - (away - emitter.far * 0.5) / (emitter.far * 0.5)).clamp(0.0, 1.0);
+        }
+        #[expect(clippy::cast_precision_loss, reason = "counts are small")]
+        let used = self.live.len() as f32 / self.budget as f32;
+        if used > BUDGET_EASY {
+            let tight = ((used - BUDGET_EASY) / (1.0 - BUDGET_EASY)).clamp(0.0, 1.0);
+            let near = (1.0 - away / 2048.0).clamp(0.0, 1.0);
+            share *= 1.0 - tight * (1.0 - near * 0.8);
+        }
+        share
     }
 
     /// Runs `emitter` of `effect` for `seconds`.
@@ -418,16 +667,25 @@ impl EffectSystem {
         if emitter.duration > 0.0 && running > emitter.duration {
             return;
         }
+        let share = self.share_made(emitter, effect.origin) * effect.settings.strength;
+        let from = (effect.handle, effect.settings);
         if !effect.burst[number] {
             effect.burst[number] = true;
-            for _ in 0..emitter.burst {
-                self.spawn(def, number, effect.origin);
+            #[expect(clippy::cast_precision_loss, reason = "counts are small")]
+            let many = emitter.burst as f32 * share;
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a count of particles"
+            )]
+            for _ in 0..many.round().max(0.0) as u32 {
+                self.spawn(def, number, effect.origin, from);
             }
         }
-        effect.owed[number] += emitter.rate * seconds;
+        effect.owed[number] += emitter.rate * seconds * share;
         while effect.owed[number] >= 1.0 {
             effect.owed[number] -= 1.0;
-            self.spawn(def, number, effect.origin);
+            self.spawn(def, number, effect.origin, from);
         }
     }
 
@@ -443,13 +701,19 @@ impl EffectSystem {
             };
             let at = particle.age / particle.life;
             let mut color = emitter.color.at(at);
+            for (part, own) in color.iter_mut().zip(particle.settings.color) {
+                *part *= own;
+            }
+            if let Some((left, whole)) = particle.fading {
+                color[3] *= (left / whole).clamp(0.0, 1.0);
+            }
             if emitter.lit {
                 let here = light(particle.origin);
                 for (part, light) in color.iter_mut().zip(here) {
                     *part *= light;
                 }
             }
-            let size = emitter.size.at(at);
+            let size = emitter.size.at(at) * particle.settings.size;
             let adds = emitter.blend == engine_map::ParticleBlend::Add;
             let look = EffectDraw {
                 origin: particle.origin,
@@ -523,8 +787,13 @@ impl EffectSystem {
                 )]
                 let count = (emitter.rate * life).ceil().max(0.0) as u32 + emitter.burst;
                 let radius = match emitter.shape {
-                    EmitterShape::Ball(radius) => radius,
-                    EmitterShape::Box(half) => half.x.max(half.y).max(half.z),
+                    EmitterShape::Ball(radius)
+                    | EmitterShape::Ring(radius)
+                    | EmitterShape::Disc(radius)
+                    | EmitterShape::Cone(radius, _) => radius,
+                    EmitterShape::Box(half) | EmitterShape::Line(half) => {
+                        half.x.max(half.y).max(half.z)
+                    }
                     EmitterShape::Point => 0.0,
                 };
                 out.push(GpuEmitter {
@@ -567,16 +836,21 @@ fn frame_of(emitter: &ParticleEmitter, age: f32, share: f32) -> f32 {
 
 /// Whether another emitter starts `emitter`, so it doesn't run by itself.
 fn started_by_another(def: &EffectDef, emitter: &ParticleEmitter) -> bool {
-    def.emitters
-        .iter()
-        .any(|other| other.on_death.as_deref() == Some(emitter.name.as_str()))
+    let name = Some(emitter.name.as_str());
+    def.timeline.iter().any(|(_, start)| *start == emitter.name)
+        || def
+            .emitters
+            .iter()
+            .any(|other| other.on_death.as_deref() == name || other.on_hit.as_deref() == name)
 }
 
 /// Whether every emitter of `effect` has finished.
 fn effect_is_over(effect: &Going) -> bool {
-    effect.def.emitters.iter().all(|emitter| {
-        let over = emitter.delay + emitter.duration;
-        let endless = emitter.duration <= 0.0 && emitter.rate > 0.0;
-        !endless && effect.age > over + emitter.life[1]
-    })
+    let timeline_done = effect.timeline_done >= effect.def.timeline.len();
+    timeline_done
+        && effect.def.emitters.iter().all(|emitter| {
+            let over = emitter.delay + emitter.duration;
+            let endless = emitter.duration <= 0.0 && emitter.rate > 0.0;
+            !endless && effect.age > over + emitter.life[1]
+        })
 }
