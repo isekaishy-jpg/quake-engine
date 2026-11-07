@@ -24,7 +24,7 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
-| 15. The editor | 155 to 162, 39 to 42, 44 to 55, 61, 15 |
+| 15. The editor | 155 to 162, 169, 170, 39 to 42, 44 to 55, 61, 15 |
 | 16. Doors | 151 |
 | 17. Artifacts and the test map | 133 to 148, 124 finished, 18, 19, 20, 21 |
 | 18. Review | 152, then circular quality and bug rounds, and a performance sweep |
@@ -35,7 +35,7 @@ Too much space went and too many maps were recompiled in the sprint. `target` is
 
 | # | Item | Waits on |
 |---|---|---|
-| 124 | One small test map that covers all the things, for everyday testing. It's a real level, not a room of patterns, and it grows as features land. Small is relative: a lift still needs another level to go down to. But it's there to test features, with no gameplay areas that test nothing. Each area earns its place, such as mesh terrain coming over flat slabs of old stone, or meeting the flat brush floor of a building. Other levels are baked at milestones, or when a change really touches them | Comes first |
+| 124 | One small test map that covers all the things, for everyday testing. It's a real level, not a room of patterns, and it grows as features land. Small is relative: a lift still needs another level to go down to. But it's there to test features, with no gameplay areas that test nothing. Each area earns its place, such as mesh terrain coming over flat slabs of old stone, or meeting the flat brush floor of a building. Other levels are baked at milestones, or when a change really touches them The human, 2026-11-07: it has no land yet, and a mixed area goes in later, with land running over old stone, meeting a building's brush floor, a dip with water in it, and a cave or an overhang. | Comes first |
 
 ## Artifacts for the test map
 
@@ -110,6 +110,9 @@ Likely a heightfield and an inverse heightfield, as many games have. Real maps a
 | 130 | Water on terrain: a surface shaped to the land, with an area set underneath it, so all of water's effects, fog, swimming and the rest work there. Pools are boxes today | 125, 17 |
 | 131 | More blended textures on a surface, each with its own normal and shine, for materials as well as land. Research how many, and what each costs a pixel. Baking can take much of that cost: the mega texture already mixes layers and paint into one read, in one 2048 image a map. Research how that grows to big land, such as an image for each tile, or baking far land and blending near it, against what it costs in memory and disk | |
 | 132 | Better tiling over big areas. Today a texture is just spread over them. Research the ways: variation at large scale, breaking up the repeat, and mixing sizes | |
+
+| 169 | Caves, overhangs and bridges in one step, in the tools and the editor. Inverse land and holes are in, and each can be made and walked today, but by hand: sheets are added one at a time, their holes cut to match, and nothing lines their edges up. Say where and how big, and the sheets, thickness, matching holes and edges come out right | 126, 127 |
+| 170 | Better edges on holes. A hole is a whole cell, so its edge steps, and today a mesh has to hide that. Research the ways, for the common cases at least | 126 |
 
 `test/docs/terrain.md` and `test/src/render.rs` are an older experiment in heightfields, painted layers and water on mesh terrain. They give an idea, and aren't to copy.
 
@@ -356,7 +359,7 @@ The human's direction, 2026-11-06: item 18's floor plan went the wrong way. This
 | 41 | Sky tab: choose or make sky scripts, sky spheres and horizons | |
 | 42 | Good default skies with variance | Authoring, later |
 | 43 | Mesh terrain, which the engine doesn't have yet. See items 125 to 130 | Mesh support |
-| 44 | Terrain tab | 43 |
+| 44 | Terrain tab, with proper support for all of what land can do. Today the editor can shape, cut holes, fill them, paint and flood, and works on a sheet facing down, but it can't make a sheet or add one, or say which way it faces or how thick it is. Those are only in the tools. It has to do those, and items 169 and 170 | 43, 169, 170 |
 | 45 | A real circle on terrain and geometry, as the brush for sculpting and for painting textures, with our layers and alpha blending. A must have | |
 | 46 | Prefabs tab, with two sets: primitives and meshes | Mesh support, for the meshes |
 | 47 | Primitives that snap together: a ramp with walls, dressing and moulding, rooms, blockouts and basic items | |
@@ -452,3 +455,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 62: f36817b. Item 63: 17e7eef. Item 64: 95cb9fb
 - Item 153, enemies going evenly: 369f8e0, and the human found them smooth. Item 154, level pictures out of the repository: 332dc60
 - What the play session found: level text in words, and the body at the end of a level: f41e2a8
+- Item 69: 21406ed
