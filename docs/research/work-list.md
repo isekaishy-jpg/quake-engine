@@ -21,7 +21,7 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 9. Shaders | 13, 14 |
 | 10. Effects | 78 to 97, 16, 9 |
 | 11. Fog and water | 70 to 76, 17, 98 to 102 |
-| 12. Sky and light | 62 to 69 |
+| 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
 | 15. The editor | 155 to 162, 39 to 42, 44 to 55, 61, 15 |
@@ -276,6 +276,19 @@ Today the sky has a gradient, a sun and one flat cloud layer, from a picture or 
 | 69 | A final bake, kept apart from everyday builds, for what's too slow to run each time. Everyday builds use a quick bake or none, with item 53's run mode. What only a final bake shows has to be checked before a level's done, so the editor should be able to run one on part of a level | |
 
 For 65 to 67, `solarityclient` shows the kind of thing, as a reference and not to copy: `crates/asset/src/database/light`. A map has a global set and local volumes with a falloff, each with 16 keys through a day, and the light's direction is worked out from the time and barely moves. So most of a day is colours changing, which is cheap. That may suit us: a baked sun on its own layer could change colour through a day with no new bake. Whether it holds up is for research.
+
+## Light on screen
+
+Added by the human, 2026-11-07. Scenes are drawn in 16 bit floats with an exposure for each map and zone, but what's over 1 only has its colour scaled down to fit, and what reaches a screen is 8 bits. A sun and a day need more than that.
+
+| # | Item | Waits on |
+|---|---|---|
+| 163 | SSAO. Research which kind, what it costs, how it sits with baked light, which already has soft corners, and with a live sun, which doesn't. Whether it's a player's choice, an author's or both | 65 |
+| 164 | A tone curve, so that bright light rolls off softly and doesn't hit a ceiling. Comes before the moving sun, so that a day is tuned once, on the curve it'll have. Research which, and whether a level can choose its own | |
+| 165 | Exposure that adjusts by itself, as eyes do, going from a dark room out into the sun, with limits an author can set. Zones already set their own, and the two have to work together | 164 |
+| 166 | Bloom, so that what's bright glows, the sun among them. There's none | 164 |
+| 167 | HDR all the way through. Find what cuts brightness off before the final pass, and take away what needn't: light on a surface stops at 2, and research how baked light is stored | 164 |
+| 168 | HDR out to a screen that has it. What's sent today is 8 bits a colour. Research what it takes, and what happens on a screen that hasn't | 164, 167 |
 
 ## Unfinished work in the real levels
 

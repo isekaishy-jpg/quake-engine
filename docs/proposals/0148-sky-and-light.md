@@ -67,7 +67,7 @@ Each of those comes from the research, and none needs more for what the items as
 
 ## Order
 
-62, 63, 64, 69, 65, 66, 67, 68, each committed by itself.
+62, 63, 64, 69, 164, 65, 163, 66, 67, 68, then 165 to 168, each committed by itself. Items 163 to 168 were added by the human after this was written, and a tone curve comes before the moving sun so that a day is tuned once, on the curve it'll have. They'll have their own research.
 
 ## What came of it
 
