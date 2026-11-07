@@ -41,6 +41,7 @@ pub(crate) fn map(models: u32) -> Map {
         look: Look {
             light_curve: 2.2,
             exposure: 1.0,
+            ..Look::default()
         },
         ..Map::default()
     };

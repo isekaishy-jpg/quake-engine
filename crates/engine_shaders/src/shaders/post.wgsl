@@ -45,15 +45,50 @@ fn luma(color: vec3<f32>) -> f32 {
     return sqrt(dot(color, vec3<f32>(0.299, 0.587, 0.114)));
 }
 
-// Linear light as a screen shows it. What's too bright comes down as a whole, so
-// that it keeps its colour, and `gamma` is the player's brightness, as
-// `BuildGammaTable` was for the palette. The noise, under a step of the screen's
-// bytes, stops dark gradients banding.
+// Where the neutral curve starts to roll off, and how fast it goes towards white. It's Khronos's
+// PBR Neutral, without its small offset, as that would change everything a level has.
+const TONE_START: f32 = 0.8;
+const TONE_WHITENS: f32 = 0.15;
+
+// What's over `TONE_START` rolls off, and what's under it is left alone. Very bright colours go
+// towards white, as they do on film and to the eye.
+fn tone_neutral(color: vec3<f32>) -> vec3<f32> {
+    let peak = max(color.r, max(color.g, color.b));
+    if peak <= TONE_START {
+        return color;
+    }
+    let room = 1.0 - TONE_START;
+    let rolled = 1.0 - room * room / (peak + 1.0 - 2.0 * TONE_START);
+    let colored = 1.0 / (TONE_WHITENS * (peak - rolled) + 1.0);
+    return mix(vec3<f32>(rolled), color * (rolled / peak), colored);
+}
+
+// Narkowicz's fit of the film curve from ACES. It works on each colour alone, so bright colours
+// shift, which is part of how it looks.
+fn tone_film(color: vec3<f32>) -> vec3<f32> {
+    let top = color * (2.51 * color + vec3<f32>(0.03));
+    let bottom = color * (2.43 * color + vec3<f32>(0.59)) + vec3<f32>(0.14);
+    return clamp(top / bottom, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// Light in a scene brought down to what a screen can show, as the level says.
+fn toned(bright: vec3<f32>) -> vec3<f32> {
+    let light = max(bright, vec3<f32>(0.0));
+    if frame.color_params.z > 1.5 {
+        return tone_film(light);
+    }
+    if frame.color_params.z > 0.5 {
+        return tone_neutral(light);
+    }
+    return light / max(max(light.r, max(light.g, light.b)), 1.0);
+}
+
+// Linear light as a screen shows it, once it's been brought down to fit, and `gamma` is the
+// player's brightness, as `BuildGammaTable` was for the palette. The noise, under a step of the
+// screen's bytes, stops dark gradients banding.
 fn to_screen(light: vec3<f32>, noise: f32) -> vec3<f32> {
     let bright = light * frame.color_params.y * frame.zone_light.rgb;
-    let peak = max(bright.r, max(bright.g, bright.b));
-    let held = max(bright / max(peak, 1.0), vec3<f32>(0.0));
-    let raised = pow(held, vec3<f32>(frame.params.w));
+    let raised = pow(toned(bright), vec3<f32>(frame.params.w));
     let low = raised * 12.92;
     let high = 1.055 * pow(raised, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
     return select(high, low, raised <= vec3<f32>(0.0031308)) + (noise - 0.5) / 255.0;

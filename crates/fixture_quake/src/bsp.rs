@@ -559,6 +559,7 @@ pub fn import_map(bsp: &[u8], lit: Option<&[u8]>, palette: &Palette) -> Result<M
         look: Look {
             light_curve: 2.2,
             exposure: 1.0,
+            ..Look::default()
         },
         textures,
         points,

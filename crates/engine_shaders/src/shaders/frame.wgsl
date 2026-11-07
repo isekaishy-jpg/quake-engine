@@ -68,7 +68,8 @@ struct Frame {
     // along each axis, with w 1 if fog reads them.
     probe_origin: vec4<f32>,
     probe_size: vec4<f32>,
-    // x what baked light is raised to, y how much light reaches the eye.
+    // x what baked light is raised to, y how much light reaches the eye, and z how what's too
+    // bright comes down: 0 it stops at the top, 1 it rolls off, 2 a film's curve.
     color_params: vec4<f32>,
     // How much of each colour of light a zone lets through to the eye.
     zone_light: vec4<f32>,

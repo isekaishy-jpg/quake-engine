@@ -38,7 +38,7 @@ pub use live::{LiveLightSource, along_path};
 pub use map::{
     Animation, AttachPoint, Entity, Face, FaceLight, Look, MOVING_MESH_PREFIX, Map, MegaImage,
     MegaMaps, MeshCorner, MeshGroup, MeshInstance, MipLevel, Model, MovingMesh, PixelForm,
-    SharedMesh, SharedMorph, SharedPart, TexelAxis, Texture, TextureKind,
+    SharedMesh, SharedMorph, SharedPart, TexelAxis, Texture, TextureKind, ToneCurve,
 };
 pub use material::{
     AlphaMode, FieldDef, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough,

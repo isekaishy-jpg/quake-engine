@@ -516,6 +516,18 @@ impl Face {
     pub const NO_STYLE: u8 = 255;
 }
 
+/// How light too bright for a screen comes down to fit it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ToneCurve {
+    /// It stops at the top, keeping its colour. What's brighter than that all looks the same.
+    #[default]
+    Hold,
+    /// What's below 0.8 stays as it is, and what's above rolls off and goes towards white.
+    Neutral,
+    /// A film's curve all the way up, with more contrast and a look of its own.
+    Film,
+}
+
 /// How a map's light comes out.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Look {
@@ -525,6 +537,8 @@ pub struct Look {
     pub light_curve: f32,
     /// How much light reaches the eye.
     pub exposure: f32,
+    /// How what's too bright comes down.
+    pub tone: ToneCurve,
 }
 
 impl Default for Look {
@@ -532,6 +546,7 @@ impl Default for Look {
         Self {
             light_curve: 1.8,
             exposure: 1.0,
+            tone: ToneCurve::Hold,
         }
     }
 }

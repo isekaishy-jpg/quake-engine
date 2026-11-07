@@ -15,7 +15,7 @@ use engine_map::{
     ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
     Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, SkyRays, Sprite,
     SpriteFacing, SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet,
-    Texture, TextureKind, TileLight, WaterOverlay, WaterPush, WaterSheet, mip_chain,
+    Texture, TextureKind, TileLight, ToneCurve, WaterOverlay, WaterPush, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -2361,6 +2361,88 @@ fn rays_can_be_turned_off() {
     };
     if let (Some(plain), Some(off)) = (plain, ray_picture(off, looking_up())) {
         assert_eq!(plain, off);
+    }
+}
+
+/// What a sky of `color` comes out as under `tone`, as the sky's a scene's easiest colour to set.
+fn toned_sky(color: [f32; 3], tone: ToneCurve) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.look.tone = tone;
+    built.sky = Some(Sky {
+        zenith: color,
+        horizon: color,
+        sun_size: 0.0,
+        sun_color: [0.0, 0.0, 0.0],
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    };
+    let capture = renderer
+        .capture(&view, Drawables::default(), 32, 32)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A neutral curve doesn't touch what a level has, up to where it starts.
+#[test]
+fn the_neutral_curve_leaves_what_is_not_bright() {
+    for color in [[0.1, 0.2, 0.3], [0.5, 0.4, 0.2], [0.7, 0.7, 0.7]] {
+        let hold = toned_sky(color, ToneCurve::Hold);
+        let neutral = toned_sky(color, ToneCurve::Neutral);
+        assert_eq!(hold, neutral, "{color:?}");
+    }
+}
+
+/// Past that it rolls off, so that brighter is still brighter, where holding stops.
+#[test]
+fn the_neutral_curve_keeps_what_is_bright_apart() {
+    let shot = |value: f32, tone| toned_sky([value, value, value], tone);
+    let (bright, brighter) = (shot(1.0, ToneCurve::Neutral), shot(1.5, ToneCurve::Neutral));
+    let (held, held_more) = (shot(1.0, ToneCurve::Hold), shot(1.5, ToneCurve::Hold));
+    if let (Some(bright), Some(brighter), Some(held), Some(held_more)) =
+        (bright, brighter, held, held_more)
+    {
+        assert_eq!(held, held_more, "it stops at the top");
+        assert!(brighter[0] > bright[0], "{bright:?} {brighter:?}");
+        assert!(bright[0] < held[0], "{bright:?} {held:?}");
+    }
+}
+
+/// Very bright colours go towards white, as holding them never does.
+#[test]
+fn the_neutral_curve_whitens_what_is_very_bright() {
+    let color = [4.0, 0.2, 0.2];
+    let (neutral, hold) = (
+        toned_sky(color, ToneCurve::Neutral),
+        toned_sky(color, ToneCurve::Hold),
+    );
+    if let (Some(neutral), Some(hold)) = (neutral, hold) {
+        assert!(neutral[1] > hold[1] + 10, "{neutral:?} {hold:?}");
+    }
+}
+
+/// A film's curve changes all of it, down to the middle.
+#[test]
+fn the_film_curve_has_a_look_of_its_own() {
+    let color = [0.4, 0.4, 0.4];
+    let (film, hold) = (
+        toned_sky(color, ToneCurve::Film),
+        toned_sky(color, ToneCurve::Hold),
+    );
+    if let (Some(film), Some(hold)) = (film, hold) {
+        assert!(film[0].abs_diff(hold[0]) > 5, "{film:?} {hold:?}");
+    }
+    let (bright, brighter) = (
+        toned_sky([1.0; 3], ToneCurve::Film),
+        toned_sky([1.5; 3], ToneCurve::Film),
+    );
+    if let (Some(bright), Some(brighter)) = (bright, brighter) {
+        assert!(brighter[0] > bright[0], "{bright:?} {brighter:?}");
     }
 }
 

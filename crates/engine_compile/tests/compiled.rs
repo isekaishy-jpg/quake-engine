@@ -3,7 +3,7 @@
 use engine_compile::{
     TextureSource, compile, compile_known, read_geometry, read_map_text, write_geometry,
 };
-use engine_map::{Look, Map, MipLevel, Texture, TextureKind};
+use engine_map::{Look, Map, MipLevel, Texture, TextureKind, ToneCurve};
 
 /// A map with a little of everything geometry has: faces of two materials, a
 /// moving part with its own model, and a piece of hull.
@@ -125,5 +125,10 @@ entity world { type = worldspawn }
         &mut Plain::default(),
     )
     .expect("compiles");
-    assert_eq!(usual.look, Look::default());
+    // What a level gets unless it says, which rolls off where the fixture's maps hold.
+    let expected = Look {
+        tone: ToneCurve::Neutral,
+        ..Look::default()
+    };
+    assert_eq!(usual.look, expected);
 }

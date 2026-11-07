@@ -10,8 +10,8 @@ use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
     MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
-    OccluderSphere, Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind, Tree,
-    WaterOverlay, WaterSheet, Zone, ZonePlane,
+    OccluderSphere, Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind,
+    ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -1493,7 +1493,7 @@ fn compile_with(
     #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
     let reach = reach.map(|reach| reach as f32);
     builder.map.wake_reach = reach.unwrap_or(size * 1.5);
-    builder.map.look = look_of(working);
+    builder.map.look = look_of(working)?;
     builder.map.live_lights = working
         .entities
         .iter()
@@ -1562,7 +1562,7 @@ fn usual_cell(map: &Map) -> f64 {
 
 /// How a working map says its light comes out.
 #[expect(clippy::cast_possible_truncation, reason = "the map stores f32")]
-fn look_of(working: &WorkingMap) -> Look {
+fn look_of(working: &WorkingMap) -> Result<Look, CompileError> {
     let world = working.entities.iter().find(|e| e.kind == "worldspawn");
     let field = |key: &str| {
         let fields = world.into_iter().flat_map(|world| &world.fields);
@@ -1572,10 +1572,24 @@ fn look_of(working: &WorkingMap) -> Look {
         found.map(|value| value as f32)
     };
     let usual = Look::default();
-    Look {
+    let tone = world.and_then(|world| world.text("tone"));
+    let tone = match tone {
+        // A level made for this engine rolls off, and what's only carried over from the
+        // fixture has `Look::default`, as it always did.
+        None | Some("neutral") => ToneCurve::Neutral,
+        Some("hold") => ToneCurve::Hold,
+        Some("film") => ToneCurve::Film,
+        Some(other) => {
+            return Err(CompileError::Bad(format!(
+                "tone is hold, neutral or film, not {other}"
+            )));
+        }
+    };
+    Ok(Look {
         light_curve: field("light_curve").unwrap_or(usual.light_curve),
         exposure: field("exposure").unwrap_or(usual.exposure),
-    }
+        tone,
+    })
 }
 
 /// A built map, with what has no picture hidden.

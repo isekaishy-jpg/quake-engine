@@ -60,3 +60,28 @@ sky {
 | `rays_speed` | How a picture drifts, in repeats a second, as two numbers |
 
 `rays = clouds` with no clouds is an error. They cost about 1 ms at 1280 by 720, looking towards the sun with the sky filling the view, and nothing looking away.
+
+## How light comes out
+
+These go in the world, not the sky. See [proposal 0150](proposals/0150-light-on-screen.md).
+
+```text
+entity world {
+    type = worldspawn
+    tone = film
+    exposure = 1.2
+}
+```
+
+| Field | Means |
+|---|---|
+| `exposure` | How much light reaches the eye |
+| `light_curve` | What baked light is raised to. Higher makes dim light dimmer |
+| `tone` | How what's too bright comes down, below |
+
+| `tone` | Means |
+|---|---|
+| `neutral` | What's below 0.8 stays as it is, and what's above rolls off and goes towards white. It's the usual |
+| `film` | A film's curve all the way up, with more contrast and a look of its own. It changes all of a level |
+| `hold` | The top is the top, and anything brighter looks the same |
+

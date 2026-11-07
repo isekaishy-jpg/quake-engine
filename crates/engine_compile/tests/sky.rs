@@ -2,7 +2,7 @@
 
 use engine_compile::{CompileError, compile, read_map};
 use engine_format::from_text;
-use engine_map::{Map, Sky, Texture, USUAL_CLOUD_CURVE};
+use engine_map::{Look, Map, Sky, Texture, ToneCurve, USUAL_CLOUD_CURVE};
 
 /// A level with `text` in its sky.
 fn level(text: &str) -> Result<Map, CompileError> {
@@ -20,6 +20,36 @@ brush {{ material = rock cuboid = -64 -64 -96 64 64 -64 }}
 /// The sky of a level with `text` in it.
 fn sky(text: &str) -> Sky {
     level(text).expect("compiles").sky.expect("has a sky")
+}
+
+/// How a level with `world` in its world block brings light down.
+fn tone_of(world: &str) -> Result<ToneCurve, CompileError> {
+    let text = format!(
+        "format 1 map
+entity world {{ type = worldspawn {world} }}
+brush {{ material = rock cuboid = -64 -64 -96 64 64 -64 }}
+"
+    );
+    let working = read_map(&from_text(&text).expect("parses"))?;
+    let map = compile(&working, &mut |_: &str| Texture::default())?;
+    Ok(map.look.tone)
+}
+
+/// A level rolls off unless it says otherwise.
+#[test]
+fn a_level_says_how_light_comes_down() {
+    assert_eq!(tone_of(""), Ok(ToneCurve::Neutral));
+    assert_eq!(tone_of("tone = neutral"), Ok(ToneCurve::Neutral));
+    assert_eq!(tone_of("tone = film"), Ok(ToneCurve::Film));
+    assert_eq!(tone_of("tone = hold"), Ok(ToneCurve::Hold));
+    let error = tone_of("tone = blue").expect_err("no such curve");
+    assert!(error.to_string().contains("blue"), "{error}");
+}
+
+/// What's carried over from the fixture, with no level to say, looks as it always did.
+#[test]
+fn a_map_with_no_say_holds() {
+    assert_eq!(Look::default().tone, ToneCurve::Hold);
 }
 
 /// A sky needn't have clouds.

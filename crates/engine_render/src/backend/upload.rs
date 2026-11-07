@@ -7,7 +7,7 @@ use engine_core::math::Vec3;
 use engine_map::{
     AliasModel, BOUNCE_STYLE, Fog, FogVolume, Look, MOST_CLOUDS, Map, Material, MipLevel,
     PixelForm, Pool, ProbeGrid, RayStencil, STENCIL_GRID, Sky, Sprite, Texture, TextureKind,
-    WaterSheet,
+    ToneCurve, WaterSheet,
 };
 use vulkane::safe::{
     AccessFlags, Buffer, BufferCopy, BufferCreateInfo, BufferImageCopy, BufferUsage,
@@ -452,6 +452,11 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     }
     out[base + 12] = extra.look.light_curve;
     out[base + 13] = extra.look.exposure;
+    out[base + 14] = match extra.look.tone {
+        ToneCurve::Hold => 0.0,
+        ToneCurve::Neutral => 1.0,
+        ToneCurve::Film => 2.0,
+    };
     let [red, green, blue] = extra.light_shift;
     out[base + 16..base + 19].copy_from_slice(&[1.0 + red, 1.0 + green, 1.0 + blue]);
     let base = base + 20;
