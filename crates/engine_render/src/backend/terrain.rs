@@ -1,9 +1,9 @@
 //! Land on the GPU (proposal 0144).
 
 use engine_core::math::Vec3;
-use engine_map::Map;
+use engine_map::{Map, TerrainSheet};
 use vulkane::safe::{
-    BufferUsage, DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType,
+    BufferCopy, BufferUsage, DescriptorPool, DescriptorPoolSize, DescriptorSet, DescriptorType,
 };
 
 use super::upload::host_buffer;
@@ -11,7 +11,7 @@ use super::{Backend, FRAMES, GpuBuffer};
 use crate::error::RenderError;
 use crate::terrain::{
     ChunkLight, GRIDS, NODE_BYTES, TerrainBatch, chunk_list, grid_indices, height_bytes,
-    hole_bytes, normal_bytes, sheet_bytes,
+    hole_bytes, normal_bytes, sheet_bytes, sheet_normals,
 };
 
 /// Parts of the land in a frame. Past this, what's furthest goes undrawn.
@@ -21,12 +21,14 @@ pub(super) const MOST_NODES: usize = 1 << 13;
 pub(super) struct GpuTerrain {
     /// Each sheet, kept alive for the set.
     _sheets: GpuBuffer,
-    /// Every height, kept alive for the set.
-    _heights: GpuBuffer,
-    /// Which way they face, kept alive for the set.
-    _normals: GpuBuffer,
-    /// Its holes, kept alive for the set.
-    _holes: GpuBuffer,
+    /// Every height.
+    heights: GpuBuffer,
+    /// Which way they face.
+    normals: GpuBuffer,
+    /// Its holes.
+    holes: GpuBuffer,
+    /// Where each sheet's heights and holes start, in samples and in bytes.
+    firsts: Vec<(u64, u64)>,
     /// What reads those.
     pub(super) set: DescriptorSet,
     /// Kept alive for the set.
@@ -48,6 +50,62 @@ pub(super) struct GpuTerrain {
 }
 
 impl Backend {
+    /// Writes `bytes` over part of `target`.
+    fn write_into(&self, target: &GpuBuffer, at: u64, bytes: &[u8]) -> Result<(), RenderError> {
+        if bytes.is_empty() {
+            return Ok(());
+        }
+        let mut staging = host_buffer(
+            &self.device,
+            &self.physical,
+            bytes.len(),
+            BufferUsage::TRANSFER_SRC,
+        )?;
+        staging.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(bytes);
+        self.queue
+            .one_shot(&self.device, self.queue_family, |rec| {
+                rec.copy_buffer(
+                    &staging.buffer,
+                    &target.buffer,
+                    &[BufferCopy {
+                        src_offset: 0,
+                        dst_offset: at,
+                        size: bytes.len() as u64,
+                    }],
+                );
+                Ok(())
+            })?;
+        Ok(())
+    }
+
+    /// Puts sheet `number` back on the GPU with what's changed in it, for a brush, which can't wait
+    /// for a whole map.
+    pub(crate) fn update_land(
+        &mut self,
+        number: usize,
+        sheet: &TerrainSheet,
+    ) -> Result<(), RenderError> {
+        self.wait_for_frame()?;
+        self.device.wait_idle()?;
+        let Some(land) = self.map.as_ref().and_then(|map| map.terrain.as_ref()) else {
+            return Ok(());
+        };
+        let Some(&(samples, holes)) = land.firsts.get(number) else {
+            return Ok(());
+        };
+        let heights: Vec<u8> = sheet
+            .data
+            .heights
+            .iter()
+            .flat_map(|height| height.to_le_bytes())
+            .collect();
+        self.write_into(&land.heights, samples * 4, &heights)?;
+        self.write_into(&land.normals, samples * 4, &sheet_normals(sheet))?;
+        let mut hole_data = sheet.data.holes.clone();
+        hole_data.resize(hole_data.len().next_multiple_of(4), 0);
+        self.write_into(&land.holes, holes, &hole_data)
+    }
+
     /// Puts `map`'s land on the GPU, if it has any.
     pub(super) fn upload_terrain(
         &self,
@@ -98,13 +156,21 @@ impl Backend {
                 BufferUsage::VERTEX_BUFFER,
             )?);
         }
+        let mut firsts = Vec::with_capacity(map.terrain.len());
+        let (mut samples, mut hole_at) = (0_u64, 0_u64);
+        for sheet in &map.terrain {
+            firsts.push((samples, hole_at));
+            samples += sheet.data.heights.len() as u64;
+            hole_at += sheet.data.holes.len().next_multiple_of(4) as u64;
+        }
         let (whole_bytes, whole_bounds) = chunk_list(map);
         let whole = self.device_buffer(&whole_bytes, BufferUsage::VERTEX_BUFFER)?;
         Ok(Some(GpuTerrain {
             _sheets: sheets,
-            _heights: heights,
-            _normals: normals,
-            _holes: holes,
+            heights,
+            normals,
+            holes,
+            firsts,
             set,
             _pool: pool,
             indices,

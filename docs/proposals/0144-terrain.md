@@ -95,4 +95,14 @@ Built as designed, and tried in the game on a land of 4 by 4 chunks.
 
 Five bugs were put back, and each fails a test: light ignoring holes, land left out of shadow maps, holes left in the picture, land casting nothing in the bake, and paths not knowing it's there.
 
+### Stacking, shaping and the brush (126, 127, 45)
+
+- **Bridges and caves work.** The real movement code walks a road under a bridge and stands on its deck, falls through a hole into a cave, and walks on under the land, with a roof over it. A bridge is a sheet up and a sheet down, with holes everywhere but its strip. So one sheet can be a lot of holes for a small thing, and a sheet's a whole chunk at the least.
+- **Thickness matters.** A sheet with none is solid as far as it goes, so a roof under ground needs a thickness, or everything above it is in solid. The first cave test showed that.
+- **Shaping** is in `engine_map`, so `engine-tool` and the editor do the same sums: `shape_terrain`, for raise, lower, flatten, smooth, hole and fill, then `stamp_terrain`, which scatters too, and `copy_terrain`.
+- **The brush** is a real circle: it lies on land, following its shape, or flat on the face of a block, whichever's nearer. Tried in the editor, through its commands: a hill came up under it, and a hole went through to what's below. A step goes straight to the screen, with `Renderer::update_land`, and the map's built again when the stroke ends. **Undo land** goes back a stroke at a time.
+- **Pictures of the editor were wrong.** A capture drew the scene across the whole window, not in the view, so what's drawn over the view didn't line up in it. The brush seemed to miss the block. A capture now puts the scene where the window has it.
+- **Every land operation has been failed on purpose:** with lower going up, an unknown source let through and copying doing nothing, the test says so. Flatten now needs its height, and won't guess.
+- **The Terrain tab,** item 44, is still at stage 15, with the other tabs. For now the tools are under Surfaces.
+
 Filled in as each part lands.

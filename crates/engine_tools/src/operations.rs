@@ -431,6 +431,77 @@ pub const OPERATIONS: &[OperationInfo] = &[
         ],
     },
     OperationInfo {
+        name: "add_terrain",
+        help: "Puts a sheet of land in the map. It can face down, for a roof, and have a thickness.",
+        args: &[
+            needs("source", ArgKind::Text, "The sheet, by name"),
+            may("origin", ArgKind::Point, "Where its low corner goes"),
+            may("material", ArgKind::Text, "Its material"),
+            may("facing", ArgKind::Text, "up, or down"),
+            may(
+                "thickness",
+                ArgKind::Number,
+                "How thick it is, or 0 for as far as it goes",
+            ),
+        ],
+    },
+    OperationInfo {
+        name: "shape_terrain",
+        help: "Shapes land with a circle: raise, lower, flatten, smooth, hole or fill.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet, by name"),
+            needs(
+                "tool",
+                ArgKind::Text,
+                "raise, lower, flatten, smooth, hole or fill",
+            ),
+            needs(
+                "at",
+                ArgKind::Point,
+                "The circle's middle, from the sheet's low corner",
+            ),
+            needs("radius", ArgKind::Number, "How far it reaches"),
+            may("soft", ArgKind::Number, "How much of it fades, from 0 to 1"),
+            may(
+                "amount",
+                ArgKind::Number,
+                "How far to raise, the height to flatten to, or the share to smooth",
+            ),
+        ],
+    },
+    OperationInfo {
+        name: "stamp_terrain",
+        help: "Presses one sheet's shape into another, or scatters it over a circle with count.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet to change"),
+            needs("stamp", ArgKind::Text, "The sheet to press in"),
+            needs(
+                "at",
+                ArgKind::Point,
+                "The circle's middle, from the sheet's low corner",
+            ),
+            needs("radius", ArgKind::Number, "How far it reaches"),
+            may("amount", ArgKind::Number, "How strongly"),
+            may(
+                "count",
+                ArgKind::Number,
+                "How many to scatter, or none for one in the middle",
+            ),
+            may("seed", ArgKind::Number, "What makes the same scatter again"),
+        ],
+    },
+    OperationInfo {
+        name: "copy_terrain",
+        help: "Copies a circle of land from one place on a sheet to another.",
+        args: &[
+            needs("name", ArgKind::Text, "The sheet"),
+            needs("from", ArgKind::Point, "Where to copy from"),
+            needs("at", ArgKind::Point, "Where to copy to"),
+            needs("radius", ArgKind::Number, "How far it reaches"),
+            may("soft", ArgKind::Number, "How much of it fades, from 0 to 1"),
+        ],
+    },
+    OperationInfo {
         name: "make_levels",
         help: "Gives a mesh in the content its coarser levels of detail.",
         args: &[needs("name", ArgKind::Text, "The mesh, by name")],
@@ -637,6 +708,10 @@ pub fn run(session: &mut Session, name: &str, args: &Json) -> Result<Json, Strin
         "import_gltf" => features::import_gltf(session, args),
         "make_levels" => features::make_levels(session, args),
         "make_terrain" => features::make_terrain(session, args),
+        "add_terrain" => features::add_terrain(session, args),
+        "shape_terrain" => features::shape_terrain(session, args),
+        "stamp_terrain" => features::stamp_terrain(session, args),
+        "copy_terrain" => features::copy_terrain(session, args),
         "check_effects" => features::check_effects(session, args),
         "plan_read" => Ok(plan::plan_read(session)),
         "plan_paint" => plan::plan_paint(session, args),

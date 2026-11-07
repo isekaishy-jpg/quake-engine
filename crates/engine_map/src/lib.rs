@@ -22,6 +22,7 @@ mod sky;
 mod sprite;
 mod stencil;
 mod terrain;
+mod terrain_edit;
 mod tile_light;
 mod tree;
 mod zone;
@@ -55,6 +56,9 @@ pub use sky::{Clouds, Fog, Sky};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
 pub use terrain::{CHUNK_CELLS, TerrainData, TerrainSheet, USUAL_CELL};
+pub use terrain_edit::{
+    TerrainBrush, TerrainStroke, copy_land, splat_land, stamp_land, stroke_land,
+};
 pub use tile_light::{LightTiles, RESIDENT, TileLight};
 pub use tree::{ClipChild, ClipNode, Contents, Leaf, Node, NodeChild, Plane, Tree};
 pub use zone::{Zone, ZonePlane, ZoneSettings};

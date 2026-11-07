@@ -3352,6 +3352,67 @@ fn land_casts_a_live_shadow() {
     );
 }
 
+/// A brush at work shows at once, heights and holes, with no map built again.
+#[test]
+fn land_can_be_changed_while_it_is_drawn() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let built = map_with_land();
+    let mut sheet = built.terrain[0].clone();
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, 400.0),
+        ..view_from_above()
+    };
+    let shot = |renderer: &mut Renderer| {
+        renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture")
+    };
+    assert!(centre(&shot(&mut renderer))[0] > 200, "land shows");
+    for y in 60..68 {
+        for x in 60..68 {
+            sheet.data.set_hole(x, y, true);
+        }
+    }
+    renderer.update_land(0, &sheet).expect("it changes");
+    assert!(
+        centre(&shot(&mut renderer))[0] < 50,
+        "the hole's there at once"
+    );
+    for y in 60..68 {
+        for x in 60..68 {
+            sheet.data.set_hole(x, y, false);
+        }
+    }
+    // Pushed up past the eye, so that the middle of the view is under it and sees nothing there.
+    sheet.data.heights.fill(600.0);
+    renderer.update_land(0, &sheet).expect("it changes");
+    assert!(centre(&shot(&mut renderer))[0] < 50, "and so are heights");
+}
+
+/// The editor's view is part of its window, and a picture has to show it there, or what's drawn
+/// over the view, like a brush's circle, won't line up with it.
+#[test]
+fn a_picture_has_the_scene_where_the_window_has_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map_with_land())).expect("load");
+    let view = View {
+        origin: Vec3::new(0.0, 0.0, 400.0),
+        ..view_from_above()
+    };
+    renderer.set_view_area(Some([32, 0, 32, 64]));
+    let shot = renderer
+        .capture(&view, Drawables::default(), 64, 64)
+        .expect("capture");
+    let at = |x: usize| shot.rgba[(32 * 64 + x) * 4];
+    assert!(at(16) < 50, "nothing left of the view: {}", at(16));
+    assert!(at(48) > 200, "and the land's in it: {}", at(48));
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

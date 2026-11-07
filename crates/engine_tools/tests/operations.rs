@@ -719,3 +719,80 @@ fn a_broken_shader_or_effect_is_refused_and_a_good_one_written() {
     );
     assert!(run(&mut session, "read_effect", &json!({ "name": "bad" })).is_err());
 }
+
+/// The land's lowest and highest, as the last change to it said.
+fn heights(told: &Value) -> (f64, f64) {
+    (
+        told["low"].as_f64().expect("low"),
+        told["high"].as_f64().expect("high"),
+    )
+}
+
+#[test]
+fn land_is_shaped_stamped_and_copied_in_its_file() {
+    let root = content("land");
+    let mut session = Session::new(&root);
+    ok(
+        &mut session,
+        "make_terrain",
+        json!({ "name": "hills", "chunks": 1, "hills": 0 }),
+    );
+    let brush = |tool: &str, amount: f64| json!({ "name": "hills", "tool": tool, "amount": amount, "at": [1000, 1000], "radius": 200 });
+    let raised = ok(&mut session, "shape_terrain", brush("raise", 100.0));
+    assert_eq!(heights(&raised), (0.0, 100.0));
+    let lowered = ok(&mut session, "shape_terrain", brush("lower", 40.0));
+    assert_eq!(heights(&lowered), (0.0, 60.0), "it was kept, and goes down");
+    let flat = ok(&mut session, "shape_terrain", brush("flatten", 10.0));
+    assert!(heights(&flat).1 < 60.0, "{flat}");
+    let refused = run(
+        &mut session,
+        "shape_terrain",
+        &json!({ "name": "hills", "tool": "flatten", "at": [0, 0], "radius": 10 }),
+    );
+    assert!(refused.is_err(), "a height isn't guessed");
+    let wrong = run(
+        &mut session,
+        "shape_terrain",
+        &json!({ "name": "hills", "tool": "dig", "at": [0, 0], "radius": 10 }),
+    );
+    assert!(wrong.is_err(), "and there's no such tool");
+
+    ok(
+        &mut session,
+        "make_terrain",
+        json!({ "name": "lump", "chunks": 1, "hills": 0 }),
+    );
+    ok(
+        &mut session,
+        "shape_terrain",
+        json!({ "name": "lump", "tool": "raise", "amount": 300, "at": [1024, 1024], "radius": 900, "soft": 0 }),
+    );
+    let stamped = ok(
+        &mut session,
+        "stamp_terrain",
+        json!({ "name": "hills", "stamp": "lump", "at": [500, 500], "radius": 300 }),
+    );
+    assert!(heights(&stamped).1 > 200.0, "{stamped}");
+    let moved = ok(
+        &mut session,
+        "copy_terrain",
+        json!({ "name": "hills", "from": [1000, 1000], "at": [500, 500], "radius": 300, "soft": 0 }),
+    );
+    assert!(
+        heights(&moved).1 < 200.0,
+        "the stamp's copied over: {moved}"
+    );
+
+    let unknown = run(
+        &mut session,
+        "add_terrain",
+        &json!({ "source": "nothing", "material": "moss" }),
+    );
+    assert!(unknown.is_err(), "land that isn't there can't be added");
+    ok(
+        &mut session,
+        "add_terrain",
+        json!({ "source": "hills", "material": "moss" }),
+    );
+    assert_eq!(count(&mut session), 1);
+}

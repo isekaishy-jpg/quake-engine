@@ -13,6 +13,7 @@ const BLOCKS: &[(&str, &[&str])] = &[
     ("brush", &[]),
     ("entity", &[]),
     ("mesh", &[]),
+    ("terrain", &[]),
     ("sky", &[]),
     ("spline", &[]),
     ("tile", &[]),

@@ -98,3 +98,110 @@ fn walking_over_rough_land_stays_on_it() {
     let above = state.origin.z - land_under(&world, &state);
     assert!(above > 20.0, "not in it: {above}");
 }
+
+/// A sheet of one chunk at height `z`, with only what `keep` says left of it.
+fn sheet_at(z: f32, keep: impl Fn(u32, u32) -> bool) -> TerrainSheet {
+    let mut data = TerrainData::flat([1, 1], 32.0);
+    for y in 0..CHUNK_CELLS {
+        for x in 0..CHUNK_CELLS {
+            data.set_hole(x, y, !keep(x, y));
+        }
+    }
+    TerrainSheet {
+        data,
+        origin: Vec3::new(0.0, 0.0, z),
+        ..TerrainSheet::default()
+    }
+}
+
+/// A world of `sheets`.
+fn stacked(sheets: Vec<TerrainSheet>) -> CollisionWorld {
+    let map = Map {
+        terrain: sheets,
+        ..Map::default()
+    };
+    CollisionWorld::new(Arc::new(map))
+}
+
+/// A road along X at height 0, and a bridge across it along Y at height 200 with an underside at
+/// 170, in a strip from 800 to 1088 along X.
+fn bridge() -> CollisionWorld {
+    let strip = |x: u32, _: u32| (25..34).contains(&x);
+    let deck = TerrainSheet {
+        thickness: 30.0,
+        ..sheet_at(200.0, strip)
+    };
+    let underside = TerrainSheet {
+        facing_down: true,
+        thickness: 30.0,
+        ..sheet_at(170.0, strip)
+    };
+    stacked(vec![sheet_at(0.0, |_, _| true), deck, underside])
+}
+
+#[test]
+fn someone_walks_along_a_road_under_a_bridge() {
+    let world = bridge();
+    let state = walk(&world, Vec3::new(300.0, 1000.0, 40.0), 4.0);
+    assert!(
+        state.origin.x > 1300.0,
+        "under it and out: {:?}",
+        state.origin
+    );
+    assert!(state.origin.z < 40.0, "on the road: {:?}", state.origin);
+}
+
+#[test]
+fn someone_stands_on_a_bridge_over_a_road() {
+    let world = bridge();
+    let state = walk(&world, Vec3::new(850.0, 1000.0, 260.0), 0.5);
+    assert!(
+        (state.origin.z - 224.0).abs() < 2.0,
+        "on the deck: {:?}",
+        state.origin
+    );
+}
+
+/// Ground with a hole in it, 40 thick, a cave's roof under that, and its floor far below.
+fn cave() -> CollisionWorld {
+    let open = |x: u32, y: u32| !(28..36).contains(&x) || !(28..36).contains(&y);
+    let ground = TerrainSheet {
+        thickness: 40.0,
+        ..sheet_at(0.0, open)
+    };
+    let roof = TerrainSheet {
+        facing_down: true,
+        thickness: 40.0,
+        ..sheet_at(-40.0, open)
+    };
+    stacked(vec![ground, roof, sheet_at(-300.0, |_, _| true)])
+}
+
+#[test]
+fn someone_falls_through_a_hole_into_a_cave_and_walks_under_the_ground() {
+    let world = cave();
+    let state = walk(&world, Vec3::new(800.0, 1024.0, 60.0), 5.0);
+    assert!(state.origin.z < -250.0, "down in it: {:?}", state.origin);
+    assert!(
+        state.origin.x > 1400.0,
+        "and along under the land: {:?}",
+        state.origin
+    );
+    assert!(
+        !world.in_solid(state.origin),
+        "and not stuck: {:?}",
+        state.origin
+    );
+}
+
+#[test]
+fn a_cave_has_a_roof() {
+    let world = cave();
+    let (from, to) = (
+        Vec3::new(500.0, 500.0, -270.0),
+        Vec3::new(500.0, 500.0, 200.0),
+    );
+    let trace = world.trace(from, to);
+    assert!(trace.fraction < 1.0, "{trace:?}");
+    assert!(trace.end.z < -60.0, "{:?}", trace.end);
+}

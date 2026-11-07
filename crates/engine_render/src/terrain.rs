@@ -288,12 +288,12 @@ pub(crate) fn sheet_bytes(map: &Map) -> Vec<u8> {
             sheet.data.cell,
         ];
         bytes.extend(origin.iter().flat_map(|part| part.to_le_bytes()));
-        let has_holes = sheet.data.holes.iter().any(|byte| *byte != 0);
+        // It's always there, as a brush can cut one while it's being drawn.
         let shape = [
             sheet.data.across(),
             first_sample,
             u32::from(sheet.facing_down),
-            if has_holes { first_hole + 1 } else { 0 },
+            first_hole + 1,
         ];
         bytes.extend(shape.iter().flat_map(|part| part.to_le_bytes()));
         let texture = map.textures.get(sheet.texture as usize);
@@ -336,16 +336,19 @@ pub(crate) fn height_bytes(map: &Map) -> Vec<u8> {
 
 /// Which way every sheet faces at each sample, as packed bytes.
 pub(crate) fn normal_bytes(map: &Map) -> Vec<u8> {
-    let mut bytes = Vec::new();
-    for sheet in &map.terrain {
-        for y in 0..=sheet.data.cells[1] {
-            for x in 0..=sheet.data.cells[0] {
-                let normal = sheet.normal(x, y);
-                #[expect(clippy::cast_possible_truncation, reason = "kept to a byte")]
-                let byte = |part: f32| (part * 127.0).round() as i8;
-                let packed = [byte(normal.x), byte(normal.y), byte(normal.z), 0];
-                bytes.extend(packed.map(i8::to_le_bytes).into_iter().flatten());
-            }
+    map.terrain.iter().flat_map(sheet_normals).collect()
+}
+
+/// Which way `sheet` faces at each sample, as packed bytes.
+pub(crate) fn sheet_normals(sheet: &TerrainSheet) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(sheet.data.heights.len() * 4);
+    for y in 0..=sheet.data.cells[1] {
+        for x in 0..=sheet.data.cells[0] {
+            let normal = sheet.normal(x, y);
+            #[expect(clippy::cast_possible_truncation, reason = "kept to a byte")]
+            let byte = |part: f32| (part * 127.0).round() as i8;
+            let packed = [byte(normal.x), byte(normal.y), byte(normal.z), 0];
+            bytes.extend(packed.map(i8::to_le_bytes).into_iter().flatten());
         }
     }
     bytes

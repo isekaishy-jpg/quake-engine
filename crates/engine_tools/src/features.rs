@@ -451,6 +451,138 @@ pub(crate) fn make_terrain(session: &Session, args: &Json) -> Result<Json, Strin
     Ok(json!({ "file": file.display().to_string(), "cells": data.cells[0] }))
 }
 
+/// The land called `name`, and where it's kept.
+fn land_file(session: &Session, name: &str) -> Result<(engine_map::TerrainData, PathBuf), String> {
+    let file = session
+        .content
+        .join("terrain")
+        .join(format!("{name}.eterrain"));
+    let bytes = std::fs::read(&file).map_err(|error| format!("{}: {error}", file.display()))?;
+    let data = engine_compile::read_terrain_data(&bytes).map_err(|error| error.to_string())?;
+    Ok((data, file))
+}
+
+/// Keeps `data` in `file`.
+fn keep_land(data: &engine_map::TerrainData, file: &Path) -> Result<Json, String> {
+    std::fs::write(file, engine_compile::write_terrain(data))
+        .map_err(|error| format!("{}: {error}", file.display()))?;
+    let (low, high) = data
+        .heights
+        .iter()
+        .fold((f32::MAX, f32::MIN), |(low, high), height| {
+            (low.min(*height), high.max(*height))
+        });
+    Ok(json!({ "low": low, "high": high }))
+}
+
+/// A number that's asked for.
+fn wanted_number(args: &Json, key: &str) -> Result<f64, String> {
+    args.get(key)
+        .and_then(Json::as_f64)
+        .ok_or_else(|| format!("{key} is required"))
+}
+
+/// A place on a sheet, as two or three numbers.
+fn sheet_place(args: &Json, key: &str) -> Result<[f32; 2], String> {
+    let numbers = args.get(key).and_then(Json::as_array);
+    let at = |index: usize| {
+        numbers
+            .and_then(|list| list.get(index))
+            .and_then(Json::as_f64)
+    };
+    match (at(0), at(1)) {
+        #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+        (Some(x), Some(y)) => Ok([x as f32, y as f32]),
+        _ => Err(format!("{key} is required, as a place")),
+    }
+}
+
+/// The circle in `args`.
+fn land_brush(args: &Json) -> Result<engine_map::TerrainBrush, String> {
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    Ok(engine_map::TerrainBrush {
+        middle: sheet_place(args, "at")?,
+        radius: wanted_number(args, "radius")? as f32,
+        soft: args.get("soft").and_then(Json::as_f64).unwrap_or(0.5) as f32,
+    })
+}
+
+/// `add_terrain`.
+pub(crate) fn add_terrain(session: &mut Session, args: &Json) -> Result<Json, String> {
+    let source = args
+        .get("source")
+        .and_then(Json::as_str)
+        .ok_or("source is required")?;
+    let _known = land_file(session, source)?;
+    add_kind(session, "terrain", args)
+}
+
+/// `shape_terrain`.
+pub(crate) fn shape_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    use engine_map::TerrainStroke as Stroke;
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let amount = args.get("amount").and_then(Json::as_f64).unwrap_or(16.0) as f32;
+    let stroke = match args.get("tool").and_then(Json::as_str) {
+        Some("raise") => Stroke::Raise(amount),
+        Some("lower") => Stroke::Raise(-amount),
+        // A height's nothing to guess at.
+        #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+        Some("flatten") => Stroke::Flatten(wanted_number(args, "amount")? as f32),
+        Some("smooth") => Stroke::Smooth(amount.clamp(0.0, 1.0)),
+        Some("hole") => Stroke::Hole(true),
+        Some("fill") => Stroke::Hole(false),
+        other => return Err(format!("no land tool called {other:?}")),
+    };
+    engine_map::stroke_land(&mut data, &land_brush(args)?, stroke);
+    keep_land(&data, &file)
+}
+
+/// `stamp_terrain`.
+pub(crate) fn stamp_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let stamp = args
+        .get("stamp")
+        .and_then(Json::as_str)
+        .ok_or("stamp is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    let (stamp, _) = land_file(session, stamp)?;
+    let brush = land_brush(args)?;
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    let amount = args.get("amount").and_then(Json::as_f64).unwrap_or(1.0) as f32;
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "small counts"
+    )]
+    match args.get("count").and_then(Json::as_f64) {
+        Some(count) => {
+            let seed = args.get("seed").and_then(Json::as_f64).unwrap_or(1.0) as u32;
+            engine_map::splat_land(&mut data, &stamp, &brush, (count as u32, amount, seed));
+        }
+        None => engine_map::stamp_land(&mut data, &stamp, &brush, amount),
+    }
+    keep_land(&data, &file)
+}
+
+/// `copy_terrain`.
+pub(crate) fn copy_terrain(session: &Session, args: &Json) -> Result<Json, String> {
+    let name = args
+        .get("name")
+        .and_then(Json::as_str)
+        .ok_or("name is required")?;
+    let (mut data, file) = land_file(session, name)?;
+    engine_map::copy_land(&mut data, sheet_place(args, "from")?, &land_brush(args)?);
+    keep_land(&data, &file)
+}
+
 pub(crate) fn make_levels(session: &Session, args: &Json) -> Result<Json, String> {
     let name = args
         .get("name")

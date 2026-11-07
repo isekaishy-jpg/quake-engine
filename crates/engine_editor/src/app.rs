@@ -8,11 +8,16 @@ use std::time::Duration;
 
 use egui::{Align2, Color32, Context, FontId, Pos2, RichText, Stroke};
 use engine_assets::{DirectoryArchive, FileSystem};
-use engine_compile::{MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map};
+use engine_compile::{
+    MaterialLibrary, apply_bake, attach_side_files, compile, map_hash, read_map, write_terrain,
+};
 use engine_core::math::Vec3;
 use engine_editor::camera::{Camera, FOV, Keys};
 use engine_format::from_text;
-use engine_map::{Map, SideFiles, Spline, Texture};
+use engine_map::{
+    Map, SideFiles, Spline, TerrainBrush, TerrainData, TerrainSheet, TerrainStroke, Texture,
+    stroke_land,
+};
 use engine_platform::{
     AppError, Frame, FrameOutcome, InputEvent, MouseButton, PlatformApp, ServiceOutcome, Window,
 };
@@ -79,6 +84,89 @@ pub(crate) enum Tool {
     Spline,
     /// Applies a material to what's clicked.
     Material(String),
+    /// Shapes land with a circle.
+    Land(TerrainTool),
+}
+
+/// What a brush does to land.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum TerrainTool {
+    /// Lifts it.
+    Raise,
+    /// Lowers it.
+    Lower,
+    /// Brings it to the height it was first touched at.
+    Flatten,
+    /// Evens it out.
+    Smooth,
+    /// Cuts a hole.
+    Hole,
+    /// Fills a hole.
+    Fill,
+}
+
+impl TerrainTool {
+    /// What's on its button.
+    const fn name(self) -> &'static str {
+        match self {
+            Self::Raise => "raise",
+            Self::Lower => "lower",
+            Self::Flatten => "flatten",
+            Self::Smooth => "smooth",
+            Self::Hole => "hole",
+            Self::Fill => "fill",
+        }
+    }
+
+    /// The tool called `name`.
+    fn called(name: &str) -> Option<Self> {
+        LAND_TOOLS.into_iter().find(|tool| tool.name() == name)
+    }
+}
+
+/// Every land tool.
+const LAND_TOOLS: [TerrainTool; 6] = [
+    TerrainTool::Raise,
+    TerrainTool::Lower,
+    TerrainTool::Flatten,
+    TerrainTool::Smooth,
+    TerrainTool::Hole,
+    TerrainTool::Fill,
+];
+
+/// How far a brush goes in a step of a stroke, at full strength.
+const LAND_STEP: f32 = 4.0;
+
+/// A sheet of land being shaped, and what it's called.
+struct LandSheet {
+    /// The name of its file.
+    source: String,
+    /// The land.
+    sheet: TerrainSheet,
+}
+
+/// Where a ray first meets land, and which sheet that is.
+fn ray_land(sheets: &[LandSheet], start: Vec3, direction: Vec3) -> Option<(usize, Vec3)> {
+    let mut along = 0.0;
+    while along < 20_000.0 {
+        let at = start + direction * along;
+        for (number, land) in sheets.iter().enumerate() {
+            let height = land.sheet.height_at(at.x, at.y);
+            let past = height.is_some_and(|height| {
+                if land.sheet.facing_down {
+                    at.z >= height
+                } else {
+                    at.z <= height
+                }
+            });
+            if past {
+                let height = height.unwrap_or(at.z);
+                return Some((number, Vec3::new(at.x, at.y, height)));
+            }
+        }
+        along += 8.0;
+    }
+    None
 }
 
 impl Tool {
@@ -92,6 +180,7 @@ impl Tool {
             Self::Paint(layer) => format!("painting layer {layer}: click along the stroke"),
             Self::Spline => "spline: click along the line, then End line".to_owned(),
             Self::Material(name) => format!("material {name}: click what to change"),
+            Self::Land(tool) => format!("land: {}, drag across it", tool.name()),
         }
     }
 }
@@ -155,6 +244,14 @@ pub(crate) struct Editor {
     offered: (Vec<String>, Vec<String>),
     /// How big the next decal or stamp is, and how deep a stamp goes.
     press: (f64, f64),
+    /// The map's land, as it's being shaped.
+    land: Vec<LandSheet>,
+    /// How much of a land brush fades, and how strong it is.
+    land_brush: (f32, f32),
+    /// What a stroke of land changed, newest last, to go back to.
+    land_undo: Vec<(usize, TerrainData)>,
+    /// The height a stroke of flattening began at.
+    land_level: Option<f32>,
     /// The map's script, as it's being edited.
     script: String,
     /// The material being edited, and its text.
@@ -177,6 +274,8 @@ pub(crate) struct Editor {
     quit: bool,
     /// Whether the pointer is over the 3D view.
     over_view: bool,
+    /// Whether a line command has said where the pointer is.
+    pointer_told: bool,
     /// The easy way of working.
     easy: Easy,
 }
@@ -359,6 +458,10 @@ impl Editor {
             tab: Tab::Build,
             offered: (Vec::new(), Vec::new()),
             press: (64.0, 8.0),
+            land: Vec::new(),
+            land_brush: (0.6, 1.0),
+            land_undo: Vec::new(),
+            land_level: None,
             script: String::new(),
             material: (String::new(), String::new()),
             view_rect: egui::Rect::NOTHING,
@@ -370,6 +473,7 @@ impl Editor {
             capture: None,
             quit: false,
             over_view: false,
+            pointer_told: false,
             easy: Easy::default(),
         };
         editor.easy.on = is_plan_map(&editor.session);
@@ -492,6 +596,15 @@ impl Editor {
             let _applied = apply_bake(&mut map, &bytes, map_hash(&document, &used));
             attach_beside(&mut map, &path);
         }
+        self.land = working
+            .terrain
+            .iter()
+            .zip(&map.terrain)
+            .map(|(source, sheet)| LandSheet {
+                source: source.source.clone(),
+                sheet: sheet.clone(),
+            })
+            .collect();
         let map = Arc::new(map);
         self.tile_streamer = TileStreamer::new(&map);
         if let Err(error) = renderer.load_map(Arc::clone(&map)) {
@@ -551,6 +664,9 @@ impl Editor {
                     .and_then(Value::as_str)
                     .map(str::to_owned);
                 let layer = args.get("layer").and_then(Value::as_u64).unwrap_or(0);
+                if let Some(size) = args.get("size").and_then(Value::as_f64) {
+                    self.press.0 = size;
+                }
                 self.set_tool(match args.get("kind").and_then(Value::as_str) {
                     Some("mesh") => name.map(Tool::Mesh),
                     Some("decal") => name.map(Tool::Decal),
@@ -558,12 +674,25 @@ impl Editor {
                     Some("material") => name.map(Tool::Material),
                     Some("paint") => Some(Tool::Paint(u8::try_from(layer).unwrap_or(0))),
                     Some("spline") => Some(Tool::Spline),
+                    Some("land") => name
+                        .and_then(|name| TerrainTool::called(&name))
+                        .map(Tool::Land),
                     _ => prefab.or(name).map(Tool::Prefab),
                 });
                 if let Some(params) = args.get("params") {
                     self.params = params.to_string();
                 }
                 emit(&json!({ "tool": self.tool.as_ref().map(Tool::describe) }));
+            }
+            "pointer" => {
+                #[expect(clippy::cast_possible_truncation, reason = "pixels fit f32")]
+                let pixel = (
+                    args.get("x").and_then(Value::as_f64).unwrap_or(0.0) as f32,
+                    args.get("y").and_then(Value::as_f64).unwrap_or(0.0) as f32,
+                );
+                self.input.pointer = pixel;
+                self.pointer_told = true;
+                emit(&json!({ "ok": true }));
             }
             "click" => {
                 #[expect(clippy::cast_possible_truncation, reason = "pixels fit f32")]
@@ -606,8 +735,103 @@ impl Editor {
         self.tool = tool;
     }
 
+    /// Where `pixel` is looking, from the camera.
+    fn pointer_ray(&self, pixel: (f32, f32)) -> (Vec3, Vec3) {
+        let corner = self.view_rect.min;
+        let inside = if self.view_rect.is_positive() {
+            (pixel.0 - corner.x, pixel.1 - corner.y)
+        } else {
+            pixel
+        };
+        (
+            self.camera.origin,
+            self.camera.ray(inside, self.view_size()),
+        )
+    }
+
+    /// The brush's size, as a radius.
+    #[expect(clippy::cast_possible_truncation, reason = "land is in f32")]
+    fn brush_radius(&self) -> f32 {
+        self.press.0 as f32 * 0.5
+    }
+
+    /// One step of a land brush under `pixel`. What it changes goes straight to the screen, and the
+    /// map's built again when the stroke ends.
+    fn land_step(&mut self, tool: TerrainTool, pixel: (f32, f32)) {
+        let (start, direction) = self.pointer_ray(pixel);
+        let Some((number, place)) = ray_land(&self.land, start, direction) else {
+            return;
+        };
+        let level = *self.land_level.get_or_insert(place.z);
+        let (soft, strength) = self.land_brush;
+        let radius = self.brush_radius();
+        let Some(land) = self.land.get_mut(number) else {
+            return;
+        };
+        let origin = land.sheet.origin;
+        let brush = TerrainBrush {
+            middle: [place.x - origin.x, place.y - origin.y],
+            radius,
+            soft,
+        };
+        let stroke = match tool {
+            TerrainTool::Raise => TerrainStroke::Raise(LAND_STEP * strength),
+            TerrainTool::Lower => TerrainStroke::Raise(-LAND_STEP * strength),
+            TerrainTool::Flatten => TerrainStroke::Flatten(level - origin.z),
+            TerrainTool::Smooth => TerrainStroke::Smooth(strength.min(1.0) * 0.5),
+            TerrainTool::Hole => TerrainStroke::Hole(true),
+            TerrainTool::Fill => TerrainStroke::Hole(false),
+        };
+        stroke_land(&mut land.sheet.data, &brush, stroke);
+        if let Some(renderer) = &mut self.renderer
+            && let Err(error) = renderer.update_land(number, &land.sheet)
+        {
+            self.log.push(format!("render: {error}"));
+        }
+    }
+
+    /// Notes what land is before a stroke, so that it can be gone back to.
+    fn land_stroke_begins(&mut self, pixel: (f32, f32)) {
+        let (start, direction) = self.pointer_ray(pixel);
+        self.land_level = None;
+        if let Some((number, _)) = ray_land(&self.land, start, direction)
+            && let Some(land) = self.land.get(number)
+        {
+            self.land_undo.push((number, land.sheet.data.clone()));
+        }
+    }
+
+    /// Keeps what a stroke did, and builds the map again.
+    fn land_stroke_ends(&mut self) {
+        let folder = self.content.join("terrain");
+        for land in &self.land {
+            let file = folder.join(format!("{}.eterrain", land.source));
+            if let Err(error) = std::fs::write(&file, write_terrain(&land.sheet.data)) {
+                self.log.push(format!("{}: {error}", file.display()));
+            }
+        }
+        self.stale = true;
+    }
+
+    /// Goes back on the last stroke of land.
+    fn undo_land(&mut self) {
+        let Some((number, data)) = self.land_undo.pop() else {
+            return;
+        };
+        if let Some(land) = self.land.get_mut(number) {
+            land.sheet.data = data;
+        }
+        self.land_stroke_ends();
+    }
+
     /// A click in the 3D view: uses the tool, or selects.
     fn click(&mut self, pixel: (f32, f32)) {
+        if let Some(Tool::Land(tool)) = self.tool {
+            self.land_stroke_begins(pixel);
+            self.land_step(tool, pixel);
+            self.land_stroke_ends();
+            return;
+        }
         let corner = self.view_rect.min;
         let inside = if self.view_rect.is_positive() {
             (pixel.0 - corner.x, pixel.1 - corner.y)
@@ -682,6 +906,7 @@ impl Editor {
                 }
                 None => Ok(json!({})),
             },
+            Tool::Land(_) => Ok(json!({})),
         };
     }
 
@@ -698,6 +923,69 @@ impl Editor {
         let answer = self.operate(operation, &start)?;
         self.drawing = answer.get("id").and_then(Value::as_u64);
         Ok(answer)
+    }
+
+    /// Whether the tool in hand works by a circle.
+    const fn tool_has_a_circle(&self) -> bool {
+        matches!(
+            self.tool,
+            Some(Tool::Land(_) | Tool::Paint(_) | Tool::Decal(_) | Tool::Stamp(_))
+        )
+    }
+
+    /// The circle of the tool in hand, where the pointer is: lying on land, following its shape, or
+    /// flat on the surface of what's under it.
+    fn brush_circle(&self) -> Vec<Vec3> {
+        const POINTS: u16 = 64;
+        let (start, direction) = self.pointer_ray(self.input.pointer);
+        let radius = self.brush_radius();
+        let round = (0..=POINTS).map(|at| {
+            let share = f32::from(at) / f32::from(POINTS);
+            (share * std::f32::consts::TAU).sin_cos()
+        });
+        let hit = self
+            .things
+            .iter()
+            .filter_map(|thing| {
+                let bounds = thing.bounds?;
+                Some((ray_box(start, direction, bounds)?, bounds))
+            })
+            .min_by(|a, b| a.0.total_cmp(&b.0));
+        let land = ray_land(&self.land, start, direction);
+        // Whichever's nearer, and a block in front of the land is what's being pointed at.
+        let on_land = land.filter(|(_, place)| {
+            hit.is_none_or(|(distance, _)| (*place - start).length() < distance)
+        });
+        if let Some((number, place)) = on_land {
+            let sheet = &self.land[number].sheet;
+            return round
+                .map(|(sine, cosine)| {
+                    let (x, y) = (place.x + cosine * radius, place.y + sine * radius);
+                    Vec3::new(x, y, sheet.surface_at(x, y).0 + 1.0)
+                })
+                .collect();
+        }
+        let Some((distance, bounds)) = hit else {
+            return Vec::new();
+        };
+        let place = start + direction * distance;
+        let [x, y, z] = box_normal(place, bounds).map(|part| {
+            #[expect(clippy::cast_possible_truncation, reason = "a direction")]
+            let part = part as f32;
+            part
+        });
+        let normal = Vec3::new(x, y, z);
+        let side = if z.abs() > 0.9 {
+            Vec3::new(1.0, 0.0, 0.0)
+        } else {
+            Vec3::new(0.0, 0.0, 1.0)
+        };
+        let across = normal.cross(side);
+        let up = normal.cross(across);
+        let lifted = place + normal;
+        round
+            .map(|(sine, cosine)| lifted + across * (cosine * radius) + up * (sine * radius))
+            .collect()
     }
 
     /// Draws the grid, lines and selection over the view.
@@ -1174,6 +1462,22 @@ impl Editor {
         ui.add(egui::DragValue::new(&mut self.press.0).range(8.0..=1024.0));
         ui.label("stamp depth");
         ui.add(egui::DragValue::new(&mut self.press.1).range(1.0..=64.0));
+        ui.label(RichText::new("LAND").color(ACCENT));
+        ui.horizontal_wrapped(|ui| {
+            for tool in LAND_TOOLS {
+                let chosen = self.tool == Some(Tool::Land(tool));
+                if ui.selectable_label(chosen, tool.name()).clicked() {
+                    self.set_tool(Some(Tool::Land(tool)));
+                }
+            }
+        });
+        ui.label("soft edge");
+        ui.add(egui::Slider::new(&mut self.land_brush.0, 0.0..=1.0));
+        ui.label("strength");
+        ui.add(egui::Slider::new(&mut self.land_brush.1, 0.1..=4.0));
+        if ui.button("undo land").clicked() {
+            self.undo_land();
+        }
         ui.label(RichText::new("PAINT LAYER").color(ACCENT));
         ui.horizontal(|ui| {
             for layer in 0..3 {
@@ -1370,8 +1674,19 @@ impl Editor {
             .show(root, |ui| {
                 let rect = ui.max_rect();
                 self.view_rect = rect;
-                let response = ui.allocate_rect(rect, egui::Sense::click());
+                let response = ui.allocate_rect(rect, egui::Sense::click_and_drag());
                 self.overlay(ui.painter());
+                if self.tool_has_a_circle() && (self.over_view || self.pointer_told) {
+                    let circle = self.brush_circle();
+                    let (size, corner) = (self.view_size(), self.view_rect.min.to_vec2());
+                    let line: Vec<Pos2> = circle
+                        .iter()
+                        .filter_map(|point| self.camera.project(*point, size))
+                        .map(|(x, y)| Pos2::new(x, y) + corner)
+                        .collect();
+                    ui.painter()
+                        .add(egui::Shape::line(line, Stroke::new(1.5, ACCENT)));
+                }
                 if let Some(tool) = &self.tool {
                     ui.painter().text(
                         rect.left_top() + egui::vec2(10.0, 8.0),
@@ -1384,9 +1699,20 @@ impl Editor {
                 response
             });
         self.over_view = central.inner.hovered();
+        let pixel = self.input.pointer;
         if central.inner.clicked() {
-            let pixel = self.input.pointer;
             self.click(pixel);
+        }
+        if let Some(Tool::Land(tool)) = self.tool {
+            if central.inner.drag_started() {
+                self.land_stroke_begins(pixel);
+            }
+            if central.inner.dragged() {
+                self.land_step(tool, pixel);
+            }
+            if central.inner.drag_stopped() {
+                self.land_stroke_ends();
+            }
         }
     }
 }

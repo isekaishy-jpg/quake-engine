@@ -425,6 +425,20 @@ impl Renderer {
             .capture(view, scene.as_ref(), drawables.quads, width, height)
     }
 
+    /// Shows `sheet` as land number `number` of the map that's loaded, for a brush at work. It has
+    /// to be the same size, and the map should be built again when the brush is done.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn update_land(
+        &mut self,
+        number: usize,
+        sheet: &engine_map::TerrainSheet,
+    ) -> Result<(), RenderError> {
+        self.backend.update_land(number, sheet)
+    }
+
     /// Starts or stops timing what the GPU does. Says if it can.
     pub fn time_gpu(&mut self, on: bool) -> bool {
         self.backend.time_gpu(on)

@@ -1491,17 +1491,19 @@ impl Backend {
             size,
             BufferUsage::TRANSFER_DST,
         )?;
+        // A picture of the window, so the scene's where the window has it.
+        let (corner, shown) = self.view_area((width, height));
         #[expect(
             clippy::cast_precision_loss,
             reason = "capture sizes are far below 2^24"
         )]
-        let aspect = width as f32 / height as f32;
+        let aspect = shown.0 as f32 / shown.1.max(1) as f32;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, (width, height))?;
-        self.ensure_scene_target((width, height))?;
+        self.ensure_scene_target(shown)?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
-                self.record_scene(rec, scene, view, (width, height));
+                self.record_scene(rec, scene, view, shown);
                 rec.begin_render_pass_ext(
                     &self.capture_pass,
                     &attachments.framebuffer,
@@ -1513,7 +1515,7 @@ impl Backend {
                         },
                     ],
                 );
-                self.record_post(rec, (0, 0), (width, height));
+                self.record_post(rec, corner, shown);
                 Self::record_canvas(rec, self.canvas.as_ref(), (width, height));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(
