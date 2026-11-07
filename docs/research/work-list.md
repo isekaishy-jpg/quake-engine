@@ -1,0 +1,327 @@
+# The work list after the sprint
+
+Status: a list, not a plan. Nothing here has been through the workflow, and nothing is approved to build. The human set it on 2026-11-06, after an audit found that [the sprint](sprint.md) left agreed work out.
+
+It replaces the Next table in the sprint. Those items were called "never on the list", and that was wrong: several are in the notes the sprint's items linked to.
+
+## UI and packs
+
+| # | Item | From | Waits on |
+|---|---|---|---|
+| 1 | Finish moving the UI to scripts: status bar, menus, words in the middle of the screen, scores and the intermission | The human | |
+| 2 | Proper mouse support in menus | The human | |
+| 3 | `.epak` becomes `.pkt`, our own name for the container. It's a change of name | The human | |
+| 4 | Pack everything into `common.pkt`, or `ui.pkt` as well if the UI must be alone, with scripts in the pack | The human | 3 |
+| 5 | Fids, which are file ids, and a FlatBuffers manifest for packs. The schemas are Claude's to research and design, and none exist yet | The human | 3 |
+| 6 | Remove Quake's UI: `hud.rs`, `menu.rs` and the fallback to them. This reverses [proposal 0118](../proposals/0118-ui-scripts.md), which kept them | The human | 1, 2, 4, 74, 77 |
+
+Older work to look at for 5, as examples and not to copy: `populous-reborn/crates/reborn_assets/schema/pack.fbs` has ids from a hash of the path, entries sorted by id, and a pack saying which packs it needs. `test/assets/manifest.json` has a size and hash for each file.
+
+To settle in research for 4: whether the UI must be alone, how a game finds its packs with no `-content`, and where packs live while `content/ui` and `content/fonts` stay out of git.
+
+## Organising the engine
+
+At first Quake was the game. We're moving off that slowly, and the fixture keeps working, on the new systems. So Quake stays playable through all of this, as the test that nothing was lost.
+
+| # | Item | Waits on |
+|---|---|---|
+| 77 | An organisation pass: what belongs in the engine, in game code, in scripts and in the fixture, and things moved to match. Only `engine_app` depends on `fixture_quake`, but 12 of its files do: rules, weapons, sounds, saves, options, the HUD and menus. Screen tints and flashes are one example: the renderer draws them, and game code says when | Before 6 |
+
+## Mesh support
+
+Some editor items wait for this.
+
+| # | Item | From | Waits on |
+|---|---|---|---|
+| 7 | Instancing | [Mesh note](mesh-support.md) | |
+| 8 | Level of detail | [Mesh note](mesh-support.md) | |
+| 9 | Attach points, for maps, prefabs and models | [Mesh note](mesh-support.md), [effects note](effects-water-shaders.md) | |
+| 10 | Skeletal animation, with bones to attach to | [Mesh note](mesh-support.md) | 9 |
+| 11 | Morph targets | [Mesh note](mesh-support.md) | 10 |
+| 12 | Whether the fixture's models move onto the mesh path, as there's meant to be one way of drawing | [Effects note](effects-water-shaders.md) | 10 |
+
+## Shaders, particles and water
+
+| # | Item | From | Waits on |
+|---|---|---|---|
+| 13 | Shader node graphs, over surface code | [Effects note](effects-water-shaders.md) | |
+| 14 | Compute shaders | [Effects note](effects-water-shaders.md) | |
+| 15 | One visual graph editor, shared by shaders and particles | [Effects note](effects-water-shaders.md) | 13, the editor talk |
+| 16 | Mesh particles | [Effects note](effects-water-shaders.md) | 7 |
+| 17 | Water of all types: more than a box with a flat top, on meshes with depth | [Effects note](effects-water-shaders.md) | |
+| 29 | Precompile shaders. Compiling at runtime can stay for testing, and has no place in a finished product. This reverses [proposal 0107](../proposals/0107-shaders.md), which measured the cost and left it | The human | |
+| 30 | The engine's own shaders in the container, as the note says. Proposal 0107 kept the core in the program, so a broken one could still show green, and that needs an answer | [Effects note](effects-water-shaders.md) | 29 |
+
+## The particle and effects pipeline
+
+What's there is a working first version: files of settings, CPU and GPU, sprites, ribbons, beams, lights and marks, and scripts can start them. It has to reach spell effects, rocket splashes, fog and dust with turbulence, sparks and player effects. Item 13 of the sprint was not that. Items 9, 15, 16, 18 and 37 are part of this too.
+
+**Look**
+
+| # | Item | Waits on |
+|---|---|---|
+| 78 | Textured particles: an image, material or shader for each emitter. This comes first, as nothing like a spell can be made without it | |
+| 79 | Flipbooks: pictures that animate through a particle's life | 78 |
+| 80 | Shaders that reach particles | 78 |
+| 81 | Rotation and spin | |
+| 82 | Stretching along how they move | |
+| 83 | Fading where they meet a surface, so they don't cut hard into walls | |
+| 84 | Lit particles, which take light from the level | |
+| 85 | Proper ordering of what's drawn over what | |
+
+**Behaviour**
+
+| # | Item | Waits on |
+|---|---|---|
+| 86 | Collision: particles that hit surfaces, bounce, die or stick | |
+| 87 | Events beyond `on_death`, such as on hitting something, and a timeline | 86 |
+| 88 | More forces: attractors, vortices and wind | |
+| 89 | More shapes: rings, cones, and emitting from a mesh's surface | Mesh support, for meshes |
+| 90 | What the GPU can do, with compute, so it isn't limited to what follows from a number and the time | 14 |
+
+**Control**
+
+| # | Item | Waits on |
+|---|---|---|
+| 91 | Stopping an effect from a script, and fading it out | |
+| 92 | Settings for one instance from a script: colour, size, strength | |
+| 93 | Limits that scale: distance, how much is on screen, and a budget | |
+
+**Pipeline**
+
+| # | Item | Waits on |
+|---|---|---|
+| 94 | Reloading effects while the game runs | |
+| 95 | A preview and live tweaking in the editor, in an effects tab | The editor's design |
+| 96 | Quake's particles on the new system, so there's one way of doing it. The fixture's look stays | 78 |
+| 97 | A real library of effects to start from | Authoring, later |
+
+## Fog and being underwater
+
+Fog needs a lot. Today it's one even height layer for a whole map, with no shape or movement. Lit fog, `r_fog_grid`, is off by default and only reads the bake.
+
+| # | Item | Waits on |
+|---|---|---|
+| 70 | Fog volumes: fog in a place, with clear air beside it. Item 25's fog by zone goes with this | |
+| 71 | Turbulence and movement: drift, wisps and banks | |
+| 72 | Lit fog as the usual kind, if it holds up on cost, and lit by moving lights and rays as well as the bake | |
+| 73 | Underwater fog, in areas, thickening with depth | |
+| 74 | Underwater screen tint, a cheap effect. One exists, as a fixed colour. It needs to be set with the water and properly used. It's in `hud.rs`, so it has to keep working when item 6 removes that | Before 6 |
+| 75 | Underwater particles, such as motes and bubbles around the view | |
+| 76 | Each body of water with its own look. Today there's one `water` block for a map | |
+
+Items 73 to 75 work together: being underwater is shown by all of them, without any one being overdone.
+
+## Water's surface
+
+A surface can have a material, with scrolling and a shader such as `ripple`. Nothing on it reacts to anything, and it has no overlays.
+
+| # | Item | Waits on |
+|---|---|---|
+| 98 | Trails through water: a mask an author defines, such as a V with a rounded point around a player, whose arms spread as ripples and fade behind them | |
+| 99 | Ripples: rings from what enters, what's shot, and rain | 98 |
+| 100 | Overlays on a surface: foam, scum and the like, in layers over its material | |
+| 101 | Foam and a soft edge where water meets the shore, by depth | 100 |
+| 102 | Effects that come from play: splashes on going in, and spray when moving fast. Water's effects exist, and nothing starts them | |
+
+For 98 and 99, `solarityclient` has surface ripple passes, with circular and directional kinds, as a reference and not to copy: `crates/rendering/src/device/vulkan_ripple`.
+
+## Sound
+
+What's there is a good mix: 128 voices, fades, following, muffling, rooms, buses, ducking and a limiter. Around it, sound is still shaped by the port. How a sound behaves is the author's to control, with spatial sound as the default and not the only way.
+
+**The base**
+
+| # | Item | Waits on |
+|---|---|---|
+| 103 | Ogg and the like for effects, not only WAV. `parse_wav` moves out of the fixture | 77 |
+| 104 | The engine's own sounds, so a level isn't silent without Quake | Authoring, later |
+| 105 | Sound events: a named sound with variants, random pitch and volume, its fade and its bus. A sound's kind comes from data, not from its name | 103 |
+| 106 | Author control of each sound: spatial, or global with no place at all, and how it fades, muffles, follows and takes reverb. A script or a level can set these | 105 |
+| 107 | A guide to sound, as water, zones and effects have | 105 |
+
+**Headphones**
+
+| # | Item | Waits on |
+|---|---|---|
+| 108 | Binaural sound for headphones, as the default: simulated surround, so you can hear which way a sound comes from, in front, behind and above. Plain stereo stays as a choice for speakers. This reverses [proposal 0129](../proposals/0129-real-sound.md), which left it out. Research what it costs, as `kira` mixes to stereo | |
+
+**Authoring**
+
+| # | Item | Waits on |
+|---|---|---|
+| 109 | A sound tab in the editor, with preview and live tweaking | The editor's design, 105 |
+| 110 | Sound in effects files, so a fire or a spell brings its own | 105 |
+
+**The world**
+
+| # | Item | Waits on |
+|---|---|---|
+| 111 | Footsteps by surface, from the material | 105 |
+| 112 | Underwater muffling, with items 73 to 75 | |
+| 113 | Sound from an area or along a line, such as a river's length | |
+| 114 | Sets of random background sounds for a zone: birds, drips, distant creaks | 105 |
+| 115 | Those sets, and music, keyed by time of day | 66 |
+
+**Music**
+
+| # | Item | Waits on |
+|---|---|---|
+| 116 | Crossfades between zones | |
+| 117 | Layers that rise in a fight, and stingers on events | 116 |
+| 118 | Streaming long tracks | |
+
+**Spatial**
+
+| # | Item | Waits on |
+|---|---|---|
+| 119 | Doppler, for fast things like rockets | |
+| 120 | Sound that goes round corners and through doorways, not only by line of sight. Item 23 goes with this | |
+| 121 | Reverb set by a zone, over what the rays measure | |
+
+**Access**
+
+| # | Item | Waits on |
+|---|---|---|
+| 122 | Subtitles and sound cues on screen | 1 |
+| 123 | More sliders, such as voices and interface sounds | |
+
+Voice chat and surround sound systems aren't wanted.
+
+## Sky
+
+Today the sky has a gradient, a sun and one flat cloud layer, from a picture or made in the shader. A window's stencil can take the sun as its light, but nothing comes from the sky itself.
+
+| # | Item | Waits on |
+|---|---|---|
+| 63 | Planes in the sky for clouds, curved or flat, and more than one | |
+| 64 | Sky ray stencils, so rays come down through the sky and clouds. Research the ways and what they cost: skies made with cheap god rays, or stencils generated to match generated clouds for a few. An author's choice, for each sky. By default they stay in the sky and don't reach the level, unless an author wants them to | 63, 62 for what reaches the level |
+| 65 | A sun that moves, and a moon: light from one direction that reaches the ground and its specular, with shadows, by day and night. Research how, and what it costs. Today the sun is baked, and it's set once in a map | |
+| 66 | Day and night: the sky, sun, moon and light going through a day, set by an author or a script. Nothing does this today | 65 |
+| 67 | Open world light in the style of older online worlds: sets of sky, cloud, fog, water, ambient, sun and specular colours, keyed through a day. Each map has one, zones can have their own, and they blend by where you stand and how far in | |
+| 68 | The human's shadow heat map: the sun moves through a set arc of some degrees, and the bake keeps, for each sample, at what angles it's in shadow. Shadows then deepen and retract slowly, with no new bake and no live sun. Research how many angles it can hold, what it costs to bake, and thin things. It's for the final bake only, not every build, as it's likely expensive at production quality | 67, 69 |
+| 69 | A final bake, kept apart from everyday builds, for what's too slow to run each time. Everyday builds use a quick bake or none, with item 53's run mode. What only a final bake shows has to be checked before a level's done, so the editor should be able to run one on part of a level | |
+
+For 65 to 67, `solarityclient` shows the kind of thing, as a reference and not to copy: `crates/asset/src/database/light`. A map has a global set and local volumes with a falloff, each with 16 keys through a day, and the light's direction is worked out from the time and barely moves. So most of a day is colours changing, which is cheap. That may suit us: a baked sun on its own layer could change colour through a day with no new bake. Whether it holds up is for research.
+
+## Unfinished work in the real levels
+
+Some of this, and of what's elsewhere on the list, will come down purely to authoring: scripts, textures, maps and shaders, not engine work. Each item says which when it reaches the workflow.
+
+| # | Item | From | Waits on |
+|---|---|---|---|
+| 18 | Effects in real levels. No map places one and no script starts one, and that includes the waterfall and splashes | The audit | |
+| 19 | Water at its best in real levels | The human | 17 |
+| 20 | Meshes in real levels, starting with the well, which is why mesh work began | The audit | |
+| 21 | Music in zones. No map sets any | The audit | |
+
+## Smaller limits left in
+
+| # | Item | From |
+|---|---|---|
+| 23 | A closed door stopping sound, and loops moving between muffled and clear | [Proposal 0129](../proposals/0129-real-sound.md) |
+| 24 | Trains as a way for a path to go | [Proposal 0122](../proposals/0122-paths-that-leap.md) |
+| 25 | Fog by zone | [Proposal 0116](../proposals/0116-zones.md) |
+| 62 | Rays from windows and stencils go through floors, where they should stop. It can be seen in Vesper Deep. The likely cause: a ray stops at what's in front of the eye, and each box is only traced once, so nothing checks what's between a point in the air and the stencil | The human |
+
+## Texture spec
+
+| # | Item | From |
+|---|---|---|
+| 26 | Rewrite [the standard](../texture-standard.md), which is poor and mostly covers tiled sets | The human |
+
+What it has to cover:
+
+- Textures that aren't tiled: UI art, frames, icons, cursors, splash and title art, and painted scenes.
+- How they're packed, and the system that saves space.
+- Kitbashing: pieces made to be combined, and sheets shared between them.
+- What a model can make. Its line saying to ask for colour only is out of date, as models can make specular and other maps too.
+
+The test repo's art is an older example, to give an idea of what's possible, and not something to copy. The spec is designed for this engine. `test/assets/source/ui` shows the kind of thing:
+
+- Sheets with a JSON file naming each region, and a border for nine-slice.
+- Each UI piece in normal, hover, pressed, focused, selected and disabled.
+- Scenes with depth, occlusion and region maps beside the picture.
+- The prompt kept beside what it made.
+
+## MCP
+
+So Claude can use it well. A test on 2026-11-06 found the loop works: a level built only through MCP compiled, ran and looked right. These are the gaps it found.
+
+| # | Item | Why |
+|---|---|---|
+| 31 | Real schemas for all 42 tools | All are empty, so an agent guesses at arguments |
+| 32 | Validation that catches bad content, when it's added and in `validate` and `compile` | An unknown type, missing effect or music, a zone with no shape, an inverted brush, an unknown block and a misspelt field all pass, and a missing material still counts as success |
+| 33 | `shot` and `playtest` report what really happened, and a shot can say where it looks from | With a map outside the content, `shot` said ok and showed the Quake menu. `playtest` only says the game stayed up |
+| 34 | One rule for paths: from the content, and staying inside it | They go from where the server started, and `save` can write outside |
+| 35 | Find and filter, in place of everything at once | `describe` is 2 MB on Vesper Deep |
+| 36 | Undo that keeps changes, not whole maps | 22 MB became 419 MB after 40 edits on Vesper Deep |
+| 37 | Tools to write shaders, effects and prefabs, compile textures and build packs | None exist |
+| 38 | An answer to a malformed request, and tests through MCP itself | It gets no reply, and the 51 tests only reach the operations |
+
+## The editor
+
+The human's direction, 2026-11-06: item 18's floor plan went the wrong way. This is a starter on what it should be, not a design, and it goes through the workflow later. Anyone being able to make maps quickly is still the goal. It has to be organised and easy to use.
+
+| # | Item | Waits on |
+|---|---|---|
+| 39 | Start on a plane, with the infinite horizon and sky | |
+| 40 | A player in third person when needed, for scale, who can move around for live checks. Quake's model for now, until we have our own | |
+| 41 | Sky tab: choose or make sky scripts, sky spheres and horizons | |
+| 42 | Good default skies with variance | Authoring, later |
+| 43 | Mesh terrain, which the engine doesn't have yet | Mesh support |
+| 44 | Terrain tab | 43 |
+| 45 | A real circle on terrain and geometry, as the brush for sculpting and for painting textures, with our layers and alpha blending. A must have | |
+| 46 | Prefabs tab, with two sets: primitives and meshes | Mesh support, for the meshes |
+| 47 | Primitives that snap together: a ramp with walls, dressing and moulding, rooms, blockouts and basic items | |
+| 48 | Generated thumbnails of every item, to see what's being chosen | |
+| 49 | Placing as a see-through ghost, with optional snapping | |
+| 50 | Proper widgets to move, rotate and resize | |
+| 51 | Railings and the like that take a texture, showing its detail and see-through between | |
+| 52 | Working together in real time: the human sees what Claude does in the editor as it's done, so MCP joins the open editor | 31 to 38 |
+| 53 | A run mode for testing, with no compile step | |
+| 54 | Toolbars of small icon squares in the viewport, for path drawing, swapping to the camera and the like | |
+| 55 | Remove the floor plan: you can't really tell what you're making on it, so it isn't useful. That's `easy.rs`, `plan.rs`, the `plan_` tools and its part of `docs/editor.md`. Bigger, Plain colours and working by keyboard or mouse alone are kept for the new editor | 39 |
+| 61 | Camera setup tab | 57 |
+
+Real maps are expected to mix meshes, mesh terrain and primitives.
+
+For 52 and 53, what exists: the game already runs a text map with no bake, bright and flat, and the editor's view uses the same renderer. It doesn't run the game, it rebuilds the whole map on a change, and nothing reloads a level in a running game. So a big map needs rebuilding only what changed, and a quick look at light.
+
+To settle in design:
+
+- Stairs, zones, effects, a screen reader, and what else needs a home in the tabs.
+- What waits for mesh support.
+
+## Cameras
+
+Added by the human, 2026-11-06. How the usual third person camera works is research. The view is Rust in `view.rs` today, and scripts can only turn it with `engine.set_view`.
+
+| # | Item | Waits on |
+|---|---|---|
+| 56 | Cameras as scripts. First person and the intermission become scripts, even if they carry over as they are | |
+| 57 | A way to set up cameras: make one, place it and choose which is in use | 56 |
+| 58 | A core third person camera, with a spring boom, pushing in at walls, snapping in, and the rest of what makes one usable | 56 |
+| 59 | Scene cameras: a fixed one like the intermission's, or a set play that moves along a path | 57 |
+| 60 | The intermission camera has less movement than the original. Quake sways the view there, and we've no sway | 56 |
+
+Third person is likely to be the more usable camera in the editor, so items 40 and 54 lean on 58.
+
+## Waiting on the human's word
+
+The audit found these, and the human hasn't said yet. They're not on the list until they do.
+
+| What | Choice |
+|---|---|
+| Doors. Behaviour still matches `doors.qc`, with the uneven closing delay and the pause then snap | A revamp, and what it does |
+| Your own shots. [Proposal 0126](../proposals/0126-own-shots.md) closes all of the gap, where the human said to aim for half | Back to half, or keep it |
+| The rewind allowance. [Proposal 0128](../proposals/0128-network-numbers.md) took it from about 42 ms to 114 ms over a compensated ping, which a cheat may be able to use | Tighten it, and how |
+| Items 1 to 17 of the sprint were held to their tests, not reread, in the final review | Finish that review |
+
+## Not on the list
+
+Moving lights' shadows are soft, with no volumes. The human had a look and they're good enough for now. They may be revisited in a second pass at some later time, and aren't on this list until then.
+
+Player setup, in the editor, is likely to be wanted. That's future work, after rendering is done.
+
+Colour isn't engine work for now: sRGB made it in. Nothing we've made is worthy of showing it, so it can't really be inspected yet, and that's still to be judged once something is. It comes back if something turns out missing or low quality. Number 22 was this, and it's left unused so the others keep theirs.

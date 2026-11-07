@@ -13,6 +13,7 @@
   - [Shadow rendering](research/shadow-rendering.md): lamps, curved surfaces and moving lights, for design later
   - [Full mesh support](research/mesh-support.md): a direction, for the workflow later
   - [Texture standard and packing](research/texture-standard.md): a direction, for the workflow later
+  - [The work list after the sprint](research/work-list.md): what's next, not yet through the workflow
   - [Meshes](meshes.md): bringing models in, and placing them
   - [Shaders](shaders.md): writing one
   - [Effects](effects.md): writing one

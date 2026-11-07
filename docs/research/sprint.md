@@ -52,18 +52,7 @@ Earlier items unblock later ones.
 
 ## Next
 
-What came up along the way and was never on the list. Each is real work for the workflow.
-
-| Item | From | Size |
-|---|---|---|
-| Skeletal animation, morphs and level of detail for meshes, with attach points on bones | Item 8 | Large |
-| A visual graph editor for effects | Item 13 | Large |
-| Mesh particles | Item 13 | Medium |
-| Scores and intermission as scripts, and the mouse in scripted menus | Item 17 | Medium |
-| Fog by zone | Item 15 | Small |
-| A closed door stopping sound, and loops moving between muffled and clear | Item 28 | Small |
-| Trains as a way for a path to go | Item 21 | Small |
-| Stairs and upper floors on the floor plan, a screen reader, and pictures on the tools | Item 18 | For going over with the human |
+What's left is in [the work list](work-list.md). An audit found the sprint left agreed work out.
 
 ## Log
 

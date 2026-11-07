@@ -73,4 +73,4 @@ The final rounds went by what can go wrong, and not by reading all 18,500 new li
 
 ## Not done
 
-These were never on the list, and they came up along the way. They're real work, so they're on [the next list](../research/sprint.md#next) and not left as notes.
+This section first said that what was left was never on the list. That was wrong: the visual graph editor, mesh particles and attach points are in the notes the sprint's items linked to, and were agreed. What's left is in [the work list](../research/work-list.md).
