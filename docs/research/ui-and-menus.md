@@ -58,7 +58,7 @@ A display change should [apply as a preview that reverts by itself](https://www.
 | Start with no layers of menus | Two screens to start anything | Continue first, and New Game goes straight in |
 | Colours | `MUTED` is 4.71:1 and `INK` 12.3:1 on the kit's surface. `ACCENT` is 3.4:1, fine for large text only. The kit's disabled grey is 2.4:1, under 3:1 | Keep those, use `ACCENT` for large things, and lighten disabled text |
 | High contrast mode | None | A setting, with 7:1 throughout |
-| Text scale to 200% | Usual text at 720p is 24 pixels, twice the 12 the guideline works out at there. `ui_scale` had no limit, giant views were unusable, and a limit still forced scrolling, because a bigger UI has less room | Scaling relative to the picture, so that every screen has the same room. Text stays over the guideline at every resolution, and there's no setting. The guideline's scaling to 200% isn't offered as such: the human's call |
+| Text scale to 200% | Usual text at 720p is 24 pixels, twice the 12 the guideline works out at there. `ui_scale` had no limit, giant views were unusable, and a limit still forced scrolling, because a bigger UI has less room | Scaling relative to the picture, so that every screen has the same room. Text stays over the guideline at every resolution, and there's no setting. The guideline's scaling to 200% isn't offered as such. The human's word: no setting for now, as the UI will be revisited |
 | Text over a scene | Plain text on the HUD | A shadow, and a plate as a setting |
 | Clashing keys | Two actions can share a key, silently | Swap, and say so |
 | Capture | Nothing says what's going on | A prompt that says how to cancel and clear |

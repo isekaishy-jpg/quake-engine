@@ -52,7 +52,7 @@ The human's word: finish moving the UI over, give menus proper mouse support, an
 - **Selected approach:** the above.
 - **Tradeoffs:** with no `scripts/ui.luau` there's no UI, and the console is what's left, as a finished game has its `common.pkt`. No gamepad exists in the engine, so menus are for what the game is played with. With no size setting, a player who wants bigger text has no way to ask for it short of a bigger picture. A window smaller than 640 by 360 fits, with small text.
 - **Acceptance criteria:** Quake and our own levels play with this UI. Every screen works by keyboard alone and by mouse alone, fits at every resolution and shape, and never scrolls. Nothing engine-side prints over the game.
-- **Future extension:** none planned.
+- **Future extension:** the human will come back to the UI later: this pass gets us something usable. Their word on a size setting: none for now. Gameplay UI beyond what's here waits for then too.
 
 ## Review
 
