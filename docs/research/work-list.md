@@ -4,6 +4,62 @@ Status: a list, not a plan. Nothing here has been through the workflow, and noth
 
 It replaces the Next table in the sprint. Those items were called "never on the list", and that was wrong: several are in the notes the sprint's items linked to.
 
+## Order, and where it stands
+
+The human's word, 2026-11-06: take every item through the whole workflow, with nothing left out. Afterwards the human makes more textures to the new standard. Earlier items unblock later ones. Status is in the log at the end.
+
+| Stage | Items |
+|---|---|
+| 1. Going back to what was said | 149, 150 |
+| 2. The base | 77, 3, 5, 4, 29, 30, 124 begun |
+| 3. Specs | 26, 133 |
+| 4. MCP | 31 to 38 |
+| 5. Cameras | 56 to 60 |
+| 6. UI | 1, 2, 74, 6 |
+| 7. Meshes | 7 to 12 |
+| 8. Terrain | 43, 125 to 132 |
+| 9. Shaders | 13, 14 |
+| 10. Effects | 78 to 97, 16, 9 |
+| 11. Fog and water | 70 to 76, 17, 98 to 102 |
+| 12. Sky and light | 62 to 69 |
+| 13. Sound | 103 to 123, 23 |
+| 14. Smaller limits | 24, 25 |
+| 15. The editor | 39 to 42, 44 to 55, 61, 15 |
+| 16. Doors | 151 |
+| 17. Artifacts and the test map | 133 to 148, 124 finished, 18, 19, 20, 21 |
+| 18. Review | 152, then circular quality and bug rounds, and a performance sweep |
+
+## How we work through this
+
+Too much space went and too many maps were recompiled in the sprint. `target` is 50 GB, and all 20 maps were rebaked again and again.
+
+| # | Item | Waits on |
+|---|---|---|
+| 124 | One small test map that covers all the things, for everyday testing. It's a real level, not a room of patterns, and it grows as features land. Small is relative: a lift still needs another level to go down to. But it's there to test features, with no gameplay areas that test nothing. Each area earns its place, such as mesh terrain coming over flat slabs of old stone, or meeting the flat brush floor of a building. Other levels are baked at milestones, or when a change really touches them | Comes first |
+
+## Artifacts for the test map
+
+Real content of good quality, for item 124, and reusable after it. What's on the map shows what's working. All of them are made new from scratch, not reworked from the prefabs we have. Blender is available, with an MCP. A written spec comes first, as assets have to be on a standard.
+
+| # | Item | Waits on |
+|---|---|---|
+| 133 | A spec for meshes and prefabs: sizes, detail, how they texture, how they snap, what comes with them | 26 |
+| 134 | A proper well, as a mesh | 133 |
+| 135 | A couple of good real mesh bridges | 133 |
+| 136 | A lift platform, with a script: it moves when a player stands on it, or runs its own cycle up and down | 133 |
+| 137 | Teleports of various styles: a doorway, a window with blinds, a ring gate style, and a portal you can see through to the other side | 133, 138 |
+| 138 | Seeing through a portal, which the engine can't do. The `portal` prefab is a teleporter pad and nothing is drawn | |
+| 139 | Better stairs and staircases, slopes and ramps | 133 |
+| 140 | Rooms and hallways, as primitives and meshes | 133 |
+| 141 | Dressings and pillars, as primitives and meshes | 133 |
+| 142 | Lamps, torches and candles on holders, braziers and a pillar brazier, with their fire and light | 133, 78 |
+| 143 | Sky presets, of higher quality and more variety. Item 42 is this | 63 |
+| 144 | Switches of various types, as meshes with scripts | 133 |
+| 145 | Objects that move | 133 |
+| 146 | Grass, trees and rocks | 133, 147 |
+| 147 | What foliage needs from the engine: drawing great numbers of copies, wind, and scattering them on land | 7 |
+| 148 | Other mesh prefabs, for reuse | 133 |
+
 ## UI and packs
 
 | # | Item | From | Waits on |
@@ -39,6 +95,23 @@ Some editor items wait for this.
 | 10 | Skeletal animation, with bones to attach to | [Mesh note](mesh-support.md) | 9 |
 | 11 | Morph targets | [Mesh note](mesh-support.md) | 10 |
 | 12 | Whether the fixture's models move onto the mesh path, as there's meant to be one way of drawing | [Effects note](effects-water-shaders.md) | 10 |
+
+## Mesh terrain
+
+Likely a heightfield and an inverse heightfield, as many games have. Real maps are expected to mix it with meshes and primitives. Item 43 is this section, and the editor's terrain tab and circle are items 44 and 45.
+
+| # | Item | Waits on |
+|---|---|---|
+| 125 | Heightfield terrain, in chunks on the tile grid, with level of detail | 8 |
+| 126 | Inverse heightfield, and holes. It's needed: without it, anything underground, overhangs and bridges can only be prefabs, with no sculpting. Research how far it goes, such as more than one layer of land stacked for a bridge over a road | 125 |
+| 127 | Shaping tools: raise, lower, smooth, stamp, splat, copy and the like | 125, 45 |
+| 128 | Painting the land properly, with its own way of blending materials. A material has 8 image slots, and at most 3 blended layers over its base, each with no normal or specular of its own, so land needs more than that | 125, 45 |
+| 129 | Terrain in everything else: collision straight from the heights and not as brushes, baked light and shadows, visibility and paths | 125 |
+| 130 | Water on terrain: a surface shaped to the land, with an area set underneath it, so all of water's effects, fog, swimming and the rest work there. Pools are boxes today | 125, 17 |
+| 131 | More blended textures on a surface, each with its own normal and shine, for materials as well as land. Research how many, and what each costs a pixel. Baking can take much of that cost: the mega texture already mixes layers and paint into one read, in one 2048 image a map. Research how that grows to big land, such as an image for each tile, or baking far land and blending near it, against what it costs in memory and disk | |
+| 132 | Better tiling over big areas. Today a texture is just spread over them. Research the ways: variation at large scale, breaking up the repeat, and mixing sizes | |
+
+`test/docs/terrain.md` and `test/src/render.rs` are an older experiment in heightfields, painted layers and water on mesh terrain. They give an idea, and aren't to copy.
 
 ## Shaders, particles and water
 
@@ -269,7 +342,7 @@ The human's direction, 2026-11-06: item 18's floor plan went the wrong way. This
 | 40 | A player in third person when needed, for scale, who can move around for live checks. Quake's model for now, until we have our own | |
 | 41 | Sky tab: choose or make sky scripts, sky spheres and horizons | |
 | 42 | Good default skies with variance | Authoring, later |
-| 43 | Mesh terrain, which the engine doesn't have yet | Mesh support |
+| 43 | Mesh terrain, which the engine doesn't have yet. See items 125 to 130 | Mesh support |
 | 44 | Terrain tab | 43 |
 | 45 | A real circle on terrain and geometry, as the brush for sculpting and for painting textures, with our layers and alpha blending. A must have | |
 | 46 | Prefabs tab, with two sets: primitives and meshes | Mesh support, for the meshes |
@@ -307,16 +380,16 @@ Added by the human, 2026-11-06. How the usual third person camera works is resea
 
 Third person is likely to be the more usable camera in the editor, so items 40 and 54 lean on 58.
 
-## Waiting on the human's word
+## Going back to what was said
 
-The audit found these, and the human hasn't said yet. They're not on the list until they do.
+The audit found these. The human said to take every item with nothing left out, so each goes back to what was first asked for, and the proposal says so.
 
-| What | Choice |
-|---|---|
-| Doors. Behaviour still matches `doors.qc`, with the uneven closing delay and the pause then snap | A revamp, and what it does |
-| Your own shots. [Proposal 0126](../proposals/0126-own-shots.md) closes all of the gap, where the human said to aim for half | Back to half, or keep it |
-| The rewind allowance. [Proposal 0128](../proposals/0128-network-numbers.md) took it from about 42 ms to 114 ms over a compensated ping, which a cheat may be able to use | Tighten it, and how |
-| Items 1 to 17 of the sprint were held to their tests, not reread, in the final review | Finish that review |
+| # | Item | From |
+|---|---|---|
+| 149 | Your own shots aim for half of the gap, as the human said, in place of [proposal 0126](../proposals/0126-own-shots.md)'s all of it | The human, 2026-11-04 |
+| 150 | Tighten the rewind allowance. [Proposal 0128](../proposals/0128-network-numbers.md) took it from about 42 ms to 114 ms over a compensated ping, which a cheat may be able to use | The fair play rules |
+| 151 | Doors: the revamp to better logic the human asked for, with the uneven closing delay and the pause then snap dealt with | The human, 2026-11-04 |
+| 152 | Finish the review: items 1 to 17 of the sprint were held to their tests, not reread | The sprint's final rounds |
 
 ## Not on the list
 
@@ -325,3 +398,8 @@ Moving lights' shadows are soft, with no volumes. The human had a look and they'
 Player setup, in the editor, is likely to be wanted. That's future work, after rendering is done.
 
 Colour isn't engine work for now: sRGB made it in. Nothing we've made is worthy of showing it, so it can't really be inspected yet, and that's still to be judged once something is. It comes back if something turns out missing or low quality. Number 22 was this, and it's left unused so the others keep theirs.
+
+## Log
+
+Newest last. One line for each thing finished, with its commit.
+
