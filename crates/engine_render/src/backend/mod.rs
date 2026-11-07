@@ -9,6 +9,7 @@ mod post;
 mod record;
 mod ripple;
 mod shadow;
+pub(crate) use shadow::{SUN_REACHES, SunShadow};
 mod sim;
 mod smaa;
 mod terrain;
@@ -109,7 +110,8 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 4
     + 256 * 4
     + 12
-    + 256;
+    + 256
+    + 4;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -124,7 +126,7 @@ const FOG_LIGHTS: usize = 4;
 const POST_BYTES: usize = 128;
 
 /// Bytes of sky values in the frame uniforms.
-const SKY_BYTES: usize = 80 + engine_map::MOST_CLOUDS * 48;
+const SKY_BYTES: usize = 80 + engine_map::MOST_CLOUDS * 48 + 32;
 
 /// Texture frames per second, from `R_TextureAnimation`.
 const ANIMATION_RATE: f32 = 5.0;
@@ -809,6 +811,7 @@ impl Backend {
                 image_binding(5, DescriptorType::SAMPLED_IMAGE),
                 image_binding(6, DescriptorType::SAMPLER),
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
+                image_binding(8, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let texture_layout = DescriptorSetLayout::new(
@@ -1449,7 +1452,7 @@ impl Backend {
         self.record_ripples(rec);
         self.record_sims(rec);
         self.clock.end(rec, self.slot, Span::Deform);
-        let wanted = scene.filter(|_| self.shadows.redraws() > 0);
+        let wanted = scene.filter(|_| self.shadows.redraws() > 0 || self.shadows.sun_draws());
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
         let entities = wanted.map_or(&[][..], |scene| scene.drawables.entities);
         let places = self

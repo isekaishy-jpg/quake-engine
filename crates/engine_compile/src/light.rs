@@ -11,7 +11,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use engine_core::math::Vec3;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material, MegaImage,
-    MipLevel, ProbeGrid, RESIDENT, TerrainSheet, TextureKind,
+    MipLevel, ProbeGrid, RESIDENT, SUN_BOUNCE_STYLE, SUN_STYLE, SunMode, TerrainSheet, TextureKind,
 };
 
 use crate::charts::{Chart, map_charts};
@@ -135,6 +135,8 @@ impl Glass {
 
 /// What light can hit.
 struct Scene<'a> {
+    /// How many layers of a face lights can have.
+    light_room: usize,
     /// Solid brushes, as a tree.
     tree: TreeBuilder,
     /// The tree's root.
@@ -564,7 +566,7 @@ fn light_on(
 const FIRST_KEYFRAME_STYLE: u8 = 48;
 
 /// The last style free for keyframes.
-const LAST_KEYFRAME_STYLE: u8 = 59;
+const LAST_KEYFRAME_STYLE: u8 = 57;
 
 /// How many visibility samples cross a light sample, along each side, to find
 /// a crisp shadow's edge.
@@ -1226,9 +1228,16 @@ type FitLayer<'a> = (u8, Vec<[f64; 3]>, Option<&'a BakeLight>);
 /// What fits on a face, what's left over from `lights`, in the order of how much
 /// light each gives, and so nothing depends on the order they're in a map. One
 /// layer is for bounced light.
-fn rank_layers<'a>(mut lights: Vec<FaceShare<'a>>) -> (Vec<FitLayer<'a>>, Vec<FaceShare<'a>>) {
-    lights.sort_by(|a, b| b.energy.total_cmp(&a.energy));
-    let room = MAX_LAYERS - 1;
+fn rank_layers<'a>(
+    mut lights: Vec<FaceShare<'a>>,
+    room: usize,
+) -> (Vec<FitLayer<'a>>, Vec<FaceShare<'a>>) {
+    // A sun on a layer of its own has to get one, however little of it there is here, or a day
+    // would leave it behind.
+    lights.sort_by(|a, b| {
+        let own = |share: &FaceShare<'_>| share.source.style == SUN_STYLE;
+        own(b).cmp(&own(a)).then(b.energy.total_cmp(&a.energy))
+    });
     let mut layers: Vec<FitLayer<'a>> = Vec::new();
     let mut spare_crisp = CRISP_STYLES.iter().copied();
     let mut left = Vec::new();
@@ -1280,7 +1289,7 @@ fn fit_layers<'a>(
             *sum = add_scaled(*sum, *direction, 1.0);
         }
     }
-    let (mut layers, left) = rank_layers(lights);
+    let (mut layers, left) = rank_layers(lights, scene.light_room);
     if !left.is_empty() && layers.iter().all(|(_, _, sharp)| sharp.is_some()) {
         // Light left over needs somewhere plain to go, so the weakest sharp
         // light gives way. Its samples then have to hold its shadow.
@@ -1898,7 +1907,7 @@ fn bounce_sources(
     bakes: &[Option<FaceBake>],
     spacing: f64,
     tile_size: f64,
-    wider: usize,
+    (wider, from): (usize, BounceFrom),
 ) -> BounceField {
     let mut field = BounceField {
         tile_size,
@@ -1909,6 +1918,9 @@ fn bounce_sources(
         for (index, point) in bake.points.iter().enumerate() {
             let mut lit = [0.0; 3];
             for (style, samples) in &bake.layers {
+                if !from.has(*style) {
+                    continue;
+                }
                 // A crisp layer holds light as if nothing shaded it.
                 let edges = bake.edges.iter().find(|(known, _)| known == style);
                 let edge = edges.and_then(|(_, edges)| edges.get(index));
@@ -1954,6 +1966,28 @@ fn bounce_sources(
         .map(|(tile, sources)| (tile, thinned(sources, most * wider)))
         .collect();
     field
+}
+
+/// Which layers something bounces from.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum BounceFrom {
+    /// All of them.
+    All,
+    /// All but the sun's.
+    Rest,
+    /// Only the sun's.
+    Sun,
+}
+
+impl BounceFrom {
+    /// Whether light of `style` counts.
+    fn has(self, style: u8) -> bool {
+        match self {
+            Self::All => true,
+            Self::Rest => style != SUN_STYLE,
+            Self::Sun => style == SUN_STYLE,
+        }
+    }
 }
 
 /// The light bounced onto a point.
@@ -2144,7 +2178,7 @@ fn probe_spacing(size_at: impl Fn(f64) -> [u32; 3]) -> f64 {
 fn bake_probes(
     scene: &Scene<'_>,
     map: &Map,
-    sources: &BounceField,
+    (sources, sun_sources): (&BounceField, Option<&BounceField>),
     gain: f64,
     ambient: f64,
 ) -> Option<ProbeGrid> {
@@ -2173,27 +2207,51 @@ fn bake_probes(
     let baked = in_parallel(&positions, |point| {
         let mut colors = [[0_u8; 3]; 6];
         let mut direction = [0.0; 3];
+        let (mut sunlit, mut all_light) = (0.0, 0.0);
         // A probe in solid stays dark, which is how sampling knows to skip it.
         let place = Vec3::new(point[0] as f32, point[1] as f32, point[2] as f32);
         let leaf = map.tree.leaf(map.tree.leaf_at(place));
         let open = leaf.is_some_and(|leaf| leaf.contents != engine_map::Contents::Solid);
         if scene.land.iter().any(|sheet| sheet.holds(place)) {
-            return (colors, direction_bytes(direction));
+            return (colors, direction_bytes(direction), 0);
         }
         let base = if open { ambient } else { 0.0 };
         for (side, normal) in PROBE_SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
+            let mut from_sun = [0.0; 3];
+            if let Some(field) = sun_sources {
+                from_sun = bounced_at(scene, field, *point, *normal, gain);
+            }
             for source in scene.lights {
+                // What's drawn live lights models as it goes.
+                if source.style == SUN_STYLE && map.sun_mode == SunMode::Live {
+                    continue;
+                }
                 let (color, from) = light_on(scene, source, *point, *normal, true);
                 let energy = color[0] + color[1] + color[2];
                 direction = add_scaled(direction, from, energy);
                 for part in 0..3 {
-                    light[part] += color[part];
+                    if source.style == SUN_STYLE {
+                        from_sun[part] += color[part];
+                    } else {
+                        light[part] += color[part];
+                    }
                 }
             }
-            colors[side] = to_bytes(light.map(|part| part + base));
+            sunlit += from_sun.iter().sum::<f64>();
+            all_light += light.iter().chain(&from_sun).sum::<f64>() + base * 3.0;
+            let total: [f64; 3] = std::array::from_fn(|part| light[part] + from_sun[part]);
+            colors[side] = to_bytes(total.map(|part| part + base));
         }
-        (colors, direction_bytes(direction))
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a share, from 0 to 1"
+        )]
+        let share = (sunlit / all_light.max(0.001) * 255.0)
+            .round()
+            .clamp(0.0, 255.0) as u8;
+        (colors, direction_bytes(direction), share)
     });
     #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
     let origin = Vec3::new(low[0] as f32, low[1] as f32, low[2] as f32);
@@ -2203,8 +2261,9 @@ fn bake_probes(
         origin,
         spacing,
         size,
-        colors: baked.iter().map(|(colors, _)| *colors).collect(),
-        directions: baked.iter().map(|(_, direction)| *direction).collect(),
+        colors: baked.iter().map(|(colors, _, _)| *colors).collect(),
+        directions: baked.iter().map(|(_, direction, _)| *direction).collect(),
+        sun_shares: baked.iter().map(|(_, _, share)| *share).collect(),
     })
 }
 
@@ -2347,6 +2406,7 @@ pub fn bake_light_as(
         .and_then(|world| world.number("bounce"))
         .unwrap_or(1.0)
         * 0.25;
+    let own_sun = map.sun_mode != SunMode::Fixed;
     if let Some(sky) = &map.sky {
         let direction = sky.sun_direction;
         let intensity = world
@@ -2357,18 +2417,20 @@ pub fn bake_light_as(
                 origin: [0.0; 3],
                 color: sky.sun_color.map(f64::from),
                 intensity,
-                style: 0,
+                style: if own_sun { SUN_STYLE } else { 0 },
                 size: world.and_then(|w| w.number("sun_size")).unwrap_or(0.0),
                 direction: Some(wide(direction)),
                 cone: -1.0,
                 cookie: None,
                 profile: Vec::new(),
                 sun: true,
-                crisp: world.is_some_and(|w| {
-                    w.fields
-                        .iter()
-                        .any(|(k, v)| k == "sun_crisp" && v.flag() == Some(true))
-                }),
+                // Crisp layers go to whichever light needs them, so a day couldn't find it.
+                crisp: !own_sun
+                    && world.is_some_and(|w| {
+                        w.fields
+                            .iter()
+                            .any(|(k, v)| k == "sun_crisp" && v.flag() == Some(true))
+                    }),
                 angle_scale: 1.0,
             });
         }
@@ -2457,6 +2519,8 @@ pub fn bake_light_as(
             .filter_map(|(face, lift)| Some((map.faces.get(*face as usize)?.first_point, *lift)))
             .collect(),
         lights: &lights,
+        // Room for what's bounced, and a sun's has a layer of its own.
+        light_room: MAX_LAYERS - if own_sun { 2 } else { 1 },
     };
 
     let faces: Vec<Face> = map.faces.clone();
@@ -2501,11 +2565,19 @@ pub fn bake_light_as(
     } else {
         &bakes[..]
     };
-    let sources = bounce_sources(lit, spacing, bounce_tile, 1);
+    let rest = if own_sun {
+        BounceFrom::Rest
+    } else {
+        BounceFrom::All
+    };
+    let sources = bounce_sources(lit, spacing, bounce_tile, (1, rest));
     // Looking at more of what bounces is most of what a final bake costs, so what's outside the
     // part it's told to take care over doesn't.
+    let widest = (FINAL_BOUNCE_SOURCES, rest);
     let fine_sources = (quality.level == BakeLevel::Final)
-        .then(|| bounce_sources(lit, spacing, bounce_tile, FINAL_BOUNCE_SOURCES));
+        .then(|| bounce_sources(lit, spacing, bounce_tile, widest));
+    let sun_sources =
+        own_sun.then(|| bounce_sources(lit, spacing, bounce_tile, (1, BounceFrom::Sun)));
     let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
             let field = fine_sources
@@ -2519,10 +2591,22 @@ pub fn bake_light_as(
             light
         })
     });
-    let probes = bake_probes(&scene, shared, &sources, bounce_gain, ambient);
-    for (bake, bounce) in bakes.iter_mut().zip(bounced) {
+    let sun_bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
+        let (bake, field) = (bake.as_ref()?, sun_sources.as_ref()?);
+        Some(bounced_face(&scene, field, bake, bounce_gain))
+    });
+    let bounces = (&sources, sun_sources.as_ref());
+    let probes = bake_probes(&scene, shared, bounces, bounce_gain, ambient);
+    for ((bake, bounce), sun_bounce) in bakes.iter_mut().zip(bounced).zip(sun_bounced) {
         if let (Some(bake), Some(bounce)) = (bake, bounce) {
             bake.layers.push((BOUNCE_STYLE, bounce));
+            if let Some(sun_bounce) = sun_bounce {
+                bake.layers.push((SUN_BOUNCE_STYLE, sun_bounce));
+            }
+            // What bounced had to be worked out from it, and now it's the game's to draw.
+            if shared.sun_mode == SunMode::Live {
+                bake.layers.retain(|(style, _)| *style != SUN_STYLE);
+            }
         }
     }
     share_samples(&scene, &mut bakes);

@@ -10,7 +10,7 @@ use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, LandPicture, Leaf, Look, Map,
     MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
-    OccluderSphere, Plane, Pool, PoolLook, TerrainSheet, TexelAxis, Texture, TextureKind,
+    OccluderSphere, Plane, Pool, PoolLook, SunMode, TerrainSheet, TexelAxis, Texture, TextureKind,
     ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
 
@@ -1494,6 +1494,13 @@ fn compile_with(
     let reach = reach.map(|reach| reach as f32);
     builder.map.wake_reach = reach.unwrap_or(size * 1.5);
     builder.map.look = look_of(working)?;
+    builder.map.sun_mode = sun_mode_of(working)?;
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn");
+    #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+    let strength = world
+        .and_then(|world| world.number("sun_intensity"))
+        .unwrap_or(0.0) as f32;
+    builder.map.sun_strength = strength;
     builder.map.live_lights = working
         .entities
         .iter()
@@ -1558,6 +1565,19 @@ fn usual_cell(map: &Map) -> f64 {
         size *= 2.0;
     }
     size
+}
+
+/// How a working map says its sun works.
+fn sun_mode_of(working: &WorkingMap) -> Result<SunMode, CompileError> {
+    let world = working.entities.iter().find(|e| e.kind == "worldspawn");
+    match world.and_then(|world| world.text("sun")) {
+        None | Some("fixed") => Ok(SunMode::Fixed),
+        Some("baked") => Ok(SunMode::Baked),
+        Some("live") => Ok(SunMode::Live),
+        Some(other) => Err(CompileError::Bad(format!(
+            "a sun is fixed, baked or live, not {other}"
+        ))),
+    }
 }
 
 /// How a working map says its light comes out.

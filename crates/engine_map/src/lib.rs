@@ -35,6 +35,7 @@ pub use effect::{
 };
 pub use emitter::Emitter;
 pub use live::{LiveLightSource, along_path};
+pub use map::SunMode;
 pub use map::{
     Animation, AttachPoint, Entity, Face, FaceLight, Look, MOVING_MESH_PREFIX, Map, MegaImage,
     MegaMaps, MeshCorner, MeshGroup, MeshInstance, MipLevel, Model, MovingMesh, PixelForm,
@@ -49,11 +50,12 @@ pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, c
 pub use occluder::{ModelOccluder, OccluderSphere, pose_occlusion, pose_spheres};
 pub use pool::{NO_WATER, Pool, PoolLook, WaterOverlay, WaterPush, WaterSheet, look_around};
 pub use probes::{BOUNCE_STYLE, CRISP_STYLES, LightTrack, ProbeGrid, ProbeSample};
+pub use probes::{SUN_BOUNCE_STYLE, SUN_STYLE};
 pub use skeleton::{
     Channel, ChannelPath, Clip, HitCapsule, Interpolation, Joint, JointPose, NO_MOVE, Rows,
     Skeleton, SkeletonPlace, after, angles_of_rows, blend_poses, moved, placed_at, turned,
 };
-pub use sky::{Clouds, Fog, FogVolume, MOST_CLOUDS, Sky, SkyRays, USUAL_CLOUD_CURVE};
+pub use sky::{Clouds, Fog, FogVolume, MOST_CLOUDS, RISING, Sky, SkyRays, USUAL_CLOUD_CURVE};
 pub use sprite::{Sprite, SpriteFacing, SpriteFrame, SpriteImage};
 pub use stencil::{RayStencil, STENCIL_GRID, stencil_boxes};
 pub use terrain::{

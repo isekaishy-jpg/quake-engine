@@ -52,6 +52,15 @@ fn a_map_with_no_say_holds() {
     assert_eq!(Look::default().tone, ToneCurve::Hold);
 }
 
+/// A sky can have a moon.
+#[test]
+fn a_sky_can_have_a_moon() {
+    let moon = sky("moon_color = 0.2 0.3 0.4 moon_size = 0.003");
+    assert_eq!(moon.moon_color, [0.2, 0.3, 0.4]);
+    assert!((moon.moon_size - 0.003).abs() < 0.0001);
+    assert_eq!(sky("").moon_color, [0.0; 3]);
+}
+
 /// A sky needn't have clouds.
 #[test]
 fn a_sky_can_be_clear() {

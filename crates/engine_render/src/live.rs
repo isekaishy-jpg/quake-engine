@@ -3,7 +3,9 @@
 
 use engine_core::math::Vec3;
 
+use crate::backend::{SUN_REACHES, SunShadow};
 use crate::matrix::rolled_axes;
+use crate::renderer::SunDraw;
 use crate::renderer::{CapsuleDraw, View};
 
 /// The most moving lights in a frame, one for each of a cluster's first bits.
@@ -41,7 +43,12 @@ const LIGHT_BYTES: usize = 48;
 pub(crate) const LIVE_BYTES: usize = 32
     + MAX_LIVE_LIGHTS * LIGHT_BYTES
     + MAX_SHADOW_LIGHTS * 6 * 64
-    + CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z * 8;
+    + CLUSTERS_X * CLUSTERS_Y * CLUSTERS_Z * 8
+    + SUN_BYTES;
+
+/// Bytes of a sun's: three maps' matrices, then where it is, its light, and how far each map
+/// reaches.
+const SUN_BYTES: usize = 3 * 64 + 48;
 
 /// A moving light in a frame.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
@@ -204,6 +211,7 @@ pub(crate) fn live_bytes(
     lights: &[LiveLight],
     capsules: &[CapsuleDraw],
     slots: &[Option<usize>],
+    sun: Option<(SunDraw, SunShadow)>,
 ) -> Vec<u8> {
     let mut floats = Vec::with_capacity(LIVE_BYTES / 4);
     let lights = lights.get(..MAX_LIVE_LIGHTS).unwrap_or(lights);
@@ -257,6 +265,19 @@ pub(crate) fn live_bytes(
     }
     for mask in cluster_masks(view, aspect, lights, capsules) {
         bytes.extend_from_slice(&mask.to_le_bytes());
+    }
+    let mut sun_floats = vec![0.0_f32; SUN_BYTES / 4];
+    if let Some((draw, shadow)) = sun {
+        for (at, matrix) in shadow.matrices.iter().enumerate() {
+            sun_floats[at * 16..at * 16 + 16].copy_from_slice(matrix);
+        }
+        let toward = draw.toward.normalized();
+        sun_floats[48..52].copy_from_slice(&[toward.x, toward.y, toward.z, 1.0]);
+        sun_floats[52..55].copy_from_slice(&draw.color);
+        sun_floats[56..59].copy_from_slice(&SUN_REACHES);
+    }
+    for float in sun_floats {
+        bytes.extend_from_slice(&float.to_le_bytes());
     }
     bytes
 }

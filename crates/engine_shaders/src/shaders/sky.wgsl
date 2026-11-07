@@ -105,6 +105,12 @@ fn sky_color(direction_in: vec3<f32>) -> vec3<f32> {
         color = mix(frame.sky_horizon.rgb, frame.sky_ground.rgb, clamp(-height * 8.0, 0.0, 1.0));
     }
     let toward = dot(direction, frame.sky_sun.xyz);
+    // The moon is on the far side of the sky.
+    let moon_toward = -toward;
+    let moon_size = frame.sky_moon.w;
+    let moon = smoothstep(1.0 - moon_size * 1.2, 1.0 - moon_size, moon_toward);
+    let moon_glow = pow(max(moon_toward, 0.0), 256.0) * 0.2;
+    color = color + frame.sky_moon_color.rgb * (moon + moon_glow);
     let size = frame.sky_sun.w;
     let disc = smoothstep(1.0 - size * 1.2, 1.0 - size, toward);
     let glow = pow(max(toward, 0.0), 64.0) * 0.35;

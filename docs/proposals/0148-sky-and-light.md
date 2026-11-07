@@ -30,8 +30,9 @@ One block with no new fields looks much as it did.
 
 ### How a sun works (65, 68)
 
-`sun = baked`, `live` or `arc` in the world.
+`sun = fixed`, `baked`, `live` or `arc` in the world.
 
+- **`fixed`** is what a sun always was, baked in with everything else, and what a level has unless it says.
 - **`baked`** goes on a layer of its own, along with what it bounces. Its colour can change with no new bake.
 - **`live`** isn't baked at all, apart from what it bounces. Three cascades of shadows follow the view, the nearest each frame and the others in turn.
 - **`arc`** gives each sample of the sun's layer 32 bits, one for each angle through `sun_arc`, and the sun moves along it. It needs a final bake. Until there is one it's drawn as `baked`.
@@ -105,5 +106,17 @@ Each of those comes from the research, and none needs more for what the items as
 - **A stale final bake is passed over,** and the compiler says so. A level is never shown with light from an older version of itself.
 - **It ships.** A pack takes what's in the folder, so `.efinal` goes with a level.
 - **What isn't there yet:** the heat map, which is item 68, and the editor's button, in stage 15.
+
+### A sun that moves, and a moon (65)
+
+- **Tried in the game:** the same yard with a fixed, a baked and a live sun looks the same, the live one a little sharper, so it's on the same scale as a bake. Moved round with `sun_toward`, its shadows go the other way and grow long as it gets low. Below the horizon it's the moon, from the far side, blue and dimmer, with its own shadows.
+- **What it costs:** about 0.1 ms for its shadows, in a small yard. The nearest of three maps is drawn each frame, and the two far ones take turns, as a sun moves slowly.
+- **`fixed` is what a level gets unless it says,** so nothing baked changes. The other kinds are the author's.
+- **What a sun bounces is on a layer of its own,** apart from what the rest bounces, or a night would still be lit by the day's. That's two layers on a face for a sun, so other lights get fewer, and the sun is always given its two first.
+- **A sun of its own can't be crisp.** Crisp layers go to whichever light needs them on a face, so nothing could find the sun's to change it.
+- **Models get a live sun** if they can see the sky towards it, looked for once for each, before anything's drawn. Probes keep how much of their light is a baked sun's, for a day to work with.
+- **What faces away from the sun is skipped before its shadow is looked at.** It would come out dark either way, as it's in its own shadow, but that's nine samples of a map saved, and no test can tell the two apart.
+- **A shadow from straight up is under what casts it,** which is right, and it's what made a test look wrong at first.
+- **What isn't done yet is day's:** the sky's colour, and turning down what a sun bounced as it sets, are item 66. `sun_toward` is for trying it, and a day drives it.
 
 Filled in as each part lands.

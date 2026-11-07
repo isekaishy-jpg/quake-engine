@@ -140,10 +140,40 @@ pub struct Sky {
     pub sun_color: [f32; 3],
     /// How large the sun looks, as a cosine distance.
     pub sun_size: f32,
+    /// The moon's colour, which is also its light, with black for no moon. It's on the far side
+    /// of the sky from the sun.
+    pub moon_color: [f32; 3],
+    /// How large the moon looks, as a cosine distance.
+    pub moon_size: f32,
     /// The layers of cloud, up to `MOST_CLOUDS`. The first is the lowest, so it's in front.
     pub clouds: Vec<Clouds>,
     /// Rays coming down through it, if an author wants them.
     pub rays: Option<SkyRays>,
+}
+
+/// How far over the horizon a sun or moon gets to all its light, as a share of straight up. It
+/// comes in and goes out over that, so that night doesn't fall all at once.
+pub const RISING: f32 = 0.1;
+
+impl Sky {
+    /// The light of a sun towards `toward`, as `strength` says, or once it's set, of the moon on
+    /// the far side of the sky, if there is one. It's towards it, and its colour.
+    #[must_use]
+    pub fn sun_or_moon(&self, toward: Vec3, strength: f32) -> Option<(Vec3, [f32; 3])> {
+        let toward = toward.normalized();
+        let up = (toward.z / RISING).clamp(0.0, 1.0);
+        if up > 0.0 {
+            return Some((toward, self.sun_color.map(|part| part * strength * up)));
+        }
+        let moon = (-toward.z / RISING).clamp(0.0, 1.0);
+        let has_moon = self.moon_color.iter().any(|part| *part > 0.0);
+        (moon > 0.0 && has_moon).then(|| {
+            (
+                toward * -1.0,
+                self.moon_color.map(|part| part * strength * moon),
+            )
+        })
+    }
 }
 
 impl Default for Sky {
@@ -156,6 +186,8 @@ impl Default for Sky {
             sun_direction: Vec3::new(0.4, 0.3, 0.8).normalized(),
             sun_color: [1.0, 0.95, 0.8],
             sun_size: 0.002,
+            moon_color: [0.0, 0.0, 0.0],
+            moon_size: 0.0015,
             clouds: Vec::new(),
             rays: None,
         }

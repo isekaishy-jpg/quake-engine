@@ -6,6 +6,12 @@ use engine_core::math::Vec3;
 /// from direct light lets moving things block one without the other.
 pub const BOUNCE_STYLE: u8 = 63;
 
+/// The style of the sun's own light, on its own layer so that a day can change it.
+pub const SUN_STYLE: u8 = 59;
+
+/// The style of what the sun bounces, which has to go with it, or a night would be lit.
+pub const SUN_BOUNCE_STYLE: u8 = 58;
+
 /// The light styles whose samples are drawn crisp, by the edges beside them. A
 /// face's sharp lights take one each, in turn.
 pub const CRISP_STYLES: [u8; 3] = [62, 61, 60];
@@ -53,6 +59,8 @@ pub struct ProbeGrid {
     pub colors: Vec<[[u8; 3]; 6]>,
     /// Which way each probe's strongest light comes from, as bytes.
     pub directions: Vec<[u8; 3]>,
+    /// How much of each probe's light comes from the sun, from 0 to 255.
+    pub sun_shares: Vec<u8>,
 }
 
 /// The light at a point.

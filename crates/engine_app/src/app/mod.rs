@@ -93,6 +93,8 @@ pub(crate) fn player_client(
 pub(crate) struct World {
     /// The search path.
     pub(crate) filesystem: Arc<FileSystem>,
+    /// Towards the sun, where something's put it, or else where the level has it.
+    pub(crate) sun_toward: Option<Vec3>,
     /// Set by `quit`.
     pub(crate) quit: bool,
     /// Commands from the command line, until `stuffcmds` takes them.
@@ -659,6 +661,7 @@ impl Engine {
             told_moving_overflow: false,
             console,
             world: World {
+                sun_toward: None,
                 filesystem: Arc::new(filesystem),
                 quit: false,
                 startup_commands: options.startup_commands,

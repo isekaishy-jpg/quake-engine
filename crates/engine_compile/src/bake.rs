@@ -509,6 +509,7 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
             "directions",
             Value::Bytes(probes.directions.as_flattened().to_vec()),
         );
+        block.set("sun_shares", Value::Bytes(probes.sun_shares.clone()));
         document.blocks.push(block);
     }
     to_binary(&document)
@@ -608,6 +609,7 @@ fn read_probes(block: &Block) -> Option<ProbeGrid> {
             })
             .collect(),
         directions: triples(bytes_of(block, "directions")?),
+        sun_shares: bytes_of(block, "sun_shares").unwrap_or_default().to_vec(),
     })
 }
 

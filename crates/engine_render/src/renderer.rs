@@ -34,6 +34,15 @@ pub enum Target {
     Offscreen,
 }
 
+/// A sun drawn as it goes, which nothing baked has in it.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct SunDraw {
+    /// Towards it.
+    pub toward: Vec3,
+    /// Its light, on the same scale as a sample of baked light.
+    pub color: [f32; 3],
+}
+
 /// How low the sun's light gets, in cells round the view.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct SkyRayFloor {
@@ -121,6 +130,12 @@ pub struct Drawables<'a> {
     pub stencil_reaches: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// How low the sun's light gets near the view, for a sky's rays that come into the level.
     pub sky_ray_floor: Option<&'a SkyRayFloor>,
+    /// What the sun's baked light is multiplied by, with none being as it was baked.
+    pub sun_tint: Option<[f32; 3]>,
+    /// A sun that isn't baked, which lights and shades as it goes. At night it's the moon.
+    pub sun: Option<SunDraw>,
+    /// Towards the sun, where it is now, for the sky, with none being where the level says.
+    pub sun_toward: Option<Vec3>,
     /// Characters shading the light.
     pub capsules: &'a [CapsuleDraw],
     /// Moving meshes.

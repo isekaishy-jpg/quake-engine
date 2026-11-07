@@ -12,10 +12,10 @@ use engine_client::{
 use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
-use engine_map::{Contents, Rows, WaterPush};
+use engine_map::{Contents, Rows, SunMode, WaterPush};
 use engine_render::{
     CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
-    ParticleDraw, ParticleSim, SkyRayFloor, SpriteDraw, View, height_scale,
+    ParticleDraw, ParticleSim, SkyRayFloor, SpriteDraw, SunDraw, View, height_scale,
 };
 
 use super::World;
@@ -54,6 +54,10 @@ pub(crate) struct Picture {
     stencil_reaches: Vec<StencilMask>,
     /// How low the sun's light gets near the view.
     sky_ray_floor: Option<SkyRayFloor>,
+    /// A sun that isn't baked.
+    sun: Option<SunDraw>,
+    /// Where the sun is now, for the sky.
+    sun_toward: Option<Vec3>,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
@@ -64,6 +68,37 @@ pub(crate) struct Picture {
     palette: Vec<Rows>,
     /// The morph weights of those.
     morph_weights: Vec<f32>,
+}
+
+/// How far over a model's feet it looks for the sun from, and how far it looks.
+const MODEL_SUN_LIFT: f32 = 24.0;
+const MODEL_SUN_REACH: f32 = 8192.0;
+
+/// How much of `sun` gets to a model at `at`, on the scale of baked light on a model.
+fn sun_reaches(sun: Option<SunDraw>, client: &engine_client::Client, at: Vec3) -> f32 {
+    let Some(sun) = sun else {
+        return 0.0;
+    };
+    let from = at + Vec3::new(0.0, 0.0, MODEL_SUN_LIFT);
+    let to = from + sun.toward.normalized() * MODEL_SUN_REACH;
+    if !client.line_is_clear(from, to, true) {
+        return 0.0;
+    }
+    let [red, green, blue] = sun.color;
+    (red + green + blue) / 3.0 * 255.0 * sun.toward.normalized().z.max(0.0)
+}
+
+/// The sun of `map` as it's drawn, if it isn't baked, towards `toward`, or where the level put
+/// it. Once it's set, it's the moon, from the far side of the sky, if the level has one.
+pub(super) fn live_sun(map: &engine_map::Map, toward: Option<Vec3>) -> Option<SunDraw> {
+    if map.sun_mode != SunMode::Live {
+        return None;
+    }
+    let sky = map.sky.as_ref()?;
+    // On the scale of a sample of baked light, as a bake would have had it.
+    let strength = map.sun_strength / 255.0;
+    let (toward, color) = sky.sun_or_moon(toward.unwrap_or(sky.sun_direction), strength)?;
+    Some(SunDraw { toward, color })
 }
 
 /// How far the eye sits above a dead player's middle.
@@ -95,6 +130,9 @@ impl Picture {
             stencil_masks: &self.stencil_masks,
             stencil_reaches: &self.stencil_reaches,
             sky_ray_floor: self.sky_ray_floor.as_ref(),
+            sun_tint: None,
+            sun: self.sun,
+            sun_toward: self.sun_toward,
             capsules: &self.capsules,
             live_lights: &self.live_lights,
             moving: &self.moving,
@@ -450,6 +488,19 @@ impl World {
                 client.draw_entities(fraction)
             };
             self.glide.smooth(&mut drawn, frame_seconds);
+            // A sun that isn't baked reaches models that can see the sky towards it. It's looked
+            // for once for each, while collision's to hand.
+            let sun = self
+                .map
+                .as_deref()
+                .and_then(|map| live_sun(map, self.sun_toward));
+            let sunned: Vec<(Vec3, f32)> = drawn
+                .iter()
+                .map(|entity| {
+                    let at = entity.state.origin;
+                    (at, sun_reaches(sun, client, at))
+                })
+                .collect();
             let wearing: HashMap<u64, u8> = client
                 .scores()
                 .iter()
@@ -480,6 +531,12 @@ impl World {
                 // Models take moving lights like any other dynamic light.
                 let mut lighting_up = lights.clone();
                 lighting_up.extend(moving.iter().map(model_light));
+                let sun_at = |at: Vec3| -> f32 {
+                    sunned
+                        .iter()
+                        .find(|(place, _)| *place == at)
+                        .map_or(0.0, |(_, light)| *light)
+                };
                 let lighting = Lighting {
                     map: &map,
                     styles: &styles,
@@ -487,6 +544,7 @@ impl World {
                     time,
                     eye: self.last_eye,
                     height_scale: height_scale(self.fov),
+                    sun: &sun_at,
                 };
                 for entity in &drawn {
                     let colors = wearing.get(&entity.state.id).copied();
@@ -589,6 +647,11 @@ impl World {
             stencil_masks: self.gates.masks().to_vec(),
             stencil_reaches: self.gates.reaches().to_vec(),
             sky_ray_floor: self.gates.sky_floor(),
+            sun: self
+                .map
+                .as_deref()
+                .and_then(|map| live_sun(map, self.sun_toward)),
+            sun_toward: self.sun_toward,
             capsules,
             live_lights: moving,
         }

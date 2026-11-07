@@ -12,15 +12,16 @@ use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Contents, EffectDef,
     FieldDef, Fog, FogVolume, LandPicture, LightTiles, Map, Material, MaterialLayer, MeshCorner,
     MeshInstance, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK, ParticleEmitter,
-    ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode,
-    Shading, SharedMesh, SharedMorph, SharedPart, SideFiles, Skeleton, Sky, SkyRays, Sprite,
-    SpriteFacing, SpriteFrame, SpriteImage, SurfacePoint, TerrainData, TerrainLayer, TerrainSheet,
-    Texture, TextureKind, TileLight, ToneCurve, WaterOverlay, WaterPush, WaterSheet, mip_chain,
+    ParticleForce, PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows,
+    SUN_BOUNCE_STYLE, SUN_STYLE, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart,
+    SideFiles, Skeleton, Sky, SkyRays, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
+    SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight,
+    ToneCurve, WaterOverlay, WaterPush, WaterSheet, mip_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
     MovingDraw, ParticleColor, ParticleDraw, ParticleShape, ParticleSim, PostSettings, Renderer,
-    SimForce, SkyRayFloor, SpriteDraw, Target, TileStreamer, View, build_world,
+    SimForce, SkyRayFloor, SpriteDraw, SunDraw, Target, TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -1306,6 +1307,7 @@ fn fog_map(level: u8) -> Map {
         size: [3, 3, 3],
         colors: vec![[[level; 3]; 6]; 27],
         directions: vec![[128, 128, 255]; 27],
+        sun_shares: Vec::new(),
     });
     built
 }
@@ -2364,6 +2366,56 @@ fn rays_can_be_turned_off() {
     }
 }
 
+/// The square, lit by a layer of `style`, under `tint`.
+fn tinted_square(style: u8, tint: Option<[f32; 3]>) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    for face in &mut built.faces {
+        if let Some(light) = &mut face.light {
+            light.styles = [style, 255, 255, 255];
+        }
+    }
+    renderer.load_map(Arc::new(built)).expect("load");
+    let drawables = Drawables {
+        sun_tint: tint,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 32, 32)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// A day changes the sun's layers, and what's lit by anything else stays as it is.
+#[test]
+fn a_tint_changes_the_suns_layers_only() {
+    let dark = Some([0.25, 0.25, 0.25]);
+    for style in [SUN_STYLE, SUN_BOUNCE_STYLE] {
+        let (plain, dimmed) = (tinted_square(style, None), tinted_square(style, dark));
+        if let (Some(plain), Some(dimmed)) = (plain, dimmed) {
+            assert!(dimmed[0] + 20 < plain[0], "{style}: {plain:?} {dimmed:?}");
+        }
+    }
+    let (plain, dimmed) = (tinted_square(0, None), tinted_square(0, dark));
+    assert_eq!(plain, dimmed);
+}
+
+/// A tint has a colour, so a sun can go orange and not only dim.
+#[test]
+fn a_tint_has_a_colour() {
+    let (plain, tinted) = (
+        tinted_square(SUN_STYLE, None),
+        tinted_square(SUN_STYLE, Some([1.0, 0.2, 0.2])),
+    );
+    if let (Some(plain), Some(tinted)) = (plain, tinted) {
+        assert!(tinted[1] + 20 < plain[1], "{plain:?} {tinted:?}");
+        assert!(
+            tinted[0] >= plain[0].saturating_sub(20),
+            "{plain:?} {tinted:?}"
+        );
+    }
+}
+
 /// What a sky of `color` comes out as under `tone`, as the sky's a scene's easiest colour to set.
 fn toned_sky(color: [f32; 3], tone: ToneCurve) -> Option<[u8; 4]> {
     let mut renderer = renderer()?;
@@ -2723,6 +2775,168 @@ fn a_live_spot_keeps_to_its_cone() {
         pixel(&plain, 4, 32),
         "outside its cone"
     );
+}
+
+/// What the square looks like from above under `sun`, with `blocker` over it.
+fn sunlit(sun: Option<SunDraw>, blocker: bool) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(map(2))).expect("load");
+    let over = [ModelInstance {
+        model: 1,
+        origin: Vec3::new(64.0, 0.0, 30.0),
+        visible: true,
+        ..ModelInstance::default()
+    }];
+    let drawables = Drawables {
+        instances: if blocker { &over } else { &[] },
+        sun,
+        ..Drawables::default()
+    };
+    Some(
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// A blue sun straight up, or towards `toward`.
+fn blue_sun(toward: Vec3) -> Option<SunDraw> {
+    Some(SunDraw {
+        toward,
+        color: [0.0, 0.0, 1.0],
+    })
+}
+
+/// How blue a picture is, all told.
+fn blueness(capture: &Capture) -> u64 {
+    let mut total = 0;
+    for y in 0..64 {
+        for x in 0..64 {
+            total += u64::from(pixel(capture, x, y)[2]);
+        }
+    }
+    total
+}
+
+/// A sun that isn't baked lights what faces it, and none when it's down.
+#[test]
+fn a_live_sun_lights_what_faces_it() {
+    let up = Vec3::new(0.0, 0.0, 1.0);
+    let (dark, lit) = (sunlit(None, false), sunlit(blue_sun(up), false));
+    let down = sunlit(blue_sun(Vec3::new(0.0, 0.0, -1.0)), false);
+    if let (Some(dark), Some(lit), Some(down)) = (dark, lit, down) {
+        assert!(blueness(&lit) > blueness(&dark) + 64 * 64 * 20);
+        assert_eq!(blueness(&down), blueness(&dark));
+    }
+}
+
+/// Looking up at the square's underside, under `sun`.
+fn underside(sun: Option<SunDraw>) -> Option<u64> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(map(2))).expect("load");
+    let view = View {
+        origin: Vec3::new(64.0, 64.0, -64.0),
+        pitch: -89.9,
+        ..view_from_above()
+    };
+    let drawables = Drawables {
+        sun,
+        ..Drawables::default()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    Some(blueness(&capture))
+}
+
+/// What faces away from the sun, and anything with the sun under it, isn't lit by it.
+#[test]
+fn a_live_sun_lights_only_what_faces_it() {
+    let dark = underside(None);
+    let above = underside(blue_sun(Vec3::new(0.0, 0.0, 1.0)));
+    let below = underside(blue_sun(Vec3::new(0.0, 0.0, -1.0)));
+    if let (Some(dark), Some(above), Some(below)) = (dark, above, below) {
+        assert_eq!(above, dark, "its back");
+        assert_eq!(below, dark, "from under the ground");
+    }
+}
+
+/// Light coming in low lights less of a floor than light from straight up.
+#[test]
+fn a_low_sun_lights_less() {
+    let high = sunlit(blue_sun(Vec3::new(0.0, 0.0, 1.0)), false);
+    let low = sunlit(blue_sun(Vec3::new(1.0, 0.0, 0.3)), false);
+    if let (Some(high), Some(low)) = (high, low) {
+        assert!(blueness(&low) + 64 * 64 * 10 < blueness(&high));
+    }
+}
+
+/// What's between the sun and a surface shades it.
+#[test]
+fn a_live_sun_casts_a_shadow() {
+    // At a slant, so that the shadow falls where the blocker doesn't hide it from above.
+    let up = Vec3::new(1.0, 0.0, 1.0);
+    let (open, shaded) = (sunlit(blue_sun(up), false), sunlit(blue_sun(up), true));
+    if let (Some(open), Some(shaded)) = (open, shaded) {
+        let darker = (0..64)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&shaded, *x, *y)[2].saturating_add(30) < pixel(&open, *x, *y)[2])
+            .count();
+        assert!(darker > 40, "{darker}");
+    }
+}
+
+/// The shadow goes the way the light does.
+#[test]
+fn a_shadow_moves_with_the_sun() {
+    let (east, west) = (
+        sunlit(blue_sun(Vec3::new(1.0, 0.0, 1.0)), true),
+        sunlit(blue_sun(Vec3::new(-1.0, 0.0, 1.0)), true),
+    );
+    if let (Some(east), Some(west)) = (east, west) {
+        let differ = (0..64)
+            .flat_map(|y| (0..64).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&east, *x, *y)[2].abs_diff(pixel(&west, *x, *y)[2]) > 30)
+            .count();
+        assert!(differ > 40, "{differ}");
+    }
+}
+
+/// The sky's sun is where a day has it, and the moon on the far side.
+#[test]
+fn the_sky_shows_the_sun_and_moon_where_they_are() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.sky = Some(Sky {
+        zenith: [0.0; 3],
+        horizon: [0.0; 3],
+        sun_color: [1.0, 0.0, 0.0],
+        sun_size: 0.02,
+        moon_color: [0.0, 0.0, 1.0],
+        moon_size: 0.02,
+        sun_direction: Vec3::new(1.0, 0.0, 0.0),
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let view = View {
+        origin: UNDER,
+        pitch: -89.9,
+        ..view_from_above()
+    };
+    let mut shot = |toward: Option<Vec3>| {
+        let drawables = Drawables {
+            sun_toward: toward,
+            ..Drawables::default()
+        };
+        let capture = renderer.capture(&view, drawables, 32, 32).expect("capture");
+        centre(&capture)
+    };
+    let sun_up = shot(Some(Vec3::new(0.0, 0.0, 1.0)));
+    let moon_up = shot(Some(Vec3::new(0.0, 0.0, -1.0)));
+    let as_level = shot(None);
+    assert!(sun_up[0] > 200 && sun_up[2] < 30, "{sun_up:?}");
+    assert!(moon_up[2] > 200 && moon_up[0] < 30, "{moon_up:?}");
+    assert!(as_level[0] < 30 && as_level[2] < 30, "{as_level:?}");
 }
 
 /// A model between a light and a surface shades it, when the light has shadows.

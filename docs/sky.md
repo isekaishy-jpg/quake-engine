@@ -61,6 +61,25 @@ sky {
 
 `rays = clouds` with no clouds is an error. They cost about 1 ms at 1280 by 720, looking towards the sun with the sky filling the view, and nothing looking away.
 
+## The sun and the moon
+
+The world says how its sun works, with `sun_intensity` for how bright and the sky's `sun_direction` for where.
+
+| `sun` | Means |
+|---|---|
+| `fixed` | Baked in with everything else, as it always was. It's what a level gets unless it says |
+| `baked` | Baked on layers of its own, with what it bounces, so that a day can change its colour with no new bake |
+| `live` | Not baked, apart from what it bounces, so that it can go anywhere and cast shadows as it goes |
+
+A live sun lights surfaces and their highlights, and models that can see the sky towards it. Its shadows come from three maps round the view, the nearest finest. When it sets it's the moon, from the far side of the sky, if the sky has one:
+
+| Field | Means |
+|---|---|
+| `moon_color` | Its colour, which is its light as well. Black, the usual, is no moon |
+| `moon_size` | How large it looks |
+
+`sun_toward x y z` at the console moves it, to try a level, and on its own puts it back.
+
 ## How light comes out
 
 These go in the world, not the sky. See [proposal 0150](proposals/0150-light-on-screen.md).

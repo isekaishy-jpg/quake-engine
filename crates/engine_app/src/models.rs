@@ -230,6 +230,8 @@ pub(crate) struct Lighting<'a> {
     pub(crate) eye: Vec3,
     /// What makes a size a share of the view's height.
     pub(crate) height_scale: f32,
+    /// How much of a sun that isn't baked gets to a point.
+    pub(crate) sun: &'a dyn Fn(Vec3) -> f32,
 }
 
 impl Lighting<'_> {
@@ -393,7 +395,8 @@ impl ModelBank {
         if let Some((mesh, moving)) = name.and_then(|name| lighting.map.moving_mesh(name)) {
             // Only what's baked: the shader adds moving lights to what it's given, as it does
             // for everything else, and adding them here too would count them twice.
-            let light = lighting.map.light_at(state.origin, lighting.styles);
+            let light =
+                lighting.map.light_at(state.origin, lighting.styles) + (lighting.sun)(state.origin);
             let mut clips = self.clips.borrow_mut();
             let seen = clips
                 .entry(state.id)
@@ -424,7 +427,8 @@ impl ModelBank {
                 return;
             }
         };
-        let light = lighting.map.light_at(state.origin, lighting.styles)
+        let light = (lighting.map.light_at(state.origin, lighting.styles)
+            + (lighting.sun)(state.origin))
             + lighting.dynamic_at(state.origin);
         let (ambient, shade) = Lighting::split(light);
         let time = lighting.time;

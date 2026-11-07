@@ -48,6 +48,96 @@ const POSE_RANGE: f32 = 255.0;
 /// How far a figure's shadow reaches at least, for one that's left.
 const GONE_REACH: f32 = 64.0;
 
+/// How many maps of the sun's shadow there are, each further out and coarser than the last.
+pub(super) const SUN_CASCADES: usize = 3;
+
+/// A sun map's side.
+const SUN_TILE: u32 = 2048;
+
+/// How far each of the sun's maps reaches from the view, each way.
+pub(crate) const SUN_REACHES: [f32; SUN_CASCADES] = [400.0, 1500.0, 5000.0];
+
+/// How deep a sun map is, through the middle of the view.
+const SUN_DEPTH: f32 = 24_000.0;
+
+/// What a view of shadows reaches: a ball round where it's from.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Reach {
+    /// Its middle.
+    center: Vec3,
+    /// How far it goes.
+    radius: f32,
+}
+
+impl Reach {
+    /// Whether something round `center`, `size` across, is in it.
+    fn touches(self, center: Vec3, size: f32) -> bool {
+        (center - self.center).length() < self.radius + size
+    }
+}
+
+/// One of the sun's maps, as it was last drawn.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct SunView {
+    /// From the world to the map.
+    pub(super) matrix: [f32; 16],
+    /// What it covers.
+    reach: Reach,
+}
+
+/// The sun's maps of the view, as the shading wants them.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct SunShadow {
+    /// Each map's matrix.
+    pub(crate) matrices: [[f32; 16]; SUN_CASCADES],
+}
+
+/// A map looking along `toward`, from the sun down, round `eye`, `half` across each way. It's
+/// kept to whole pixels of it, or its edges would crawl as the view moves.
+fn sun_view(toward: Vec3, eye: Vec3, half: f32) -> SunView {
+    let down = toward.normalized() * -1.0;
+    let helper = if down.z.abs() > 0.99 {
+        Vec3::new(1.0, 0.0, 0.0)
+    } else {
+        Vec3::new(0.0, 0.0, 1.0)
+    };
+    let cross = |a: Vec3, b: Vec3| {
+        Vec3::new(
+            a.y * b.z - a.z * b.y,
+            a.z * b.x - a.x * b.z,
+            a.x * b.y - a.y * b.x,
+        )
+    };
+    let right = cross(helper, down).normalized();
+    let up = cross(down, right);
+    #[expect(clippy::cast_precision_loss, reason = "a small size")]
+    let pixel = 2.0 * half / SUN_TILE as f32;
+    let snap = |axis: Vec3| (axis.dot(eye) / pixel).round() * pixel;
+    let center = right * snap(right) + up * snap(up) + down * down.dot(eye);
+    let row = |axis: Vec3, scale: f32, add: f32| {
+        [
+            axis.x * scale,
+            axis.y * scale,
+            axis.z * scale,
+            -axis.dot(center) * scale + add,
+        ]
+    };
+    let x = row(right, 1.0 / half, 0.0);
+    let y = row(up, 1.0 / half, 0.0);
+    let z = row(down, 1.0 / SUN_DEPTH, 0.5);
+    let w = [0.0, 0.0, 0.0, 1.0];
+    let matrix = [
+        x[0], y[0], z[0], w[0], x[1], y[1], z[1], w[1], x[2], y[2], z[2], w[2], x[3], y[3], z[3],
+        w[3],
+    ];
+    // What can shade the map: up to the top of it, towards the sun.
+    let reach = Reach {
+        center,
+        radius: (half * half * 2.0 + (SUN_DEPTH * 0.5) * (SUN_DEPTH * 0.5)).sqrt(),
+    };
+    SunView { matrix, reach }
+}
+
 /// Some of what shadows are drawn from.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub(super) struct ShadowRange {
@@ -173,6 +263,18 @@ pub(super) struct Shadows {
     waiting: [u32; MAX_SHADOW_LIGHTS],
     /// The lights to redraw this frame, by slot.
     redraw: Vec<(usize, LiveLight)>,
+    /// The sun's maps, side by side.
+    pub(super) sun_atlas: GpuImage,
+    /// Them as a target.
+    sun_framebuffer: Framebuffer,
+    /// Whether they've been started off.
+    sun_ready: Cell<bool>,
+    /// Each map as it was last drawn, with no sun none of them.
+    sun_views: [Option<SunView>; SUN_CASCADES],
+    /// Which maps to draw this frame.
+    sun_redraw: Vec<usize>,
+    /// Frames the sun's been out, which takes turns at the far maps.
+    sun_frames: u64,
 }
 
 /// A pass over the atlas's depth.
@@ -220,6 +322,20 @@ impl Shadows {
         let first_pass = atlas_pass(device, true)?;
         let pass = atlas_pass(device, false)?;
         let framebuffer = Framebuffer::new(device, &pass, &[&atlas.view], ATLAS_SIZE, ATLAS_SIZE)?;
+        #[expect(clippy::cast_possible_truncation, reason = "three maps")]
+        let sun_width = SUN_TILE * SUN_CASCADES as u32;
+        let sun_image = Image::new_2d(
+            device,
+            Image2dCreateInfo {
+                format: DEPTH_FORMAT,
+                width: sun_width,
+                height: SUN_TILE,
+                usage: ImageUsage::DEPTH_STENCIL_ATTACHMENT | ImageUsage::SAMPLED,
+            },
+        )?;
+        let sun_atlas = device_image(device, physical, sun_image, true)?;
+        let sun_framebuffer =
+            Framebuffer::new(device, &pass, &[&sun_atlas.view], sun_width, SUN_TILE)?;
         let layout = PipelineLayout::with_push_constants(
             device,
             &[land_layout],
@@ -302,7 +418,46 @@ impl Shadows {
             stances: Vec::new(),
             waiting: [0; MAX_SHADOW_LIGHTS],
             redraw: Vec::new(),
+            sun_atlas,
+            sun_framebuffer,
+            sun_ready: Cell::new(false),
+            sun_views: [None; SUN_CASCADES],
+            sun_redraw: Vec::new(),
+            sun_frames: 0,
         })
+    }
+
+    /// Works out which of the sun's maps to draw this frame, round `eye`. The nearest is drawn
+    /// every frame, and the far ones take turns, as a sun moves slowly and they're coarse.
+    pub(super) fn plan_sun(&mut self, toward: Option<Vec3>, eye: Vec3) {
+        self.sun_redraw.clear();
+        let Some(toward) = toward.filter(|toward| toward.z > 0.0) else {
+            self.sun_views = [None; SUN_CASCADES];
+            return;
+        };
+        self.sun_frames += 1;
+        #[expect(clippy::cast_possible_truncation, reason = "a small count")]
+        let turn = 1 + (self.sun_frames % (SUN_CASCADES as u64 - 1)) as usize;
+        for (cascade, (view, reach)) in self.sun_views.iter_mut().zip(SUN_REACHES).enumerate() {
+            if cascade == 0 || cascade == turn || view.is_none() {
+                *view = Some(sun_view(toward, eye, reach));
+                self.sun_redraw.push(cascade);
+            }
+        }
+    }
+
+    /// The sun's maps as they're drawn, if the sun's out.
+    pub(super) fn sun_shadow(&self) -> Option<SunShadow> {
+        let mut matrices = [[0.0; 16]; SUN_CASCADES];
+        for (matrix, view) in matrices.iter_mut().zip(&self.sun_views) {
+            *matrix = view.as_ref()?.matrix;
+        }
+        Some(SunShadow { matrices })
+    }
+
+    /// Whether the sun's maps want drawing this frame.
+    pub(super) fn sun_draws(&self) -> bool {
+        !self.sun_redraw.is_empty()
     }
 
     /// Redraws nothing this frame, for when shadows are off.
@@ -462,62 +617,113 @@ impl Shadows {
             );
             rec.end_render_pass();
         }
-        let Some(map) = map.filter(|_| !self.redraw.is_empty()) else {
+        if !self.sun_ready.replace(true) {
+            rec.begin_render_pass_ext(
+                &self.first_pass,
+                &self.sun_framebuffer,
+                &[vulkane::safe::ClearValue::DepthStencil {
+                    depth: 1.0,
+                    stencil: 0,
+                }],
+            );
+            rec.end_render_pass();
+        }
+        let Some(map) = map else {
             return;
         };
-        rec.begin_render_pass_ext(&self.pass, &self.framebuffer, &[]);
-        for (slot, light) in &self.redraw {
-            for face in 0..6 {
-                self.record_tile(rec, map, mesh_ranges, *slot * 6 + face, face, light);
-                self.record_moving(rec, map, frame, face, light);
-                self.record_land(rec, map, face, light);
-                self.record_figures(rec, figures, (&map.moving, frame), face, light);
+        let casters = (mesh_ranges, figures, frame);
+        if !self.redraw.is_empty() {
+            rec.begin_render_pass_ext(&self.pass, &self.framebuffer, &[]);
+            for (slot, light) in &self.redraw {
+                let reach = Reach {
+                    center: light.origin,
+                    radius: light.radius,
+                };
+                for face in 0..6 {
+                    let tile = u32::try_from(*slot * 6 + face).unwrap_or(0);
+                    let at = (
+                        tile % TILES_ACROSS * TILE_SIZE,
+                        tile / TILES_ACROSS * TILE_SIZE,
+                    );
+                    self.clear_tile(rec, at, TILE_SIZE);
+                    let matrix = cube_face(light.origin, face, light.radius);
+                    self.record_casters(rec, map, casters, &matrix, reach);
+                }
             }
+            rec.end_render_pass();
         }
-        rec.end_render_pass();
+        if !self.sun_redraw.is_empty() {
+            rec.begin_render_pass_ext(&self.pass, &self.sun_framebuffer, &[]);
+            for cascade in &self.sun_redraw {
+                let Some(view) = self.sun_views[*cascade] else {
+                    continue;
+                };
+                let x = u32::try_from(*cascade).unwrap_or(0) * SUN_TILE;
+                self.clear_tile(rec, (x, 0), SUN_TILE);
+                self.record_casters(rec, map, casters, &view.matrix, view.reach);
+            }
+            rec.end_render_pass();
+        }
     }
 
-    /// Draws one tile.
-    fn record_tile(
+    /// Sets a tile at `at`, `size` across, as what's drawn into, and empties it.
+    fn clear_tile(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        (x, y): (u32, u32),
+        size: u32,
+    ) {
+        #[expect(clippy::cast_precision_loss, reason = "atlas sizes are small")]
+        rec.set_viewport(x as f32, y as f32, size as f32, size as f32);
+        rec.set_scissor(
+            i32::try_from(x).unwrap_or(0),
+            i32::try_from(y).unwrap_or(0),
+            size,
+            size,
+        );
+        rec.bind_graphics_pipeline(&self.clear);
+        rec.draw(3, 1, 0, 0);
+    }
+
+    /// Draws everything that casts a shadow into the tile that's set up, as `matrix` sees it.
+    fn record_casters(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        (ranges, figures, frame): (&[ShadowRange], &[Figure<'_>], usize),
+        matrix: &[f32; 16],
+        reach: Reach,
+    ) {
+        self.record_world(rec, map, ranges, matrix, reach);
+        self.record_moving(rec, map, frame, matrix, reach);
+        self.record_land(rec, map, matrix, reach);
+        self.record_figures(rec, figures, (&map.moving, frame), matrix, reach);
+    }
+
+    /// Draws the world's faces and the copies of meshes `reach` gets to.
+    fn record_world(
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: &GpuMap,
         ranges: &[ShadowRange],
-        tile: usize,
-        face: usize,
-        light: &LiveLight,
+        matrix: &[f32; 16],
+        reach: Reach,
     ) {
-        let tile = u32::try_from(tile).unwrap_or(0);
-        let (x, y) = (
-            tile % TILES_ACROSS * TILE_SIZE,
-            tile / TILES_ACROSS * TILE_SIZE,
-        );
-        #[expect(clippy::cast_precision_loss, reason = "atlas sizes are small")]
-        rec.set_viewport(x as f32, y as f32, TILE_SIZE as f32, TILE_SIZE as f32);
-        rec.set_scissor(
-            i32::try_from(x).unwrap_or(0),
-            i32::try_from(y).unwrap_or(0),
-            TILE_SIZE,
-            TILE_SIZE,
-        );
-        rec.bind_graphics_pipeline(&self.clear);
-        rec.draw(3, 1, 0, 0);
         rec.bind_graphics_pipeline(&self.pipeline);
         rec.bind_vertex_buffers(0, &[(&map.vertices.buffer, 0)]);
         rec.bind_index_buffer(&map.shadow_indices.buffer, 0, INDEX_TYPE_U32);
-        let matrix = cube_face(light.origin, face, light.radius);
         let reached = |range: &&ShadowRange| {
             range
                 .bounds
-                .is_none_or(|(middle, size)| (middle - light.origin).length() < light.radius + size)
+                .is_none_or(|(middle, size)| reach.touches(middle, size))
         };
         for range in ranges.iter().filter(reached) {
             let offset = range.offset;
             let tail = [offset.x, offset.y, offset.z, 0.0];
-            self.push(rec, &matrix, tail);
+            self.push(rec, matrix, tail);
             rec.draw_indexed(range.count, 1, range.first, 0, 0);
         }
-        self.record_instances(rec, map, &matrix, light);
+        self.record_instances(rec, map, matrix, reach);
     }
 
     /// Draws the moving meshes a light reaches into the tile that's set up.
@@ -526,14 +732,13 @@ impl Shadows {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: &GpuMap,
         frame: usize,
-        face: usize,
-        light: &LiveLight,
+        matrix: &[f32; 16],
+        reach: Reach,
     ) {
         let moving = &map.moving;
-        let matrix = cube_face(light.origin, face, light.radius);
         rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for job in moving.jobs(frame) {
-            if (job.center - light.origin).length() >= light.radius + job.radius {
+            if !reach.touches(job.center, job.radius) {
                 continue;
             }
             if bind_moving(rec, moving, job, frame, false).is_none() {
@@ -542,7 +747,7 @@ impl Shadows {
             let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
                 continue;
             };
-            self.push(rec, &multiply(&matrix, &job.placed), [0.0; 4]);
+            self.push(rec, &multiply(matrix, &job.placed), [0.0; 4]);
             for part in mesh.shadow_parts(job.level) {
                 rec.draw_indexed(part.count, 1, part.first, 0, 0);
             }
@@ -555,11 +760,9 @@ impl Shadows {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: &GpuMap,
         matrix: &[f32; 16],
-        light: &LiveLight,
+        reach: Reach,
     ) {
-        let reached = |caster: &&ShadowInstance| {
-            (caster.center - light.origin).length() < light.radius + caster.radius
-        };
+        let reached = |caster: &&ShadowInstance| reach.touches(caster.center, caster.radius);
         rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for caster in map.shadow_instances.iter().filter(reached) {
             let Some(mesh) = map.shared_meshes.get(caster.mesh as usize) else {
@@ -594,8 +797,8 @@ impl Shadows {
         &self,
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         map: &GpuMap,
-        face: usize,
-        light: &LiveLight,
+        matrix: &[f32; 16],
+        reach: Reach,
     ) {
         let Some(land) = &map.terrain else {
             return;
@@ -608,10 +811,9 @@ impl Shadows {
         rec.bind_graphics_descriptor_sets(&self.layout, 0, &[&land.set]);
         rec.bind_vertex_buffers(0, &[(&land.whole.buffer, 0)]);
         rec.bind_index_buffer(&land.indices.buffer, 0, INDEX_TYPE_U32);
-        let matrix = cube_face(light.origin, face, light.radius);
-        self.push(rec, &matrix, [0.0; 4]);
-        for (chunk, (middle, reach)) in (0_u32..).zip(&land.whole_bounds) {
-            if (*middle - light.origin).length() < light.radius + reach {
+        self.push(rec, matrix, [0.0; 4]);
+        for (chunk, (middle, size)) in (0_u32..).zip(&land.whole_bounds) {
+            if reach.touches(*middle, *size) {
                 rec.draw_indexed(count, 1, first, 0, chunk);
             }
         }
@@ -623,13 +825,10 @@ impl Shadows {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         figures: &[Figure<'_>],
         (moving, slot): (&GpuMoving, usize),
-        face: usize,
-        light: &LiveLight,
+        matrix: &[f32; 16],
+        reach: Reach,
     ) {
-        let reached = |(model, draw, _): &&Figure<'_>| {
-            (draw.origin - light.origin).length() < light.radius + model.reach()
-        };
-        let matrix = cube_face(light.origin, face, light.radius);
+        let reached = |(model, draw, _): &&Figure<'_>| reach.touches(draw.origin, model.reach());
         rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for (gpu, draw, moved_to) in figures.iter().filter(reached) {
             let (corners, offset) = match moved_to {
@@ -638,7 +837,7 @@ impl Shadows {
             };
             rec.bind_vertex_buffers(0, &[(&corners.buffer, offset)]);
             rec.bind_index_buffer(&gpu.indices.buffer, 0, INDEX_TYPE_U32);
-            let placed = multiply(&matrix, &model_matrix(draw.origin, draw.angles));
+            let placed = multiply(matrix, &model_matrix(draw.origin, draw.angles));
             self.push(rec, &placed, [0.0; 4]);
             rec.draw_indexed(gpu.index_count, 1, 0, 0, 0);
         }

@@ -516,6 +516,18 @@ impl Face {
     pub const NO_STYLE: u8 = 255;
 }
 
+/// How a level's sun works.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum SunMode {
+    /// Baked in with everything else, where nothing can change it.
+    #[default]
+    Fixed,
+    /// Baked on layers of its own, so that its colour can change with no new bake.
+    Baked,
+    /// Not baked, apart from what it bounces, so that it can go anywhere.
+    Live,
+}
+
 /// How light too bright for a screen comes down to fit it.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum ToneCurve {
@@ -718,6 +730,10 @@ pub struct Map {
     pub post_shader: Option<Arc<crate::ShaderCode>>,
     /// How its light comes out.
     pub look: Look,
+    /// How its sun works.
+    pub sun_mode: SunMode,
+    /// How bright its sun is, as a light's intensity, for a sun that isn't baked.
+    pub sun_strength: f32,
     /// Where each sample's light comes from, as bytes. Empty unless the map
     /// was baked with directions.
     pub light_directions: Vec<[u8; 3]>,

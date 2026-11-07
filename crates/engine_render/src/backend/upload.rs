@@ -269,7 +269,7 @@ pub(super) fn frame_bytes(
         .chain(&styles)
         .chain(&positions)
         .chain(&cuts)
-        .chain(&sky_values(sky))
+        .chain(&sky_values(sky, extra.sun_toward))
         .chain(&post_values(&matrix, post, fog))
         .chain(&extra_values(extra, post))
     {
@@ -293,6 +293,10 @@ pub(super) struct FrameExtras<'a> {
     sky: Option<&'a Sky>,
     /// How low the sun's light gets near the view.
     sky_floor: Option<&'a SkyRayFloor>,
+    /// What the sun's baked light is multiplied by.
+    sun_tint: [f32; 3],
+    /// Towards the sun, where a day has it.
+    sun_toward: Option<Vec3>,
     /// The characters shading light.
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
@@ -487,6 +491,8 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         }
     }
     sky_ray_values(&mut out[base + 1024..], extra, post.rays != 0);
+    let base = base + 1024 + 12 + 256;
+    out[base..base + 3].copy_from_slice(&extra.sun_tint);
     out
 }
 
@@ -628,7 +634,7 @@ fn sky_ray_values(out: &mut [f32], extra: &FrameExtras<'_>, wanted: bool) {
 }
 
 /// The sky's part of the frame uniforms.
-fn sky_values(sky: Option<&Sky>) -> [f32; SKY_BYTES / 4] {
+fn sky_values(sky: Option<&Sky>, sun_toward: Option<Vec3>) -> [f32; SKY_BYTES / 4] {
     let mut out = [0.0; SKY_BYTES / 4];
     let Some(sky) = sky else {
         return out;
@@ -643,6 +649,14 @@ fn sky_values(sky: Option<&Sky>) -> [f32; SKY_BYTES / 4] {
         sky.sun_direction.z,
     ]);
     out[15] = sky.sun_size;
+    // A sun that moves is where it is now, not where the level put it.
+    if let Some(toward) = sun_toward {
+        let toward = toward.normalized();
+        out[12..15].copy_from_slice(&[toward.x, toward.y, toward.z]);
+    }
+    let at = 20 + MOST_CLOUDS * 12;
+    out[at + 3] = sky.moon_size;
+    out[at + 4..at + 7].copy_from_slice(&sky.moon_color);
     out[16..19].copy_from_slice(&sky.sun_color);
     let mut picture = 0.0;
     for (index, clouds) in sky.clouds.iter().take(MOST_CLOUDS).enumerate() {
@@ -1010,6 +1024,11 @@ impl Backend {
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
         frame_set.write_sampler(6, &self.shadow_sampler);
+        frame_set.write_sampled_image(
+            8,
+            &self.shadows.sun_atlas.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
         frame_set.write_sampled_image(7, &paint_atlas.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         frame_set.write_sampled_image(
             3,
@@ -1451,6 +1470,10 @@ impl Backend {
             reaches: scene.map_or(&[][..], |scene| scene.drawables.stencil_reaches),
             sky,
             sky_floor: scene.and_then(|scene| scene.drawables.sky_ray_floor),
+            sun_toward: scene.and_then(|scene| scene.drawables.sun_toward),
+            sun_tint: scene
+                .and_then(|scene| scene.drawables.sun_tint)
+                .unwrap_or([1.0; 3]),
             capsules: scene.map_or(&[][..], |scene| scene.drawables.capsules),
             pools: scene.map_or(&[][..], |scene| scene.map.pools.as_slice()),
             sheets: scene.map_or(&[][..], |scene| scene.map.water_sheets.as_slice()),
@@ -1498,7 +1521,11 @@ impl Backend {
         };
         let size = self.scene_size();
         let capsules = scene.map_or(&[][..], |scene| scene.drawables.capsules);
-        let bytes = live_bytes(view, aspect, size, live, capsules, &slots);
+        let sun = scene.and_then(|scene| scene.drawables.sun);
+        self.shadows
+            .plan_sun(sun.map(|sun| sun.toward), view.origin);
+        let sun = sun.zip(self.shadows.sun_shadow());
+        let bytes = live_bytes(view, aspect, size, live, capsules, &slots, sun);
         let values = &mut self.frame_values[slot];
         values.live.memory.map()?.as_slice_mut()[..bytes.len()].copy_from_slice(&bytes);
         if let Some(scene) = scene

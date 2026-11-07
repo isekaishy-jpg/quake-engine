@@ -42,6 +42,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("screenshot", screenshot);
     console.register("gpu_times", gpu_times);
     console.register("setpos", setpos);
+    console.register("sun_toward", sun_toward);
     console.register("camera", camera);
     console.register("noclip", noclip);
     console.register("changelevel", changelevel);
@@ -762,6 +763,19 @@ fn setpos(console: &mut Console<World>, world: &mut World, args: &Args) {
     if let (Some(yaw), Some(pitch)) = (number(4), number(5)) {
         world.look.set_view(f64::from(yaw), f64::from(pitch));
     }
+}
+
+/// `sun_toward`: puts a sun that isn't baked towards a direction, and with none, back where the
+/// level has it. Below the horizon it's night.
+fn sun_toward(console: &mut Console<World>, world: &mut World, args: &Args) {
+    let number = |index: usize| args.get(index).parse::<f32>().ok();
+    world.sun_toward = match (number(1), number(2), number(3)) {
+        (Some(x), Some(y), Some(z)) => Some(engine_core::math::Vec3::new(x, y, z)),
+        _ => {
+            console.print("sun_toward <x> <y> <z>, or nothing for where the level has it");
+            None
+        }
+    };
 }
 
 /// `impulse`: sends a number to the game with the next command.

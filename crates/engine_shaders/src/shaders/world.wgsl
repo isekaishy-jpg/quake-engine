@@ -7,6 +7,8 @@
 @group(0) @binding(5) var shadow_atlas: texture_depth_2d;
 @group(0) @binding(7) var paint_atlas: texture_2d<f32>;
 @group(0) @binding(6) var shadow_sampler: sampler_comparison;
+// The sun's three maps, side by side, nearest first.
+@group(0) @binding(8) var sun_shadows: texture_depth_2d;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 
@@ -239,6 +241,10 @@ fn vs_main(in: VertexIn) -> VertexOut {
     return out;
 }
 
+// The layers of the sun's own light and of what it bounces, as in the map.
+const SUN_BOUNCE_STYLE: u32 = 58u;
+const SUN_STYLE: u32 = 59u;
+
 // The light from one layer, or none for an unused one.
 fn layer(in: VertexOut, slot: f32, style: u32) -> vec3<f32> {
     if style >= 64u {
@@ -251,6 +257,10 @@ fn layer(in: VertexOut, slot: f32, style: u32) -> vec3<f32> {
         // Alpha says how far the shadow's edge is, which blends between samples
         // far better than light does, so the edge stays sharp.
         color = color * smoothstep(0.46, 0.54, sample.a);
+    }
+    // A day changes the sun's colour, and a style's only a number.
+    if style == SUN_BOUNCE_STYLE || style == SUN_STYLE {
+        color = color * frame.sun_tint.rgb;
     }
     return color * frame.styles[style / 4u][style % 4u];
 }
@@ -293,6 +303,12 @@ struct LiveFrame {
     shadows: array<mat4x4<f32>, 60>,
     // Two clusters to an entry, each a 64 bit mask.
     clusters: array<vec4<u32>, 1152>,
+    // A sun that isn't baked: its maps, then towards it with w 1 if it's out, its light, and how
+    // far each map reaches.
+    sun_matrices: array<mat4x4<f32>, 3>,
+    sun_toward: vec4<f32>,
+    sun_light: vec4<f32>,
+    sun_reach: vec4<f32>,
 }
 
 @group(0) @binding(4) var<uniform> live: LiveFrame;
@@ -368,6 +384,66 @@ fn live_shadow(
         }
     }
     return total / 64.0;
+}
+
+// How many pixels across one of the sun's maps is, as in the backend.
+const SUN_TILE: f32 = 2048.0;
+
+// How much of the sun gets to `point`, which faces `normal`, from the nearest of its maps it's in.
+// Past the last there's no shadow, as far off it's too coarse to see.
+fn sun_shadow(point: vec3<f32>, normal: vec3<f32>) -> f32 {
+    let depth = dot(point - frame.eye.xyz, live.forward.xyz);
+    var cascade = 0;
+    if depth > live.sun_reach.x * 0.9 {
+        cascade = 1;
+    }
+    if depth > live.sun_reach.y * 0.9 {
+        cascade = 2;
+    }
+    if depth > live.sun_reach.z * 0.9 {
+        return 1.0;
+    }
+    let reach = live.sun_reach[cascade];
+    let pixel = 2.0 * reach / SUN_TILE;
+    let facing = abs(dot(normal, live.sun_toward.xyz));
+    let lifted = point + normal * pixel * mix(3.0, 1.5, facing);
+    let clip = live.sun_matrices[cascade] * vec4<f32>(lifted, 1.0);
+    let margin = 2.0 / SUN_TILE;
+    let inner = clamp(vec2<f32>(clip.x * 0.5 + 0.5, 0.5 - clip.y * 0.5), vec2<f32>(margin), vec2<f32>(1.0 - margin));
+    let uv = vec2<f32>((f32(cascade) + inner.x) / 3.0, inner.y);
+    let step_size = vec2<f32>(1.0 / (SUN_TILE * 3.0), 1.0 / SUN_TILE);
+    var total = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let offset = vec2<f32>(f32(x), f32(y)) * step_size * 1.5;
+            total = total + textureSampleCompareLevel(sun_shadows, shadow_sampler, uv + offset, clip.z);
+        }
+    }
+    return total / 9.0;
+}
+
+// The sun's light on a pixel, and how much of it gets there. It's kept for the highlight.
+var<private> sun_seen: f32 = 0.0;
+
+// A sun that isn't baked, on a surface. Its plane comes from the pixel, facing the eye.
+fn sun_on(world: vec3<f32>, smooth_normal: vec3<f32>) -> vec3<f32> {
+    sun_seen = 0.0;
+    if live.sun_toward.w < 0.5 {
+        return vec3<f32>(0.0);
+    }
+    var normal = normalize(cross(dpdx(world), dpdy(world)));
+    if dot(normal, frame.eye.xyz - world) < 0.0 {
+        normal = -normal;
+    }
+    if dot(smooth_normal, smooth_normal) > 0.01 {
+        normal = normalize(smooth_normal);
+    }
+    let facing = dot(normal, live.sun_toward.xyz);
+    if facing <= 0.0 {
+        return vec3<f32>(0.0);
+    }
+    sun_seen = sun_shadow(world, normal);
+    return live.sun_light.rgb * facing * sun_seen;
 }
 
 // What reaches a pixel: a bit for each moving light, then each capsule.
@@ -473,7 +549,8 @@ fn light(in: VertexOut) -> vec3<f32> {
     }
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
-    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster, in.normal.xyz);
+    let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster, in.normal.xyz)
+        + sun_on(in.world, in.normal.xyz);
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
     return pow(keep_hue(2.0 * (shaded + moving), 2.0), vec3<f32>(frame.color_params.x));

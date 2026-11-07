@@ -246,6 +246,12 @@ fn shine_at(
     has_direction: bool,
 ) -> f32 {
     var shine = specular_light(in.world, normal, to_eye, gloss);
+    if live.sun_toward.w > 0.5 && sun_seen > 0.0 {
+        // The sun's highlight, where it gets to.
+        let half_sun = normalize(live.sun_toward.xyz + to_eye);
+        let strength = dot(live.sun_light.rgb, vec3<f32>(0.333)) * sun_seen;
+        shine = shine + pow(max(dot(normal, half_sun), 0.0), gloss) * strength;
+    }
     if has_direction {
         // A highlight from baked light, which slides as the eye moves.
         let half_vector = normalize(normalize(baked_from) + to_eye);

@@ -723,6 +723,8 @@ fn read_sky(block: &Block) -> Result<SkySource, CompileError> {
             sun_direction: Vec3::new(x, y, z).normalized(),
             sun_color: color_of(block, "sun_color", defaults.sun_color),
             sun_size: number(block, "sun_size", defaults.sun_size),
+            moon_color: color_of(block, "moon_color", defaults.moon_color),
+            moon_size: number(block, "moon_size", defaults.moon_size),
             clouds,
             rays,
         },
