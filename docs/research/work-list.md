@@ -420,3 +420,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 10: cc6a580, fda7c89
 - Item 11: 7ef5130
 - Item 12, alias models stay: c90dd80
+- Item 12 reversed, on the human's decision: what moving meshes cost, 2e2190d, and the fixture's models moved over, 4cccc4e
