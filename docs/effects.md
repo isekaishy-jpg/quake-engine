@@ -128,6 +128,10 @@ fn shader_motion(particle: SimParticle, seconds: f32) -> SimParticle {
 
 100,000 at once cost about 0.2 ms a frame to step and a fraction of a millisecond to draw. A million cost about 1.5 ms to step. A level can have 2 million slots and 1,024 emitters going.
 
+## Changing one while the game runs
+
+Save an effect file, a picture it shows or a shader it names, and the game reads them all again within a second. What's going starts over as the file now says, and particles already made finish as they were. A file that's wrong leaves things as they were, and the console says why.
+
 ## Checking
 
 ```bash

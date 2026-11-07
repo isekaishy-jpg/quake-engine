@@ -3,6 +3,7 @@
 use std::fs;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use crate::archive::Archive;
 use crate::error::AssetError;
@@ -63,6 +64,10 @@ fn walk(directory: &Path, prefix: &str, found: &mut Vec<String>) {
 impl Archive for DirectoryArchive {
     fn label(&self) -> &str {
         &self.label
+    }
+
+    fn changed(&self, path: &str) -> Option<SystemTime> {
+        fs::metadata(self.resolve(path)?).ok()?.modified().ok()
     }
 
     fn paths(&self) -> Vec<String> {

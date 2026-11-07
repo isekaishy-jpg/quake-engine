@@ -92,3 +92,10 @@ Filled in as each part lands.
 - **Stopping** fades them as a whole, over what's asked. They're kept stepping until then.
 - **The depth a step reads is the last frame's,** so it's read with the last frame's view. Reading it with the new one missed everything when the view jumped.
 - **Bugs found in review:** a field that wouldn't build moved every later one along by one. Changing `r_msaa` left a level's particle shaders and motions made for the old samples. Two emitters at one step threw the same way, and slots near each other could too, as a slot's number and the step were added. `strength` and `far` weren't in a burst. The slots had no barrier against the last frame still reading them.
+
+### Reloading (94)
+
+- **Tried in the game:** with a fire going, its colour changed in the file, and in under a second it burned the new colour. A broken file changed nothing, and the console said what was wrong.
+- **A thread looks at dates,** twice a second, so that a slow disc can't hold up a frame. Reading the files is on the main thread, as it's rare and it's only for those making things.
+- **What's going starts again,** with what's timed from the start, so a change to a timeline or a burst shows. Particles already made keep the emitter they had.
+- **Only the map's effects change.** The level isn't touched, and nothing that holds it has to find out.

@@ -305,6 +305,27 @@ impl EffectSystem {
         self.live.clear();
     }
 
+    /// Changes what effects there are while they're going. What's going starts over as it now
+    /// is, so what's timed can be seen. Particles there are go on as they were made.
+    pub fn change_effects(&mut self, effects: &[Arc<EffectDef>]) {
+        self.known = effects
+            .iter()
+            .map(|effect| (effect_id(&effect.name), Arc::clone(effect)))
+            .collect();
+        for effect in &mut self.going {
+            let Some(def) = self.known.get(&effect_id(&effect.def.name)) else {
+                continue;
+            };
+            let count = def.emitters.len();
+            effect.def = Arc::clone(def);
+            effect.age = 0.0;
+            effect.timeline_done = 0;
+            effect.owed = vec![0.0; count];
+            effect.burst = vec![false; count];
+            effect.sim_spawn = vec![0; count];
+        }
+    }
+
     /// Sets the world's gravity.
     pub const fn set_gravity(&mut self, gravity: f32) {
         self.gravity = gravity;

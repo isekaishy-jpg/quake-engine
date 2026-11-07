@@ -2,11 +2,13 @@
 
 mod keys;
 mod net;
+mod reload;
 mod shading;
 mod shots;
 mod sound;
 mod view;
 
+use self::reload::watch_effects;
 use self::shading::{Flames, StencilGates};
 
 use std::collections::{BTreeMap, VecDeque};
@@ -156,6 +158,8 @@ pub(crate) struct World {
     pub(crate) effects: Effects,
     /// The clock of the last update of effects.
     pub(crate) effects_time: f32,
+    /// Says when the files effects come from have changed.
+    effect_changes: Option<Receiver<()>>,
     /// Which zone the view is in.
     pub(crate) zones: ZoneTracker,
     /// The engine's own look, if the content has it.
@@ -680,6 +684,7 @@ impl Engine {
                 models: ModelBank::default(),
                 effects: Effects::default(),
                 effects_time: 0.0,
+                effect_changes: None,
                 zones: ZoneTracker::default(),
                 ui_script,
                 ui_error: None,
@@ -747,6 +752,7 @@ impl Engine {
         }
         self.console.execute(&mut self.world);
         self.follow_settings();
+        self.world.follow_effect_files();
         // With no game, there's always something to type at.
         if self.world.client.is_none()
             && self.world.connecting.is_none()
@@ -992,6 +998,7 @@ impl PlatformApp for Engine {
             }
         }
         self.world.renderer = Some(renderer);
+        self.world.effect_changes = Some(watch_effects(&self.world.filesystem));
         self.world.look.set_scale(self.look_scale());
         self.typed = Some(read_standard_input());
         self.console.add(&format!("exec {STARTUP_SCRIPT}"));

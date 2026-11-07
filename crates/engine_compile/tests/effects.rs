@@ -308,3 +308,62 @@ brush { material = rock cuboid = -64 -64 -96 64 64 -64 }
     assert_eq!(numbers, [(1, 2), (1, 1), (0, 0), (0, 0)]);
     let _gone = std::fs::remove_dir_all(&root);
 }
+
+/// What's dated is what effects come from: their files, and what those name.
+#[test]
+fn what_effects_come_from_can_be_watched() {
+    let root = std::env::temp_dir().join(format!("engine-watch-{}", std::process::id()));
+    let _gone = std::fs::remove_dir_all(&root);
+    for folder in ["effects", "shaders", "textures"] {
+        std::fs::create_dir_all(root.join(folder)).expect("folder");
+    }
+    let pixels = [200, 100, 50, 255].repeat(16);
+    let picture = engine_compile::encode_png(4, 4, &pixels).expect("encodes");
+    std::fs::write(root.join("textures/dot.png"), &picture).expect("write");
+    std::fs::write(root.join("textures/other.png"), &picture).expect("write");
+    std::fs::write(
+        root.join("shaders/tint.wgsl"),
+        "fn shader_particle(look: ParticleLook) -> vec4<f32> { return look.color; }
+",
+    )
+    .expect("write");
+    let path = root.join("effects/one.eeffect");
+    let text = "format 1 effect\nemitter a { image = textures/dot.png shader = tint }\n";
+    std::fs::write(&path, text).expect("write");
+    let mut filesystem = engine_assets::FileSystem::new();
+    filesystem.mount(Box::new(engine_assets::DirectoryArchive::new(&root)));
+    let files = engine_compile::effect_files(&filesystem);
+    let names: Vec<&str> = files.iter().map(|(name, _)| name.as_str()).collect();
+    assert_eq!(
+        names,
+        [
+            "effects/one.eeffect",
+            "shaders/tint.wgsl",
+            "textures/dot.png"
+        ]
+    );
+    let read = engine_compile::read_effects(&filesystem, &[]).expect("reads");
+    assert_eq!(
+        (read.effects.len(), read.pictures.len(), read.shaders.len()),
+        (1, 1, 1)
+    );
+    // Clocks on files can be coarse, so the date's moved by hand.
+    let later = std::time::SystemTime::now() + std::time::Duration::from_secs(60);
+    let file = std::fs::File::options()
+        .write(true)
+        .open(root.join("textures/dot.png"))
+        .expect("opens");
+    file.set_modified(later).expect("dates");
+    assert_ne!(engine_compile::effect_files(&filesystem), files);
+    std::fs::write(&path, "this isn't an effect").expect("write");
+    let told = engine_compile::read_effects(&filesystem, &[]).expect_err("wrong");
+    assert!(told.to_string().contains("effects/one.eeffect"), "{told}");
+    let _gone = std::fs::remove_dir_all(&root);
+}
+
+/// What has no dates isn't watched.
+#[test]
+fn what_ships_has_nothing_to_watch() {
+    let filesystem = engine_assets::FileSystem::new();
+    assert!(engine_compile::effect_files(&filesystem).is_empty());
+}

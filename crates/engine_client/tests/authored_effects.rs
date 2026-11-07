@@ -952,3 +952,57 @@ fn compute_waits_for_a_delay_and_stops_at_a_duration() {
     effects.update(3.0, &quiet());
     assert!(effects.sims().is_empty());
 }
+
+/// New ones take over from what's going, which starts again, and what's made stays as it was.
+#[test]
+fn changed_effects_take_over_what_is_going() {
+    let old = ParticleEmitter {
+        burst: 5,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    };
+    let mut effects = system(vec![old.clone()]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, true);
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 5);
+    let new = ParticleEmitter {
+        burst: 7,
+        ..old.clone()
+    };
+    let extra = ParticleEmitter {
+        burst: 2,
+        ..old.clone()
+    };
+    let def = EffectDef {
+        name: "test".to_owned(),
+        emitters: vec![new, extra],
+        timeline: Vec::new(),
+    };
+    effects.change_effects(&[Arc::new(def)]);
+    assert_eq!(effects.count(), 5, "they aren't touched");
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 14, "and it's started over as it now is");
+    effects.update(20.0, &quiet());
+    assert_eq!(effects.count(), 0);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 9, "what starts now is new");
+}
+
+/// An effect that's gone from the files goes on until it's over, and can't start again.
+#[test]
+fn an_effect_that_is_gone_goes_on_until_it_ends() {
+    let mut effects = system(vec![ParticleEmitter {
+        burst: 5,
+        life: [10.0, 10.0],
+        ..ParticleEmitter::default()
+    }]);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.update(0.1, &quiet());
+    effects.change_effects(&[]);
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 5);
+    effects.start(effect_id("test"), Vec3::ZERO, None, false);
+    effects.update(0.1, &quiet());
+    assert_eq!(effects.count(), 5);
+}

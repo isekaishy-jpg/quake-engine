@@ -5181,6 +5181,54 @@ fn a_broken_motion_says_so_and_they_go_on() {
     assert!((slot[2] - 50.0).abs() < 0.5, "{slot:?}");
 }
 
+/// Effects can change with a level loaded: their pictures and shaders, and that there's compute.
+#[test]
+fn effects_change_while_a_level_is_loaded() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let solid = |color: [u8; 4]| image_of(8, move |_, _| color);
+    let mut before = map(1);
+    before.effect_pictures = vec![Arc::new(solid([255, 0, 0, 255]))];
+    renderer.load_map(Arc::new(before)).expect("load");
+    let particle = ParticleDraw {
+        picture: 1,
+        ..particle_over(40.0, [255, 255, 255], 60.0)
+    };
+    let look = |renderer: &mut Renderer| {
+        let particles = [particle];
+        let drawables = Drawables {
+            particles: &particles,
+            ..Drawables::default()
+        };
+        centre(
+            &renderer
+                .capture(&view_from_above(), drawables, 64, 64)
+                .expect("capture"),
+        )
+    };
+    let red = look(&mut renderer);
+    assert!(red[0] > 200 && red[1] < 40, "{red:?}");
+    let mut after = map_with_sims();
+    after.effect_pictures = vec![Arc::new(solid([0, 255, 0, 255]))];
+    renderer.reload_effects(&after).expect("reloads");
+    let green = look(&mut renderer);
+    assert!(green[1] > 200 && green[0] < 40, "{green:?}");
+    let slot = run_sim(&mut renderer, one_sim(), 3);
+    assert!(slot[2] > 20.0, "there's compute now: {slot:?}");
+    let without = Map {
+        effect_pictures: vec![Arc::new(solid([0, 0, 255, 255]))],
+        ..map(1)
+    };
+    renderer.reload_effects(&without).expect("reloads");
+    assert!(
+        renderer.read_sim(1).expect("reads").is_empty(),
+        "and now not"
+    );
+    let blue = look(&mut renderer);
+    assert!(blue[2] > 200 && blue[1] < 40, "{blue:?}");
+}
+
 /// What the two kinds of model cost on the GPU, drawn and moved. It says nothing is wrong by passing:
 /// it's here to be run by hand, with `cargo test --release -p engine_render --test gpu speed_of
 /// -- --ignored --nocapture`, and `COPIES` and `CORNERS` to change what's drawn.

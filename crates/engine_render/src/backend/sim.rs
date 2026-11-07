@@ -11,8 +11,9 @@ use vulkane::safe::{
     ImageLayout, PipelineLayout, PipelineStage, PushConstantRange, ShaderModule, ShaderStageFlags,
 };
 
+use super::field::GpuField;
 use super::upload::host_buffer;
-use super::{Backend, FRAMES, GpuBuffer};
+use super::{Backend, FRAMES, GpuBuffer, ParticlePictures, ParticlePipelines};
 use crate::error::RenderError;
 use crate::sprite::{ParticleSim, SIM_EMITTER_BYTES, sim_emitter_bytes};
 
@@ -157,7 +158,7 @@ impl Backend {
     pub(super) fn upload_sims(
         &mut self,
         map: &Map,
-        fields: &[super::field::GpuField],
+        fields: &[GpuField],
     ) -> Result<Option<GpuSims>, RenderError> {
         let wanted = map
             .effects
@@ -276,6 +277,36 @@ impl Backend {
             });
         }
         Ok((plain, motions))
+    }
+
+    /// Takes what's in `map` for effects, in place of what's on the GPU.
+    pub(crate) fn reload_effects(&mut self, map: &Map) -> Result<(), RenderError> {
+        self.wait_for_frame()?;
+        self.device.wait_idle()?;
+        let Some(mut gpu) = self.map.take() else {
+            return Ok(());
+        };
+        let made = self.effects_of(map, &gpu.fields);
+        let done = made.map(|(pictures, shaders, sims)| {
+            gpu.particle_pictures = pictures;
+            gpu.particle_shaders = shaders;
+            gpu.particle_codes.clone_from(&map.effect_shaders);
+            gpu.sims = sims;
+        });
+        self.map = Some(gpu);
+        done
+    }
+
+    /// What effects have on the GPU, from `map`.
+    fn effects_of(
+        &mut self,
+        map: &Map,
+        fields: &[GpuField],
+    ) -> Result<(ParticlePictures, Vec<ParticlePipelines>, Option<GpuSims>), RenderError> {
+        let pictures = self.upload_particle_pictures(map)?;
+        let shaders = self.upload_particle_shaders(&map.effect_shaders)?;
+        let sims = self.upload_sims(map, fields)?;
+        Ok((pictures, shaders, sims))
     }
 
     /// Makes what a level's particles have of their own again, for a scene with other samples.

@@ -251,6 +251,16 @@ impl Renderer {
         Ok(())
     }
 
+    /// Takes what's in `map` for effects, with its fields, in place of what's loaded. Nothing else
+    /// of it is looked at.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn reload_effects(&mut self, map: &Map) -> Result<(), RenderError> {
+        self.backend.reload_effects(map)
+    }
+
     /// Gives `tile` its detailed light. Returns whether it did: with the atlas
     /// full it stays in its average colours, which is safe to leave.
     ///

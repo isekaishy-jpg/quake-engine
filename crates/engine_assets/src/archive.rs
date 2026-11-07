@@ -1,5 +1,7 @@
 //! Anything that holds files.
 
+use std::time::SystemTime;
+
 use crate::error::AssetError;
 
 /// A source of files. Paths are normalized by [`crate::normalize_path`]. Files
@@ -13,6 +15,11 @@ pub trait Archive: Send + Sync {
 
     /// Whether it holds `path`.
     fn contains(&self, path: &str) -> bool;
+
+    /// When `path` last changed, for an archive whose files can.
+    fn changed(&self, _path: &str) -> Option<SystemTime> {
+        None
+    }
 
     /// The path of file id `id`, for an archive that knows ids.
     fn path_of_id(&self, _id: u32) -> Option<String> {

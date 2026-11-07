@@ -1,6 +1,7 @@
 //! The search path.
 
 use std::collections::BTreeSet;
+use std::time::SystemTime;
 
 use crate::archive::Archive;
 use crate::error::AssetError;
@@ -56,6 +57,17 @@ impl FileSystem {
             .find_map(|archive| archive.path_of_id(id))
             .ok_or_else(|| AssetError::NotFound(format!("file id {id}")))?;
         self.read(&path)
+    }
+
+    /// When the `path` that reads get last changed, if what holds it can say.
+    #[must_use]
+    pub fn changed(&self, path: &str) -> Option<SystemTime> {
+        let normalized = normalize_path(path).ok()?;
+        self.archives
+            .iter()
+            .rev()
+            .find(|archive| archive.contains(&normalized))?
+            .changed(&normalized)
     }
 
     /// Whether any archive holds `path`.

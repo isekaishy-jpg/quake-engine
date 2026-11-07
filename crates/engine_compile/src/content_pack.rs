@@ -1,6 +1,7 @@
 //! A level as a game reads it, and a content folder as one pack (proposal 0106).
 
 use std::sync::Arc;
+use std::time::SystemTime;
 
 use engine_assets::FileSystem;
 use engine_core::math::Vec3;
@@ -68,7 +69,9 @@ fn effects_in(filesystem: &FileSystem) -> Result<Vec<Arc<EffectDef>>, CompileErr
             let bytes = filesystem
                 .read(&path)
                 .map_err(|error| CompileError::Bad(error.to_string()))?;
-            out.push(Arc::new(read_effect(name, &document_of(&bytes)?)?));
+            let read = document_of(&bytes).and_then(|document| read_effect(name, &document));
+            let effect = read.map_err(|error| CompileError::Bad(format!("{path}: {error}")))?;
+            out.push(Arc::new(effect));
         }
     }
     out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -79,15 +82,58 @@ fn effects_in(filesystem: &FileSystem) -> Result<Vec<Arc<EffectDef>>, CompileErr
 const WIDEST_PICTURE: u32 = 512;
 
 /// A level's effects, with what they show.
-struct EffectExtras {
+#[derive(Clone, Debug)]
+pub struct EffectExtras {
     /// The effects.
-    effects: Vec<Arc<EffectDef>>,
+    pub effects: Vec<Arc<EffectDef>>,
     /// Their pictures.
-    pictures: Vec<SlotImage>,
+    pub pictures: Vec<SlotImage>,
     /// Their shaders.
-    shaders: Vec<Arc<ShaderCode>>,
+    pub shaders: Vec<Arc<ShaderCode>>,
     /// Their shaders for how compute moves them.
-    motions: Vec<Arc<ShaderCode>>,
+    pub motions: Vec<Arc<ShaderCode>>,
+}
+
+/// Every effect `filesystem` holds as a level with `fields` has them, read afresh.
+///
+/// # Errors
+///
+/// Returns an error if one is wrong, or something it shows is.
+pub fn read_effects(
+    filesystem: &FileSystem,
+    fields: &[String],
+) -> Result<EffectExtras, CompileError> {
+    let mut library = MaterialLibrary::for_play(filesystem);
+    effect_extras(&mut library, effects_in(filesystem)?, fields)
+}
+
+/// Every file effects come from and when it changed, which says when to read them again. There's
+/// nothing to say of a file what holds it can't date, so what ships has an empty list.
+#[must_use]
+pub fn effect_files(filesystem: &FileSystem) -> Vec<(String, SystemTime)> {
+    let mut paths = filesystem.list("effects/");
+    paths.retain(|path| path.ends_with(".eeffect"));
+    let effects = paths.clone();
+    for path in effects {
+        let bytes = filesystem.read(&path).unwrap_or_default();
+        let Ok(effect) = document_of(&bytes).and_then(|document| read_effect("", &document)) else {
+            continue;
+        };
+        for emitter in &effect.emitters {
+            paths.extend(emitter.image.clone());
+            for name in emitter.shader.iter().chain(&emitter.motion) {
+                paths.push(format!("shaders/{name}.wgsl"));
+                paths.push(format!("shaders/{name}.egraph"));
+            }
+        }
+    }
+    paths.sort();
+    paths.dedup();
+    let dated = paths.into_iter().filter_map(|path| {
+        let changed = filesystem.changed(&path)?;
+        Some((path, changed))
+    });
+    dated.collect()
 }
 
 /// `effects`, with their emitters told where their pictures and shaders are, and those pictures
