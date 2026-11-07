@@ -7,7 +7,7 @@ use std::sync::Arc;
 use engine_core::entity::{EFFECT_MUZZLE_FLASH, EntityState, ModelInstance};
 use engine_core::math::Vec3;
 use engine_core::player::{PLAYER_MAXS, PLAYER_MINS, PUNCH_RECOVERY, PlayerState, UserCommand};
-use engine_map::Map;
+use engine_map::{Map, MovingMesh, after, angles_of_rows, moved, placed_at};
 use engine_movement::{MoveVars, player_move};
 use engine_physics::CollisionWorld;
 use serde::{Deserialize, Serialize};
@@ -81,8 +81,11 @@ pub enum MoveType {
 pub struct Attachment {
     /// What it's on.
     pub parent: EntityId,
-    /// Which of the map's model points.
+    /// Which of the map's model points, or of the places of a moving mesh's skeleton.
     pub point: u32,
+    /// Whether it's on a skeleton, and not on a model.
+    #[serde(default)]
+    pub on_skeleton: bool,
 }
 
 /// What the engine knows about an entity. Game fields live in the script.
@@ -143,6 +146,12 @@ pub struct Entity {
     /// What it's held to, if anything.
     #[serde(default)]
     pub attached: Option<Attachment>,
+    /// Which clip of a moving mesh it's playing, plus one, or 0 for none.
+    #[serde(default)]
+    pub clip: u16,
+    /// When that began.
+    #[serde(default)]
+    pub clip_start: f64,
 }
 
 /// Something a script has to handle.
@@ -643,6 +652,9 @@ impl Simulation {
                 effects: entity.effects,
                 origin: self.origin(id).unwrap_or(entity.origin),
                 angles: self.shown_angles(id, entity),
+                clip: entity.clip,
+                #[expect(clippy::cast_possible_truncation, reason = "a clip's start")]
+                clip_start: entity.clip_start as f32,
             })
             .collect()
     }
@@ -788,6 +800,14 @@ impl Simulation {
     /// Where the place called `name` on `id` is now, and how it's turned.
     pub fn place_on(&self, id: EntityId, name: &str) -> Option<(Vec3, Vec3)> {
         let parent = self.entities.get(id)?;
+        if let Some(mesh) = self.moving_mesh_of(parent) {
+            let at = mesh
+                .skeleton
+                .places
+                .iter()
+                .position(|place| place.name == name)?;
+            return self.skeleton_place_on(parent, at);
+        }
         let at = self.map.model_point(parent.model?, name)?;
         self.point_on(parent, at)
     }
@@ -798,16 +818,73 @@ impl Simulation {
         Some((parent.origin + point.origin, parent.angles + point.angles))
     }
 
+    /// The moving mesh `entity` shows, if it shows one.
+    fn moving_mesh_of(&self, entity: &Entity) -> Option<&MovingMesh> {
+        let name = self.shapes.get(usize::from(entity.shape).checked_sub(1)?)?;
+        Some(self.map.moving_mesh(name)?.1)
+    }
+
+    /// Where the skeleton's place `at` is on `parent`, in the pose it's in now. It's worked out
+    /// here as it's the server that says where things are held.
+    fn skeleton_place_on(&self, parent: &Entity, at: usize) -> Option<(Vec3, Vec3)> {
+        let skeleton = &self.moving_mesh_of(parent)?.skeleton;
+        let place = skeleton.places.get(at)?;
+        let clip = usize::from(parent.clip).checked_sub(1);
+        #[expect(clippy::cast_possible_truncation, reason = "a clip's time")]
+        let time = (self.time - parent.clip_start) as f32;
+        let placed = skeleton.placed(&skeleton.pose(clip, time));
+        let rows = after(
+            &placed_at(parent.origin, parent.angles),
+            &skeleton.place(&place.name, &placed)?,
+        );
+        Some((moved(&rows, Vec3::ZERO), angles_of_rows(&rows)))
+    }
+
+    /// Plays the clip called `name` on `id`, from now. Says if it has such a clip. With no name,
+    /// it stops, at rest.
+    pub fn set_clip(&mut self, id: EntityId, name: &str) -> bool {
+        let time = self.time;
+        let Some(entity) = self.entities.get(id) else {
+            return false;
+        };
+        let Some(mesh) = self.moving_mesh_of(entity) else {
+            return false;
+        };
+        let clip = mesh.skeleton.clip_named(name);
+        if clip.is_none() && !name.is_empty() {
+            return false;
+        }
+        let number = clip.map_or(0, |clip| u16::try_from(clip + 1).unwrap_or(0));
+        if let Some(entity) = self.entities.get_mut(id) {
+            // Asking again for what's playing leaves it playing, or it'd never get past the start.
+            if entity.clip != number {
+                entity.clip = number;
+                entity.clip_start = time;
+            }
+        }
+        true
+    }
+
     /// Holds `id` to the place called `name` on `parent`. Says if there's such a place.
     pub fn attach(&mut self, id: EntityId, parent: EntityId, name: &str) -> bool {
-        let model = self.entities.get(parent).and_then(|parent| parent.model);
-        let at = model.and_then(|model| self.map.model_point(model, name));
+        let holder = self.entities.get(parent);
+        let places = holder
+            .and_then(|parent| self.moving_mesh_of(parent))
+            .map(|mesh| &mesh.skeleton.places);
+        let on_skeleton = places.is_some();
+        let at = if let Some(places) = places {
+            places.iter().position(|place| place.name == name)
+        } else {
+            let model = holder.and_then(|parent| parent.model);
+            model.and_then(|model| self.map.model_point(model, name))
+        };
         let (Some(at), Some(entity)) = (at, self.entities.get_mut(id)) else {
             return false;
         };
         entity.attached = Some(Attachment {
             parent,
             point: u32::try_from(at).unwrap_or(u32::MAX),
+            on_skeleton,
         });
         true
     }
@@ -829,7 +906,14 @@ impl Simulation {
             .collect();
         for (id, attachment) in held {
             let parent = self.entities.get(attachment.parent);
-            let place = parent.and_then(|parent| self.point_on(parent, attachment.point as usize));
+            let at = attachment.point as usize;
+            let place = parent.and_then(|parent| {
+                if attachment.on_skeleton {
+                    self.skeleton_place_on(parent, at)
+                } else {
+                    self.point_on(parent, at)
+                }
+            });
             let Some((origin, angles)) = place else {
                 self.detach(id);
                 continue;

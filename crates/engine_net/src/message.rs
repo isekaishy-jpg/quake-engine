@@ -899,6 +899,8 @@ pub(crate) fn encode_snapshot(snapshot: &Snapshot, out: &mut Vec<u8>) {
         out.extend_from_slice(&[entity.skin, entity.effects]);
         put_vec3(out, entity.origin);
         put_vec3(out, entity.angles);
+        out.extend_from_slice(&entity.clip.to_le_bytes());
+        out.extend_from_slice(&entity.clip_start.to_le_bytes());
     }
     let count = u32::try_from(snapshot.boxes.len()).unwrap_or(u32::MAX);
     out.extend_from_slice(&count.to_le_bytes());
@@ -986,6 +988,8 @@ fn decode_snapshot(bytes: &[u8]) -> Option<Snapshot> {
             effects: reader.byte()?,
             origin: reader.vec3()?,
             angles: reader.vec3()?,
+            clip: reader.u16()?,
+            clip_start: reader.f32()?,
         });
     }
     let count = usize::try_from(reader.u32()?).ok()?;

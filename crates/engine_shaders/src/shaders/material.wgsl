@@ -361,7 +361,10 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     // Where baked light comes from, so bumps and shine answer it too.
     let stored = textureSampleLevel(light_direction, lightmap_sampler, in.light_uv, 0.0);
     var baked_from = vec3<f32>(0.0);
-    if stored.a > 0.5 {
+    if in.styles.x == OWN_LIGHT {
+        // What moves has no light baked for it, so it's shaped by light from above.
+        baked_from = vec3<f32>(0.3, 0.2, 0.93);
+    } else if stored.a > 0.5 {
         baked_from = stored.xyz * 2.0 - vec3<f32>(1.0);
     }
     let has_direction = dot(baked_from, baked_from) > 0.01;

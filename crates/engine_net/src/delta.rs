@@ -21,6 +21,8 @@ const EFFECTS: u8 = 8;
 const ORIGIN: u8 = 16;
 /// An entity's angles changed.
 const ANGLES: u8 = 32;
+/// An entity's clip changed.
+const CLIP: u8 = 64;
 
 /// The most changes of one kind a delta may hold.
 const MAX_CHANGES: usize = 8192;
@@ -45,7 +47,11 @@ fn put_entity(out: &mut Vec<u8>, old: Option<&EntityState>, new: &EntityState) -
         | changed(|a, b| a.skin != b.skin, SKIN)
         | changed(|a, b| a.effects != b.effects, EFFECTS)
         | changed(|a, b| a.origin != b.origin, ORIGIN)
-        | changed(|a, b| a.angles != b.angles, ANGLES);
+        | changed(|a, b| a.angles != b.angles, ANGLES)
+        | changed(
+            |a, b| a.clip != b.clip || a.clip_start != b.clip_start,
+            CLIP,
+        );
     if mask == 0 {
         return false;
     }
@@ -68,6 +74,10 @@ fn put_entity(out: &mut Vec<u8>, old: Option<&EntityState>, new: &EntityState) -
     }
     if mask & ANGLES != 0 {
         put_vec3(out, new.angles);
+    }
+    if mask & CLIP != 0 {
+        out.extend_from_slice(&new.clip.to_le_bytes());
+        out.extend_from_slice(&new.clip_start.to_le_bytes());
     }
     true
 }
@@ -235,6 +245,10 @@ fn read_entity(reader: &mut Reader<'_>, old: &HashMap<u64, EntityState>) -> Opti
     }
     if mask & ANGLES != 0 {
         entity.angles = reader.vec3()?;
+    }
+    if mask & CLIP != 0 {
+        entity.clip = reader.u16()?;
+        entity.clip_start = reader.f32()?;
     }
     Some(entity)
 }

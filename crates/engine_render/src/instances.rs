@@ -13,6 +13,25 @@ pub const INSTANCE_BYTES: usize = 64;
 /// a boundary doesn't flicker between two.
 const COMING_BACK: f32 = 1.1;
 
+/// A moving mesh to draw this frame.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct MovingDraw {
+    /// Which of the map's moving meshes.
+    pub mesh: u32,
+    /// What places it.
+    pub rows: engine_map::Rows,
+    /// Where its joints start in the frame's palette.
+    pub first_joint: u32,
+    /// How many it has.
+    pub joint_count: u32,
+    /// Its light, as a colour.
+    pub light: [f32; 3],
+    /// Its middle, in the world, as it's posed.
+    pub center: Vec3,
+    /// How far it reaches from there.
+    pub radius: f32,
+}
+
 /// The copies of one level of one mesh that are drawn together.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct InstanceBatch {

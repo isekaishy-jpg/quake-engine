@@ -167,6 +167,9 @@ pub struct MeshGroup {
     pub placement: Option<u32>,
 }
 
+/// What starts the name of a model that's a moving mesh, as `mesh:arm`.
+pub const MOVING_MESH_PREFIX: &str = "mesh:";
+
 /// A named place that things can be put at or follow (proposal 0140).
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct AttachPoint {
@@ -207,6 +210,10 @@ pub struct SharedMesh {
     pub corners: Vec<MeshCorner>,
     /// Its triangles, three to each.
     pub indices: Vec<u32>,
+    /// The joints that carry each corner, if it has a skin.
+    pub joints: Vec<[u8; 4]>,
+    /// How much of each corner goes with each of those, out of 255.
+    pub weights: Vec<[u8; 4]>,
     /// Its parts by material, for each level of detail, the finest first.
     pub levels: Vec<Vec<SharedPart>>,
     /// The share of the view's height it has to fall below to go to each coarser level.
@@ -215,6 +222,17 @@ pub struct SharedMesh {
     pub center: Vec3,
     /// How far it reaches from there.
     pub radius: f32,
+}
+
+/// A mesh that moves, which things in a level can show as a model.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct MovingMesh {
+    /// What it's called.
+    pub name: String,
+    /// What's drawn.
+    pub mesh: SharedMesh,
+    /// What moves it.
+    pub skeleton: crate::Skeleton,
 }
 
 /// A placement of a [`SharedMesh`]. Its faces in [`Map::faces`] hold its light, and are found
@@ -236,6 +254,17 @@ impl Map {
     #[must_use]
     pub fn place(&self, name: &str) -> Option<&AttachPoint> {
         self.places.iter().find(|place| place.name == name)
+    }
+
+    /// The moving mesh that the model called `shape` shows, if it is one.
+    #[must_use]
+    pub fn moving_mesh(&self, shape: &str) -> Option<(usize, &MovingMesh)> {
+        let name = shape.strip_prefix(MOVING_MESH_PREFIX)?;
+        let found = self
+            .moving_meshes
+            .iter()
+            .position(|mesh| mesh.name == name)?;
+        Some((found, self.moving_meshes.get(found)?))
     }
 
     /// Which of [`Map::model_points`] is `name` on `model`.
@@ -401,6 +430,8 @@ pub struct Map {
     pub shared_meshes: Vec<SharedMesh>,
     /// What's drawn from them.
     pub mesh_instances: Vec<MeshInstance>,
+    /// Meshes that move, which the level's said it uses.
+    pub moving_meshes: Vec<MovingMesh>,
     /// The named parts of the map.
     pub zones: Vec<crate::Zone>,
     /// The effects that can be started.

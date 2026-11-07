@@ -1,5 +1,6 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
+mod deform;
 mod pipeline_cache;
 mod pipelines;
 mod post;
@@ -32,6 +33,7 @@ use vulkane::safe::{
     SignalSemaphore, Surface, Swapchain, SwapchainCreateInfo, WaitSemaphore,
 };
 
+use self::deform::{Deform, GpuMoving};
 use crate::alias::ALIAS_PUSH_SIZE;
 use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
@@ -231,6 +233,8 @@ struct GpuMap {
     shadow_instances: Vec<ShadowInstance>,
     /// Which level of detail each copy is at.
     instance_levels: Vec<usize>,
+    /// Meshes that move, if it has any.
+    moving: Option<GpuMoving>,
     /// The visible indices, one for each frame in flight.
     indices: [GpuBuffer; FRAMES],
     /// Which of those are behind the view, which changes as it moves between
@@ -532,6 +536,10 @@ pub(crate) struct Backend {
     queue: Queue,
     /// The queue's family.
     queue_family: u32,
+    /// What moves meshes.
+    deform: Deform,
+    /// Whether a moving mesh has had to draw at rest.
+    moving_overflow: bool,
     /// The GPU's name.
     device_name: String,
     /// The surface, if drawing to a window. It drops after the swapchain.
@@ -577,7 +585,9 @@ fn pick_device(
         }
         for (family, properties) in physical.queue_family_properties().iter().enumerate() {
             let family = u32::try_from(family).unwrap_or(u32::MAX);
+            // One queue does both: moving meshes are worked out just before they're drawn.
             if properties.queue_flags().contains(QueueFlags::GRAPHICS)
+                && properties.queue_flags().contains(QueueFlags::COMPUTE)
                 && surface.is_none_or(|surface| surface.supports_present(&physical, family))
             {
                 return Ok((physical, family));
@@ -635,6 +645,7 @@ impl Backend {
             }
             _ => PresentMode::FIFO,
         };
+        let deform = Deform::new(&device)?;
         let present_pass = make_pass(&device, ImageLayout::PRESENT_SRC_KHR)?;
         let capture_pass = make_pass(&device, ImageLayout::TRANSFER_SRC_OPTIMAL)?;
 
@@ -861,6 +872,8 @@ impl Backend {
             free_present_mode: present_mode,
             queue,
             queue_family,
+            deform,
+            moving_overflow: false,
             device_name,
             physical,
             device,
@@ -1083,6 +1096,11 @@ impl Backend {
         }
     }
 
+    /// Whether a moving mesh has had to draw at rest since this was last asked.
+    pub(crate) fn take_moving_overflow(&mut self) -> bool {
+        std::mem::take(&mut self.moving_overflow)
+    }
+
     /// How many lights' shadows the last frame redrew.
     pub(crate) fn shadow_redraws(&self) -> usize {
         self.shadows.redraws()
@@ -1140,12 +1158,13 @@ impl Backend {
         let Some(target) = &self.scene_target else {
             return;
         };
+        self.record_deform(rec);
         let wanted = scene.filter(|_| self.shadows.redraws() > 0);
         let ranges = wanted.map_or_else(Vec::new, |scene| self.shadow_ranges(scene));
         let entities = wanted.map_or(&[][..], |scene| scene.drawables.entities);
         let figures = shadow::shadow_figures(&self.models, entities);
         self.shadows
-            .record(rec, self.map.as_ref(), &ranges, &figures);
+            .record(rec, self.map.as_ref(), &ranges, &figures, self.slot);
         // The scene reads what shadows wrote.
         rec.memory_barrier(
             PipelineStage::ALL_GRAPHICS,

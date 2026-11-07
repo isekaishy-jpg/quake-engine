@@ -45,6 +45,42 @@ pub fn turned(rows: &Rows, direction: Vec3) -> Vec3 {
     Vec3::new(row(rows[0]), row(rows[1]), row(rows[2]))
 }
 
+/// What places something at `origin`, turned by `angles`: its pitch, yaw and roll in degrees.
+#[must_use]
+pub fn placed_at(origin: Vec3, angles: Vec3) -> Rows {
+    let (sin_pitch, cos_pitch) = angles.x.to_radians().sin_cos();
+    let (sin_yaw, cos_yaw) = angles.y.to_radians().sin_cos();
+    let (sin_roll, cos_roll) = angles.z.to_radians().sin_cos();
+    let forward = Vec3::new(cos_pitch * cos_yaw, cos_pitch * sin_yaw, -sin_pitch);
+    let left = Vec3::new(
+        sin_roll * sin_pitch * cos_yaw - cos_roll * sin_yaw,
+        sin_roll * sin_pitch * sin_yaw + cos_roll * cos_yaw,
+        sin_roll * cos_pitch,
+    );
+    let up = forward.cross(left);
+    [
+        [forward.x, left.x, up.x, origin.x],
+        [forward.y, left.y, up.y, origin.y],
+        [forward.z, left.z, up.z, origin.z],
+    ]
+}
+
+/// The pitch, yaw and roll in degrees that `rows` turns by.
+#[must_use]
+pub fn angles_of_rows(rows: &Rows) -> Vec3 {
+    let forward = turned(rows, Vec3::new(1.0, 0.0, 0.0)).normalized();
+    let left = turned(rows, Vec3::new(0.0, 1.0, 0.0)).normalized();
+    let up = forward.cross(left);
+    let pitch = (-forward.z).clamp(-1.0, 1.0).asin();
+    // Straight up or down, yaw and roll are the same turn, so it's all yaw.
+    let (yaw, roll) = if forward.x.hypot(forward.y) > 1e-5 {
+        (forward.y.atan2(forward.x), left.z.atan2(up.z))
+    } else {
+        ((-left.x).atan2(left.y), 0.0)
+    };
+    Vec3::new(pitch.to_degrees(), yaw.to_degrees(), roll.to_degrees())
+}
+
 /// Where something is, relative to what it's on.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct JointPose {

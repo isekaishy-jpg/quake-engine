@@ -75,6 +75,22 @@ pub struct PointSource {
     pub copy: Option<u64>,
 }
 
+impl WorkingMap {
+    /// The meshes the level says things can show, which it can't work out, as scripts choose
+    /// them. It's Quake's own rule, that models are known when a level loads.
+    #[must_use]
+    pub fn moving_names(&self) -> Vec<String> {
+        let world = self
+            .entities
+            .iter()
+            .find(|entity| entity.kind == "worldspawn");
+        let names = world
+            .and_then(|world| world.text("meshes"))
+            .unwrap_or_default();
+        names.split_whitespace().map(str::to_owned).collect()
+    }
+}
+
 impl EntitySource {
     /// Sets a field to three numbers.
     pub(crate) fn set_point(&mut self, key: &str, point: Point) {
@@ -177,6 +193,8 @@ pub struct WorkingMap {
     pub points: Vec<PointSource>,
     /// The meshes that placements share, by name.
     pub shared: HashMap<String, Arc<Mesh>>,
+    /// The meshes that move, in the order the level names them.
+    pub moving: Vec<(String, Arc<Mesh>)>,
     /// What's changed about how liquids look.
     pub water: Option<WaterSource>,
     /// Fog, if it has any.
@@ -731,6 +749,7 @@ pub fn read_map(document: &Document) -> Result<WorkingMap, CompileError> {
         placed: Vec::new(),
         points: document.blocks_of("point").map(read_point).collect(),
         shared: HashMap::new(),
+        moving: Vec::new(),
         water: document.blocks_of("water").next().map(read_water),
     })
 }

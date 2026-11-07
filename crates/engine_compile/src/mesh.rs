@@ -690,10 +690,15 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
                         uv: part.uvs[corner].map(|part| part as f32 * across),
                         normal: packed_normal(normal),
                     };
+                    let joints = part.joints.get(corner).copied().unwrap_or([0; 4]);
+                    let weights = part.weights.get(corner).copied().unwrap_or([0; 4]);
+                    let skinned = !part.joints.is_empty();
                     let key = (
                         made.position.map(f32::to_bits),
                         made.uv.map(f32::to_bits),
                         made.normal,
+                        joints,
+                        weights,
                     );
                     let index = *known.entry(key).or_insert_with(|| {
                         for axis in 0..3 {
@@ -701,6 +706,10 @@ pub(crate) fn shared_mesh(mesh: &Mesh, material: &mut dyn FnMut(&str) -> (u32, f
                             high[axis] = high[axis].max(made.position[axis]);
                         }
                         shared.corners.push(made);
+                        if skinned {
+                            shared.joints.push(joints);
+                            shared.weights.push(weights);
+                        }
                         u32::try_from(shared.corners.len() - 1).unwrap_or(u32::MAX)
                     });
                     shared.indices.push(index);
@@ -898,6 +907,11 @@ pub fn resolve_meshes(
         placed.push(mesh);
     }
     working.placed = placed;
+    let mut moving = Vec::new();
+    for name in working.moving_names() {
+        moving.push((name.clone(), read(&name)?.mesh));
+    }
+    working.moving = moving;
     for entity in &mut working.entities {
         if let Some(placement) = &entity.mesh {
             let loaded = read(&placement.source)?;
@@ -951,17 +965,32 @@ fn find_place<'a>(working: &'a WorkingMap, name: &str, copy: Option<u64>) -> Opt
     Some([found.origin.x, found.origin.y, found.origin.z].map(f64::from))
 }
 
+/// Whether `name` is a place on a mesh that moves, which is only known where it is once it's
+/// posed, so that's for when the level runs.
+fn on_a_moving_mesh(working: &WorkingMap, name: &str) -> bool {
+    let skeletons = working
+        .moving
+        .iter()
+        .filter_map(|(_, mesh)| mesh.skeleton.as_ref());
+    skeletons
+        .flat_map(|skeleton| &skeleton.places)
+        .any(|place| place.name == name)
+}
+
 /// Puts every entity with an `attach` where that place is.
 fn put_attached(working: &mut WorkingMap) -> Result<(), CompileError> {
     let mut places = Vec::new();
     for (number, entity) in working.entities.iter().enumerate() {
         if let Some(name) = entity.text("attach") {
-            let place = find_place(working, name, entity.copy).ok_or_else(|| {
-                CompileError::Bad(format!(
+            let Some(place) = find_place(working, name, entity.copy) else {
+                if on_a_moving_mesh(working, name) {
+                    continue;
+                }
+                return Err(CompileError::Bad(format!(
                     "{} is attached to {name}, which isn't there",
                     entity.kind
-                ))
-            })?;
+                )));
+            };
             places.push((number, place));
         }
     }

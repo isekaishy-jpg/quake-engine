@@ -372,6 +372,7 @@ impl<'a> MaterialLibrary<'a> {
                 .iter()
                 .filter_map(|e| e.mesh.as_ref().map(|m| m.source.clone())),
         );
+        names.extend(working.moving_names());
         names.sort();
         names.dedup();
         for name in names {

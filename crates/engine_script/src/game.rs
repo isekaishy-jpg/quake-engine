@@ -816,6 +816,13 @@ impl Game {
         )?;
         let sim = Rc::clone(simulation);
         engine.set(
+            "set_clip",
+            lua.create_function(move |_, (id, name): (f64, String)| {
+                Ok(sim.borrow_mut().set_clip(id_from(id), &name))
+            })?,
+        )?;
+        let sim = Rc::clone(simulation);
+        engine.set(
             "attach_point",
             lua.create_function(move |_, (id, name): (f64, String)| {
                 let place = sim.borrow().place_on(id_from(id), &name);

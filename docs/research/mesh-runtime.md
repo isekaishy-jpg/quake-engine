@@ -76,6 +76,6 @@ Nothing found gives a standard layout, and sources differ: [a texture](https://c
 - One new thing, a run time mesh, and one way to draw it. Instances are the case of many, a skeleton and morphs change corners, and an attach point is a place in it.
 - Skinning is linear, as glTF defines it, with four joints a vertex and joints in one storage buffer.
 - Attach points are named nodes in the file, read after the pose.
-- The open choice for the proposal is compute against the vertex shader, given that neither compute nor storage buffers exist yet.
+- The proposal chose compute. A moving mesh is plain vertices after that, so there's no second way of drawing.
 - Baked placements stay right for what wants baked light. A placement chooses, as `light = probe` already does.
 - Item 12 follows from this: alias models are a mesh with morph-like poses, so moving them is a question of whether that one path can draw them as they are.

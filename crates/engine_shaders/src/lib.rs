@@ -47,6 +47,8 @@ pub enum Module<'a> {
     Shadow,
     /// Edge smoothing.
     Smaa,
+    /// What moves meshes.
+    Deform,
     /// A surface with this surface code.
     Surface(&'a str),
     /// A surface with nothing unusual about it.
@@ -70,6 +72,7 @@ impl Module<'_> {
             Self::Sprite => "sprite".to_owned(),
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
+            Self::Deform => "deform".to_owned(),
             Self::PlainSurface => "plain".to_owned(),
             Self::Surface(code) => format!("surface_{:016x}", code_id(code)),
             Self::Post { code, samples } => {
@@ -150,6 +153,7 @@ pub fn all_modules<'a>(surfaces: &[&'a str], posts: &[&'a str]) -> Vec<Module<'a
         Module::Sprite,
         Module::Shadow,
         Module::Smaa,
+        Module::Deform,
         Module::PlainSurface,
         Module::Surface(""),
         Module::Surface(BROKEN),

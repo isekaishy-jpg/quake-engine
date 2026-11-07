@@ -45,6 +45,10 @@ pub struct EntityState {
     pub origin: Vec3,
     /// Its pitch, yaw and roll in degrees.
     pub angles: Vec3,
+    /// Which clip of a moving mesh it's playing, plus one, or 0 for none.
+    pub clip: u16,
+    /// When that began.
+    pub clip_start: f32,
 }
 
 /// Something launched, whose path is fixed from here on (proposal 0052).

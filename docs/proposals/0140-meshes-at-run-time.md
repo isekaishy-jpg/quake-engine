@@ -21,7 +21,7 @@ Status: proposed, 2026-11-06, the [work list](../research/work-list.md), items 7
 
 - **`Renderer::add_mesh`** uploads a mesh once: vertices in the world's own `Vertex` format, in the mesh's own space, indices, its parts by material, its levels of detail and its bounds.
 - **`vs_mesh`** is a second vertex entry in `material.wgsl`, beside `vs_main`. It reads a second vertex binding at instance rate: three rows of a matrix, then the light chart's place, step and styles, and a fade. It sets `normal.w` to 1, as a probe face has. **The fragment shaders don't change,** so every material and surface shader works on a mesh with nothing new to write.
-- **Levels hold the meshes they use.** The compiler gathers them from placements, entities, and a `meshes` list on the level for what scripts spawn, with materials resolved as they are for faces. This is Quake's own rule, that models are known when a level loads.
+- **Levels hold the meshes they use.** The compiler gathers them from placements, entities, and a `meshes` list on the level for what scripts spawn, with materials resolved as they are for faces. This is Quake's own rule, that models are known when a level loads. Moving meshes are kept in `Map`, as the server and the client both have that, so both see the same skeletons.
 - **Which placements are instances:** those with `light = probe`. They have one light each, so they lose nothing. Others stay baked, with a light map of their own, as a hero piece wants. So old levels look as they did until an author asks.
 - **Light and collision don't change.** A placement's triangles still go to the bake, to cast shadows, and to collision. They just aren't drawn as faces.
 - **Visibility.** The compiler lists the leaves each instance touches. When the view changes leaf, the visible set is rebuilt, as for faces. Each frame, those are tested against the view, given a level of detail, grouped by mesh and level, and written to the instance buffer. A part is then one draw for all its copies.
@@ -137,4 +137,27 @@ The barrels added to the proving ground for item 7 took its kept geometry from 1
 Tried and dropped: fewer brushes to a part made no difference, and cutting along the way turned planes face made it slightly worse. Neither was the cause.
 
 Other levels keep what they've baked until their next compile. `wide_world`'s 167 MB should shrink then.
+
+### Item 10: skeletons
+
+Built as designed, on Vulkan 1.3 ([proposal 0141](0141-vulkan-1-3.md)), and tried with a real model: an arm of three bones made in Blender, which waves. It moves in the game as it does there, is lit with what's around it, casts a shadow that follows its pose, and a box of shells held to its tip goes with the bone, on the real server.
+
+- **Everything above a joint is a joint.** A rig's own node moves its bones, and being a joint it needs nothing special, even if it's animated.
+- **A corner's four strongest joints** are kept, as bytes that come to 255.
+- **The GPU test can fail.** With weights ignored in the shader, the test reads 0 of 21.5. With skinning broken, it reads no movement.
+
+Found in review and in trying it:
+
+- **A queue was only checked for graphics,** and it now does compute too, which Vulkan doesn't promise of every queue. It's checked for both now.
+- **The arm didn't draw at first.** A model's name was only kept if a file loaded, and a moving mesh has no file.
+- **It flared white beside a fire.** Moving light was added on the CPU, and the shader adds it too.
+- **A place on a skeleton failed the check that a place exists,** as it's only known once it's posed. Those are checked when the level runs, and say so on the console.
+
+Limits, as they stand:
+
+- **A moving mesh draws its finest level.** Its corners are all moved anyway, so a coarser level would only save drawing.
+- **The outline hull doesn't draw moving meshes.** It's off by default. Item 12 decides how alias models and meshes share that.
+- **A moving mesh has no collision of its own.** It has the box its entity has, as alias models do.
+- **Clips don't blend.** Changing clip is a cut. The design had the client blending over a short time, and that's still to do.
+- **A clip's clock is the map's,** so what a client shows is as good as its clock is. Bad networks haven't been tried.
 

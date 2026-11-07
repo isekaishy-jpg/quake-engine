@@ -504,6 +504,8 @@ pub(crate) struct Engine {
     console: Console<World>,
     /// The console's context.
     world: World,
+    /// Whether the console's been told that too much is moving at once.
+    told_moving_overflow: bool,
     /// Turns real time into ticks.
     clock: TickClock,
     /// When the clock last advanced.
@@ -633,6 +635,7 @@ impl Engine {
         );
         let rate = TICK_RATE.expect("the tick rate is a non-zero constant");
         Ok(Self {
+            told_moving_overflow: false,
             console,
             world: World {
                 filesystem: Arc::new(filesystem),
@@ -1132,6 +1135,12 @@ impl PlatformApp for Engine {
                 self.console.print(format!("renderer: {error}"));
                 self.show_output();
                 return FrameOutcome::Stop;
+            }
+            let renderer = self.world.renderer.as_mut();
+            if renderer.is_some_and(Renderer::take_moving_overflow) && !self.told_moving_overflow {
+                self.told_moving_overflow = true;
+                self.console
+                    .print("too much moving at once: some meshes are drawing at rest");
             }
         }
         self.world.level_wait = self.world.level_wait.saturating_add(1);

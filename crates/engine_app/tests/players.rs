@@ -588,6 +588,8 @@ fn snapshot(tick: u32) -> Snapshot {
                 effects: 0,
                 origin: Vec3::new(1.0, 2.0, 3.0),
                 angles: Vec3::ZERO,
+                clip: 0,
+                clip_start: 0.0,
             })
             .collect(),
         boxes: vec![(Vec3::ZERO, Vec3::new(1.0, 1.0, 1.0))],

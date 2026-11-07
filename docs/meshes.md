@@ -68,6 +68,28 @@ entity { type = effect effect = campfire attach = lamp attach_to = lift }
 
 Scripts have `engine.place(name)`, `engine.attach_point(entity, name)`, which both give an origin and angles, or nothing, and `engine.attach(entity, parent, name)` and `engine.detach(entity)`. What's held moves at the end of a tick, after everything else, so it doesn't lag. If what holds it goes, it stays where it was.
 
+## Things that move
+
+A model with an armature comes in with its bones and its clips. Name it on the level, as a level has to know what it can show:
+
+```text
+entity world { type = worldspawn meshes = "arm guard" }
+```
+
+Then a script shows it, and plays a clip by name:
+
+```lua
+engine.precache_model("mesh:arm")
+engine.set_model(id, "mesh:arm")
+engine.set_clip(id, "wave")
+```
+
+`engine.set_clip` says if there's such a clip, and with no name it goes back to rest. Asking for what's playing leaves it playing. A clip goes round.
+
+An empty under a bone is an attach point that goes with the bone. It's the server that works out where it is, so what's held to it is right for everyone.
+
+Skinning is linear, as glTF defines it, with four joints to a corner. A joint that twists a long way loses volume, so give it a twist bone. See [proposal 0140](proposals/0140-meshes-at-run-time.md).
+
 ## What's in a `.emesh`
 
 A document, binary from import, and text if a script writes it. Each `part` has a `material`, `points`, `uvs` and `triangles`, and can have `normals`, one to a corner. With none, they're worked out from the shape: smooth, except where two triangles turn by more than 40 degrees. Each `hull` is a box for collision.

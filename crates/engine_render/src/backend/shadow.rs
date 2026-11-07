@@ -15,6 +15,7 @@ use vulkane::safe::{
     VertexInputAttribute, VertexInputBinding,
 };
 
+use super::deform::bind_moving;
 use super::upload::device_image;
 use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
 use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix};
@@ -311,12 +312,14 @@ impl Shadows {
         &mut self,
         lights: &[LiveLight],
         instances: &[ModelInstance],
-        figures: &[Figure<'_>],
+        (figures, moving): (&[Figure<'_>], &[(Vec3, f32)]),
         map: &Map,
         eye: Vec3,
     ) -> Vec<Option<usize>> {
         let mut moved = self.moved_models(instances, map);
         moved.extend(self.moved_figures(figures));
+        // A moving mesh changes shape where it stands, so there's no telling it's still.
+        moved.extend_from_slice(moving);
         let mut slots = vec![None; lights.len()];
         let shadowed: Vec<usize> = (0..lights.len()).filter(|at| lights[*at].shadows).collect();
         // Lights that held a slot keep it, so their tiles stay good.
@@ -426,6 +429,7 @@ impl Shadows {
         map: Option<&GpuMap>,
         mesh_ranges: &[ShadowRange],
         figures: &[Figure<'_>],
+        frame: usize,
     ) {
         if !self.ready.replace(true) {
             rec.begin_render_pass_ext(
@@ -445,6 +449,7 @@ impl Shadows {
         for (slot, light) in &self.redraw {
             for face in 0..6 {
                 self.record_tile(rec, map, mesh_ranges, *slot * 6 + face, face, light);
+                self.record_moving(rec, map, frame, face, light);
                 self.record_figures(rec, figures, face, light);
             }
         }
@@ -492,6 +497,36 @@ impl Shadows {
             rec.draw_indexed(range.count, 1, range.first, 0, 0);
         }
         self.record_instances(rec, map, &matrix, light);
+    }
+
+    /// Draws the moving meshes a light reaches into the tile that's set up.
+    fn record_moving(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        frame: usize,
+        face: usize,
+        light: &LiveLight,
+    ) {
+        let Some(moving) = &map.moving else {
+            return;
+        };
+        let matrix = cube_face(light.origin, face, light.radius);
+        for job in moving.jobs(frame) {
+            if (job.center - light.origin).length() >= light.radius + job.radius {
+                continue;
+            }
+            if bind_moving(rec, moving, job, frame, false).is_none() {
+                continue;
+            }
+            let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
+                continue;
+            };
+            self.push(rec, &multiply(&matrix, &job.placed), [0.0; 8]);
+            for part in &mesh.shadow_parts {
+                rec.draw_indexed(part.count, 1, part.first, 0, 0);
+            }
+        }
     }
 
     /// Draws the copies of shared meshes a light reaches into the tile that's set up.

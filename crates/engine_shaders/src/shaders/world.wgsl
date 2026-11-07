@@ -35,6 +35,9 @@ struct VertexOut {
     @location(5) normal: vec4<f32>,
 }
 
+// A style saying that what moves has no chart in the atlas, and its light fields are a colour.
+const OWN_LIGHT: u32 = 254u;
+
 // A copy of a shared mesh: its corners, and what the copy says (proposal 0140).
 struct MeshIn {
     @location(0) position: vec3<f32>,
@@ -314,8 +317,11 @@ fn keep_hue(color: vec3<f32>, most: f32) -> vec3<f32> {
 }
 
 fn light(in: VertexOut) -> vec3<f32> {
-    let baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
-        + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
+    var baked = vec3<f32>(in.light_uv, in.light_step);
+    if in.styles.x != OWN_LIGHT {
+        baked = layer(in, 0.0, in.styles.x) + layer(in, 1.0, in.styles.y)
+            + layer(in, 2.0, in.styles.z) + layer(in, 3.0, in.styles.w);
+    }
     let cluster = cluster_at(in.world, in.clip.xy);
     let shaded = baked * capsule_shade(in.world, cluster);
     let moving = vec3<f32>(dynamic_light(in.world)) + live_light(in.world, cluster, in.normal.xyz);

@@ -8,8 +8,8 @@ use engine_core::math::Vec3;
 use engine_format::{Value, from_text};
 use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, Entity, Face, Leaf, Look, Map, MeshGroup,
-    MeshInstance, Model, ModelOccluder, Node, NodeChild, OccluderSphere, Plane, Pool, PoolLook,
-    TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
+    MeshInstance, Model, ModelOccluder, MovingMesh, Node, NodeChild, OccluderSphere, Plane, Pool,
+    PoolLook, TexelAxis, Texture, TextureKind, Tree, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -644,6 +644,31 @@ impl Builder<'_> {
     }
 
     /// Adds a triangle of a mesh.
+    /// What `name`'s texture is, and what its places on it are multiplied by.
+    fn mesh_material(&mut self, name: &str) -> (u32, f32) {
+        let texture = self.texture_of(name);
+        let tile = self.map.textures.get(texture as usize);
+        // A face's places go by its texture's size, or this with none.
+        let across = if tile.is_some_and(|tile| tile.tile_size().is_some()) {
+            1.0
+        } else {
+            64.0
+        };
+        (texture, across)
+    }
+
+    /// Keeps the meshes that things in the level can show.
+    fn keep_moving_meshes(&mut self, working: &WorkingMap) {
+        for (name, mesh) in &working.moving {
+            let shared = shared_mesh(mesh, &mut |material| self.mesh_material(material));
+            self.map.moving_meshes.push(MovingMesh {
+                name: name.clone(),
+                mesh: shared,
+                skeleton: mesh.skeleton.clone().unwrap_or_default(),
+            });
+        }
+    }
+
     /// Makes an instance of each placement that shares its mesh, keeping each mesh once. A
     /// placement's faces stay, for its light and for finding it by leaves.
     fn share_meshes(&mut self, working: &WorkingMap) {
@@ -662,17 +687,7 @@ impl Builder<'_> {
                 number
             } else {
                 let number = u32::try_from(self.map.shared_meshes.len()).unwrap_or(u32::MAX);
-                let shared = shared_mesh(mesh, &mut |name| {
-                    let texture = self.texture_of(name);
-                    let tile = self.map.textures.get(texture as usize);
-                    // A face's places go by its texture's size, or this with none.
-                    let across = if tile.is_some_and(|tile| tile.tile_size().is_some()) {
-                        1.0
-                    } else {
-                        64.0
-                    };
-                    (texture, across)
-                });
+                let shared = shared_mesh(mesh, &mut |name| self.mesh_material(name));
                 self.map.shared_meshes.push(shared);
                 numbers.insert(placement.source.as_str(), number);
                 number
@@ -1040,6 +1055,7 @@ fn compile_with(
     world_meshes.push(&decals);
     builder.add_model(&working.brushes, &world_meshes, &working.stamps)?;
     builder.share_meshes(working);
+    builder.keep_moving_meshes(working);
     builder.map.places = level_places(working);
     builder.map.emitters = emitters;
     let mut entities = Vec::with_capacity(working.entities.len() + 1);

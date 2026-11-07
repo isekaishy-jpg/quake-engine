@@ -7,12 +7,13 @@ use engine_core::canvas::{Image, Quad};
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_core::window::NativeWindow;
-use engine_map::{AliasModel, Map, STENCIL_GRID, Sprite, TileLight};
+use engine_map::{AliasModel, Map, Rows, STENCIL_GRID, Sprite, TileLight};
 
 use crate::alias::EntityDraw;
 use crate::backend::{Backend, Scene};
 use crate::canvas::UiFrame;
 use crate::error::RenderError;
+use crate::instances::MovingDraw;
 use crate::live::LiveLight;
 use crate::sprite::{GpuParticles, LightDraw, ParticleDraw, SpriteDraw};
 use crate::visible::VisibleSet;
@@ -79,6 +80,10 @@ pub struct Drawables<'a> {
     pub stencil_masks: &'a [[f32; STENCIL_GRID * STENCIL_GRID]],
     /// Characters shading the light.
     pub capsules: &'a [CapsuleDraw],
+    /// Moving meshes.
+    pub moving: &'a [MovingDraw],
+    /// The joints of all of those.
+    pub palette: &'a [Rows],
 }
 
 /// A character that shades what's behind it, with no shadow map.
@@ -416,6 +421,11 @@ impl Renderer {
         let scene = Self::scene(self.loaded.as_mut(), view, drawables);
         self.backend
             .capture(view, scene.as_ref(), drawables.quads, width, height)
+    }
+
+    /// Whether a moving mesh has had to draw at rest for want of room since this was last asked.
+    pub fn take_moving_overflow(&mut self) -> bool {
+        self.backend.take_moving_overflow()
     }
 
     /// Counts for the current visible set.

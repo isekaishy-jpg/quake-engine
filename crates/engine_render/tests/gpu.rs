@@ -10,14 +10,15 @@ use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
 use engine_map::{
     AliasCorner, AliasFrame, AliasModel, AliasVertex, AlphaMode, Clouds, Fog, LightTiles, Map,
-    Material, MaterialLayer, MetalRough, MipLevel, PAINT_MASK, PixelForm, Pool, PoolLook,
-    ProbeGrid, RESIDENT, RayStencil, ShaderCode, Shading, SideFiles, Sky, Sprite, SpriteFacing,
-    SpriteFrame, SpriteImage, TextureKind, TileLight,
+    Material, MaterialLayer, MeshCorner, MetalRough, MipLevel, MovingMesh, NO_MOVE, PAINT_MASK,
+    PixelForm, Pool, PoolLook, ProbeGrid, RESIDENT, RayStencil, Rows, ShaderCode, Shading,
+    SharedMesh, SharedPart, SideFiles, Skeleton, Sky, Sprite, SpriteFacing, SpriteFrame,
+    SpriteImage, TextureKind, TileLight,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
-    ParticleColor, ParticleDraw, ParticleShape, PostSettings, Renderer, SpriteDraw, Target,
-    TileStreamer, View, build_world,
+    MovingDraw, ParticleColor, ParticleDraw, ParticleShape, PostSettings, Renderer, SpriteDraw,
+    Target, TileStreamer, View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -2213,4 +2214,178 @@ fn turning_shadows_off_stops_redraws() {
         .capture(&view_from_above(), drawables(), 16, 16)
         .expect("capture");
     assert_eq!(renderer.shadow_redraws(), 0);
+}
+
+/// A map with a small square that moves, floating over the floor, whose corners go half with
+/// each of two joints if `shared`, and otherwise all with the first.
+fn map_with_a_moving_square(shared: bool) -> Map {
+    let mut map = map(1);
+    let corner = |x: f32, y: f32| MeshCorner {
+        position: [x, y, 32.0],
+        uv: [0.0, 0.0],
+        normal: [0, 0, 127],
+    };
+    let corners = vec![
+        corner(56.0, 56.0),
+        corner(72.0, 56.0),
+        corner(72.0, 72.0),
+        corner(56.0, 72.0),
+    ];
+    let weights = if shared {
+        [128, 127, 0, 0]
+    } else {
+        [255, 0, 0, 0]
+    };
+    let mesh = SharedMesh {
+        joints: vec![[0, 1, 0, 0]; corners.len()],
+        weights: vec![weights; corners.len()],
+        indices: vec![0, 1, 2, 0, 2, 3],
+        levels: vec![vec![SharedPart {
+            texture: 0,
+            first: 0,
+            count: 6,
+        }]],
+        corners,
+        ..SharedMesh::default()
+    };
+    map.moving_meshes.push(MovingMesh {
+        name: "square".to_owned(),
+        mesh,
+        skeleton: Skeleton::default(),
+    });
+    map
+}
+
+/// The middle of where `a` differs from `b`, and how many pixels that is.
+fn middle_of_change(a: &Capture, b: &Capture) -> (f32, f32, u32) {
+    let (mut x, mut y, mut count) = (0.0, 0.0, 0);
+    let pixels = a
+        .rgba
+        .as_chunks::<4>()
+        .0
+        .iter()
+        .zip(b.rgba.as_chunks::<4>().0);
+    for (at, (one, other)) in (0_u32..).zip(pixels) {
+        if one[..3] != other[..3] {
+            x += f32::from(u16::try_from(at % a.width).expect("small"));
+            y += f32::from(u16::try_from(at / a.width).expect("small"));
+            count += 1;
+        }
+    }
+    let share = f32::from(u16::try_from(count.max(1)).expect("small"));
+    (x / share, y / share, count)
+}
+
+/// What moves a corner along X by `by`.
+fn along(by: f32) -> Rows {
+    let mut rows = NO_MOVE;
+    rows[0][3] = by;
+    rows
+}
+
+/// What's drawn of a mesh placed where it was made, in black, with `palette`.
+fn draw_moving(renderer: &mut Renderer, palette: &[Rows]) -> Capture {
+    let draw = MovingDraw {
+        mesh: 0,
+        rows: NO_MOVE,
+        first_joint: 0,
+        joint_count: u32::try_from(palette.len()).expect("few"),
+        light: [0.0; 3],
+        center: Vec3::new(64.0, 64.0, 32.0),
+        radius: 200.0,
+    };
+    let drawables = Drawables {
+        moving: &[draw],
+        palette,
+        ..Drawables::default()
+    };
+    renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture")
+}
+
+/// The compute pass really does put corners where the palette says. Looking down, X runs up the
+/// picture or across it, so this goes by how far the mesh moved and not which way.
+#[test]
+fn the_compute_pass_moves_a_mesh_by_its_joints() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(false)))
+        .expect("load");
+    let empty = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let still = draw_moving(&mut renderer, &[NO_MOVE, NO_MOVE]);
+    let moved = draw_moving(&mut renderer, &[along(16.0), NO_MOVE]);
+    let (still_x, still_y, still_count) = middle_of_change(&still, &empty);
+    let (moved_x, moved_y, moved_count) = middle_of_change(&moved, &empty);
+    assert!(still_count > 20, "it shows: {still_count}");
+    assert!(moved_count > 20, "it still shows: {moved_count}");
+    let shift = (moved_x - still_x).hypot(moved_y - still_y);
+    assert!(shift > 8.0, "it went: {shift}");
+}
+
+/// A corner goes by the weighted sum of its joints, as glTF defines it: half with a joint that
+/// moves is half as far.
+#[test]
+fn a_corner_shared_by_joints_goes_by_their_weights() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let shift = |renderer: &mut Renderer, palette: &[Rows]| {
+        let empty = renderer
+            .capture(&view_from_above(), Drawables::default(), 64, 64)
+            .expect("capture");
+        let still = draw_moving(renderer, &[NO_MOVE, NO_MOVE]);
+        let moved = draw_moving(renderer, palette);
+        let (a, b, _) = middle_of_change(&still, &empty);
+        let (c, d, _) = middle_of_change(&moved, &empty);
+        (c - a).hypot(d - b)
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(false)))
+        .expect("load");
+    let whole = shift(&mut renderer, &[along(16.0), NO_MOVE]);
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(true)))
+        .expect("load");
+    let half = shift(&mut renderer, &[NO_MOVE, along(16.0)]);
+    assert!(whole > 8.0, "{whole}");
+    assert!((half / whole - 0.5).abs() < 0.15, "{half} of {whole}");
+}
+
+/// With no joints to go by, as past the frame's budget, a mesh still shows, where it was made.
+#[test]
+fn a_mesh_with_no_palette_draws_at_rest() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(map_with_a_moving_square(false)))
+        .expect("load");
+    let empty = renderer
+        .capture(&view_from_above(), Drawables::default(), 64, 64)
+        .expect("capture");
+    let draw = MovingDraw {
+        mesh: 0,
+        rows: NO_MOVE,
+        first_joint: 9000,
+        joint_count: 2,
+        light: [0.0; 3],
+        center: Vec3::new(64.0, 64.0, 32.0),
+        radius: 200.0,
+    };
+    let drawables = Drawables {
+        moving: &[draw],
+        ..Drawables::default()
+    };
+    let rest = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    let (_, _, count) = middle_of_change(&rest, &empty);
+    assert!(count > 20, "{count}");
+    assert!(renderer.take_moving_overflow(), "and it says so");
+    assert!(!renderer.take_moving_overflow(), "once");
 }

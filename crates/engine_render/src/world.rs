@@ -69,6 +69,9 @@ pub enum BatchKind {
     Blended,
 }
 
+/// The style saying that what's drawn brings its own light, which is in the shader too.
+pub(crate) const OWN_LIGHT_STYLE: u8 = 254;
+
 /// Where an instance's light is, as a vertex would say.
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct InstanceLight {

@@ -4,7 +4,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use engine_core::math::Vec3;
-use engine_map::{AttachPoint, ClipChild, Map, Model};
+use engine_map::{
+    AttachPoint, Channel, ChannelPath, Clip, ClipChild, Interpolation, Joint, Map, Model,
+    MovingMesh, NO_MOVE, Skeleton, SkeletonPlace,
+};
 use engine_physics::CollisionWorld;
 use engine_sim::{EntityId, MoveType, Simulation, Solid};
 use engine_test_maps::room;
@@ -132,4 +135,140 @@ fn what_is_held_lets_go_when_what_holds_it_goes() {
     assert_eq!(origin_of(&simulation, thing), left);
     let held = simulation.entity(thing).expect("it's there").attached;
     assert_eq!(held, None);
+}
+
+/// A joint at the origin, turning about Z, with a place one unit along it.
+fn turning_skeleton() -> Skeleton {
+    let (sine, cosine) = 45.0_f32.to_radians().sin_cos();
+    let turned = [0.0, 0.0, sine, cosine];
+    let mut offset = NO_MOVE;
+    offset[0][3] = 10.0;
+    Skeleton {
+        joints: vec![Joint {
+            name: "root".to_owned(),
+            inverse_bind: NO_MOVE,
+            ..Joint::default()
+        }],
+        clips: vec![Clip {
+            name: "turn".to_owned(),
+            length: 2.0,
+            channels: vec![Channel {
+                joint: 0,
+                path: ChannelPath::Rotation,
+                interpolation: Interpolation::Step,
+                times: vec![0.0, 1.0],
+                values: [[0.0, 0.0, 0.0, 1.0], turned].concat(),
+            }],
+        }],
+        places: vec![SkeletonPlace {
+            name: "tip".to_owned(),
+            joint: Some(0),
+            offset,
+        }],
+        reach: 0.0,
+    }
+}
+
+/// A simulation with a thing showing a moving mesh, and another to hold to it.
+fn figure_and_thing() -> (Simulation, EntityId, EntityId) {
+    let mut map = Map::clone(&room());
+    map.moving_meshes.push(MovingMesh {
+        name: "arm".to_owned(),
+        skeleton: turning_skeleton(),
+        ..MovingMesh::default()
+    });
+    let mut simulation = Simulation::new(Arc::new(map), Vec3::new(200.0, 200.0, 0.0));
+    let figure = simulation.spawn();
+    simulation.set_shape(figure, "mesh:arm");
+    simulation.entity_mut(figure).expect("there").origin = Vec3::new(100.0, 0.0, 0.0);
+    let thing = simulation.spawn();
+    (simulation, figure, thing)
+}
+
+#[test]
+fn a_clip_is_chosen_by_name_and_says_if_it_is_there() {
+    let (mut simulation, figure, thing) = figure_and_thing();
+    assert!(simulation.set_clip(figure, "turn"));
+    assert_eq!(simulation.entity(figure).expect("there").clip, 1);
+    assert!(!simulation.set_clip(figure, "dance"));
+    assert!(
+        !simulation.set_clip(thing, "turn"),
+        "it shows no moving mesh"
+    );
+    assert!(simulation.set_clip(figure, ""), "no name stops it");
+    assert_eq!(simulation.entity(figure).expect("there").clip, 0);
+}
+
+/// Asking for what's playing leaves it, or a script asking each think would hold it at the start.
+#[test]
+fn asking_for_the_clip_that_is_playing_leaves_it_playing() {
+    let (mut simulation, figure, _) = figure_and_thing();
+    assert!(simulation.set_clip(figure, "turn"));
+    let started = simulation.entity(figure).expect("there").clip_start;
+    simulation.end_tick(0.5);
+    assert!(simulation.set_clip(figure, "turn"));
+    assert!((simulation.entity(figure).expect("there").clip_start - started).abs() < 0.0001);
+}
+
+/// A place on a joint goes where the pose takes it, which the server has to know for itself.
+#[test]
+fn a_place_on_a_joint_follows_the_clip() {
+    let (mut simulation, figure, _) = figure_and_thing();
+    assert!(simulation.set_clip(figure, "turn"));
+    let (still, _) = simulation.place_on(figure, "tip").expect("there");
+    assert!(
+        (still - Vec3::new(110.0, 0.0, 0.0)).length() < 0.001,
+        "{still:?}"
+    );
+    simulation.end_tick(1.5);
+    let (turned, angles) = simulation.place_on(figure, "tip").expect("there");
+    assert!(
+        (turned - Vec3::new(100.0, 10.0, 0.0)).length() < 0.001,
+        "{turned:?}"
+    );
+    assert!((angles.y - 90.0).abs() < 0.01, "{angles:?}");
+    assert!(simulation.place_on(figure, "nothing").is_none());
+}
+
+/// A place turns with what it's on, as well as with the clip.
+#[test]
+fn a_place_on_a_joint_goes_with_its_entity() {
+    let (mut simulation, figure, _) = figure_and_thing();
+    simulation.entity_mut(figure).expect("there").angles = Vec3::new(0.0, 90.0, 0.0);
+    let (place, _) = simulation.place_on(figure, "tip").expect("there");
+    assert!(
+        (place - Vec3::new(100.0, 10.0, 0.0)).length() < 0.001,
+        "{place:?}"
+    );
+}
+
+#[test]
+fn what_is_held_to_a_joint_follows_it() {
+    let (mut simulation, figure, thing) = figure_and_thing();
+    assert!(simulation.set_clip(figure, "turn"));
+    assert!(simulation.attach(thing, figure, "tip"));
+    simulation.end_tick(TICK);
+    assert!((origin_of(&simulation, thing) - Vec3::new(110.0, 0.0, 0.0)).length() < 0.001);
+    simulation.end_tick(1.2);
+    simulation.end_tick(TICK);
+    let held = origin_of(&simulation, thing);
+    assert!(
+        (held - Vec3::new(100.0, 10.0, 0.0)).length() < 0.001,
+        "{held:?}"
+    );
+}
+
+/// What a client's told is enough to play the same clip from the same moment.
+#[test]
+fn a_client_is_told_the_clip_and_when_it_began() {
+    let (mut simulation, figure, _) = figure_and_thing();
+    assert!(simulation.set_clip(figure, "turn"));
+    let started = simulation.entity(figure).expect("there").clip_start;
+    let told = simulation.entity_states();
+    let state = told
+        .iter()
+        .find(|state| state.id == figure.to_bits())
+        .expect("told");
+    assert_eq!(state.clip, 1);
+    assert!((f64::from(state.clip_start) - started).abs() < 0.001);
 }

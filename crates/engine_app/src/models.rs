@@ -5,9 +5,13 @@ use std::sync::Arc;
 
 use engine_assets::FileSystem;
 use engine_client::{BeamPiece, DrawnEntity};
+use engine_core::entity::EntityState;
 use engine_core::math::Vec3;
-use engine_map::{AliasModel, Map, OccluderSphere, Sprite, pose_occlusion};
-use engine_render::{EntityDraw, LightDraw, Renderer, SpriteDraw, model_matrix};
+use engine_map::{
+    AliasModel, MOVING_MESH_PREFIX, Map, MovingMesh, OccluderSphere, Rows, Sprite, moved,
+    placed_at, pose_occlusion,
+};
+use engine_render::{EntityDraw, LightDraw, MovingDraw, Renderer, SpriteDraw, model_matrix};
 use fixture_quake::{load_palette, parse_colored_mdl, parse_item_bsp, parse_mdl, parse_spr};
 
 /// How fast bonus items spin, in degrees a second.
@@ -22,8 +26,40 @@ const MAX_LIGHT: f32 = 192.0;
 /// The least light on the player's weapon.
 const MIN_WEAPON_LIGHT: f32 = 24.0;
 
+/// What the map calls full light, for what moves.
+const MOVING_FULL_LIGHT: f32 = 255.0;
+
 /// Light at which a skin shows as it is.
 const NEUTRAL_LIGHT: f32 = 128.0;
+
+/// Adds `moving`, the map's mesh number `mesh`, as `state` has it, to what's drawn.
+fn draw_moving(
+    mesh: usize,
+    moving: &MovingMesh,
+    state: &EntityState,
+    light: f32,
+    time: f32,
+    lists: &mut DrawLists,
+) {
+    let skeleton = &moving.skeleton;
+    let clip = usize::from(state.clip).checked_sub(1);
+    let placed = skeleton.placed(&skeleton.pose(clip, time - state.clip_start));
+    let (middle, radius) = skeleton.bounds(&placed);
+    let rows = placed_at(state.origin, state.angles);
+    let first_joint = u32::try_from(lists.palette.len()).unwrap_or(0);
+    let joint_count = u32::try_from(placed.len()).unwrap_or(0);
+    lists.palette.extend(skeleton.palette(&placed));
+    let level = (light / MOVING_FULL_LIGHT).clamp(0.0, 2.0);
+    lists.moving.push(MovingDraw {
+        mesh: u32::try_from(mesh).unwrap_or(0),
+        rows,
+        first_joint,
+        joint_count,
+        light: [level; 3],
+        center: moved(&rows, middle),
+        radius,
+    });
+}
 
 /// A model the renderer holds.
 struct Loaded {
@@ -101,6 +137,10 @@ pub(crate) struct DrawLists {
     pub(crate) entities: Vec<EntityDraw>,
     /// The sprites.
     pub(crate) sprites: Vec<SpriteDraw>,
+    /// Moving meshes.
+    pub(crate) moving: Vec<MovingDraw>,
+    /// The joints of all of those.
+    pub(crate) palette: Vec<Rows>,
     /// The shade of each model, as it's posed: the whole, then its parts.
     pub(crate) shades: Vec<Vec<(Vec3, f32)>>,
 }
@@ -169,6 +209,11 @@ impl ModelBank {
         filesystem: &FileSystem,
         renderer: Option<&mut Renderer>,
     ) {
+        // A moving mesh is in the map, with no file to load.
+        if name.starts_with(MOVING_MESH_PREFIX) {
+            self.names.insert(number, name.to_owned());
+            return;
+        }
         if let Some(asset) = self.asset(name, filesystem, renderer) {
             self.by_number.insert(number, asset);
             self.names.insert(number, name.to_owned());
@@ -206,6 +251,14 @@ impl ModelBank {
     ) {
         let state = &entity.state;
         let number = u32::from(state.model);
+        let name = self.names.get(&number);
+        if let Some((mesh, moving)) = name.and_then(|name| lighting.map.moving_mesh(name)) {
+            // Only what's baked: the shader adds moving lights to what it's given, as it does
+            // for everything else, and adding them here too would count them twice.
+            let light = lighting.map.light_at(state.origin, lighting.styles);
+            draw_moving(mesh, moving, state, light, lighting.time, lists);
+            return;
+        }
         let colored = colors.and_then(|colors| self.colored.get(&(number, colors)));
         let Some(asset) = colored.or_else(|| self.by_number.get(&number)) else {
             return;

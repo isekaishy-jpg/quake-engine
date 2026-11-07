@@ -12,10 +12,10 @@ use engine_core::canvas::Quad;
 use engine_core::entity::ModelInstance;
 use engine_core::math::{Vec3, view_axes};
 use engine_map::ParticleKind;
-use engine_map::{Contents, look_around};
+use engine_map::{Contents, Rows, look_around};
 use engine_render::{
-    CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, ParticleColor,
-    ParticleDraw, ParticleShape, SpriteDraw, View,
+    CapsuleDraw, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight, MovingDraw,
+    ParticleColor, ParticleDraw, ParticleShape, SpriteDraw, View,
 };
 
 use super::World;
@@ -48,6 +48,10 @@ pub(crate) struct Picture {
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
     live_lights: Vec<LiveLight>,
+    /// Moving meshes.
+    moving: Vec<MovingDraw>,
+    /// The joints of those.
+    palette: Vec<Rows>,
 }
 
 /// How far the eye sits above a dead player's middle.
@@ -71,6 +75,8 @@ impl Picture {
             stencil_masks: &self.stencil_masks,
             capsules: &self.capsules,
             live_lights: &self.live_lights,
+            moving: &self.moving,
+            palette: &self.palette,
         }
     }
 }
@@ -477,6 +483,8 @@ impl World {
             instances,
             entities: lists.entities,
             sprites: lists.sprites,
+            moving: lists.moving,
+            palette: lists.palette,
             particles: self.particle_draws(),
             gpu_particles: self.gpu_particles(),
             lights,

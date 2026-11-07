@@ -35,6 +35,9 @@ const CANVAS_SHADER: &str = include_str!("shaders/canvas.wgsl");
 const SHADOW_SHADER: &str = include_str!("shaders/shadow.wgsl");
 
 /// The shader of edge smoothing.
+const DEFORM_SHADER: &str = include_str!("shaders/deform.wgsl");
+
+/// Edge smoothing.
 const SMAA_SHADER: &str = include_str!("shaders/smaa.wgsl");
 
 /// The hooks of a surface, and what each does if a shader leaves it alone.
@@ -94,6 +97,7 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Sprite => SPRITE_SHADER.to_owned(),
         Module::Shadow => SHADOW_SHADER.to_owned(),
         Module::Smaa => SMAA_SHADER.to_owned(),
+        Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::PlainSurface => {
             surface_source("").replace("const PLAIN: bool = false;", "const PLAIN: bool = true;")

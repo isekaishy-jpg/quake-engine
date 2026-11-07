@@ -86,7 +86,7 @@ fn copy_into_atlas(
 }
 
 /// Whether a material of `map` casts shadows: what's solid, and not a liquid.
-fn casts_shadow(map: &Map, texture: u32) -> bool {
+pub(super) fn casts_shadow(map: &Map, texture: u32) -> bool {
     map.textures.get(texture as usize).is_some_and(|texture| {
         texture.kind != TextureKind::Liquid
             && !matches!(
@@ -675,6 +675,7 @@ impl Backend {
                     .collect(),
             });
         }
+        let moving = self.upload_moving(map)?;
         let shadow_instances = map
             .mesh_instances
             .iter()
@@ -916,6 +917,7 @@ impl Backend {
             instances,
             instance_batches: std::array::from_fn(|_| Vec::new()),
             instance_levels: vec![0; map.mesh_instances.len()],
+            moving,
             shadow_instances,
             sky_set,
             texture_shaders,
@@ -953,6 +955,24 @@ impl Backend {
         let code = self.built_in_shaders.get(name).cloned();
         let code = code.unwrap_or_default();
         self.surface_for(name, &code)
+    }
+
+    /// A buffer only the GPU touches.
+    pub(super) fn scratch_buffer(
+        &self,
+        size: usize,
+        usage: BufferUsage,
+    ) -> Result<GpuBuffer, RenderError> {
+        let (buffer, memory) = Buffer::new_bound(
+            &self.device,
+            &self.physical,
+            BufferCreateInfo {
+                size: size.max(4) as u64,
+                usage,
+            },
+            MemoryPropertyFlags::DEVICE_LOCAL,
+        )?;
+        Ok(GpuBuffer { buffer, memory })
     }
 
     /// A device-local buffer holding `bytes`.
@@ -1224,8 +1244,14 @@ impl Backend {
             Some(scene) => {
                 let figures = shadow_figures(&self.models, scene.drawables.entities);
                 let instances = scene.drawables.instances;
+                let moving: Vec<(Vec3, f32)> = scene
+                    .drawables
+                    .moving
+                    .iter()
+                    .map(|draw| (draw.center, draw.radius))
+                    .collect();
                 self.shadows
-                    .plan(live, instances, &figures, scene.map, view.origin)
+                    .plan(live, instances, (&figures, &moving), scene.map, view.origin)
             }
             None => {
                 self.shadows.rest();
@@ -1247,10 +1273,15 @@ impl Backend {
             }
         }
         if let (Some(scene), Some(map)) = (scene, &mut self.map) {
+            let angles = [view.yaw, view.pitch, view.roll];
+            let seen = view_projection(view.origin, angles, view.fov, aspect);
+            let planes = view_planes(&seen);
+            if let Some(moving) = &mut map.moving {
+                let drawables = &scene.drawables;
+                self.moving_overflow |=
+                    moving.prepare(slot, drawables.moving, drawables.palette, &planes)?;
+            }
             if !scene.map.mesh_instances.is_empty() {
-                let angles = [view.yaw, view.pitch, view.roll];
-                let seen = view_projection(view.origin, angles, view.fov, aspect);
-                let planes = view_planes(&seen);
                 let levels = LevelView {
                     eye: view.origin,
                     height_scale: Vec3::new(seen[1], seen[5], seen[9]).length(),

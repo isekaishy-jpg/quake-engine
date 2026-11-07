@@ -48,6 +48,13 @@ A player is 56 units tall and 32 wide, and steps up 18. Things are made for that
 - **Attach points** are empties named `attach_<name>`. Use the same name across a kit, so that one thing fits them all.
 - **Levels of detail** are made for you. To make your own, add nodes named `<name>_lod1`, `<name>_lod2` and so on, with the same materials.
 
+## Things that move
+
+- **Four joints to a corner** at most. More are dropped, keeping the strongest.
+- **256 joints** at most, counting what's above them.
+- **A joint that twists far** wants a twist bone, or it loses volume.
+- **Clips are named,** as scripts play them by name.
+
 ## Texturing
 
 - **One UV set,** and it can overlap and repeat, as light has its own, generated.

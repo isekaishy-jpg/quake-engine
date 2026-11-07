@@ -4,6 +4,7 @@ use engine_core::math::Vec3;
 use engine_map::{Map, Shading};
 use vulkane::safe::ShaderStageFlags;
 
+use super::deform::bind_moving;
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuSprite, INDEX_TYPE_U32,
     Layouts, MODEL_OFFSET_SIZE, Pipelines, Scene,
@@ -40,6 +41,8 @@ pub(super) struct Recorder<'a> {
     instances: &'a GpuBuffer,
     /// Where each mesh's copies are.
     instance_batches: &'a [InstanceBatch],
+    /// Which frame in flight this is.
+    slot: usize,
     /// Whether models get hull outlines.
     outline_hull: bool,
 }
@@ -158,6 +161,7 @@ impl Backend {
             indices: &self.map.as_ref()?.indices[self.slot],
             instances: &self.map.as_ref()?.instances[self.slot],
             instance_batches: &self.map.as_ref()?.instance_batches[self.slot],
+            slot: self.slot,
             outline_hull: self.post.outline_hull,
         })
     }
@@ -473,6 +477,53 @@ impl Recorder<'_> {
                     &[&map.frame_set, set],
                 );
                 rec.draw_indexed(part.count, batch.count, part.first, 0, batch.first);
+            }
+        }
+        self.record_moving(rec, scene, step, see_through);
+    }
+
+    /// Records what moved this frame, which is drawn as any other mesh is from here.
+    fn record_moving(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        scene: &Scene<'_>,
+        step: u32,
+        see_through: bool,
+    ) {
+        let map = self.map;
+        let Some(moving) = &map.moving else {
+            return;
+        };
+        for job in moving.jobs(self.slot) {
+            if bind_moving(rec, moving, job, self.slot, true).is_none() {
+                continue;
+            }
+            let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
+                continue;
+            };
+            for part in &mesh.parts {
+                let texture = scene.map.textures.get(part.texture as usize);
+                let Some(kind) = texture.and_then(batch_kind) else {
+                    continue;
+                };
+                if (kind == BatchKind::Blended) != see_through {
+                    continue;
+                }
+                let texture = animated_texture(scene.map, part.texture, step, 0);
+                let Some(Some(set)) = map.texture_sets.get(texture as usize) else {
+                    continue;
+                };
+                let shader = map.texture_shaders.get(texture as usize).copied();
+                let Some(surface) = self.pipelines.surfaces.get(shader.unwrap_or(0)) else {
+                    continue;
+                };
+                rec.bind_graphics_pipeline(surface.mesh(kind));
+                rec.bind_graphics_descriptor_sets(
+                    &self.layouts.material,
+                    0,
+                    &[&map.frame_set, set],
+                );
+                rec.draw_indexed(part.count, 1, part.first, 0, job.instance);
             }
         }
     }
