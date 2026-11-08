@@ -176,6 +176,120 @@ struct Scene<'a> {
     /// For a sun on an arc that this bake keeps the shadows of, each angle along it, as the
     /// directions of the rays across its slice of the arc. Empty otherwise.
     arc: Vec<[Point; ARC_RAYS]>,
+    /// Light from the sky, if the level has a sky that gives any.
+    sky: Option<SkyLight>,
+}
+
+/// Light from the whole sky, which reaches what sees it (proposal 0152). What's in a sun's shadow
+/// outdoors is lit by it, where with a flat ambient alone it was nearly black.
+struct SkyLight {
+    /// How bright it is on what sees all the sky above it, on a sun's scale.
+    strength: f64,
+    /// The sky's colour overhead, brought to as bright as white is, as a light's colour is.
+    zenith: [f64; 3],
+    /// The same at the horizon.
+    horizon: [f64; 3],
+    /// Directions over a half of a sphere round +z, as many towards each part as light from there
+    /// lights what faces +z.
+    rays: Vec<Point>,
+}
+
+/// How much of what a sun gives the sky gives, unless a level says.
+const SKY_SHARE: f64 = 0.25;
+
+/// How many rays each sample sends at the sky, by how much work a bake does.
+const fn sky_rays(level: BakeLevel) -> usize {
+    match level {
+        BakeLevel::Quick => 12,
+        BakeLevel::Usual => 32,
+        BakeLevel::Final => 64,
+    }
+}
+
+impl SkyLight {
+    /// The sky's light of a level with `sky`, `strength` bright, with `count` rays, if it gives
+    /// any.
+    fn new(sky: &engine_map::Sky, strength: f64, count: usize) -> Option<Self> {
+        if strength <= 0.0 || count == 0 {
+            return None;
+        }
+        let golden = std::f64::consts::PI * (3.0 - 5.0_f64.sqrt());
+        #[expect(clippy::cast_precision_loss, reason = "a few rays")]
+        let rays: Vec<Point> = (0..count)
+            .map(|ray| {
+                let share = (ray as f64 + 0.5) / count as f64;
+                let out = share.sqrt();
+                let turn = ray as f64 * golden;
+                [out * turn.cos(), out * turn.sin(), (1.0 - share).sqrt()]
+            })
+            .collect();
+        let (zenith, horizon) = (sky.zenith.map(f64::from), sky.horizon.map(f64::from));
+        let mut average = [0.0; 3];
+        #[expect(clippy::cast_precision_loss, reason = "a few rays")]
+        let each = 1.0 / rays.len() as f64;
+        for ray in &rays {
+            for part in 0..3 {
+                average[part] += (horizon[part] + (zenith[part] - horizon[part]) * ray[2]) * each;
+            }
+        }
+        // As bright as white, so that its strength says how much light, and the sky its colour.
+        let bright = 0.2126 * average[0] + 0.7152 * average[1] + 0.0722 * average[2];
+        if bright <= 1e-6 {
+            return None;
+        }
+        Some(Self {
+            strength,
+            zenith: zenith.map(|part| part / bright),
+            horizon: horizon.map(|part| part / bright),
+            rays,
+        })
+    }
+
+    /// The sky's colour towards `up`, how high a direction goes.
+    fn color(&self, up: f64) -> [f64; 3] {
+        std::array::from_fn(|part| {
+            let low = self.horizon[part];
+            (low + (self.zenith[part] - low) * up) * self.strength
+        })
+    }
+}
+
+/// The light from the sky on a surface at `point` facing `normal`: each ray that reaches it brings
+/// its part of the sky, through glass and holes as the sun's does. What's below the horizon is the
+/// ground's light, which bouncing brings.
+fn sky_at(scene: &Scene<'_>, point: Point, normal: Point) -> [f64; 3] {
+    let Some(sky) = &scene.sky else {
+        return [0.0; 3];
+    };
+    let side = normalized(cross(normal, [0.3, 0.2, 0.9]))
+        .or_else(|| normalized(cross(normal, [1.0, 0.0, 0.0])))
+        .unwrap_or([1.0, 0.0, 0.0]);
+    let across = cross(normal, side);
+    let start = add_scaled(point, normal, SURFACE_OFFSET);
+    let mut total = [0.0; 3];
+    for ray in &sky.rays {
+        let toward = add_scaled(
+            add_scaled(normal.map(|part| part * ray[2]), side, ray[0]),
+            across,
+            ray[1],
+        );
+        if toward[2] <= 0.0 {
+            continue;
+        }
+        let reach = (scene.top + 64.0 - start[2]) / toward[2].max(1e-3);
+        let target = add_scaled(start, toward, reach.clamp(64.0, SUN_DISTANCE));
+        if shadowed(scene, start, target) {
+            continue;
+        }
+        let tint = through_glass(scene, start, target);
+        let color = sky.color(toward[2]);
+        for part in 0..3 {
+            total[part] += color[part] * tint[part];
+        }
+    }
+    #[expect(clippy::cast_precision_loss, reason = "a few rays")]
+    let each = 1.0 / sky.rays.len() as f64;
+    total.map(|part| part * each)
 }
 
 /// How many rays each angle along a sun's arc takes, across its slice of the arc.
@@ -2177,6 +2291,14 @@ fn bounced_face(
     bake: &FaceBake,
     gain: f64,
 ) -> Vec<[f64; 3]> {
+    across_face(bake, |point, normal| {
+        bounced_at(scene, sources, point, normal, gain)
+    })
+}
+
+/// `light` over `bake`, worked out at some of its samples and blended between them, as what
+/// changes slowly across a face needn't be worked out at each.
+fn across_face(bake: &FaceBake, light: impl Fn(Point, Point) -> [f64; 3]) -> Vec<[f64; 3]> {
     let (width, height) = (bake.light.width as usize, bake.light.height as usize);
     let stride = if bake.fine { 1 } else { BOUNCE_STRIDE };
     let columns = bounce_stops(width, stride);
@@ -2186,7 +2308,7 @@ fn bounced_face(
         for column in &columns {
             let at = row * width + column;
             let normal = bake.normals.as_ref().map_or(bake.normal, |all| all[at]);
-            known.push(bounced_at(scene, sources, bake.points[at], normal, gain));
+            known.push(light(bake.points[at], normal));
         }
     }
     let read = |column: usize, row: usize| {
@@ -2349,6 +2471,13 @@ fn bake_probes(
         let base = if open { ambient } else { 0.0 };
         for (side, normal) in PROBE_SIDES.iter().enumerate() {
             let mut light = bounced_at(scene, sources, *point, *normal, gain);
+            // What's in a probe doesn't change with a day, so the sky's light is in it as it is.
+            if open {
+                let sky = sky_at(scene, *point, *normal);
+                for part in 0..3 {
+                    light[part] += sky[part];
+                }
+            }
             let mut from_sun = [0.0; 3];
             if let Some(field) = sun_sources {
                 from_sun = bounced_at(scene, field, *point, *normal, gain);
@@ -2499,6 +2628,20 @@ pub struct BakeInput<'a> {
 }
 
 /// The material of `face`, if it has one.
+/// The sky's light of `map`, with `world` its worldspawn: `sky_light` bright, or a share of its
+/// sun's if it doesn't say.
+fn sky_light_of(
+    map: &Map,
+    world: Option<&crate::source::EntitySource>,
+    level: BakeLevel,
+) -> Option<SkyLight> {
+    let sky = map.sky.as_ref()?;
+    let number = |key: &str| world.and_then(|world| world.number(key));
+    let strength =
+        number("sky_light").unwrap_or_else(|| number("sun_intensity").unwrap_or(0.0) * SKY_SHARE);
+    SkyLight::new(sky, strength, sky_rays(level))
+}
+
 fn material_of<'a>(map: &'a Map, face: &Face) -> Option<&'a Material> {
     map.textures.get(face.texture as usize)?.material.as_deref()
 }
@@ -2708,6 +2851,7 @@ pub fn bake_light_as(
             .filter_map(|(face, lift)| Some((map.faces.get(*face as usize)?.first_point, *lift)))
             .collect(),
         arc: arc_rays(map, quality.level, lights.iter().any(|light| light.sun)),
+        sky: sky_light_of(map, world, quality.level),
         lights: &lights,
         // Room for what's bounced, and a sun's has a layer of its own.
         light_room: MAX_LAYERS - if own_sun { 2 } else { 1 },
@@ -2768,7 +2912,7 @@ pub fn bake_light_as(
         .then(|| bounce_sources(lit, spacing, bounce_tile, widest));
     let sun_sources =
         own_sun.then(|| bounce_sources(lit, spacing, bounce_tile, (1, BounceFrom::Sun)));
-    let bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
+    let mut bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         bake.as_ref().map(|bake| {
             let field = fine_sources
                 .as_ref()
@@ -2781,10 +2925,36 @@ pub fn bake_light_as(
             light
         })
     });
-    let sun_bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
+    let mut sun_bounced: Vec<Option<Vec<[f64; 3]>>> = in_parallel(&bakes, |bake| {
         let (bake, field) = (bake.as_ref()?, sun_sources.as_ref()?);
         Some(bounced_face(&scene, field, bake, bounce_gain))
     });
+    // The sky's light goes with what's bounced: with what the sun bounces when a day changes
+    // the sun, which takes it down as the sun goes, and with the rest when nothing changes it.
+    if scene.sky.is_some() {
+        let skies = in_parallel(&bakes, |bake| {
+            bake.as_ref()
+                .map(|bake| across_face(bake, |point, normal| sky_at(&scene, point, normal)))
+        });
+        for ((sky, bounce), sun_bounce) in skies.into_iter().zip(&mut bounced).zip(&mut sun_bounced)
+        {
+            let Some(sky) = sky else {
+                continue;
+            };
+            let into = if own_sun {
+                sun_bounce.get_or_insert_with(|| vec![[0.0; 3]; sky.len()])
+            } else if let Some(bounce) = bounce {
+                bounce
+            } else {
+                continue;
+            };
+            for (sample, light) in into.iter_mut().zip(sky) {
+                for part in 0..3 {
+                    sample[part] += light[part];
+                }
+            }
+        }
+    }
     // Light brighter than a byte holds is brought down by a power of two, all of it alike, and
     // the game multiplies it back.
     let brightest = bakes

@@ -13,7 +13,7 @@ use engine_core::math::Vec3;
 use engine_format::from_text;
 use engine_map::{
     AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, Map, Material, MaterialLayer, MipLevel,
-    PAINT_MASK, SideFiles, Texture, TextureKind,
+    PAINT_MASK, SUN_BOUNCE_STYLE, SideFiles, Texture, TextureKind,
 };
 use engine_physics::CollisionWorld;
 
@@ -1756,4 +1756,139 @@ entity lamp {{ type = light origin = -128 3 100 light = 1800 }}
         (on_floor - on_wall).abs() < 10.0,
         "the floor's stops at {on_floor} and the wall's at {on_wall}"
     );
+}
+
+/// Open ground under a blue sky, with a wall standing at its east edge, and `world` said of it.
+fn under_the_sky(world: &str) -> Map {
+    let text = format!(
+        "format 1 map
+entity world {{ type = worldspawn light_spacing = 32 {world} }}
+sky {{ zenith = 0.2 0.4 1 horizon = 0.7 0.75 0.8 sun_direction = 0 0 1 }}
+brush {{ material = ground cuboid = -512 -512 -64 512 512 0 }}
+brush {{ material = wall cuboid = 512 -512 0 576 512 256 }}
+"
+    );
+    baked(&text, &[])
+}
+
+/// The average colour of `face`'s layer of `style`, as the game reads it.
+fn layer_colour(map: &Map, face: &Face, style: u8) -> [f32; 3] {
+    let Some(light) = face.light else {
+        return [0.0; 3];
+    };
+    let Some(layer) = light.styles.iter().position(|known| *known == style) else {
+        return [0.0; 3];
+    };
+    let count = (light.width * light.height) as usize;
+    let first = light.first_sample as usize + layer * count;
+    let mut total = [0.0; 3];
+    for sample in &map.light[first..first + count] {
+        for part in 0..3 {
+            total[part] += f32::from(sample[part]) * map.light_scale() / count as f32;
+        }
+    }
+    total
+}
+
+/// What's under the open sky is lit by it, in its colour, which with nothing else changes
+/// nothing, so it goes with what's bounced. A wall that sees half the sky gets about half, and
+/// more of the horizon's colour.
+#[test]
+fn the_sky_lights_what_sees_it() {
+    let map = under_the_sky("sky_light = 100");
+    let ground = layer_colour(&map, face_of(&map, "ground"), BOUNCE_STYLE);
+    let brightness = (ground[0] + ground[1] + ground[2]) / 3.0;
+    assert!(brightness > 50.0, "{ground:?}");
+    assert!(
+        ground[2] > ground[0] * 1.2,
+        "a blue sky's light is blue: {ground:?}"
+    );
+    let wall = layer_colour(&map, face_of(&map, "wall"), BOUNCE_STYLE);
+    let side = (wall[0] + wall[1] + wall[2]) / 3.0;
+    assert!(
+        side > brightness * 0.3 && side < brightness * 0.75,
+        "{side} {brightness}"
+    );
+    // Facing up, the ground sees more of the sky overhead, and a wall more of the horizon.
+    let blueness = |colour: [f32; 3]| colour[2] / colour[0].max(0.001);
+    assert!(blueness(ground) > blueness(wall), "{ground:?} {wall:?}");
+    let none = under_the_sky("sky_light = 0");
+    let dark = layer_colour(&none, face_of(&none, "ground"), BOUNCE_STYLE);
+    assert!(dark.iter().all(|part| *part < 1.0), "{dark:?}");
+}
+
+/// Without a word, the sky gives a quarter of what the sun gives, and none without a sun.
+#[test]
+fn the_sky_gives_a_share_of_the_sun() {
+    let sunny = under_the_sky("sun_intensity = 200");
+    let ground = layer_colour(&sunny, face_of(&sunny, "ground"), BOUNCE_STYLE);
+    let brightness = (ground[0] + ground[1] + ground[2]) / 3.0;
+    assert!(brightness > 30.0 && brightness < 70.0, "{ground:?}");
+    let sunless = under_the_sky("");
+    let dark = layer_colour(&sunless, face_of(&sunless, "ground"), BOUNCE_STYLE);
+    assert!(dark.iter().all(|part| *part < 1.0), "{dark:?}");
+}
+
+/// When a day changes the sun, the sky's light goes with what the sun bounces, which the day takes
+/// down as the sun goes.
+#[test]
+fn a_days_sky_light_goes_with_the_sun() {
+    let map = under_the_sky("sky_light = 100 sun = live");
+    let ground = face_of(&map, "ground");
+    let with_sun = layer_colour(&map, ground, SUN_BOUNCE_STYLE);
+    let constant = layer_colour(&map, ground, BOUNCE_STYLE);
+    assert!(with_sun[2] > 50.0, "{with_sun:?}");
+    assert!(constant.iter().all(|part| *part < 1.0), "{constant:?}");
+}
+
+/// A room shut in sees no sky, however bright, and a probe in it none either, where one out under
+/// the sky does.
+#[test]
+fn what_sees_no_sky_gets_none() {
+    let text = format!(
+        "{ROOM}entity world {{ type = worldspawn sky_light = 100 }}\nsky {{ zenith = 0.2 0.4 1 }}\n"
+    );
+    let map = baked(&text, &[]);
+    let floor = layer_colour(&map, face_of(&map, "floor"), BOUNCE_STYLE);
+    assert!(floor.iter().all(|part| *part < 1.0), "{floor:?}");
+    let shut = map
+        .probes
+        .as_ref()
+        .and_then(|probes| probes.sample(Vec3::ZERO));
+    assert!(shut.is_none_or(|probe| probe.brightness < 1.0), "{shut:?}");
+    let open = under_the_sky("sky_light = 100");
+    let probe = open.probes.as_ref().expect("probes");
+    let out = probe.sample(Vec3::new(0.0, 0.0, 64.0)).expect("a probe");
+    assert!(out.brightness > 20.0, "{out:?}");
+}
+
+/// The sky's light through red glass in a roof is red.
+#[test]
+fn the_skys_light_through_glass_takes_its_colour() {
+    let red = MipLevel {
+        width: 1,
+        height: 1,
+        rgba: vec![255, 0, 0, 255],
+        form: engine_map::PixelForm::Rgba,
+    };
+    let glass = Texture {
+        name: "ceiling".to_owned(),
+        kind: TextureKind::Solid,
+        mips: vec![red.clone()],
+        animation: None,
+        alternate: None,
+        material: Some(Arc::new(Material {
+            alpha: AlphaMode::Blend,
+            slots: vec![Arc::new(vec![red])],
+            tint: Some(1),
+            ..Material::default()
+        })),
+    };
+    let text = format!(
+        "{ROOM}entity world {{ type = worldspawn sky_light = 100 }}\nsky {{ zenith = 1 1 1 horizon = 1 1 1 }}\n"
+    );
+    let map = baked(&text, &[glass]);
+    let floor = layer_colour(&map, face_of(&map, "floor"), BOUNCE_STYLE);
+    assert!(floor[0] > 10.0, "light comes through: {floor:?}");
+    assert!(floor[1] < floor[0] / 4.0, "and it's red: {floor:?}");
 }

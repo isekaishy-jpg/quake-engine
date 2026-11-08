@@ -72,6 +72,8 @@ The world says how its sun works, with `sun_intensity` for how bright and the sk
 | `live` | Not baked, apart from what it bounces, so that it can go anywhere and cast shadows as it goes |
 | `arc` | Its shadows baked at 32 angles along an arc through the day, so that it moves along it and they go with it, with no new bake and no maps of them to draw. It needs a day, and a final bake. Until there is one, it's `baked` |
 
+The whole sky lights what can see it too, in its colour, blue overhead on a clear day, so that what's in the sun's shadow out in the open isn't black ([proposal 0152](proposals/0152-sky-light.md)). `sky_light` in the world says how bright, on the sun's scale; without it, it's a quarter of `sun_intensity`, and none with no sun. It goes as what the sun bounces goes through a day.
+
 A live sun lights surfaces and their highlights, and models that can see the sky towards it. Its shadows come from three maps round the view, the nearest finest. When it sets it's the moon, from the far side of the sky, if the sky has one:
 
 | Field | Means |

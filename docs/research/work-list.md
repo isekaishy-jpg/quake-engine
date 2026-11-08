@@ -21,7 +21,7 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 9. Shaders | 13, 14 |
 | 10. Effects | 78 to 97, 16, 9 |
 | 11. Fog and water | 70 to 76, 17, 98 to 102 |
-| 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168, then 172 to 177 |
+| 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168, then 172 to 175, 178, 176, 177 |
 | 12b. Land that's whole | 171, then 169 and 170 in the tools, and the editor's part of them in stage 15 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
@@ -300,6 +300,7 @@ Added by the human, 2026-11-07. Scenes are drawn in 16 bit floats with an exposu
 | 175 | Cut-out edges: fences, grates and leaves step and crawl, as several samples a pixel don't smooth what's cut out. Research alpha to coverage, and keeping how much is covered through mips | 172 |
 | 176 | Drawing at another size: above the screen's, for pictures and strong cards, and below with upscaling for weak ones. Research what upscaling there is to use, and how it goes with item 173 | 173 |
 | 177 | Thin things that fall between pixels, such as wires, poles and far edges, which the rest may not help. Research what does, once 172 to 176 are in | 173, 174, 175 |
+| 178 | Sky light: what's in shadow outdoors is lit by the whole sky, and by what the sun lights round it, where today it has only a flat ambient, so a sun's shadow in an open, well lit place is nearly black. Research light from the sky dome, how much of the sky each sample sees, its colour through a day and under a live sun, and how probes and models get it. The human, 2026-11-08: the shadows are too dark for such a well lit scene | 67, 68 |
 
 ## Unfinished work in the real levels
 
@@ -476,3 +477,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 172: 2ef12c7
 - Item 173: 425d8ee
 - Item 174: 8ba4e25
+- Item 175: 81e207d
