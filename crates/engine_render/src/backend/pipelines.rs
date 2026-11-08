@@ -309,7 +309,12 @@ impl Backend {
             after_depth: surface("fs_material")
                 .depth_test(true, false)
                 .build(device)?,
-            masked: surface("fs_masked").depth_test(true, true).build(device)?,
+            // A face with holes is one side of a brush, and through them only the brush's inside
+            // would show from behind, such as the underside of its top.
+            masked: surface("fs_masked")
+                .cull_mode(CullMode::BACK)
+                .depth_test(true, true)
+                .build(device)?,
             blended: surface("fs_material")
                 .depth_test(true, false)
                 .alpha_blending(true)

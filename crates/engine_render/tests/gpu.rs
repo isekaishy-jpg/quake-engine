@@ -10248,3 +10248,34 @@ fn samples_are_weighed_by_light_as_its_shown() {
         );
     }
 }
+
+/// A face with holes shows from its front and not from behind: through the holes of a brush's
+/// side, what's inside it would show, such as the underside of its top, as a dark line along a
+/// grate far off.
+#[test]
+fn a_face_with_holes_shows_only_from_its_front() {
+    let shot = |below: bool| -> Option<[u8; 4]> {
+        let mut renderer = renderer()?;
+        let mut built = map(1);
+        built.textures[0].kind = TextureKind::Cutout;
+        renderer.load_map(Arc::new(built)).expect("load");
+        let view = if below {
+            View {
+                origin: Vec3::new(64.0, 64.0, -64.0),
+                pitch: -89.9,
+                ..view_from_above()
+            }
+        } else {
+            view_from_above()
+        };
+        Some(centre(
+            &renderer
+                .capture(&view, Drawables::default(), 64, 64)
+                .expect("capture"),
+        ))
+    };
+    if let (Some(front), Some(behind)) = (shot(false), shot(true)) {
+        assert!(front[1] > 60, "it shows from the front: {front:?}");
+        assert!(behind[1] < 20, "not from behind: {behind:?}");
+    }
+}
