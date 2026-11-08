@@ -5,14 +5,14 @@ use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, BufferUsage, CullMode,
     DescriptorSetLayout, DescriptorSetLayoutBinding, DescriptorType, Device, Format,
     GraphicsPipeline, GraphicsPipelineBuilder, GraphicsShaderStage, ImageLayout, InputRate,
-    PipelineLayout, RenderPass, RenderPassCreateInfo, Sampler, SamplerCreateInfo, SamplerFilter,
-    ShaderModule, ShaderStageFlags, VertexInputAttribute, VertexInputBinding,
+    PipelineLayout, PushConstantRange, RenderPass, RenderPassCreateInfo, Sampler,
+    SamplerCreateInfo, SamplerFilter, ShaderModule, ShaderStageFlags, VertexInputAttribute,
+    VertexInputBinding,
 };
 
 use super::upload::host_buffer;
 use super::{
-    Backend, COLOR_FORMAT, CanvasPass, DEPTH_FORMAT, Layouts, ParticlePipelines, Pipelines,
-    SurfacePipelines,
+    Backend, CanvasPass, DEPTH_FORMAT, Layouts, ParticlePipelines, Pipelines, SurfacePipelines,
 };
 use crate::canvas::{MAX_QUADS, UiFrame, VERTEX_FLOATS};
 use crate::error::RenderError;
@@ -24,13 +24,14 @@ use crate::world::Vertex;
 /// A render pass with one colour and one depth attachment.
 pub(super) fn make_pass(
     device: &Device,
+    format: Format,
     final_layout: ImageLayout,
 ) -> Result<RenderPass, RenderError> {
     Ok(RenderPass::new(
         device,
         RenderPassCreateInfo {
             color_attachments: &[AttachmentDescription {
-                format: COLOR_FORMAT,
+                format,
                 load_op: AttachmentLoadOp::CLEAR,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
@@ -45,6 +46,47 @@ pub(super) fn make_pass(
             }),
         },
     )?)
+}
+
+/// The bytes of what the canvas is told of the screen: which it is, how bright white is, and how
+/// bright the brightest is next to it.
+pub(super) const CANVAS_SCREEN_BYTES: u32 = 16;
+
+/// The canvas's pipeline, with `layout`, for `pass`.
+pub(super) fn canvas_pipeline(
+    device: &Device,
+    layout: &PipelineLayout,
+    pass: &RenderPass,
+) -> Result<GraphicsPipeline, RenderError> {
+    let spirv = spirv(&Module::Canvas).map_err(RenderError)?;
+    let shader = ShaderModule::from_spirv(device, &spirv)?;
+    let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
+    let attribute = |location, format, offset| VertexInputAttribute {
+        location,
+        binding: 0,
+        format,
+        offset,
+    };
+    Ok(GraphicsPipelineBuilder::new(layout, pass)
+        .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
+        .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
+        .vertex_input(
+            &[VertexInputBinding {
+                binding: 0,
+                stride,
+                input_rate: InputRate::VERTEX,
+            }],
+            &[
+                attribute(0, Format::R32G32_SFLOAT, 0),
+                attribute(1, Format::R32G32_SFLOAT, 8),
+                attribute(2, Format::R32G32B32A32_SFLOAT, 16),
+            ],
+        )
+        .dynamic_viewport_scissor()
+        .cull_mode(CullMode::NONE)
+        .depth_test(false, false)
+        .alpha_blending(true)
+        .build(device)?)
 }
 
 impl Backend {
@@ -71,36 +113,17 @@ impl Backend {
                 binding(1, DescriptorType::SAMPLER),
             ],
         )?;
-        let layout = PipelineLayout::new(&self.device, &[&set_layout])?;
-        let spirv = spirv(&Module::Canvas).map_err(RenderError)?;
-        let shader = ShaderModule::from_spirv(&self.device, &spirv)?;
-        let stride = u32::try_from(VERTEX_FLOATS * 4).unwrap_or(0);
-        let attribute = |location, format, offset| VertexInputAttribute {
-            location,
-            binding: 0,
-            format,
-            offset,
-        };
-        let pipeline = GraphicsPipelineBuilder::new(&layout, &self.present_pass)
-            .stage(GraphicsShaderStage::Vertex, &shader, "vs_main")
-            .stage(GraphicsShaderStage::Fragment, &shader, "fs_main")
-            .vertex_input(
-                &[VertexInputBinding {
-                    binding: 0,
-                    stride,
-                    input_rate: InputRate::VERTEX,
-                }],
-                &[
-                    attribute(0, Format::R32G32_SFLOAT, 0),
-                    attribute(1, Format::R32G32_SFLOAT, 8),
-                    attribute(2, Format::R32G32B32A32_SFLOAT, 16),
-                ],
-            )
-            .dynamic_viewport_scissor()
-            .cull_mode(CullMode::NONE)
-            .depth_test(false, false)
-            .alpha_blending(true)
-            .build(&self.device)?;
+        // What the canvas is told of the screen it's sent to.
+        let layout = PipelineLayout::with_push_constants(
+            &self.device,
+            &[&set_layout],
+            &[PushConstantRange {
+                stage_flags: ShaderStageFlags::FRAGMENT,
+                offset: 0,
+                size: CANVAS_SCREEN_BYTES,
+            }],
+        )?;
+        let pipeline = canvas_pipeline(&self.device, &layout, &self.present_pass)?;
         let buffer = || {
             host_buffer(
                 &self.device,

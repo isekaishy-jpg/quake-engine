@@ -42,6 +42,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("screenshot", screenshot);
     console.register("gpu_times", gpu_times);
     console.register("exposure", exposure);
+    console.register("screen", screen);
     console.register("setpos", setpos);
     console.register("sun_toward", sun_toward);
     console.register("time_of_day", time_of_day);
@@ -754,6 +755,25 @@ fn exposure(console: &mut Console<World>, world: &mut World, _args: &Args) {
         )),
         (None, _) => console.print("exposure isn't going by itself here"),
     }
+}
+
+/// `screen`: what's being sent to the screen, and what it can be sent.
+fn screen(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    let Some(renderer) = &world.renderer else {
+        console.print("no renderer");
+        return;
+    };
+    let name = |output: engine_render::ScreenOutput| match output {
+        engine_render::ScreenOutput::Standard => "standard",
+        engine_render::ScreenOutput::ScRgb => "HDR as scRGB",
+        engine_render::ScreenOutput::Hdr10 => "HDR10",
+    };
+    let offers: Vec<&str> = renderer.screen_offers().into_iter().map(name).collect();
+    console.print(format!(
+        "sending {}, and the screen takes {}",
+        name(renderer.screen_output()),
+        offers.join(", ")
+    ));
 }
 
 /// `setpos x y z [yaw pitch]`: moves the player, through the server.

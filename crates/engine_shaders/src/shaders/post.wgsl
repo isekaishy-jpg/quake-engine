@@ -73,16 +73,30 @@ fn tone_film(color: vec3<f32>) -> vec3<f32> {
     return clamp(top / bottom, vec3<f32>(0.0), vec3<f32>(1.0));
 }
 
-// Light in a scene brought down to what a screen can show, as the level says.
-fn toned(bright: vec3<f32>) -> vec3<f32> {
-    let light = max(bright, vec3<f32>(0.0));
+// Light in a scene brought down to what a screen can show, as the level says, where the most it
+// shows is `most` times white.
+fn toned(bright: vec3<f32>, most: f32) -> vec3<f32> {
+    let light = max(bright, vec3<f32>(0.0)) / most;
     if frame.color_params.z > 1.5 {
-        return tone_film(light);
+        return tone_film(light) * most;
     }
     if frame.color_params.z > 0.5 {
-        return tone_neutral(light);
+        return tone_neutral(light) * most;
     }
-    return light / max(max(light.r, max(light.g, light.b)), 1.0);
+    return light / max(max(light.r, max(light.g, light.b)), 1.0) * most;
+}
+
+// Rec. 709's colours, which scenes are in, as Rec. 2020's, which HDR10 is in.
+const TO_REC2020: mat3x3<f32> = mat3x3<f32>(
+    vec3<f32>(0.6274, 0.0691, 0.0164),
+    vec3<f32>(0.3293, 0.9195, 0.0880),
+    vec3<f32>(0.0433, 0.0114, 0.8956),
+);
+
+// Nits on the PQ curve HDR10 is sent on, from 0 to 10,000.
+fn perceptual_quantizer(nits: vec3<f32>) -> vec3<f32> {
+    let share = pow(clamp(nits / 10000.0, vec3<f32>(0.0), vec3<f32>(1.0)), vec3<f32>(0.1593017578125));
+    return pow((0.8359375 + 18.8515625 * share) / (1.0 + 18.6875 * share), vec3<f32>(78.84375));
 }
 
 // Linear light as a screen shows it, once it's been brought down to fit, and `gamma` is the
@@ -90,7 +104,18 @@ fn toned(bright: vec3<f32>) -> vec3<f32> {
 // screen's bytes, stops dark gradients banding.
 fn to_screen(light: vec3<f32>, noise: f32) -> vec3<f32> {
     let bright = light * frame.color_params.y * frame.zone_light.rgb;
-    let raised = pow(toned(bright), vec3<f32>(frame.params.w));
+    if frame.screen.x > 0.5 {
+        // In HDR, white is so many nits, and what's brighter goes on to the brightest the
+        // screen shows.
+        let raised = pow(toned(bright, frame.screen.z), vec3<f32>(frame.params.w));
+        let nits = raised * frame.screen.y;
+        if frame.screen.x < 1.5 {
+            // scRGB: linear light, where 1 is 80 nits.
+            return nits / 80.0;
+        }
+        return perceptual_quantizer(TO_REC2020 * nits) + vec3<f32>((noise - 0.5) / 1023.0);
+    }
+    let raised = pow(toned(bright, 1.0), vec3<f32>(frame.params.w));
     let low = raised * 12.92;
     let high = 1.055 * pow(raised, vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
     return select(high, low, raised <= vec3<f32>(0.0031308)) + (noise - 0.5) / 255.0;

@@ -8,6 +8,7 @@ use vulkane::safe::{DescriptorSet, GraphicsPipeline, ShaderStageFlags};
 
 use super::clock::{GpuClock, Span};
 use super::deform::{MovingJob, bind_figure, bind_moving};
+use super::pipelines::CANVAS_SCREEN_BYTES;
 use super::{
     ANIMATION_RATE, Backend, CanvasPass, GpuAlias, GpuBuffer, GpuMap, GpuMesh, GpuSprite,
     INDEX_TYPE_U32, Layouts, MODEL_OFFSET_SIZE, ParticlePipelines, Pipelines, Scene,
@@ -140,6 +141,7 @@ impl Backend {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         canvas: Option<&CanvasPass>,
         size: (u32, u32),
+        (pipeline, screen): (Option<&GraphicsPipeline>, [f32; 4]),
     ) {
         let Some(canvas) =
             canvas.filter(|canvas| !canvas.batches.is_empty() || !canvas.ui.batches.is_empty())
@@ -152,7 +154,12 @@ impl Backend {
         )]
         rec.set_viewport(0.0, 0.0, size.0 as f32, size.1 as f32);
         rec.set_scissor(0, 0, size.0, size.1);
-        rec.bind_graphics_pipeline(&canvas.pipeline);
+        rec.bind_graphics_pipeline(pipeline.unwrap_or(&canvas.pipeline));
+        let mut told = [0_u8; CANVAS_SCREEN_BYTES as usize];
+        for (chunk, value) in told.as_chunks_mut::<4>().0.iter_mut().zip(screen) {
+            *chunk = value.to_le_bytes();
+        }
+        rec.push_constants(&canvas.layout, ShaderStageFlags::FRAGMENT, 0, &told);
         rec.bind_vertex_buffers(0, &[(&canvas.vertices[canvas.slot].buffer, 0)]);
         for batch in &canvas.batches {
             let Some(picture) = canvas.pictures.get(batch.picture as usize) else {

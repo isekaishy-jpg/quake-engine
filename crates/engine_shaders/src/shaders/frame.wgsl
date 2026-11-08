@@ -119,6 +119,9 @@ struct Frame {
     // x what baked light and probes are multiplied by, and y the most light a surface takes,
     // which is 0 for none.
     baked: vec4<f32>,
+    // What the final pass encodes for: x 0 for a standard screen, 1 scRGB and 2 HDR10, y how
+    // bright white is in nits, and z how many times as bright the brightest is.
+    screen: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

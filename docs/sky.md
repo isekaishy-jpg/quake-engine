@@ -171,6 +171,10 @@ A player sets `r_ssao` to 0 for none, 1 for some, which is the usual, or 2 for m
 
 What's brighter than a screen shows glows, blurred wide, so the sun and bright lamps do and the rest is as it was. A player can turn it off with `r_bloom 0`.
 
+### HDR screens
+
+`r_hdr 1` sends HDR to a screen that takes it, with HDR on in Windows: scRGB if it does, HDR10 if not, and what every screen shows otherwise. `r_hdr_white` is how bright white is in nits, 200 unless a player says, and `r_hdr_peak` the brightest the screen shows, 1000. What's brighter than white goes on to the peak. `screen` at the console says what's being sent and what the screen takes. Pictures, from `screenshot`, stay standard.
+
 ### Exposure that goes by itself
 
 What's seen is measured, the middle of the view most, leaving out the darkest and brightest tenth, and exposure goes towards middle grey as far as `exposure_range` lets it. A level starts where it should be. A zone can have its own `exposure_range`, and its light still multiplies after. `exposure` at the console says how bright what's seen is and how far exposure's gone, to tune a range by. A player can turn it off with `r_exposure_auto 0`.

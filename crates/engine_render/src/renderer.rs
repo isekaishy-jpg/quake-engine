@@ -175,6 +175,18 @@ pub struct CapsuleDraw {
     pub strength: f32,
 }
 
+/// What would be sent to a screen, read back: each colour as it's stored, from 0 to 1 for
+/// standard and HDR10, and as linear light for scRGB.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ScreenCapture {
+    /// Width in pixels.
+    pub width: u32,
+    /// Height in pixels.
+    pub height: u32,
+    /// Red, green, blue and alpha a pixel.
+    pub values: Vec<[f32; 4]>,
+}
+
 /// Pixels read back from the renderer.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Capture {
@@ -209,6 +221,25 @@ struct LoadedMap {
     shown: ShownTiles,
 }
 
+/// What's sent to a screen (proposal 0150).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub enum ScreenOutput {
+    /// 8 bits a colour, as sRGB: what every screen shows.
+    #[default]
+    Standard,
+    /// Linear light in 16 bit floats, Rec. 709's colours, with 1 as 80 nits: what Windows calls
+    /// scRGB.
+    ScRgb,
+    /// 10 bits a colour on the PQ curve, in Rec. 2020's colours: HDR10.
+    Hdr10,
+}
+
+/// How bright a screen's white is in HDR, in nits, unless a player says.
+pub const USUAL_WHITE_NITS: f32 = 200.0;
+
+/// How bright the brightest a screen shows in HDR is, in nits, unless a player says.
+pub const USUAL_PEAK_NITS: f32 = 1000.0;
+
 /// What the final pass does (proposal 0075).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostSettings {
@@ -241,6 +272,12 @@ pub struct PostSettings {
     pub auto_exposure: bool,
     /// Whether what's brighter than a screen shows glows, as much as a level says.
     pub bloom: bool,
+    /// Whether HDR's sent to a screen that has it.
+    pub hdr: bool,
+    /// How bright white is in HDR, in nits, with 0 for [`USUAL_WHITE_NITS`].
+    pub white_nits: f32,
+    /// The brightest a screen shows in HDR, in nits, with 0 for [`USUAL_PEAK_NITS`].
+    pub peak_nits: f32,
 }
 
 /// How surfaces are filtered.
@@ -305,6 +342,19 @@ impl Renderer {
     #[must_use]
     pub fn device_name(&self) -> &str {
         self.backend.device_name()
+    }
+
+    /// What's being sent to the screen.
+    #[must_use]
+    pub fn screen_output(&self) -> ScreenOutput {
+        self.backend.screen_output()
+    }
+
+    /// What the screen can be sent, best first. A screen that has no HDR, or a system that can't
+    /// say, offers only [`ScreenOutput::Standard`].
+    #[must_use]
+    pub fn screen_offers(&self) -> Vec<ScreenOutput> {
+        self.backend.screen_offers()
     }
 
     /// Replaces the loaded map.
@@ -517,6 +567,23 @@ impl Renderer {
         let scene = Self::scene(self.loaded.as_mut(), view, drawables);
         self.backend
             .capture(view, scene.as_ref(), drawables.quads, width, height)
+    }
+
+    /// Draws off-screen as `output` would be sent to a screen, and reads it back.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`RenderError`] if the device fails.
+    pub fn capture_as(
+        &mut self,
+        view: &View,
+        drawables: Drawables<'_>,
+        size: (u32, u32),
+        output: ScreenOutput,
+    ) -> Result<ScreenCapture, RenderError> {
+        let scene = Self::scene(self.loaded.as_mut(), view, drawables);
+        self.backend
+            .capture_as(view, scene.as_ref(), drawables.quads, size, output)
     }
 
     /// Shows `sheet` as land number `number` of the map that's loaded, for a brush at work. It has

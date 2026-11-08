@@ -21,7 +21,8 @@ use engine_map::{
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
     MovingDraw, ParticleColor, ParticleDraw, ParticleShape, ParticleSim, PostSettings, Renderer,
-    SimForce, SkyRayFloor, SpriteDraw, SunDraw, Target, TileStreamer, View, build_world,
+    ScreenOutput, SimForce, SkyRayFloor, SpriteDraw, SunDraw, Target, TileStreamer, View,
+    build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -8374,4 +8375,201 @@ fn a_sparkle_is_weighted_down() {
         assert!(glow > 1000, "it glows: {glow}");
         assert!(glow < 5200, "{glow}");
     }
+}
+
+/// The middle of a sky of one `color`, which a sky takes as sRGB, on the neutral curve, as
+/// `output` would be sent with `post`.
+fn sky_sent(color: f32, output: ScreenOutput, post: PostSettings) -> Option<[f32; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.look.tone = ToneCurve::Neutral;
+    built.look.light_most = None;
+    built.sky = Some(Sky {
+        zenith: [color; 3],
+        horizon: [color; 3],
+        sun_size: 0.0,
+        sun_color: [0.0; 3],
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(post);
+    let view = View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    };
+    let sent = renderer
+        .capture_as(&view, Drawables::default(), (32, 32), output)
+        .expect("capture");
+    Some(sent.values[16 * 32 + 16])
+}
+
+/// HDR on.
+fn hdr(white: f32, peak: f32) -> PostSettings {
+    PostSettings {
+        hdr: true,
+        white_nits: white,
+        peak_nits: peak,
+        ..PostSettings::default()
+    }
+}
+
+/// Whether `value` is within `slack` of `wanted`.
+fn near(value: f32, wanted: f32, slack: f32) -> bool {
+    (value - wanted).abs() < slack
+}
+
+/// Sent as scRGB, what's below the curve is as it is, at white's nits, where 1 is 80 nits. A sky
+/// of 0.5 is 0.214 of white in light.
+#[test]
+fn scrgb_is_linear_light_at_whites_nits() {
+    let half = sky_sent(0.5, ScreenOutput::ScRgb, hdr(200.0, 1000.0));
+    let dimmer_white = sky_sent(0.5, ScreenOutput::ScRgb, hdr(100.0, 1000.0));
+    if let (Some(half), Some(dimmer_white)) = (half, dimmer_white) {
+        assert!(near(half[1], 0.214 * 2.5, 0.01), "{half:?}");
+        assert!(
+            near(dimmer_white[1], 0.214 * 1.25, 0.01),
+            "{dimmer_white:?}"
+        );
+    }
+}
+
+/// What's brighter than white goes past it in HDR, up to the brightest the screen shows, where on
+/// a standard screen it stops at the top.
+#[test]
+fn hdr_shows_what_is_brighter_than_white() {
+    // 1.613 as sRGB is three times white in light.
+    let standard = sky_sent(1.613, ScreenOutput::Standard, PostSettings::default());
+    let bright = sky_sent(1.613, ScreenOutput::ScRgb, hdr(200.0, 1000.0));
+    let blinding = sky_sent(100.0, ScreenOutput::ScRgb, hdr(200.0, 1000.0));
+    if let (Some(standard), Some(bright), Some(blinding)) = (standard, bright, blinding) {
+        assert!(standard[1] <= 1.0);
+        assert!(near(bright[1], 7.5, 0.1), "three times white: {bright:?}");
+        assert!(
+            blinding[1] <= 12.5 + 0.01,
+            "no brighter than the peak: {blinding:?}"
+        );
+        assert!(blinding[1] > 11.0, "{blinding:?}");
+    }
+}
+
+/// HDR10 is on the PQ curve: a sky of 0.5, 0.214 of white at 200 nits, is 43 nits, which is
+/// 0.426 up it.
+#[test]
+fn hdr10_is_on_the_pq_curve() {
+    if let Some(sent) = sky_sent(0.5, ScreenOutput::Hdr10, hdr(200.0, 1000.0)) {
+        for part in 0..3 {
+            assert!(near(sent[part], 0.426, 0.01), "{sent:?}");
+        }
+    }
+}
+
+/// What's drawn over the view, made for a standard screen, is white at white's nits in HDR.
+#[test]
+fn what_is_drawn_over_the_view_is_white_at_whites_nits() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(hdr(200.0, 1000.0));
+    let quads = [Quad {
+        picture: 0,
+        place: [0.0, 0.0, 64.0, 32.0],
+        source: [0.0, 0.0, 1.0, 1.0],
+        color: [0.5, 0.5, 0.5, 1.0],
+    }];
+    let drawables = Drawables {
+        quads: &quads,
+        ..Drawables::default()
+    };
+    let sent = renderer
+        .capture_as(&view_from_above(), drawables, (64, 32), ScreenOutput::ScRgb)
+        .expect("capture");
+    // sRGB's 0.5 is 0.214 of white in light.
+    let middle = sent.values[16 * 64 + 32];
+    assert!(near(middle[0], 0.214 * 2.5, 0.02), "{middle:?}");
+}
+
+/// A screen with nothing to say of HDR, as with no window, is sent what every screen shows, and
+/// a capture as standard is the capture there's always been.
+#[test]
+fn a_screen_without_hdr_is_sent_standard() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(hdr(200.0, 1000.0));
+    assert_eq!(renderer.screen_offers(), vec![ScreenOutput::Standard]);
+    assert_eq!(renderer.screen_output(), ScreenOutput::Standard);
+    let plain = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
+    let sent = renderer
+        .capture_as(
+            &view_from_above(),
+            Drawables::default(),
+            (32, 32),
+            ScreenOutput::Standard,
+        )
+        .expect("capture");
+    let first = plain.rgba.as_chunks::<4>().0[16 * 32 + 16].map(|part| f32::from(part) / 255.0);
+    assert_eq!(sent.values[16 * 32 + 16], first);
+}
+
+/// HDR10 is in Rec. 2020's colours, where Rec. 709's pure red has some green and blue in it.
+#[test]
+fn hdr10_is_in_rec2020s_colours() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.look.tone = ToneCurve::Neutral;
+    built.sky = Some(Sky {
+        zenith: [0.5, 0.0, 0.0],
+        horizon: [0.5, 0.0, 0.0],
+        sun_size: 0.0,
+        sun_color: [0.0; 3],
+        ..Sky::default()
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(hdr(200.0, 1000.0));
+    let view = View {
+        origin: UNDER,
+        pitch: -89.0,
+        ..view_from_above()
+    };
+    let sent = renderer
+        .capture_as(&view, Drawables::default(), (32, 32), ScreenOutput::Hdr10)
+        .expect("capture");
+    let red = sent.values[16 * 32 + 16];
+    assert!(red[0] > 0.3, "{red:?}");
+    assert!(
+        red[1] > 0.1 && red[2] > 0.05,
+        "some green and blue: {red:?}"
+    );
+}
+
+/// A picture after one taken for HDR is as one always was.
+#[test]
+fn a_picture_after_an_hdr_one_is_standard() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(hdr(200.0, 1000.0));
+    let before = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
+    let _hdr = renderer
+        .capture_as(
+            &view_from_above(),
+            Drawables::default(),
+            (32, 32),
+            ScreenOutput::ScRgb,
+        )
+        .expect("capture");
+    let after = renderer
+        .capture(&view_from_above(), Drawables::default(), 32, 32)
+        .expect("capture");
+    assert_eq!(before.rgba, after.rgba);
 }

@@ -1,6 +1,6 @@
 # Proposal 0150: light on screen
 
-Status: accepted for items 164, 163, 165, 166 and 167, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 164, 163, 165, 166, 167 and 168, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -110,6 +110,25 @@ Every way of holding more needs the fourth byte, or more bytes, and the fourth b
 - **Light goes past 2 on a surface,** and models past Quake's limits, on a level made for this engine. Light goes on to the tone curve and bloom as it is. What's carried over from the fixture keeps both, as `Look::light_most`.
 - **A bake brings light down by a power of two** when some of it is brighter than a byte holds, all of a level's alike, and its probes with it, and the game multiplies it back. A level whose light fits is as it always was. An arc sun's bits aren't light, and are left as they are. A saved bake says how far.
 
+## HDR to a screen that has it (168)
+
+### What it takes
+
+Vulkan says what a screen takes as pairs of a format and a colour space, once `VK_EXT_swapchain_colorspace` is on. Two are HDR:
+
+| Output | Sent as | What 1 is |
+|---|---|---|
+| scRGB | Linear light in 16 bit floats, Rec. 709's colours | 80 nits, and more is brighter. Windows composes in it |
+| HDR10 | 10 bits a colour on the PQ curve, Rec. 2020's colours | Nits, from 0 to 10,000 along the curve |
+
+On either, white isn't the top: a player says how bright white is, and the tone curve rolls off at the brightest the screen shows instead of at white. `VK_EXT_hdr_metadata` tells the screen that much, where it's there. What's drawn over the view, the HUD and menus, is made for a standard screen, so it's taken as sRGB and put at white. A screen that takes neither, or a system that doesn't say, is sent what it always was.
+
+### What changes
+
+- **`r_hdr 1`** sends HDR to a screen that takes it, scRGB if it does, HDR10 if not, and standard otherwise. `r_hdr_white` is white in nits, 200 unless a player says, and `r_hdr_peak` the brightest, 1000.
+- **`screen` at the console** says what's being sent and what the screen takes.
+- **Pictures stay standard.** `screenshot` and what tests read are what they were, and tests can ask for HDR as it would be sent, in floats.
+
 ## What came of it
 
 ### A tone curve (164)
@@ -156,6 +175,13 @@ Every way of holding more needs the fourth byte, or more bytes, and the fourth b
 - **Three tests of the bake were reading bytes,** and now read light as the game does, multiplied back. One of them, of a shadow round a corner, had passed only because bright light stopped at a byte: it read whichever floor face was biggest, which next to the post wasn't the one holding the point, and stopped bytes hid that. It reads the face that holds the point now.
 - **A model in bright light** has ambient and directional light going on as they were at Quake's 128, the directional half the ambient, so it's as bright as what's round it.
 
+### HDR to a screen that has it (168)
+
+- **Tried in the game:** this screen takes only standard, so with `r_hdr 1` it's sent standard, `screen` says so, and the picture is the same to the byte as with it off. **HDR itself needs a person with an HDR screen** to see, with HDR on in Windows: tests check what's sent, but not how a screen shows it.
+- **What's sent is checked in numbers.** A sky of 0.5, which a sky takes as sRGB, is 0.214 of white in light: 0.535 as scRGB at 200 nits, and 0.426 up the PQ curve as HDR10. Three times white is three times as bright, and what's brighter stops at the peak. Pure red has green and blue in Rec. 2020. The HUD's grey is white's share of it.
+- **The scene isn't drawn twice.** Only the final pass and the HUD know the screen, and their pipelines for HDR are made when it's wanted.
+- **A part only a person can try:** a window sending HDR tells its final pass so each frame, and no test has a window. If HDR looks wrong on an HDR screen, that's where to look.
+
 ## Sources
 
 - [PBR Neutral, Khronos](https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/README.md)
@@ -177,5 +203,8 @@ Every way of holding more needs the fourth byte, or more bytes, and the fourth b
 - [Bloom in Bevy](https://docs.rs/bevy/0.15.2/src/bloom_3d/bloom_3d.rs.html)
 - [Bloom, Diligent Engine](https://diligentgraphics.github.io/docs/df/de0/DiligentFX_PostProcess_Bloom_README.html)
 - [Lightmaps: technical information, Unity](https://docs.unity3d.com/Manual/Lightmaps-TechnicalInformation.html)
+- [VK_EXT_swapchain_colorspace, Khronos](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_swapchain_colorspace.html)
+- [VK_EXT_hdr_metadata, Khronos](https://registry.khronos.org/vulkan/specs/latest/man/html/VK_EXT_hdr_metadata.html)
+- [SMPTE ST 2084, the PQ curve](https://en.wikipedia.org/wiki/Perceptual_quantizer)
 - [Tweaking automatic exposure in Unreal, Versluis](https://www.versluis.com/2020/03/how-to-tweak-automatic-exposure-control-in-unreal-engine/)
 - [Ambient occlusion and baked light, Godot forum](https://forum.godotengine.org/t/global-ambient-light-levels/138068)

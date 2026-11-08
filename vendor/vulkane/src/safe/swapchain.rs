@@ -272,6 +272,35 @@ impl Swapchain {
         check(unsafe { present(queue.raw(), &info) })
     }
 
+    /// Tells the display how bright what's sent is meant to be, for a swapchain in an HDR colour
+    /// space: `wide` for Rec. 2020's primaries, otherwise Rec. 709's, with `peak` and `average`
+    /// nits at most. Does nothing if `VK_EXT_hdr_metadata` isn't enabled. Engine extension.
+    pub fn set_hdr_metadata(&self, wide: bool, peak: f32, average: f32) {
+        let Some(set) = self.device.dispatch.vkSetHdrMetadataEXT else {
+            return;
+        };
+        let xy = |x: f32, y: f32| VkXYColorEXT { x, y };
+        let (red, green, blue) = if wide {
+            (xy(0.708, 0.292), xy(0.170, 0.797), xy(0.131, 0.046))
+        } else {
+            (xy(0.640, 0.330), xy(0.300, 0.600), xy(0.150, 0.060))
+        };
+        let metadata = VkHdrMetadataEXT {
+            sType: VkStructureType::STRUCTURE_TYPE_HDR_METADATA_EXT,
+            displayPrimaryRed: red,
+            displayPrimaryGreen: green,
+            displayPrimaryBlue: blue,
+            whitePoint: xy(0.3127, 0.3290),
+            maxLuminance: peak,
+            minLuminance: 0.0,
+            maxContentLightLevel: peak,
+            maxFrameAverageLightLevel: average,
+            ..Default::default()
+        };
+        // Safety: the swapchain and the metadata live until the end of the call.
+        unsafe { set(self.device.handle, 1, &self.handle, &metadata) };
+    }
+
     /// Pick the best `(format, color_space)` pair from the surface's
     /// supported list. Prefers `B8G8R8A8_SRGB` with `SRGB_NONLINEAR`, and
     /// otherwise takes the first pair this build can name.

@@ -10,6 +10,7 @@ mod pipelines;
 mod post;
 mod record;
 mod ripple;
+mod screen;
 mod shadow;
 pub(crate) use shadow::{SUN_REACHES, SunShadow};
 mod sim;
@@ -55,15 +56,23 @@ use crate::canvas::{QuadBatch, UiFrame};
 use crate::error::{RenderError, vulkan_is_new_enough};
 use crate::instances::InstanceBatch;
 use crate::live::LIVE_BYTES;
+use crate::renderer::ScreenOutput;
 use crate::renderer::{Capture, Drawables, PostSettings, Target, TextureFilter, View};
 use crate::sprite::{
     GPU_PARTICLE_PUSH, MAX_LIGHT_DRAWS, MAX_PARTICLE_DRAWS, PARTICLE_BYTES, SPRITE_PUSH_SIZE,
 };
 use crate::visible::VisibleSet;
 use crate::world::{BatchKind, WorldMesh};
+use vulkane::raw::bindings::{VkColorSpaceKHR, VkFormat};
 
 /// The colour format of every target. UNORM keeps the original's sums.
 const COLOR_FORMAT: Format = Format::B8G8R8A8_UNORM;
+
+/// What HDR10 is sent as: 10 bits a colour and 2 of alpha.
+const HDR10_FORMAT: Format = Format(VkFormat::FORMAT_A2B10G10R10_UNORM_PACK32);
+
+/// What scRGB is sent as: linear light in 16 bit floats.
+const SCRGB_FORMAT: Format = Format::R16G16B16A16_SFLOAT;
 
 /// What a scene is drawn in: linear light, with room for more than a screen shows.
 const SCENE_FORMAT: Format = Format::R16G16B16A16_SFLOAT;
@@ -113,6 +122,7 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 256 * 4
     + 12
     + 256
+    + 4
     + 4
     + 4
     + 4
@@ -712,6 +722,16 @@ pub(crate) struct Backend {
     moving_overflow: bool,
     /// The GPU's name.
     device_name: String,
+    /// Whether the system says what colour spaces a screen has.
+    colour_spaces: bool,
+    /// Whether the GPU can tell a screen how bright what's sent is meant to be.
+    hdr_metadata: bool,
+    /// What's being sent to the screen.
+    screen: ScreenOutput,
+    /// What this frame's final pass encodes for.
+    encoding: ScreenOutput,
+    /// An HDR output's passes and pipelines, once one's wanted.
+    screen_pipes: Option<screen::ScreenPipes>,
     /// The surface, if drawing to a window. It drops after the swapchain.
     surface: Option<Arc<Surface>>,
     /// The physical device.
@@ -778,9 +798,19 @@ impl Backend {
             Target::Window(window) => Some(window),
             Target::Offscreen => None,
         };
-        let extensions = InstanceExtensions::new()
+        // What says a screen has colour spaces other than sRGB, where the system has it.
+        let has = |name: &str| {
+            Instance::enumerate_extension_properties()
+                .is_ok_and(|found| found.iter().any(|extension| extension.name() == name))
+        };
+        let colour_spaces = has(vulkane::raw::bindings::EXT_SWAPCHAIN_COLORSPACE_EXTENSION_NAME);
+        let mut extensions = InstanceExtensions::new()
             .khr_surface()
             .enable_raw(vulkane::raw::bindings::KHR_WIN32_SURFACE_EXTENSION_NAME);
+        if colour_spaces {
+            extensions = extensions
+                .enable_raw(vulkane::raw::bindings::EXT_SWAPCHAIN_COLORSPACE_EXTENSION_NAME);
+        }
         let instance = Instance::new(InstanceCreateInfo {
             application_name: Some("Quake Engine"),
             api_version: ApiVersion::V1_3,
@@ -793,7 +823,19 @@ impl Backend {
             .transpose()?;
         let (physical, queue_family) = pick_device(&instance, surface.as_deref())?;
         let device_name = physical.properties().device_name().to_owned();
-        let device_extensions = DeviceExtensions::new().khr_swapchain();
+        // What tells a screen how bright what's sent is meant to be, where the GPU has it.
+        let hdr_metadata = physical
+            .enumerate_extension_properties()
+            .is_ok_and(|found| {
+                found.iter().any(|extension| {
+                    extension.name() == vulkane::raw::bindings::EXT_HDR_METADATA_EXTENSION_NAME
+                })
+            });
+        let mut device_extensions = DeviceExtensions::new().khr_swapchain();
+        if hdr_metadata {
+            device_extensions = device_extensions
+                .enable_raw(vulkane::raw::bindings::EXT_HDR_METADATA_EXTENSION_NAME);
+        }
         let features = DeviceFeatures::new()
             .with_sampler_anisotropy()
             .with_texture_compression_bc()
@@ -816,8 +858,8 @@ impl Backend {
             _ => PresentMode::FIFO,
         };
         let deform = Deform::new(&device)?;
-        let present_pass = make_pass(&device, ImageLayout::PRESENT_SRC_KHR)?;
-        let capture_pass = make_pass(&device, ImageLayout::TRANSFER_SRC_OPTIMAL)?;
+        let present_pass = make_pass(&device, COLOR_FORMAT, ImageLayout::PRESENT_SRC_KHR)?;
+        let capture_pass = make_pass(&device, COLOR_FORMAT, ImageLayout::TRANSFER_SRC_OPTIMAL)?;
 
         let image_binding = |binding, descriptor_type| DescriptorSetLayoutBinding {
             binding,
@@ -1203,6 +1245,11 @@ impl Backend {
             field_time: 0.0,
             moving_overflow: false,
             device_name,
+            colour_spaces,
+            hdr_metadata,
+            screen: ScreenOutput::Standard,
+            encoding: ScreenOutput::Standard,
+            screen_pipes: None,
             physical,
             device,
             _instance: instance,
@@ -1223,6 +1270,35 @@ impl Backend {
     /// The GPU's name.
     pub(crate) fn device_name(&self) -> &str {
         &self.device_name
+    }
+
+    /// What's being sent to the screen.
+    pub(crate) fn screen_output(&self) -> ScreenOutput {
+        self.screen
+    }
+
+    /// What the screen can be sent, best first.
+    pub(crate) fn screen_offers(&self) -> Vec<ScreenOutput> {
+        let mut offers = Vec::new();
+        if let Some(surface) = self.surface.as_ref().filter(|_| self.colour_spaces) {
+            let formats = surface.formats(&self.physical).unwrap_or_default();
+            let offered = |format: Format, space: VkColorSpaceKHR| {
+                formats.iter().any(|found| {
+                    found.format() == Some(format) && found.color_space() == Some(space)
+                })
+            };
+            if offered(
+                SCRGB_FORMAT,
+                VkColorSpaceKHR::COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT,
+            ) {
+                offers.push(ScreenOutput::ScRgb);
+            }
+            if offered(HDR10_FORMAT, VkColorSpaceKHR::COLOR_SPACE_HDR10_ST2084_EXT) {
+                offers.push(ScreenOutput::Hdr10);
+            }
+        }
+        offers.push(ScreenOutput::Standard);
+        offers
     }
 
     /// Waits for frame `slot`, if it's in flight.
@@ -1271,11 +1347,28 @@ impl Backend {
         if width == 0 || height == 0 {
             return Ok(());
         }
+        // HDR if a player wants it and the screen takes it, the best it takes, and otherwise
+        // what every screen shows.
+        let output = if self.post.hdr {
+            self.screen_offers()
+                .first()
+                .copied()
+                .unwrap_or(ScreenOutput::Standard)
+        } else {
+            ScreenOutput::Standard
+        };
+        self.ensure_screen_pipes(output)?;
+        let color_space = match output {
+            ScreenOutput::Standard => VkColorSpaceKHR::COLOR_SPACE_SRGB_NONLINEAR_KHR,
+            ScreenOutput::ScRgb => VkColorSpaceKHR::COLOR_SPACE_EXTENDED_SRGB_LINEAR_EXT,
+            ScreenOutput::Hdr10 => VkColorSpaceKHR::COLOR_SPACE_HDR10_ST2084_EXT,
+        };
         let swapchain = Swapchain::new(
             &self.device,
             &surface,
             SwapchainCreateInfo {
-                format: COLOR_FORMAT,
+                format: screen::output_format(output),
+                color_space,
                 width,
                 height,
                 min_image_count: capabilities.min_image_count().max(MIN_SWAPCHAIN_IMAGES + 1),
@@ -1283,14 +1376,27 @@ impl Backend {
                 ..SwapchainCreateInfo::default()
             },
         )?;
+        if output != ScreenOutput::Standard && self.hdr_metadata {
+            let [_, white, peak, _] = self.screen_values(output);
+            swapchain.set_hdr_metadata(output == ScreenOutput::Hdr10, white * peak, white);
+        }
+        self.screen = output;
         let depth = depth_image(&self.device, &self.physical, (width, height))?;
         let views = swapchain.image_views()?;
         let mut framebuffers = Vec::with_capacity(views.len());
         let mut finished = Vec::with_capacity(views.len());
         for view in &views {
+            let pass = match self
+                .screen_pipes
+                .as_ref()
+                .filter(|pipes| pipes.output == output)
+            {
+                Some(pipes) => &pipes.window_pass,
+                None => &self.present_pass,
+            };
             framebuffers.push(Framebuffer::new(
                 &self.device,
-                &self.present_pass,
+                pass,
                 &[view, &depth.view],
                 width,
                 height,
@@ -1410,7 +1516,14 @@ impl Backend {
 
     /// Sets the final pass's settings.
     pub(crate) fn set_post(&mut self, post: PostSettings) {
+        // What a screen's sent is chosen with its swapchain, so a change of it makes one again.
+        let screen_changed = self.post.hdr != post.hdr
+            || self.post.white_nits.to_bits() != post.white_nits.to_bits()
+            || self.post.peak_nits.to_bits() != post.peak_nits.to_bits();
         self.post = post;
+        if screen_changed {
+            self.resized = true;
+        }
     }
 
     /// Sets the part of the window the scene shows in, or `None` for all of it.
@@ -1723,6 +1836,7 @@ impl Backend {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         corner: (u32, u32),
         size: (u32, u32),
+        pipeline: &GraphicsPipeline,
     ) {
         let Some(target) = &self.scene_target else {
             return;
@@ -1743,7 +1857,7 @@ impl Backend {
             size.0,
             size.1,
         );
-        rec.bind_graphics_pipeline(&self.post_pipeline);
+        rec.bind_graphics_pipeline(pipeline);
         rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
         self.clock.start(rec, self.slot, Span::Post);
         rec.draw(3, 1, 0, 0);
@@ -1789,6 +1903,7 @@ impl Backend {
             reason = "window sizes are far below 2^24"
         )]
         let aspect = shown.0 as f32 / shown.1.max(1) as f32;
+        self.encoding = self.screen;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, extent)?;
         self.ensure_scene_target(shown)?;
@@ -1811,8 +1926,10 @@ impl Backend {
                     },
                 ],
             );
-            self.record_post(&mut rec, corner, shown);
-            Self::record_canvas(&mut rec, self.canvas.as_ref(), extent);
+            let (post, canvas) = self.screen_pipelines(self.screen);
+            self.record_post(&mut rec, corner, shown, post);
+            let screen = self.screen_values(self.screen);
+            Self::record_canvas(&mut rec, self.canvas.as_ref(), extent, (canvas, screen));
             rec.end_render_pass();
             rec.end()?;
         }
@@ -1883,6 +2000,7 @@ impl Backend {
             reason = "capture sizes are far below 2^24"
         )]
         let aspect = shown.0 as f32 / shown.1.max(1) as f32;
+        self.encoding = ScreenOutput::Standard;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, (width, height))?;
         self.ensure_scene_target(shown)?;
@@ -1900,8 +2018,9 @@ impl Backend {
                         },
                     ],
                 );
-                self.record_post(rec, corner, shown);
-                Self::record_canvas(rec, self.canvas.as_ref(), (width, height));
+                self.record_post(rec, corner, shown, &self.post_pipeline);
+                let screen = self.screen_values(ScreenOutput::Standard);
+                Self::record_canvas(rec, self.canvas.as_ref(), (width, height), (None, screen));
                 rec.end_render_pass();
                 rec.copy_image_to_buffer(
                     &color.image,

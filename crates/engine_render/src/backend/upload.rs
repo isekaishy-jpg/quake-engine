@@ -313,6 +313,9 @@ pub(super) struct FrameExtras<'a> {
     bloom: f32,
     /// What baked light is multiplied by.
     light_scale: f32,
+    /// What the final pass encodes for: which screen output, white in nits, and the brightest
+    /// next to white.
+    screen: [f32; 4],
     /// What a zone does to the light.
     light_shift: [f32; 3],
     /// Bodies of liquid.
@@ -519,6 +522,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 12] = extra.bloom;
     out[base + 16] = extra.light_scale;
     out[base + 17] = extra.look.light_most.unwrap_or(0.0);
+    out[base + 20..base + 24].copy_from_slice(&extra.screen);
     out
 }
 
@@ -1547,6 +1551,7 @@ impl Backend {
             exposure_scale: 1.0,
             bloom: 0.0,
             light_scale: scene.map_or(1.0, |scene| scene.map.light_scale()),
+            screen: self.screen_values(self.encoding),
             light_shift: view.light_shift,
         };
         // Exposure goes by itself as far as a zone, or else the level, lets it, from how bright
