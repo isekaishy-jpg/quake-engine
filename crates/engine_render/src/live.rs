@@ -67,6 +67,9 @@ pub struct LiveLight {
     pub spot_cosine: f32,
     /// Whether it casts shadows.
     pub shadows: bool,
+    /// How much of what it lights bounces on, where 1 is as much as a baked light's does, and 0,
+    /// the usual, none (proposal 0153).
+    pub bounce: f32,
 }
 
 /// Which slice into the view `depth` is in.

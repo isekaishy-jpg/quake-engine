@@ -1167,6 +1167,18 @@ impl Backend {
             &direction_atlas.view,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
+        let live_bounce = self.upload_live_bounce(map)?;
+        if self.bounce_blank.is_none() {
+            self.bounce_blank =
+                Some(self.upload_image(&[(1, 1, &[0; 8][..])], Format::R16G16B16A16_SFLOAT)?);
+        }
+        let bounce_image = live_bounce
+            .as_ref()
+            .map(|bounce| &bounce.image)
+            .or(self.bounce_blank.as_ref());
+        if let Some(image) = bounce_image {
+            frame_set.write_sampled_image(10, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        }
 
         let blank =
             self.upload_image(&[(1, 1, &[128, 128, 255, 255][..])], Format::R8G8B8A8_UNORM)?;
@@ -1306,6 +1318,7 @@ impl Backend {
             shadow_indices,
             shadow_world_count,
             shadow_cutoffs,
+            live_bounce,
             shadow_parts,
             texture_sets,
             _material_params: material_params,
@@ -1733,6 +1746,7 @@ impl Backend {
             ..extra
         };
         self.note_moved_brushes(scene);
+        self.plan_live_bounce(scene)?;
         self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());
         self.ssao_shown = self.post.ssao != 0 && extra.look.ssao > 0.0;
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);

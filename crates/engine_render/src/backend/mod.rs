@@ -1,6 +1,7 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
 mod bloom;
+mod bounce;
 mod clock;
 mod deform;
 mod exposure;
@@ -362,6 +363,8 @@ struct GpuMap {
     shadow_parts: Vec<shadow::ShadowRange>,
     /// Each texture's cutoff, if it has holes that light goes through.
     shadow_cutoffs: Vec<Option<f32>>,
+    /// What live lights bounce, if it has probes for it to be at.
+    live_bounce: Option<bounce::LiveBounce>,
     /// The light atlas.
     atlas: GpuImage,
     /// Where the atlas's light comes from.
@@ -674,6 +677,8 @@ pub(crate) struct Backend {
     stencil_images: Vec<GpuImage>,
     /// The probes, as slices stacked down an image.
     probe_image: Option<GpuImage>,
+    /// No live bounce, for a map with no probes for it to be at.
+    bounce_blank: Option<GpuImage>,
     /// The texture sampler.
     texture_sampler: Sampler,
     /// The material sampler.
@@ -925,6 +930,7 @@ impl Backend {
                 image_binding(7, DescriptorType::SAMPLED_IMAGE),
                 image_binding(8, DescriptorType::SAMPLED_IMAGE),
                 image_binding(9, DescriptorType::SAMPLED_IMAGE),
+                image_binding(10, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let texture_layout = DescriptorSetLayout::new(
@@ -1264,6 +1270,7 @@ impl Backend {
             blank_stencil: None,
             stencil_images: Vec::new(),
             probe_image: None,
+            bounce_blank: None,
             texture_sampler,
             material_sampler,
             filter: None,
@@ -1691,6 +1698,7 @@ impl Backend {
             AccessFlags::MEMORY_READ | AccessFlags::MEMORY_WRITE,
         );
         self.record_tile_writes(rec);
+        self.record_live_bounce(rec);
         let values = &self.frame_values[self.slot];
         let copy = |size: usize| BufferCopy {
             src_offset: 0,

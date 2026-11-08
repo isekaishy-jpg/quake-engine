@@ -13,6 +13,7 @@ mod canvas;
 mod error;
 mod instances;
 mod live;
+mod live_bounce;
 mod material;
 mod matrix;
 mod renderer;
@@ -36,6 +37,7 @@ pub use live::{
     CLUSTERS_X, CLUSTERS_Y, CLUSTERS_Z, LiveLight, MAX_LIVE_LIGHTS, MAX_SHADOW_LIGHTS,
     cluster_masks, cube_face, slice_of,
 };
+pub use live_bounce::{LIVE_BOUNCE_GAIN, bounce_of_light};
 pub use material::{MATERIAL_PARAMS_BYTES, MATERIAL_PARAMS_STRIDE, material_params};
 pub use matrix::{height_scale, view_projection};
 pub use renderer::{

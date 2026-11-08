@@ -9689,3 +9689,99 @@ fn light_goes_through_a_cut_outs_holes_to_a_shadow() {
         );
     }
 }
+
+/// The middle of the floor, with probes over it, under a live light that shines straight up and
+/// away from it, which bounces `bounce`.
+fn floor_under_a_light_shining_up(bounce: f32, probes: bool) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    // None of the floor's own light, so what's there is what's bounced.
+    built.light = vec![[0, 0, 0]; built.light.len()];
+    if probes {
+        let count = 5 * 5 * 3;
+        built.probes = Some(ProbeGrid {
+            origin: Vec3::ZERO,
+            spacing: 32.0,
+            size: [5, 5, 3],
+            colors: vec![[[0; 3]; 6]; count],
+            directions: vec![[0; 3]; count],
+            sun_shares: vec![0; count],
+        });
+    }
+    renderer.load_map(Arc::new(built)).expect("load");
+    let lights = [LiveLight {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        radius: 300.0,
+        color: [1.0; 3],
+        spot: Vec3::new(0.0, 0.0, 1.0),
+        spot_cosine: 0.9,
+        bounce,
+        ..LiveLight::default()
+    }];
+    let drawables = Drawables {
+        live_lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// What a live light bounces reaches what it doesn't light itself, from the probes round it, and
+/// none of it without its bounce, or with no probes for it to be at.
+#[test]
+fn a_live_lights_bounce_reaches_what_it_does_not_light() {
+    let Some(none) = floor_under_a_light_shining_up(0.0, true) else {
+        return;
+    };
+    let bounced = floor_under_a_light_shining_up(1.0, true).expect("it drew");
+    let no_probes = floor_under_a_light_shining_up(1.0, false).expect("it drew");
+    assert!(none[0] < 5, "it doesn't light the floor itself: {none:?}");
+    assert!(bounced[0] > none[0] + 20, "{none:?} {bounced:?}");
+    assert_eq!(no_probes, none, "nowhere for it to be");
+}
+
+/// A live light that changes has what it bounces worked out again, in its new colour.
+#[test]
+fn a_live_lights_bounce_follows_it() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut built = map(1);
+    built.light = vec![[0, 0, 0]; built.light.len()];
+    let count = 5 * 5 * 3;
+    built.probes = Some(ProbeGrid {
+        origin: Vec3::ZERO,
+        spacing: 32.0,
+        size: [5, 5, 3],
+        colors: vec![[[0; 3]; 6]; count],
+        directions: vec![[0; 3]; count],
+        sun_shares: vec![0; count],
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    let mut shot = |color: [f32; 3]| {
+        let lights = [LiveLight {
+            origin: Vec3::new(64.0, 64.0, 40.0),
+            radius: 300.0,
+            color,
+            spot: Vec3::new(0.0, 0.0, 1.0),
+            spot_cosine: 0.9,
+            bounce: 1.0,
+            ..LiveLight::default()
+        }];
+        let drawables = Drawables {
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        let capture = renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture");
+        centre(&capture)
+    };
+    let white = shot([1.0; 3]);
+    // Only its green changes, so a light kept by less than its whole colour would show.
+    let magenta = shot([1.0, 0.0, 1.0]);
+    assert!(white[1] > 20, "{white:?}");
+    assert!(magenta[1] < white[1] / 4, "{white:?} {magenta:?}");
+}

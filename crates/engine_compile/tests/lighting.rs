@@ -1892,3 +1892,64 @@ fn the_skys_light_through_glass_takes_its_colour() {
     assert!(floor[0] > 10.0, "light comes through: {floor:?}");
     assert!(floor[1] < floor[0] / 4.0, "and it's red: {floor:?}");
 }
+
+/// What's bounced onto the ceiling, from a lamp low in the room that bounces `bounce`.
+fn bounced_onto_the_ceiling(bounce: &str) -> f32 {
+    let text = format!(
+        "{ROOM}entity lamp {{ type = light origin = 0 0 -200 intensity = 600 {bounce} }}\n"
+    );
+    let map = baked(&text, &[]);
+    let ceiling = layer_colour(&map, face_of(&map, "ceiling"), BOUNCE_STYLE);
+    (ceiling[0] + ceiling[1] + ceiling[2]) / 3.0
+}
+
+/// A lamp says how much of what it lights bounces on, as an engine's indirect multiplier does:
+/// none at 0, and twice at 2.
+#[test]
+fn a_lamps_bounce_says_how_much_of_its_light_bounces() {
+    let usual = bounced_onto_the_ceiling("");
+    let none = bounced_onto_the_ceiling("bounce = 0");
+    let twice = bounced_onto_the_ceiling("bounce = 2");
+    assert!(usual > 2.0, "{usual}");
+    assert!(none < usual * 0.05, "{none} {usual}");
+    assert!((twice / usual - 2.0).abs() < 0.2, "{twice} {usual}");
+}
+
+/// What sees no sky gets the share of it a level lets leak, and what does gets it all.
+#[test]
+fn a_share_of_the_sky_leaks_to_what_sees_none() {
+    let shut = |leak: &str| {
+        let text = format!(
+            "{ROOM}entity world {{ type = worldspawn sky_light = 100 {leak} }}\nsky {{ zenith = 1 1 1 horizon = 1 1 1 }}\n"
+        );
+        let map = baked(&text, &[]);
+        let floor = layer_colour(&map, face_of(&map, "floor"), BOUNCE_STYLE);
+        (floor[0] + floor[1] + floor[2]) / 3.0
+    };
+    let none = shut("");
+    let half = shut("sky_leak = 0.5");
+    let open = under_the_sky("sky_light = 100 sky_leak = 0.5");
+    let ground = layer_colour(&open, face_of(&open, "ground"), BOUNCE_STYLE);
+    let ground = (ground[0] + ground[1] + ground[2]) / 3.0;
+    let all = under_the_sky("sky_light = 100");
+    let all = layer_colour(&all, face_of(&all, "ground"), BOUNCE_STYLE);
+    let all = (all[0] + all[1] + all[2]) / 3.0;
+    assert!(none < 1.0, "{none}");
+    assert!((half - 50.0).abs() < 8.0, "half of it: {half}");
+    // Only where the wall at its edge hides some of the sky is there more.
+    assert!(
+        ground >= all && ground < all * 1.1,
+        "what sees it gets little more: {ground} {all}"
+    );
+}
+
+/// A live light bounces as much as a baked one unless it says, and says with `bounce`.
+#[test]
+fn a_live_light_says_how_much_it_bounces() {
+    let text = format!(
+        "{ROOM}entity a {{ type = live_light origin = 0 0 0 }}\nentity b {{ type = live_light origin = 0 0 64 bounce = 0.5 }}\n"
+    );
+    let map = baked(&text, &[]);
+    let bounces: Vec<f32> = map.live_lights.iter().map(|light| light.bounce).collect();
+    assert_eq!(bounces, [1.0, 0.5]);
+}

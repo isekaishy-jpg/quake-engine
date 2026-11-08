@@ -141,3 +141,73 @@ fn a_spline_passes_through_its_points() {
 fn an_empty_spline_has_no_point() {
     assert_eq!(Spline::default().point_at(0.5), None);
 }
+
+/// Open space with a wall across it from x = 100 to 116, as high as z = 200 and open above, or
+/// all the way up if `high`. Leaf 1 is the open, leaf 2 the wall, and leaf 3 past it.
+fn walled(high: bool) -> Tree {
+    let plane = |normal: Vec3, distance: f32| Plane { normal, distance };
+    let mut tree = Tree {
+        planes: vec![
+            plane(Vec3::new(0.0, 0.0, 1.0), 200.0),
+            plane(Vec3::new(1.0, 0.0, 0.0), 100.0),
+            plane(Vec3::new(1.0, 0.0, 0.0), 116.0),
+        ],
+        nodes: vec![
+            Node {
+                plane: 0,
+                children: [NodeChild::Leaf(1), NodeChild::Node(1)],
+            },
+            Node {
+                plane: 1,
+                children: [NodeChild::Node(2), NodeChild::Leaf(1)],
+            },
+            Node {
+                plane: 2,
+                children: [NodeChild::Leaf(3), NodeChild::Leaf(2)],
+            },
+        ],
+        leaves: vec![Leaf::default(); 4],
+        ..Tree::default()
+    };
+    tree.leaves[0].contents = Contents::Solid;
+    tree.leaves[2].contents = Contents::Solid;
+    if high {
+        tree.nodes[0] = tree.nodes[1];
+    }
+    tree
+}
+
+/// A line is clear unless it crosses what's solid, wherever along it that is.
+#[test]
+fn a_line_is_clear_unless_it_crosses_what_is_solid() {
+    let tree = walled(false);
+    let at = |x: f32, z: f32| Vec3::new(x, 0.0, z);
+    assert!(tree.line_clear(at(0.0, 0.0), at(90.0, 50.0)), "on one side");
+    assert!(
+        tree.line_clear(at(130.0, 0.0), at(300.0, 0.0)),
+        "on the other"
+    );
+    assert!(
+        !tree.line_clear(at(0.0, 0.0), at(300.0, 0.0)),
+        "through the wall"
+    );
+    assert!(!tree.line_clear(at(300.0, 0.0), at(0.0, 0.0)), "either way");
+    assert!(
+        !tree.line_clear(at(108.0, 0.0), at(108.0, 50.0)),
+        "inside it"
+    );
+    assert!(tree.line_clear(at(0.0, 300.0), at(300.0, 300.0)), "over it");
+    assert!(
+        tree.line_clear(at(0.0, 100.0), at(300.0, 500.0)),
+        "over its top"
+    );
+    let high = walled(true);
+    assert!(
+        !high.line_clear(at(0.0, 300.0), at(300.0, 300.0)),
+        "not over a high one"
+    );
+    assert!(
+        Tree::default().line_clear(at(0.0, 0.0), at(300.0, 0.0)),
+        "with no tree"
+    );
+}

@@ -68,6 +68,7 @@ pub(super) fn live_lights(map: &Map, eye: Vec3, time: f32, most: usize) -> Vec<L
             spot: source.spot,
             spot_cosine: source.spot_cosine,
             shadows: source.shadows,
+            bounce: source.bounce,
         })
         .collect();
     lights.sort_by(|a, b| {

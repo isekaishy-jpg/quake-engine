@@ -111,6 +111,53 @@ pub struct Tree {
 }
 
 impl Tree {
+    /// Whether nothing solid is between `start` and `end`.
+    #[must_use]
+    pub fn line_clear(&self, start: Vec3, end: Vec3) -> bool {
+        if self.nodes.is_empty() {
+            return true;
+        }
+        self.clear_through(NodeChild::Node(0), start, end, 0)
+    }
+
+    /// Whether `child` has nothing solid between `start` and `end`, which are in it. Each node
+    /// splits the line where it crosses its plane, and goes down each side with its part.
+    fn clear_through(&self, child: NodeChild, start: Vec3, end: Vec3, depth: u32) -> bool {
+        let index = match child {
+            NodeChild::Leaf(leaf) => {
+                return self
+                    .leaves
+                    .get(leaf as usize)
+                    .is_some_and(|leaf| leaf.contents != Contents::Solid)
+                    && leaf != 0;
+            }
+            NodeChild::Node(index) => index,
+        };
+        // A tree that loops would never end; a real one is far shallower than this.
+        if depth > 256 {
+            return true;
+        }
+        let (Some(node), Some(plane)) = (
+            self.node(index),
+            self.node(index).and_then(|node| self.plane(node.plane)),
+        ) else {
+            return true;
+        };
+        let front = plane.normal.dot(start) - plane.distance;
+        let back = plane.normal.dot(end) - plane.distance;
+        if front >= 0.0 && back >= 0.0 {
+            return self.clear_through(node.children[0], start, end, depth + 1);
+        }
+        if front < 0.0 && back < 0.0 {
+            return self.clear_through(node.children[1], start, end, depth + 1);
+        }
+        let share = front / (front - back);
+        let middle = start + (end - start) * share;
+        let near = usize::from(front < 0.0);
+        self.clear_through(node.children[near], start, middle, depth + 1)
+            && self.clear_through(node.children[1 - near], middle, end, depth + 1)
+    }
+
     /// The leaf holding `point`.
     #[must_use]
     pub fn leaf_at(&self, point: Vec3) -> u32 {

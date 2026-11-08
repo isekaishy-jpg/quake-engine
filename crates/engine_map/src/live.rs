@@ -38,6 +38,9 @@ pub struct LiveLightSource {
     pub spot_cosine: f32,
     /// Whether it casts shadows.
     pub shadows: bool,
+    /// How much of what it lights bounces on, where 1 is as much as a baked light's does
+    /// (proposal 0153).
+    pub bounce: f32,
     /// Points it moves through in turn, if it moves.
     pub path: Vec<Vec3>,
     /// How many seconds a trip round `path` takes.

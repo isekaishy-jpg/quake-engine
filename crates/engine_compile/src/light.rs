@@ -105,6 +105,9 @@ struct BakeLight {
     crisp: bool,
     /// How much the angle light strikes at counts, from 0 to 1 (proposal 0098).
     angle_scale: f64,
+    /// How much of what it lights bounces on, where 1 is what any light's does, as an engine's
+    /// indirect multiplier is (proposal 0153).
+    bounce: f64,
 }
 
 /// A see-through surface that colours light passing through it.
@@ -192,6 +195,9 @@ struct SkyLight {
     /// Directions over a half of a sphere round +z, as many towards each part as light from there
     /// lights what faces +z.
     rays: Vec<Point>,
+    /// How much of what's blocked gets through all the same, from 0 to 1, so that what sees no
+    /// sky isn't black unless that's wanted, as Unreal's skylight leaking is (proposal 0153).
+    leak: f64,
 }
 
 /// How much of what a sun gives the sky gives, unless a level says.
@@ -209,7 +215,7 @@ const fn sky_rays(level: BakeLevel) -> usize {
 impl SkyLight {
     /// The sky's light of a level with `sky`, `strength` bright, with `count` rays, if it gives
     /// any.
-    fn new(sky: &engine_map::Sky, strength: f64, count: usize) -> Option<Self> {
+    fn new(sky: &engine_map::Sky, (strength, leak): (f64, f64), count: usize) -> Option<Self> {
         if strength <= 0.0 || count == 0 {
             return None;
         }
@@ -242,6 +248,7 @@ impl SkyLight {
             zenith: zenith.map(|part| part / bright),
             horizon: horizon.map(|part| part / bright),
             rays,
+            leak: leak.clamp(0.0, 1.0),
         })
     }
 
@@ -278,13 +285,15 @@ fn sky_at(scene: &Scene<'_>, point: Point, normal: Point) -> [f64; 3] {
         }
         let reach = (scene.top + 64.0 - start[2]) / toward[2].max(1e-3);
         let target = add_scaled(start, toward, reach.clamp(64.0, SUN_DISTANCE));
-        if shadowed(scene, start, target) {
-            continue;
-        }
-        let tint = through_glass(scene, start, target);
         let color = sky.color(toward[2]);
+        let through = if shadowed(scene, start, target) {
+            [0.0; 3]
+        } else {
+            through_glass(scene, start, target)
+        };
         for part in 0..3 {
-            total[part] += color[part] * tint[part];
+            let got = through[part] + (1.0 - through[part]) * sky.leak;
+            total[part] += color[part] * got;
         }
     }
     #[expect(clippy::cast_precision_loss, reason = "a few rays")]
@@ -877,6 +886,7 @@ fn read_lights(
                 .number("angle_scale")
                 .unwrap_or(DEFAULT_ANGLE_SCALE)
                 .clamp(0.0, 1.0),
+            bounce: entity.number("bounce").unwrap_or(1.0).max(0.0),
         };
         let keyframes = entity
             .fields
@@ -981,6 +991,8 @@ struct FaceBake {
     normal: Point,
     /// The face's average colour, for what it bounces.
     albedo: [f64; 3],
+    /// How much of the lamps' light on it bounces on: their shares, by how much each gives it.
+    bounce_share: f64,
     /// How much surface it has.
     area: f64,
     /// How far each sample is from the edge of each crisp shadow, by its style.
@@ -1395,6 +1407,17 @@ struct FaceShare<'a> {
     energy: f64,
 }
 
+/// How much of the light of lamps, each with how much it gives, bounces on: their shares, each by
+/// how much it gives. The sun's isn't one of them, as what it bounces is apart.
+fn bounce_share_of<'a>(lights: impl Iterator<Item = (&'a BakeLight, f64)>) -> f64 {
+    let (mut shared, mut all) = (0.0, 0.0);
+    for (light, energy) in lights.filter(|(light, _)| !light.sun) {
+        shared += energy * light.bounce;
+        all += energy;
+    }
+    if all > 0.0 { shared / all } else { 1.0 }
+}
+
 /// How much light is in `color`.
 fn energy_of(color: [f64; 3]) -> f64 {
     color[0] + color[1] + color[2]
@@ -1595,6 +1618,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
             lights.push(found);
         }
     }
+    let bounce_share = bounce_share_of(lights.iter().map(|share| (share.source, share.energy)));
     let (layers, directions, crisp) = fit_layers(scene, lights, &lifted, normal);
     let edges = crisp
         .iter()
@@ -1615,6 +1639,7 @@ fn bake_face(scene: &Scene<'_>, map: &Map, face: &Face, spacing: f64) -> Option<
         points,
         normal,
         albedo: albedo_of(map, face),
+        bounce_share,
         area: face_area(map, face),
         edges,
         sharp,
@@ -1651,6 +1676,7 @@ fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Opt
     let count = chart.spots.len();
     let mut layers: Vec<(u8, Vec<[f64; 3]>)> = Vec::new();
     let mut directions = vec![[0.0; 3]; count];
+    let mut given = Vec::new();
     for source in scene.lights {
         let at = match layers.iter().position(|(known, _)| *known == source.style) {
             Some(at) => at,
@@ -1660,12 +1686,14 @@ fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Opt
             }
             None => continue,
         };
+        let mut from_it = 0.0;
         for (index, spot) in chart.spots.iter().enumerate() {
             let (color, direction) = match chart.probe_reach {
                 Some(reach) => all_round(scene, source, spot.point, reach),
                 None => light_on(scene, source, spot.point, spot.normal, true),
             };
             let energy = color[0] + color[1] + color[2];
+            from_it += energy;
             if energy > 0.0 {
                 let sample = &mut layers[at].1[index];
                 for part in 0..3 {
@@ -1674,6 +1702,7 @@ fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Opt
                 directions[index] = add_scaled(directions[index], direction, energy);
             }
         }
+        given.push((source, from_it));
     }
     #[expect(
         clippy::cast_possible_truncation,
@@ -1683,6 +1712,7 @@ fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Opt
     let texels_per_sample = chart.spacing as u32;
     #[expect(clippy::cast_possible_wrap, reason = "there aren't that many charts")]
     let own_grid = number as i64;
+    let bounce_share = bounce_share_of(given.into_iter());
     Some(FaceBake {
         fine: false,
         layers,
@@ -1705,6 +1735,7 @@ fn bake_chart(scene: &Scene<'_>, map: &Map, chart: &Chart, number: usize) -> Opt
             .collect(),
         normal: chart.normal,
         albedo: albedo_of(map, first),
+        bounce_share,
         area: chart.area,
         edges: Vec::new(),
         sharp: Vec::new(),
@@ -2158,8 +2189,14 @@ fn bounce_sources(
                 if edge.is_some_and(|edge| *edge < 128) {
                     continue;
                 }
+                // The sun's bounces whole, and the lamps' by their share.
+                let share = if *style == SUN_STYLE {
+                    1.0
+                } else {
+                    bake.bounce_share
+                };
                 for part in 0..3 {
-                    lit[part] += samples[index][part];
+                    lit[part] += samples[index][part] * share;
                 }
             }
             if lit[0] + lit[1] + lit[2] > 1.0 {
@@ -2639,7 +2676,8 @@ fn sky_light_of(
     let number = |key: &str| world.and_then(|world| world.number(key));
     let strength =
         number("sky_light").unwrap_or_else(|| number("sun_intensity").unwrap_or(0.0) * SKY_SHARE);
-    SkyLight::new(sky, strength, sky_rays(level))
+    let leak = number("sky_leak").unwrap_or(0.0);
+    SkyLight::new(sky, (strength, leak), sky_rays(level))
 }
 
 fn material_of<'a>(map: &'a Map, face: &Face) -> Option<&'a Material> {
@@ -2742,6 +2780,7 @@ pub fn bake_light_as(
                             .any(|(k, v)| k == "sun_crisp" && v.flag() == Some(true))
                     }),
                 angle_scale: 1.0,
+                bounce: 1.0,
             });
         }
     }

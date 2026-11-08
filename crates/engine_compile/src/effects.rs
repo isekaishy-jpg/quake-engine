@@ -108,6 +108,7 @@ pub(crate) fn build_live_light(entity: &EntitySource) -> Option<LiveLightSource>
         spot,
         spot_cosine: degrees.to_radians().cos(),
         shadows: entity.is_on("shadows"),
+        bounce: number_of(entity, "bounce", 1.0).max(0.0),
         path: entity.points("path").into_iter().map(stored).collect(),
         period: number_of(entity, "period", 0.0),
     })

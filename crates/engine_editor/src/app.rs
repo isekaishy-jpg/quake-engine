@@ -2797,6 +2797,7 @@ impl PlatformApp for Editor {
                     spot: light.spot,
                     spot_cosine: light.spot_cosine,
                     shadows: light.shadows,
+                    bounce: light.bounce,
                 })
                 .take(MAX_LIVE_LIGHTS)
                 .collect()

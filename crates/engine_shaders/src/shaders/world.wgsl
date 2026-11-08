@@ -11,6 +11,8 @@
 @group(0) @binding(8) var sun_shadows: texture_depth_2d;
 // How open pixels are to light from all round, and how far they are, at half the size.
 @group(0) @binding(9) var corner_shade: texture_2d<f32>;
+// What live lights bounce, at the probes, in slices stacked down it as the probes are.
+@group(0) @binding(10) var live_bounce: texture_2d<f32>;
 @group(1) @binding(0) var surface: texture_2d<f32>;
 @group(1) @binding(1) var surface_sampler: sampler;
 
@@ -658,6 +660,29 @@ fn shaded_layer(in: VertexOut, slot: f32, style: u32, open: f32) -> vec3<f32> {
     return layer(in, slot, style) * open;
 }
 
+// What live lights bounce, at `point`, from the probes round it (proposal 0153).
+fn bounce_at(point: vec3<f32>) -> vec3<f32> {
+    // With no probes, their grid is no size, and what's read is black; this saves reading it.
+    if frame.probe_size.x < 0.5 {
+        return vec3<f32>(0.0);
+    }
+    let size = frame.probe_size.xyz;
+    let local = clamp(
+        (point - frame.probe_origin.xyz) / frame.probe_origin.w,
+        vec3<f32>(0.0),
+        size - vec3<f32>(1.0),
+    );
+    let low = floor(local.z);
+    let high = min(low + 1.0, size.z - 1.0);
+    let across = (local.x + 0.5) / size.x;
+    let rows = size.y * size.z;
+    let first = vec2<f32>(across, (low * size.y + local.y + 0.5) / rows);
+    let second = vec2<f32>(across, (high * size.y + local.y + 0.5) / rows);
+    let below = textureSampleLevel(live_bounce, lightmap_sampler, first, 0.0).rgb;
+    let above = textureSampleLevel(live_bounce, lightmap_sampler, second, 0.0).rgb;
+    return mix(below, above, local.z - low);
+}
+
 fn light(in: VertexOut) -> vec3<f32> {
     let open = openness(in.clip.xy, in.world);
     var baked = vec3<f32>(in.light_uv, in.light_step) * open;
@@ -671,7 +696,8 @@ fn light(in: VertexOut) -> vec3<f32> {
         + select(sun_on(in.world, in.normal.xyz), arc_sun(in), on_arc());
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
-    let lit = shaded + moving + frame.day_light.rgb * open;
+    // What live lights bounce is light from all round, which corners darken.
+    let lit = shaded + moving + (frame.day_light.rgb + bounce_at(in.world)) * open;
     var doubled = 2.0 * max(lit, vec3<f32>(0.0));
     if frame.baked.y > 0.0 {
         doubled = keep_hue(doubled, frame.baked.y);
