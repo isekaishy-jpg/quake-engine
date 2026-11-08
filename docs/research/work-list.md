@@ -21,7 +21,7 @@ The human's word, 2026-11-06: take every item through the whole workflow, with n
 | 9. Shaders | 13, 14 |
 | 10. Effects | 78 to 97, 16, 9 |
 | 11. Fog and water | 70 to 76, 17, 98 to 102 |
-| 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168 |
+| 12. Sky and light | 62, 63, 64, 69, 164, 65, 163, 66, 67, 68, 165 to 168, then 172 to 177 |
 | 12b. Land that's whole | 171, then 169 and 170 in the tools, and the editor's part of them in stage 15 |
 | 13. Sound | 103 to 123, 23 |
 | 14. Smaller limits | 24, 25 |
@@ -294,6 +294,12 @@ Added by the human, 2026-11-07. Scenes are drawn in 16 bit floats with an exposu
 | 166 | Bloom, so that what's bright glows, the sun among them. There's none | 164 |
 | 167 | HDR all the way through. Find what cuts brightness off before the final pass, and take away what needn't: light on a surface stops at 2, and research how baked light is stored | 164 |
 | 168 | HDR out to a screen that has it. What's sent today is 8 bits a colour. Research what it takes, and what happens on a screen that hasn't | 164, 167 |
+| 172 | Anti-aliasing that's on. Edges step in every picture, as what's there is all off unless a player turns it on: several samples a pixel (`r_msaa`), a quick blend (`r_aa 1`) and SMAA (`r_aa 2`). Research what each costs here and how each looks, choose what's on by default, and put them in the options with names a player knows. The human, 2026-11-07: the geometry has a lot of aliasing, and the tools to deal with it should all be there | |
+| 173 | Temporal anti-aliasing: the view shifted a little each frame and blended over frames, by how things moved, so that thin things and shimmer settle. Research ghosting on what moves, what moves needs to say how it moved, and how it sits with the noise the rays, fog and SSAO passes lean on to blur | 172 |
+| 174 | Shading that shimmers: highlights and bumps that sparkle as they shrink with distance. Research what's done, such as taking a bump's spread into its roughness, and what textures' mips and filtering need | 172 |
+| 175 | Cut-out edges: fences, grates and leaves step and crawl, as several samples a pixel don't smooth what's cut out. Research alpha to coverage, and keeping how much is covered through mips | 172 |
+| 176 | Drawing at another size: above the screen's, for pictures and strong cards, and below with upscaling for weak ones. Research what upscaling there is to use, and how it goes with item 173 | 173 |
+| 177 | Thin things that fall between pixels, such as wires, poles and far edges, which the rest may not help. Research what does, once 172 to 176 are in | 173, 174, 175 |
 
 ## Unfinished work in the real levels
 
@@ -462,3 +468,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 65: 50eb81b
 - Items 66 and 67: 3551b08
 - Item 163: 09aef88
+- Item 68: 075183f

@@ -56,6 +56,8 @@ pub(crate) struct Picture {
     sky_ray_floor: Option<SkyRayFloor>,
     /// What a day does to it.
     day: DayNow,
+    /// How far exposure can go by itself where the view is, if a zone says.
+    exposure_range: Option<[f32; 2]>,
     /// Characters shading the light.
     capsules: Vec<CapsuleDraw>,
     /// Lights worked out this frame.
@@ -189,6 +191,7 @@ impl Picture {
             sun_tint: self.day.sun_tint,
             sun: self.day.sun,
             sun_arc: self.day.sun_arc,
+            exposure_range: self.exposure_range,
             sun_toward: self.day.toward,
             sky_now: self.day.sky.as_ref(),
             fog_color: self.day.fog,
@@ -717,6 +720,7 @@ impl World {
             }),
             capsules,
             live_lights: moving,
+            exposure_range: self.zones.exposure_range(),
         }
     }
 }

@@ -1168,6 +1168,26 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
     return vec4<f32>(fog.rgb + color * (3.0 - through * 2.0), fog.w);
 }
 
+// How bright each of a few cells of the scene is on average, as a power of two, for exposure to
+// go by. Each looks at a few points across its cell.
+@fragment
+fn fs_meter(in: PostOut) -> @location(0) vec4<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let cells = 16.0;
+    let cell = floor(in.uv * cells);
+    var total = 0.0;
+    for (var y = 0; y < 4; y = y + 1) {
+        for (var x = 0; x < 4; x = x + 1) {
+            let within = (vec2<f32>(f32(x), f32(y)) + vec2<f32>(0.5)) / 4.0;
+            let uv = (cell + within) / cells;
+            let color = load_color(vec2<i32>(uv * size));
+            let bright = dot(color, vec3<f32>(0.2126, 0.7152, 0.0722));
+            total = total + log2(max(bright, 0.0001));
+        }
+    }
+    return vec4<f32>(total / 16.0, 0.0, 0.0, 1.0);
+}
+
 // How open each pixel is to light from all round, and how far it is from the eye, worked out
 // from depth before anything's shaded, at half the size each way. Surfaces read it.
 @fragment

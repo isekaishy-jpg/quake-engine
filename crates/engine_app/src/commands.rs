@@ -41,6 +41,7 @@ pub(crate) fn register(console: &mut Console<World>) {
     console.register("unbindall", unbindall);
     console.register("screenshot", screenshot);
     console.register("gpu_times", gpu_times);
+    console.register("exposure", exposure);
     console.register("setpos", setpos);
     console.register("sun_toward", sun_toward);
     console.register("time_of_day", time_of_day);
@@ -737,6 +738,21 @@ fn gpu_times(console: &mut Console<World>, world: &mut World, args: &Args) {
         times.deform,
         times.models
     ));
+}
+
+/// `exposure`: how bright what's seen is, and how far exposure has gone by itself, to tune a
+/// level's range by.
+fn exposure(console: &mut Console<World>, world: &mut World, _args: &Args) {
+    let Some(renderer) = &world.renderer else {
+        console.print("no renderer");
+        return;
+    };
+    match renderer.exposure() {
+        (Some(brightness), stops) => console.print(format!(
+            "what's seen is 2^{brightness:.2} bright, and exposure's gone {stops:+.2} stops"
+        )),
+        (None, _) => console.print("exposure isn't going by itself here"),
+    }
 }
 
 /// `setpos x y z [yaw pitch]`: moves the player, through the server.

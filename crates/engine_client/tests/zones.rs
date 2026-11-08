@@ -141,3 +141,26 @@ fn leaving_for_nowhere_leaves_the_music_and_stops_the_sound() {
     assert_eq!(change.music, None);
     assert_eq!(change.sound, Some(None));
 }
+
+/// How far exposure goes by itself is a zone's where it says, or what's round it says, and the
+/// level's elsewhere.
+#[test]
+fn exposure_goes_as_far_as_the_zone_says() {
+    let mut map = town();
+    map.zones[0].exposure_range = Some([0.0, 2.0]);
+    map.zones[1].exposure_range = Some([-1.0, 0.5]);
+    let mut zones = ZoneTracker::default();
+    let _start = zones.update(&map, OUTSIDE, 0.1);
+    assert_eq!(zones.exposure_range(), None);
+    let _in = zones.update(&map, IN_TOWN, 0.1);
+    assert_eq!(zones.exposure_range(), Some([0.0, 2.0]));
+    let _market = zones.update(&map, IN_MARKET, 0.1);
+    assert_eq!(zones.exposure_range(), Some([-1.0, 0.5]));
+    map.zones[1].exposure_range = None;
+    let _again = zones.update(&map, IN_MARKET, 0.1);
+    assert_eq!(
+        zones.exposure_range(),
+        Some([0.0, 2.0]),
+        "from the town round it"
+    );
+}

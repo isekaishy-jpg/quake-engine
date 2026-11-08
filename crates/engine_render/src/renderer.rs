@@ -134,6 +134,9 @@ pub struct Drawables<'a> {
     pub sun_tint: Option<[f32; 3]>,
     /// A sun that isn't baked, which lights and shades as it goes. At night it's the moon.
     pub sun: Option<SunDraw>,
+    /// How far exposure can go by itself, down and up in stops, in place of the level's, as a
+    /// zone says.
+    pub exposure_range: Option<[f32; 2]>,
     /// Where along its arc that sun is, if its shadows were baked along one. Then they're read
     /// from its layer of baked light, and none are drawn.
     pub sun_arc: Option<f32>,
@@ -234,6 +237,8 @@ pub struct PostSettings {
     pub fog_grid: bool,
     /// Corners and creases darkened: 0 for none, 1 for some looks round each, 2 for more.
     pub ssao: u8,
+    /// Whether exposure goes by itself, as far as a level lets it.
+    pub auto_exposure: bool,
 }
 
 /// How surfaces are filtered.
@@ -549,6 +554,13 @@ impl Renderer {
     /// Starts or stops timing what the GPU does. Says if it can.
     pub fn time_gpu(&mut self, on: bool) -> bool {
         self.backend.time_gpu(on)
+    }
+
+    /// How bright the last scene measured was, as a power of two, and how far exposure has gone
+    /// by itself, in stops. Nothing's measured unless exposure's going by itself.
+    #[must_use]
+    pub fn exposure(&self) -> (Option<f32>, f32) {
+        self.backend.exposure()
     }
 
     /// What the GPU took, on average, since this was last asked.

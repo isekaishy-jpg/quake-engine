@@ -11,7 +11,7 @@ use engine_map::{
     AttachPoint, ClipChild, ClipNode, Contents, DayCycle, Entity, Face, LandPicture, Leaf, Look,
     Map, MeshGroup, MeshInstance, Model, ModelOccluder, MovingMesh, NO_WATER, Node, NodeChild,
     OccluderSphere, Plane, Pool, PoolLook, SunArc, SunMode, TerrainSheet, TexelAxis, Texture,
-    TextureKind, ToneCurve, Tree, WaterOverlay, WaterSheet, Zone, ZonePlane,
+    TextureKind, ToneCurve, Tree, USUAL_EXPOSURE_SPEED, WaterOverlay, WaterSheet, Zone, ZonePlane,
 };
 
 use crate::cells::{DEFAULT_CELL, cut_cells};
@@ -92,6 +92,7 @@ fn read_zone(entity: &EntitySource) -> Zone {
         music,
         sound: text("sound"),
         light: light.or(brightness),
+        exposure_range: exposure_range_of(entity.field("exposure_range")),
         light_set: text("light_set"),
         #[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
         light_blend: entity
@@ -99,6 +100,23 @@ fn read_zone(entity: &EntitySource) -> Zone {
             .map_or(ZONE_LIGHT_BLEND, |far| far as f32),
     }
 }
+
+/// How far exposure can go, down and up in stops, from a field of two numbers, held to what makes
+/// sense: the first no higher than 0, the second no lower, and neither past [`MOST_EXPOSURE`].
+#[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+fn exposure_range_of(value: Option<&Value>) -> Option<[f32; 2]> {
+    let numbers = value?.numbers()?;
+    let [down, up] = numbers.as_slice() else {
+        return None;
+    };
+    Some([
+        (*down as f32).clamp(-MOST_EXPOSURE, 0.0),
+        (*up as f32).clamp(0.0, MOST_EXPOSURE),
+    ])
+}
+
+/// The most stops exposure can go by itself either way.
+const MOST_EXPOSURE: f32 = 8.0;
 
 /// How far into a zone it takes for its set of light to be all there is, unless it says.
 const ZONE_LIGHT_BLEND: f32 = 256.0;
@@ -1691,7 +1709,22 @@ fn look_of(working: &WorkingMap) -> Result<Look, CompileError> {
         // A level made for this engine has some, and what's carried over from the fixture none.
         ssao: field("ssao").unwrap_or(LEVEL_SSAO).clamp(0.0, 1.0),
         ssao_radius: field("ssao_radius").unwrap_or(usual.ssao_radius).max(1.0),
+        // Levels are built by eye on what they show, so one only adjusts if it says.
+        exposure_range: exposure_range_of(world.and_then(|world| world.field("exposure_range")))
+            .unwrap_or(usual.exposure_range),
+        exposure_speed: exposure_speed_of(world.and_then(|world| world.field("exposure_speed"))),
     })
+}
+
+/// How fast exposure goes by itself, from a field of two numbers, into light and into the dark,
+/// in stops a second.
+#[expect(clippy::cast_possible_truncation, reason = "stored as f32")]
+fn exposure_speed_of(value: Option<&Value>) -> [f32; 2] {
+    let numbers = value.and_then(Value::numbers).unwrap_or_default();
+    match numbers.as_slice() {
+        [light, dark] => [(*light as f32).max(0.01), (*dark as f32).max(0.01)],
+        _ => USUAL_EXPOSURE_SPEED,
+    }
 }
 
 /// A built map, with what has no picture hidden.

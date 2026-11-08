@@ -1,6 +1,6 @@
 # Proposal 0150: light on screen
 
-Status: accepted for items 164 and 163, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 164, 163 and 165, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -53,6 +53,19 @@ Baked light here is a sample every 16 units, so it has soft corners at that size
 - **Depth is drawn first, and how open each pixel is worked out from it,** and then surfaces are shaded with it. That puts what's open into the shading, so only light from all round is darkened: baked light and a day's. A sun's own layer, a live sun and moving lights aren't. Neither is fog.
 - **Both choose.** A level says how much and how far round, as `ssao` and `ssao_radius`, and a player says how much they'll spend, with `r_ssao`.
 
+## Exposure that goes by itself (165)
+
+### How others do it
+
+Unreal and Unity measure how bright a scene is from the average of its brightness as powers of two, from a histogram or straight, and leave out the darkest and brightest few percent so that a lamp or a black corner doesn't sway it. Unreal can weight the middle of the view more, as that's where a player looks, and says that steadies it. The average is taken as middle grey, held between a least and a most an author sets, and exposure goes there at so many stops a second, with one speed into light and another into the dark. Unreal's volumes set all of it in places, and setting the least and most the same turns it off.
+
+### What changes
+
+- **The scene's measured** in 16 cells each way, each the average of its brightness as a power of two at 16 points, and read back once its frame's done. The cells near the middle count most, and the darkest and brightest tenth are left out.
+- **Exposure goes towards middle grey,** as far as the level's `exposure_range` lets it, down and up in stops from its `exposure`, at `exposure_speed`: 3 stops a second into light and 1 into the dark unless it says. A level starts where it should be, and so does a long gap.
+- **It's the author's.** Levels are built by eye on what they show, so one adjusts only if it says how far. A zone can say how far in it, in place of the level's, and a zone's light still multiplies after, so a zone that darkens stays darker. A player can turn it off with `r_exposure_auto 0`.
+- **`exposure` at the console** says how bright what's seen is and how far it's gone, to tune a range by.
+
 ## What came of it
 
 ### A tone curve (164)
@@ -71,6 +84,14 @@ Baked light here is a sample every 16 units, so it has soft corners at that size
 - **The normal is from the nearer side** each way. From one side only, a pixel at an edge took the slope across to what's behind it.
 - **What wasn't seen isn't darkened.** What's kept is how open a pixel is and how far it is, and a surface reads only what's as far as it is, so what's see-through doesn't take the shade of what's behind it, and none bleeds across an edge.
 
+### Exposure that goes by itself (165)
+
+- **Tried in the game:** a yard at noon measures 2^-2.46, almost exactly middle grey, so it stays as it is. A closed shed measures 2^-7.85 and goes up the whole 2 stops, and reads clearly. Stepping out, exposure comes down in about two thirds of a second, and stepping back in it takes two. At night it goes up as far as it's let, and the night's lighter but still a night.
+- **At first every level adjusted.** Vesper Deep's start looks out of a dark doorway, which measures 2^-7.4, and the whole level came out two stops brighter than it was built. So a level only adjusts if it says how far, as the tone curve leaves levels as they were built.
+- **What it costs:** too little to show. It's 256 pixels and a copy of a kilobyte, read a frame or two late, and in the yard the scene took 2.0 to 2.1 ms with it on and with it off.
+- **What's measured is the scene,** before fog and what's drawn in the final pass, and before a zone's light, so a zone isn't undone.
+- **A setting a player saves** carries over to the next run, which made a level look as if it ignored its range while trying it.
+
 ## Sources
 
 - [PBR Neutral, Khronos](https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/README.md)
@@ -83,4 +104,8 @@ Baked light here is a sample every 16 units, so it has soft corners at that size
 - [SSAO, HBAO+ and XeGTAO compared, Steam discussion](https://steamcommunity.com/app/2215430/discussions/0/7093810350790445377)
 - [Do you apply SSAO to the whole image or to ambient only, GameDev.net](https://www.gamedev.net/forums/topic/653661-do-you-apply-ssao-to-rendered-image-or-to-ambient-light-term-only/)
 - [SSAO, Unity URP](https://docs.unity3d.com/Manual/urp/ssao-renderer-feature-reference.html)
+- [Automatic exposure, Unreal Engine 4.27](https://docs.unrealengine.com/4.27/RenderingAndGraphics/PostProcessEffects/AutomaticExposure)
+- [Auto exposure in Unreal Engine](https://dev.epicgames.com/documentation/en-us/unreal-engine/auto-exposure-in-unreal-engine)
+- [Auto exposure, Unity post processing](https://docs.unity3d.com/Packages/com.unity.postprocessing@3.4/manual/Auto-Exposure.html)
+- [Tweaking automatic exposure in Unreal, Versluis](https://www.versluis.com/2020/03/how-to-tweak-automatic-exposure-control-in-unreal-engine/)
 - [Ambient occlusion and baked light, Godot forum](https://forum.godotengine.org/t/global-ambient-light-levels/138068)

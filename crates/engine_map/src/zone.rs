@@ -38,6 +38,8 @@ pub struct Zone {
     pub light_blend: f32,
     /// How much light reaches the eye in it, as a share of each colour.
     pub light: Option<[f32; 3]>,
+    /// How far exposure can go by itself in it, down and up in stops, in place of the level's.
+    pub exposure_range: Option<[f32; 2]>,
 }
 
 impl Zone {
@@ -108,6 +110,8 @@ pub struct ZoneSettings {
     pub sound: Option<String>,
     /// How much light reaches the eye.
     pub light: Option<[f32; 3]>,
+    /// How far exposure can go by itself.
+    pub exposure_range: Option<[f32; 2]>,
 }
 
 impl Map {
@@ -119,6 +123,7 @@ impl Map {
             out.music = out.music.or_else(|| found.music.clone());
             out.sound = out.sound.or_else(|| found.sound.clone());
             out.light = out.light.or(found.light);
+            out.exposure_range = out.exposure_range.or(found.exposure_range);
         }
         out
     }

@@ -148,6 +148,8 @@ entity world {
 | `tone` | How what's too bright comes down, below |
 | `ssao` | How much corners and creases darken, from 0 for none to 1. 0.6 unless a level says. What's carried over from the fixture has none |
 | `ssao_radius` | How far round a point that looks, in world units. 32 unless it says |
+| `exposure_range` | How far exposure goes by itself, down and up in stops from `exposure`, as eyes do going from the dark into the sun: `exposure_range = -1 2`. None unless it says, as levels are built by eye |
+| `exposure_speed` | How fast it goes, in stops a second, into light and then into the dark. `3 1` unless it says |
 
 | `tone` | Means |
 |---|---|
@@ -162,4 +164,8 @@ Darkening in corners is on light that comes from all round: baked light, and the
 It's worked out from what's solid before anything's shaded. What's see-through, cut out, or moved by its shader isn't in that, so it isn't darkened, and nor are models, which have their capsules' shade.
 
 A player sets `r_ssao` to 0 for none, 1 for some, which is the usual, or 2 for more and smoother.
+
+### Exposure that goes by itself
+
+What's seen is measured, the middle of the view most, leaving out the darkest and brightest tenth, and exposure goes towards middle grey as far as `exposure_range` lets it. A level starts where it should be. A zone can have its own `exposure_range`, and its light still multiplies after. `exposure` at the console says how bright what's seen is and how far exposure's gone, to tune a range by. A player can turn it off with `r_exposure_auto 0`.
 

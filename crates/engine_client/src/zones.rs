@@ -28,6 +28,8 @@ pub struct ZoneTracker {
     sound: Option<String>,
     /// The light as it is.
     light: [f32; 3],
+    /// How far exposure can go by itself where they are, if a zone says.
+    exposure_range: Option<[f32; 2]>,
     /// Whether anything's been looked at yet.
     started: bool,
 }
@@ -39,6 +41,7 @@ impl Default for ZoneTracker {
             music: None,
             sound: None,
             light: [1.0; 3],
+            exposure_range: None,
             started: false,
         }
     }
@@ -55,6 +58,13 @@ impl ZoneTracker {
     #[must_use]
     pub const fn light(&self) -> [f32; 3] {
         self.light
+    }
+
+    /// How far exposure can go by itself where they are, down and up in stops, if a zone says.
+    /// It goes there at its own speed.
+    #[must_use]
+    pub const fn exposure_range(&self) -> Option<[f32; 2]> {
+        self.exposure_range
     }
 
     /// Follows someone to `point`, `seconds` on. Returns what's changed, if they
@@ -75,6 +85,9 @@ impl ZoneTracker {
         for (light, target) in self.light.iter_mut().zip(wanted) {
             *light += (target - *light) * share;
         }
+        self.exposure_range = settings
+            .as_ref()
+            .and_then(|settings| settings.exposure_range);
         if self.started && zone == self.zone {
             return None;
         }

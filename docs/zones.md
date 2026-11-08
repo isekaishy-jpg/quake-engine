@@ -31,6 +31,7 @@ The brushes are the zone's shape, as many as it takes. They're never seen or tou
 | `priority` | What wins where zones overlap. Without it, the smaller does |
 | `light_set` | A [set of light](sky.md#sets-of-light) of its own, for a day |
 | `light_blend` | How far in it takes for that to be all there is, 256 unless it says |
+| `exposure_range` | How far [exposure goes by itself](sky.md#exposure-that-goes-by-itself) in it, down and up in stops, in place of the level's |
 
 A sub zone is a zone inside another. Going in shows its title, and coming back out to the zone round it doesn't show that zone's again. What a sub zone doesn't set comes from its parent. Going from a zone to nowhere leaves its music playing, and light goes back to as it was, over a second and a half.
 

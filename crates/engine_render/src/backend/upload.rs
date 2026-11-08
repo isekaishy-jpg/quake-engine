@@ -16,6 +16,7 @@ use vulkane::safe::{
     MemoryPropertyFlags, PhysicalDevice, PipelineStage,
 };
 
+use super::exposure::Exposure;
 use super::ripple::GpuRipples;
 use super::shadow::{SUN_CASCADES, ShadowRange, SunShadow, shadow_figures};
 use super::{
@@ -305,6 +306,8 @@ pub(super) struct FrameExtras<'a> {
     capsules: &'a [CapsuleDraw],
     /// How the map's light comes out.
     look: Look,
+    /// What exposure that goes by itself multiplies light by.
+    exposure_scale: f32,
     /// What a zone does to the light.
     light_shift: [f32; 3],
     /// Bodies of liquid.
@@ -461,7 +464,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
         out[base + 11] = f32::from(u8::from(post.fog_grid));
     }
     out[base + 12] = extra.look.light_curve;
-    out[base + 13] = extra.look.exposure;
+    out[base + 13] = extra.look.exposure * extra.exposure_scale;
     out[base + 14] = match extra.look.tone {
         ToneCurve::Hold => 0.0,
         ToneCurve::Neutral => 1.0,
@@ -850,6 +853,9 @@ impl Backend {
         self.wait_for_frame()?;
         self.device.wait_idle()?;
         self.map = None;
+        // A new level starts where its own exposure should be.
+        self.exposure = Exposure::default();
+        self.brightness = None;
         self.tile_writes.borrow_mut().clear();
         let mut vertex_bytes = Vec::with_capacity(mesh.vertices.len() * Vertex::SIZE);
         for vertex in &mesh.vertices {
@@ -1530,7 +1536,25 @@ impl Backend {
             samples: self.samples,
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
+            exposure_scale: 1.0,
             light_shift: view.light_shift,
+        };
+        // Exposure goes by itself as far as a zone, or else the level, lets it, from how bright
+        // what was last measured was.
+        let range = scene
+            .and_then(|scene| scene.drawables.exposure_range)
+            .unwrap_or(extra.look.exposure_range);
+        self.metering = self.post.auto_exposure && scene.is_some() && range != [0.0; 2];
+        if self.metering {
+            let speed = extra.look.exposure_speed;
+            self.exposure.step(self.brightness, range, speed, view.time);
+        } else {
+            self.exposure = Exposure::default();
+            self.brightness = None;
+        }
+        let extra = FrameExtras {
+            exposure_scale: self.exposure.scale(),
+            ..extra
         };
         self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());
         self.ssao_shown = self.post.ssao != 0 && extra.look.ssao > 0.0;

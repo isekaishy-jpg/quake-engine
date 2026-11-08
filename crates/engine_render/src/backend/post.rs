@@ -418,6 +418,14 @@ impl Backend {
             "fs_rays",
             "",
         )?;
+        self.meter_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.meter_pass,
+            samples,
+            "fs_meter",
+            "",
+        )?;
         self.corner_pipeline = Self::make_post_pipeline(
             &self.device,
             &self.post_layout,

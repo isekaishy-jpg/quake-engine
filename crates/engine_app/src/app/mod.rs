@@ -616,6 +616,7 @@ impl Engine {
         console.register_cvar("r_effect_budget", "8192", saved);
         console.register_cvar("r_live_shadows", "1", saved);
         console.register_cvar("r_ssao", "1", saved);
+        console.register_cvar("r_exposure_auto", "1", saved);
         console.register_cvar("r_msaa", "1", saved);
         console.register_cvar("r_edges", "0", saved);
         console.register_cvar("r_outline_hull", "0", saved);
@@ -812,6 +813,7 @@ impl Engine {
             outline_hull: self.cvar_number("r_outline_hull") != 0.0,
             fog_grid: self.cvar_number("r_fog_grid") != 0.0,
             ssao: self.cvar_number("r_ssao").clamp(0.0, 2.0) as u8,
+            auto_exposure: self.cvar_number("r_exposure_auto") != 0.0,
         };
         #[expect(
             clippy::cast_possible_truncation,

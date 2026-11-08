@@ -558,7 +558,17 @@ pub struct Look {
     pub ssao: f32,
     /// How far that looks round a point, in world units.
     pub ssao_radius: f32,
+    /// How far exposure can go by itself, down and up, in stops from `exposure`, as eyes do in
+    /// the dark and the light. Both 0 is none.
+    pub exposure_range: [f32; 2],
+    /// How fast it goes, in stops a second: into light, then into the dark, which eyes are slower
+    /// at.
+    pub exposure_speed: [f32; 2],
 }
+
+/// How fast exposure goes by itself unless a level says, in stops a second: into light, then into
+/// the dark.
+pub const USUAL_EXPOSURE_SPEED: [f32; 2] = [3.0, 1.0];
 
 impl Default for Look {
     fn default() -> Self {
@@ -568,6 +578,8 @@ impl Default for Look {
             tone: ToneCurve::Hold,
             ssao: 0.0,
             ssao_radius: 32.0,
+            exposure_range: [0.0; 2],
+            exposure_speed: USUAL_EXPOSURE_SPEED,
         }
     }
 }

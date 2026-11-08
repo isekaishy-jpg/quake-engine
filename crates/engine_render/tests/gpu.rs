@@ -7831,3 +7831,240 @@ fn on_an_arc_no_shadows_are_drawn() {
         assert_eq!(darker(&arc_open, &arc_covered), 0, "on an arc");
     }
 }
+
+/// The square, lit as the level says, with exposure going by itself as far as `range`.
+fn exposed_square(range: [f32; 2]) -> Map {
+    let mut built = map(1);
+    built.look.exposure_range = range;
+    built
+}
+
+/// A renderer with `built` loaded and exposure going by itself if `auto`.
+fn exposing(built: Map, auto: bool) -> Option<Renderer> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        auto_exposure: auto,
+        ..PostSettings::default()
+    });
+    Some(renderer)
+}
+
+/// A frame from above at `time`, with the level's light at `light` of what it is, and `drawables`.
+fn exposed_frame(
+    renderer: &mut Renderer,
+    time: f32,
+    light: f32,
+    drawables: Drawables<'_>,
+) -> Capture {
+    let mut view = view_from_above();
+    view.time = time;
+    view.styles[0] = light;
+    renderer.capture(&view, drawables, 32, 32).expect("capture")
+}
+
+/// How far exposure's gone by itself.
+fn stops(renderer: &Renderer) -> f32 {
+    renderer.exposure().1
+}
+
+/// In the dark, exposure goes up, and in bright light down, as far as the level lets it.
+#[test]
+fn exposure_goes_by_itself_as_far_as_a_level_lets_it() {
+    let Some(mut renderer) = exposing(exposed_square([-1.0, 2.0]), true) else {
+        return;
+    };
+    for frame in 0..2 {
+        exposed_frame(
+            &mut renderer,
+            0.1 * frame as f32,
+            0.02,
+            Drawables::default(),
+        );
+    }
+    assert!(
+        (stops(&renderer) - 2.0).abs() < 1e-4,
+        "up: {}",
+        stops(&renderer)
+    );
+    let measured = renderer.exposure().0.expect("measured");
+    assert!(measured < -4.47, "dark: {measured}");
+    for frame in 2..40 {
+        exposed_frame(&mut renderer, 0.1 * frame as f32, 4.0, Drawables::default());
+    }
+    assert!(
+        (stops(&renderer) + 1.0).abs() < 1e-4,
+        "down: {}",
+        stops(&renderer)
+    );
+}
+
+/// It goes by degrees, faster into light than into the dark, as eyes do.
+#[test]
+fn exposure_goes_by_degrees() {
+    let Some(mut renderer) = exposing(exposed_square([-1.0, 2.0]), true) else {
+        return;
+    };
+    let frame = |renderer: &mut Renderer, time: f32, light: f32| {
+        exposed_frame(renderer, time, light, Drawables::default());
+    };
+    frame(&mut renderer, 0.0, 0.02);
+    frame(&mut renderer, 0.1, 0.02);
+    // The first bright frame goes by what was last measured, which was dark.
+    frame(&mut renderer, 0.2, 4.0);
+    frame(&mut renderer, 0.3, 4.0);
+    let into_light = stops(&renderer);
+    assert!(
+        (into_light - 1.7).abs() < 0.01,
+        "3 stops a second: {into_light}"
+    );
+    let mut time = 0.3;
+    for _ in 0..20 {
+        time += 0.1;
+        frame(&mut renderer, time, 4.0);
+    }
+    frame(&mut renderer, time + 0.1, 0.02);
+    frame(&mut renderer, time + 0.2, 0.02);
+    let into_dark = stops(&renderer);
+    assert!(
+        (into_dark + 0.9).abs() < 0.01,
+        "1 stop a second: {into_dark}"
+    );
+    // After a long gap, it's where it should be at once, which going by degrees wouldn't be.
+    frame(&mut renderer, time + 1.7, 0.02);
+    assert!(
+        (stops(&renderer) - 2.0).abs() < 1e-4,
+        "{}",
+        stops(&renderer)
+    );
+}
+
+/// What exposure's gone by itself shows: a dark square comes out brighter than with it off.
+#[test]
+fn exposure_that_goes_up_brightens_the_picture() {
+    let on = exposing(exposed_square([0.0, 2.0]), true);
+    let off = exposing(exposed_square([0.0, 2.0]), false);
+    let (Some(mut on), Some(mut off)) = (on, off) else {
+        return;
+    };
+    for frame in 0..3 {
+        let time = 0.1 * frame as f32;
+        exposed_frame(&mut on, time, 0.1, Drawables::default());
+        exposed_frame(&mut off, time, 0.1, Drawables::default());
+    }
+    let lit = centre(&exposed_frame(&mut on, 0.3, 0.1, Drawables::default()));
+    let dim = centre(&exposed_frame(&mut off, 0.3, 0.1, Drawables::default()));
+    assert!(lit[1] > dim[1] + 20, "{dim:?} {lit:?}");
+}
+
+/// It doesn't go at all unless a level says how far, or if a player's turned it off, and then
+/// the picture's as it was.
+#[test]
+fn exposure_stays_unless_a_level_and_a_player_want_it() {
+    let pictures = |built: Map, auto: bool| -> Option<(Capture, (Option<f32>, f32))> {
+        let mut renderer = exposing(built, auto)?;
+        for frame in 0..3 {
+            exposed_frame(
+                &mut renderer,
+                0.1 * frame as f32,
+                0.05,
+                Drawables::default(),
+            );
+        }
+        let shot = exposed_frame(&mut renderer, 0.3, 0.05, Drawables::default());
+        Some((shot, renderer.exposure()))
+    };
+    let still = pictures(exposed_square([0.0, 0.0]), true);
+    let player_off = pictures(exposed_square([-1.0, 2.0]), false);
+    let never = pictures(exposed_square([0.0, 0.0]), false);
+    if let (Some(still), Some(player_off), Some(never)) = (still, player_off, never) {
+        assert_eq!(still.1, (None, 0.0));
+        assert_eq!(player_off.1, (None, 0.0));
+        assert_eq!(centre(&still.0), centre(&never.0));
+        assert_eq!(centre(&player_off.0), centre(&never.0));
+    }
+}
+
+/// A zone's range goes in place of the level's.
+#[test]
+fn a_zone_says_how_far_exposure_goes_there() {
+    let Some(mut renderer) = exposing(exposed_square([-1.0, 2.0]), true) else {
+        return;
+    };
+    let drawables = Drawables {
+        exposure_range: Some([0.0, 0.5]),
+        ..Drawables::default()
+    };
+    for frame in 0..3 {
+        exposed_frame(&mut renderer, 0.1 * frame as f32, 0.02, drawables);
+    }
+    assert!(
+        (stops(&renderer) - 0.5).abs() < 1e-4,
+        "{}",
+        stops(&renderer)
+    );
+    // Where the level's off, a zone can still turn it on.
+    let Some(mut renderer) = exposing(exposed_square([0.0, 0.0]), true) else {
+        return;
+    };
+    for frame in 0..3 {
+        exposed_frame(&mut renderer, 0.1 * frame as f32, 0.02, drawables);
+    }
+    assert!(
+        (stops(&renderer) - 0.5).abs() < 1e-4,
+        "{}",
+        stops(&renderer)
+    );
+}
+
+/// A new level starts where its own exposure should be, not where the last one left it.
+#[test]
+fn a_new_level_starts_again() {
+    let Some(mut renderer) = exposing(exposed_square([-1.0, 2.0]), true) else {
+        return;
+    };
+    for frame in 0..3 {
+        exposed_frame(
+            &mut renderer,
+            0.1 * frame as f32,
+            0.02,
+            Drawables::default(),
+        );
+    }
+    assert!(stops(&renderer) > 1.9);
+    renderer
+        .load_map(Arc::new(exposed_square([-1.0, 2.0])))
+        .expect("load");
+    assert_eq!(renderer.exposure(), (None, 0.0));
+}
+
+/// A small bright thing in view, like a lamp, doesn't sway how bright the scene's taken to be.
+#[test]
+fn a_bright_spot_does_not_sway_exposure() {
+    let measured = |spot: bool| -> Option<f32> {
+        let mut renderer = exposing(exposed_square([-8.0, 8.0]), true)?;
+        let lamp = [LiveLight {
+            spot: Vec3::new(0.0, 0.0, -1.0),
+            spot_cosine: 0.975,
+            color: [400.0, 400.0, 400.0],
+            ..blue_light(Vec3::new(64.0, 64.0, 60.0), false)
+        }];
+        let drawables = Drawables {
+            live_lights: if spot { &lamp } else { &[] },
+            ..Drawables::default()
+        };
+        exposed_frame(&mut renderer, 0.0, 0.3, drawables);
+        let shot = exposed_frame(&mut renderer, 0.1, 0.3, drawables);
+        let bright = (0..32)
+            .flat_map(|y| (0..32).map(move |x| (x, y)))
+            .filter(|(x, y)| pixel(&shot, *x, *y)[0] == 255)
+            .count();
+        if spot {
+            assert!((20..=80).contains(&bright), "a small spot: {bright}");
+        }
+        renderer.exposure().0
+    };
+    if let (Some(plain), Some(spotted)) = (measured(false), measured(true)) {
+        assert!((plain - spotted).abs() < 0.1, "{plain} {spotted}");
+    }
+}

@@ -2,6 +2,7 @@
 
 mod clock;
 mod deform;
+mod exposure;
 mod field;
 mod pipeline_cache;
 mod pipelines;
@@ -590,6 +591,18 @@ pub(crate) struct Backend {
     ray_pass: RenderPass,
     /// Light in the air.
     ray_pipeline: GraphicsPipeline,
+    /// The pass how bright a scene is gets measured in.
+    meter_pass: RenderPass,
+    /// How bright a scene is.
+    meter_pipeline: GraphicsPipeline,
+    /// Where that's measured and read back.
+    meter: exposure::Meter,
+    /// How bright the last scene measured was, as a power of two.
+    brightness: Option<f32>,
+    /// How far exposure has got by itself.
+    exposure: exposure::Exposure,
+    /// Whether this frame measures how bright it is.
+    metering: bool,
     /// The pass corners are worked out in.
     corner_pass: RenderPass,
     /// How open each pixel is to light from all round.
@@ -1072,6 +1085,10 @@ impl Backend {
         let ray_pass = post::make_ray_pass(&device)?;
         let ray_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays", "")?;
+        let meter_pass = exposure::make_meter_pass(&device)?;
+        let meter_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &meter_pass, 1, "fs_meter", "")?;
+        let meter = exposure::Meter::new(&device, &physical, &meter_pass)?;
         let corner_pass = post::make_corner_pass(&device)?;
         let corner_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &corner_pass, 1, "fs_corners", "")?;
@@ -1114,6 +1131,12 @@ impl Backend {
             post_pipeline,
             ray_pass,
             ray_pipeline,
+            meter_pass,
+            meter_pipeline,
+            meter,
+            brightness: None,
+            exposure: exposure::Exposure::default(),
+            metering: false,
             corner_pass,
             corner_pipeline,
             smaa,
@@ -1194,11 +1217,20 @@ impl Backend {
             self.frame_done[slot].wait(u64::MAX)?;
             self.frame_done[slot].reset()?;
             self.in_flight[slot] = false;
-            self.clock.read(slot);
+            self.read_frame(slot);
         }
         self.commands[slot] = None;
         self.written_tiles[slot].borrow_mut().clear();
         Ok(())
+    }
+
+    /// Reads back what frame `slot` measured: what each part took, and how bright it was. It has
+    /// to have finished.
+    fn read_frame(&mut self, slot: usize) {
+        self.clock.read(slot);
+        if let Some(brightness) = self.meter.read(slot) {
+            self.brightness = Some(brightness);
+        }
     }
 
     /// Waits for every frame in flight.
@@ -1393,6 +1425,11 @@ impl Backend {
         self.clock.set_on(on)
     }
 
+    /// How bright the last scene measured was, and how far exposure has gone by itself.
+    pub(crate) fn exposure(&self) -> (Option<f32>, f32) {
+        (self.brightness, self.exposure.stops)
+    }
+
     /// What the GPU's clock has seen since this was last asked.
     pub(crate) fn take_gpu_times(&mut self) -> GpuTimes {
         self.clock.take()
@@ -1542,6 +1579,10 @@ impl Backend {
             || (self.post.rays != 0 && !self.stencil_images.is_empty())
         {
             self.record_rays(rec, target);
+        }
+        if self.metering {
+            let pass = (&self.meter_pass, &self.meter_pipeline, &self.post_layout);
+            self.meter.record(rec, pass, &target.set, self.slot);
         }
     }
 
@@ -1858,7 +1899,7 @@ impl Backend {
                 );
                 Ok(())
             })?;
-        self.clock.read(self.slot);
+        self.read_frame(self.slot);
         let mut rgba = readback.memory.map()?.as_slice()[..size].to_vec();
         let (pixels, _remainder) = rgba.as_chunks_mut::<4>();
         for pixel in pixels {

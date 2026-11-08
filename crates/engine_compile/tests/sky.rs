@@ -2,7 +2,9 @@
 
 use engine_compile::{CompileError, compile, read_map};
 use engine_format::from_text;
-use engine_map::{Look, Map, Sky, SunArc, SunMode, Texture, ToneCurve, USUAL_CLOUD_CURVE};
+use engine_map::{
+    Look, Map, Sky, SunArc, SunMode, Texture, ToneCurve, USUAL_CLOUD_CURVE, USUAL_EXPOSURE_SPEED,
+};
 
 /// A level with `text` in its sky.
 fn level(text: &str) -> Result<Map, CompileError> {
@@ -381,4 +383,43 @@ fn an_arc_is_held_to_what_makes_sense() {
     }
     let error = sun_of("sun = arcs day_start = 10").expect_err("no such sun");
     assert!(error.to_string().contains("arc"), "{error}");
+}
+
+/// Exposure only goes by itself in a level that says how far, held to what makes sense, and as
+/// fast as it says.
+#[test]
+fn a_level_says_how_far_exposure_goes() {
+    let usual = look_of("");
+    assert_eq!(usual.exposure_range, [0.0; 2], "levels are built by eye");
+    assert_eq!(usual.exposure_speed, USUAL_EXPOSURE_SPEED);
+    let said = look_of("exposure_range = -1.5 2 exposure_speed = 4 0.5");
+    assert_eq!(said.exposure_range, [-1.5, 2.0]);
+    assert_eq!(said.exposure_speed, [4.0, 0.5]);
+    let wild = look_of("exposure_range = 3 -20 exposure_speed = 0 -1");
+    assert_eq!(wild.exposure_range, [0.0, 0.0], "down is down and up is up");
+    assert!(wild.exposure_speed.iter().all(|speed| *speed > 0.0));
+    assert_eq!(
+        look_of("exposure_range = -20 20").exposure_range,
+        [-8.0, 8.0]
+    );
+    assert_eq!(look_of("exposure_range = 1").exposure_range, [0.0; 2]);
+}
+
+/// A zone can say how far exposure goes in it.
+#[test]
+fn a_zone_says_how_far_exposure_goes() {
+    let map = day_level(
+        "",
+        "entity cave { type = zone exposure_range = 0 3
+            brush { material = hidden cuboid = 0 0 0 128 128 128 } }
+        entity hall { type = zone
+            brush { material = hidden cuboid = 200 0 0 328 128 128 } }",
+    )
+    .expect("compiles");
+    let range = |name: &str| {
+        let zone = map.zones.iter().find(|zone| zone.name == name);
+        zone.expect("a zone").exposure_range
+    };
+    assert_eq!(range("cave"), Some([0.0, 3.0]));
+    assert_eq!(range("hall"), None);
 }
