@@ -1722,6 +1722,8 @@ fn look_of(working: &WorkingMap) -> Result<Look, CompileError> {
         bloom_threshold: field("bloom_threshold")
             .unwrap_or(usual.bloom_threshold)
             .max(0.0),
+        // Light on what's made for this engine goes on to the tone curve as it is.
+        light_most: None,
     })
 }
 

@@ -450,3 +450,11 @@ fn a_level_says_how_much_glows() {
 fn a_map_with_no_say_has_no_bloom() {
     assert!(Look::default().bloom.abs() < 1e-6);
 }
+
+/// Light on a level made for this engine goes past what a texture shows twice over, and what's
+/// carried over from the fixture stops there.
+#[test]
+fn light_on_a_level_goes_past_two() {
+    assert_eq!(look_of("").light_most, None);
+    assert_eq!(Look::default().light_most, Some(2.0));
+}

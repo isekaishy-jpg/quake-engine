@@ -292,7 +292,7 @@ Added by the human, 2026-11-07. Scenes are drawn in 16 bit floats with an exposu
 | 164 | A tone curve, so that bright light rolls off softly and doesn't hit a ceiling. Comes before the moving sun, so that a day is tuned once, on the curve it'll have. Research which, and whether a level can choose its own | |
 | 165 | Exposure that adjusts by itself, as eyes do, going from a dark room out into the sun, with limits an author can set. Zones already set their own, and the two have to work together | 164 |
 | 166 | Bloom, so that what's bright glows, the sun among them. There's none | 164 |
-| 167 | HDR all the way through. Find what cuts brightness off before the final pass, and take away what needn't: light on a surface stops at 2, and research how baked light is stored. Then put back bloom's weighting of bright looks (item 166) and see the test of a very bright spot fail, which it can't while light stops at 2 | 164 |
+| 167 | HDR all the way through. Find what cuts brightness off before the final pass, and take away what needn't: light on a surface stops at 2, and research how baked light is stored. Then put back bloom's weighting of bright looks (item 166) and see a test fail, which none can while light stops at 2 | 164 |
 | 168 | HDR out to a screen that has it. What's sent today is 8 bits a colour. Research what it takes, and what happens on a screen that hasn't | 164, 167 |
 | 172 | Anti-aliasing that's on. Edges step in every picture, as what's there is all off unless a player turns it on: several samples a pixel (`r_msaa`), a quick blend (`r_aa 1`) and SMAA (`r_aa 2`). Research what each costs here and how each looks, choose what's on by default, and put them in the options with names a player knows. The human, 2026-11-07: the geometry has a lot of aliasing, and the tools to deal with it should all be there | |
 | 173 | Temporal anti-aliasing: the view shifted a little each frame and blended over frames, by how things moved, so that thin things and shimmer settle. Research ghosting on what moves, what moves needs to say how it moved, and how it sits with the noise the rays, fog and SSAO passes lean on to blur | 172 |
@@ -470,3 +470,4 @@ Newest last. One line for each thing finished, with its commit.
 - Item 163: 09aef88
 - Item 68: 075183f
 - Item 165: 106e0d5
+- Item 166: 5a5c461

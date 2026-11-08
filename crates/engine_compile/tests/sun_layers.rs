@@ -68,7 +68,9 @@ fn layer_total(map: &Map, face: &Face, style: u8) -> Option<u64> {
     let size = (light.width * light.height) as usize;
     let first = light.first_sample as usize + slot * size;
     let samples = &map.light[first..first + size];
-    Some(samples.iter().flatten().map(|part| u64::from(*part)).sum())
+    // As the game reads it, with what a bake brought down multiplied back.
+    let total: u64 = samples.iter().flatten().map(|part| u64::from(*part)).sum();
+    Some(total << map.light_shift)
 }
 
 /// What a level has always done is what it does unless it says.

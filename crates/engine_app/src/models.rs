@@ -21,12 +21,6 @@ use fixture_quake::{load_palette, parse_colored_mdl, parse_item_bsp, parse_mdl, 
 /// How fast bonus items spin, in degrees a second.
 const SPIN_SPEED: f32 = 100.0;
 
-/// The most ambient light on a model, from `R_DrawEntitiesOnList`.
-const MAX_AMBIENT: f32 = 128.0;
-
-/// The most light on a model, ambient and directional together.
-const MAX_LIGHT: f32 = 192.0;
-
 /// The least light on the player's weapon.
 const MIN_WEAPON_LIGHT: f32 = 24.0;
 
@@ -35,9 +29,6 @@ const CLIP_BLEND_SECONDS: f32 = 0.2;
 
 /// What the map calls full light, for what moves.
 const MOVING_FULL_LIGHT: f32 = 255.0;
-
-/// Light at which a skin shows as it is.
-const NEUTRAL_LIGHT: f32 = 128.0;
 
 /// How long what's far off goes between poses, in seconds, by its level of detail. Where it is
 /// goes on changing every frame: this is only how often its limbs do.
@@ -244,10 +235,8 @@ impl Lighting<'_> {
     }
 
     /// The ambient and directional light of `light`, as multiples of neutral.
-    fn split(light: f32) -> (f32, f32) {
-        let ambient = light.min(MAX_AMBIENT);
-        let shade = light.min(MAX_LIGHT - ambient);
-        (ambient / NEUTRAL_LIGHT, shade / NEUTRAL_LIGHT)
+    fn split(&self, light: f32) -> (f32, f32) {
+        self.map.model_light(light)
     }
 }
 
@@ -430,7 +419,7 @@ impl ModelBank {
         let light = (lighting.map.light_at(state.origin, lighting.styles)
             + (lighting.sun)(state.origin))
             + lighting.dynamic_at(state.origin);
-        let (ambient, shade) = Lighting::split(light);
+        let (ambient, shade) = lighting.split(light);
         let time = lighting.time;
         for loaded in parts {
             let model = &loaded.model;
@@ -510,7 +499,7 @@ impl ModelBank {
             .light_at(placed.0, lighting.styles)
             .max(MIN_WEAPON_LIGHT)
             + lighting.dynamic_at(placed.0);
-        let (ambient, shade) = Lighting::split(light);
+        let (ambient, shade) = lighting.split(light);
         Some(EntityDraw {
             model: loaded.number,
             pose,

@@ -569,6 +569,10 @@ pub struct Look {
     /// How bright light has to be, once exposed, before it glows. 1 is the brightest a screen
     /// shows.
     pub bloom_threshold: f32,
+    /// The most light a surface takes, twice what a texture shows, and models with it Quake's
+    /// limits, as it was in the fixture. None is none, and light goes on to the tone curve as it
+    /// is.
+    pub light_most: Option<f32>,
 }
 
 /// How fast exposure goes by itself unless a level says, in stops a second: into light, then into
@@ -587,6 +591,7 @@ impl Default for Look {
             exposure_speed: USUAL_EXPOSURE_SPEED,
             bloom: 0.0,
             bloom_threshold: 1.0,
+            light_most: Some(2.0),
         }
     }
 }
@@ -766,6 +771,9 @@ pub struct Map {
     pub day: Option<crate::DayCycle>,
     /// The hours a sun on an arc has its shadows baked through.
     pub sun_arc: crate::SunArc,
+    /// What its baked light, and its probes', is multiplied by, as a power of two: a bake brings
+    /// light down by that to fit a byte when some of it's brighter than one holds. 0 is 1.
+    pub light_shift: u8,
     /// Whether its sun's layer holds a bit for each angle along that arc, which only a final
     /// bake of a sun on an arc gives it.
     pub sun_arc_baked: bool,
@@ -797,6 +805,12 @@ impl Model {
 }
 
 impl Map {
+    /// What its baked light, and its probes', is multiplied by.
+    #[must_use]
+    pub fn light_scale(&self) -> f32 {
+        f32::from(1_u16 << self.light_shift.min(15))
+    }
+
     /// Whether its sun is drawn from the shadows baked along its arc.
     #[must_use]
     pub fn arc_drawn(&self) -> bool {

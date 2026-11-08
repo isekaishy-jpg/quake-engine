@@ -81,6 +81,8 @@ fn layer_light(map: &Map, face: &Face, style: u8) -> Option<(f32, f32)> {
     let values: Vec<f32> = samples
         .iter()
         .map(|sample| (f32::from(sample[0]) + f32::from(sample[1]) + f32::from(sample[2])) / 3.0)
+        // As the game reads it, with what a bake brought down multiplied back.
+        .map(|value| value * map.light_scale())
         .collect();
     let high = values.iter().copied().fold(0.0, f32::max);
     let total: f32 = values.iter().sum();
@@ -1604,7 +1606,7 @@ fn blended_at(map: &Map, face: &Face, point: Vec3) -> f32 {
         let (x, y) = (x as u32, y as u32);
         let at =
             light.first_sample + y.min(light.height - 1) * light.width + x.min(light.width - 1);
-        f32::from(map.light[at as usize][0])
+        f32::from(map.light[at as usize][0]) * map.light_scale()
     };
     let top = sample(x, y) * (1.0 - across) + sample(x + 1.0, y) * across;
     let bottom = sample(x, y + 1.0) * (1.0 - across) + sample(x + 1.0, y + 1.0) * across;
@@ -1620,6 +1622,31 @@ fn biggest_face<'a>(map: &'a Map, on: &dyn Fn(Vec3) -> bool) -> &'a Face {
         .expect("a face")
 }
 
+/// The face of `map` whose corners all pass `on` and whose bounds hold `point`, or the biggest of
+/// them if none quite does.
+fn face_holding<'a>(map: &'a Map, on: &dyn Fn(Vec3) -> bool, point: Vec3) -> &'a Face {
+    let holds = |face: &&Face| {
+        let points = map.face_points(face);
+        let span = |axis: fn(&Vec3) -> f32| {
+            let values = points.iter().map(axis);
+            let low = values.clone().fold(f32::MAX, f32::min);
+            let high = values.fold(f32::MIN, f32::max);
+            (low, high)
+        };
+        let inside =
+            |value: f32, (low, high): (f32, f32)| value >= low - 1.0 && value <= high + 1.0;
+        inside(point.x, span(|p| p.x))
+            && inside(point.y, span(|p| p.y))
+            && inside(point.z, span(|p| p.z))
+    };
+    map.faces
+        .iter()
+        .filter(|face| face.light.is_some())
+        .filter(|face| map.face_points(face).iter().all(|corner| on(*corner)))
+        .find(holds)
+        .unwrap_or_else(|| biggest_face(map, on))
+}
+
 /// Where along `y` a face of `shaded` goes dark, compared with the same in `open`,
 /// with `on` finding it and `at` turning a place along it into a point.
 fn shadow_edge(
@@ -1628,10 +1655,14 @@ fn shadow_edge(
     on: &dyn Fn(Vec3) -> bool,
     at: &dyn Fn(f32) -> Vec3,
 ) -> f32 {
-    let (one, other) = (biggest_face(shaded, on), biggest_face(open, on));
     let mut y = -120.0;
     while y < 120.0 {
         let point = at(y);
+        // What stands on a face splits it, so the face that holds the point is the one to read.
+        let (one, other) = (
+            face_holding(shaded, on, point),
+            face_holding(open, on, point),
+        );
         let whole = blended_at(open, other, point).max(1.0);
         if blended_at(shaded, one, point) / whole < 0.5 {
             return y;

@@ -264,7 +264,7 @@ fn layer(in: VertexOut, slot: f32, style: u32) -> vec3<f32> {
     if style == SUN_BOUNCE_STYLE || style == SUN_STYLE {
         color = color * frame.sun_tint.rgb;
     }
-    return color * frame.styles[style / 4u][style % 4u];
+    return color * frame.styles[style / 4u][style % 4u] * frame.baked.x;
 }
 
 // Light from `R_AddDynamicLights`, on the same scale as a light map sample.
@@ -672,7 +672,11 @@ fn light(in: VertexOut) -> vec3<f32> {
     // A curve above 1 makes dim light dimmer, which is the murk of the old look:
     // 2.2 is what light did to a picture before scenes were linear.
     let lit = shaded + moving + frame.day_light.rgb * open;
-    return pow(keep_hue(2.0 * lit, 2.0), vec3<f32>(frame.color_params.x));
+    var doubled = 2.0 * max(lit, vec3<f32>(0.0));
+    if frame.baked.y > 0.0 {
+        doubled = keep_hue(doubled, frame.baked.y);
+    }
+    return pow(doubled, vec3<f32>(frame.color_params.x));
 }
 
 // A colour on its way into the scene, which holds linear light, and has room for

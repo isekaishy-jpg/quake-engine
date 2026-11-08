@@ -130,6 +130,7 @@ entity world { type = worldspawn }
         tone: ToneCurve::Neutral,
         ssao: 0.6,
         bloom: 1.0,
+        light_most: None,
         ..Look::default()
     };
     assert_eq!(usual.look, expected);

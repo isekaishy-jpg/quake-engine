@@ -2188,6 +2188,20 @@ fn to_bytes(color: [f64; 3]) -> [u8; 3] {
     color.map(|part| (part * share).clamp(0.0, 255.0) as u8)
 }
 
+/// The most a bake brings light down by, as a power of two.
+const MOST_LIGHT_SHIFT: u8 = 4;
+
+/// What light `brightest` at its brightest is brought down by to fit a byte, as a power of two.
+#[expect(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "held to a few"
+)]
+fn light_shift_for(brightest: f64) -> u8 {
+    // What fits gives a power of 0 or less, which is 0 as a byte.
+    ((brightest / 255.0).log2().ceil() as u8).min(MOST_LIGHT_SHIFT)
+}
+
 /// A direction as bytes.
 #[expect(
     clippy::cast_possible_truncation,
@@ -2255,8 +2269,8 @@ fn bake_probes(
     scene: &Scene<'_>,
     map: &Map,
     (sources, sun_sources): (&BounceField, Option<&BounceField>),
-    gain: f64,
-    ambient: f64,
+    (gain, ambient): (f64, f64),
+    scale: f64,
 ) -> Option<ProbeGrid> {
     let model = map.models.first()?;
     let (low, high) = (wide(model.mins), wide(model.maxs));
@@ -2319,7 +2333,7 @@ fn bake_probes(
             sunlit += from_sun.iter().sum::<f64>();
             all_light += light.iter().chain(&from_sun).sum::<f64>() + base * 3.0;
             let total: [f64; 3] = std::array::from_fn(|part| light[part] + from_sun[part]);
-            colors[side] = to_bytes(total.map(|part| part + base));
+            colors[side] = to_bytes(total.map(|part| (part + base) / scale));
         }
         #[expect(
             clippy::cast_possible_truncation,
@@ -2674,8 +2688,20 @@ pub fn bake_light_as(
         let (bake, field) = (bake.as_ref()?, sun_sources.as_ref()?);
         Some(bounced_face(&scene, field, bake, bounce_gain))
     });
+    // Light brighter than a byte holds is brought down by a power of two, all of it alike, and
+    // the game multiplies it back.
+    let brightest = bakes
+        .iter()
+        .flatten()
+        .flat_map(|bake| bake.layers.iter().flat_map(|(_, layer)| layer))
+        .chain(bounced.iter().flatten().flatten())
+        .chain(sun_bounced.iter().flatten().flatten())
+        .map(|color| color.iter().copied().fold(0.0, f64::max) + ambient)
+        .fold(0.0, f64::max);
+    let light_shift = light_shift_for(brightest);
+    let light_scale = f64::from(1_u16 << light_shift);
     let bounces = (&sources, sun_sources.as_ref());
-    let probes = bake_probes(&scene, shared, bounces, bounce_gain, ambient);
+    let probes = bake_probes(&scene, shared, bounces, (bounce_gain, ambient), light_scale);
     for ((bake, bounce), sun_bounce) in bakes.iter_mut().zip(bounced).zip(sun_bounced) {
         if let (Some(bake), Some(bounce)) = (bake, bounce) {
             bake.layers.push((BOUNCE_STYLE, bounce));
@@ -2725,7 +2751,14 @@ pub fn bake_light_as(
         light.first_sample = u32::try_from(samples.len()).unwrap_or(u32::MAX);
         for (index, (style, layer)) in bake.layers.iter().enumerate().take(MAX_LAYERS) {
             light.styles[index] = *style;
-            samples.extend(layer.iter().map(|color| to_bytes(*color)));
+            // A sun's layer on an arc holds bits, not light.
+            let bits = arc_baked && *style == SUN_STYLE;
+            let scale = if bits { 1.0 } else { light_scale };
+            samples.extend(
+                layer
+                    .iter()
+                    .map(|color| to_bytes(color.map(|part| part / scale))),
+            );
             directions.extend(bake.directions.iter().map(|d| direction_bytes(*d)));
             match bake.edges.iter().find(|(known, _)| known == style) {
                 Some((_, found)) => edges.extend_from_slice(found),
@@ -2778,5 +2811,6 @@ pub fn bake_light_as(
     map.probes = probes;
     map.lit = true;
     map.sun_arc_baked = arc_baked;
+    map.light_shift = light_shift;
     Ok(())
 }

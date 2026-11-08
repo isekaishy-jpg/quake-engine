@@ -109,3 +109,35 @@ fn a_track_with_no_period_is_left_alone() {
     track.blend(&mut styles, 1.0);
     assert_eq!(styles, [0.25; 2]);
 }
+
+/// A bake that brought light down to fit a byte has it multiplied back.
+#[test]
+fn baked_light_is_multiplied_back() {
+    let mut map = map();
+    assert!((map.light_scale() - 1.0).abs() < 1e-6);
+    map.light_shift = 2;
+    assert!((map.light_scale() - 4.0).abs() < 1e-6);
+    let light = map.light_at(Vec3::new(1.0, 1.0, 40.0), &[1.0; 64]);
+    assert!((light - 120.0).abs() < 1e-3, "{light}");
+}
+
+/// With the fixture's look a model's light stops where Quake's did, and without it goes on.
+#[test]
+fn models_take_quakes_limits_only_with_its_look() {
+    let mut map = map();
+    assert_eq!(map.model_light(64.0), (0.5, 0.5));
+    assert_eq!(
+        map.model_light(512.0),
+        (1.0, 0.5),
+        "ambient 128, and 192 in all"
+    );
+    map.look.light_most = None;
+    assert_eq!(
+        map.model_light(64.0),
+        (0.5, 0.5),
+        "below the limits, as it was"
+    );
+    assert_eq!(map.model_light(512.0), (4.0, 2.0));
+    let (ambient, shade) = map.model_light(128.0);
+    assert_eq!((ambient, shade), (1.0, 0.5), "where the two ways meet");
+}

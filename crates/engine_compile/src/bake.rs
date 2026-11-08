@@ -432,6 +432,9 @@ pub fn write_bake(map: &Map, hash: u64) -> Vec<u8> {
     if map.sun_arc_baked {
         block.set("sun_arc", Value::Number(1.0));
     }
+    if map.light_shift > 0 {
+        block.set("light_shift", Value::Number(f64::from(map.light_shift)));
+    }
     block.set("paint", Value::Bytes(paint.as_flattened().to_vec()));
     if let Some(split) = &split {
         let mut cells = Vec::with_capacity(split.cells.len() * 8);
@@ -652,6 +655,16 @@ pub fn apply_bake(map: &mut Map, bytes: &[u8], hash: u64) -> Result<bool, Compil
     map.light_directions = triples(directions);
     map.light_edges = bytes_of(light, "edges").unwrap_or_default().to_vec();
     map.sun_arc_baked = light.get("sun_arc").is_some();
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a small shift"
+    )]
+    let shift = light
+        .get("light_shift")
+        .and_then(Value::number)
+        .unwrap_or(0.0) as u8;
+    map.light_shift = shift;
     if let (Some(data), Some(starts)) = (
         bytes_of(light, "visibility"),
         bytes_of(light, "visible_from"),

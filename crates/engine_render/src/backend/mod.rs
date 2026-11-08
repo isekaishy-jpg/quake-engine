@@ -116,6 +116,7 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 4
     + 4
     + 4
+    + 4
     + 4;
 
 /// How many pools can show in a frame.

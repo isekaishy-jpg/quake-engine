@@ -311,6 +311,8 @@ pub(super) struct FrameExtras<'a> {
     exposure_scale: f32,
     /// What the final pass multiplies what glows by.
     bloom: f32,
+    /// What baked light is multiplied by.
+    light_scale: f32,
     /// What a zone does to the light.
     light_shift: [f32; 3],
     /// Bodies of liquid.
@@ -515,6 +517,8 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     let strength = if looks > 0.0 { extra.look.ssao } else { 0.0 };
     out[base + 8..base + 11].copy_from_slice(&[strength, extra.look.ssao_radius, looks]);
     out[base + 12] = extra.bloom;
+    out[base + 16] = extra.light_scale;
+    out[base + 17] = extra.look.light_most.unwrap_or(0.0);
     out
 }
 
@@ -1542,6 +1546,7 @@ impl Backend {
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
             exposure_scale: 1.0,
             bloom: 0.0,
+            light_scale: scene.map_or(1.0, |scene| scene.map.light_scale()),
             light_shift: view.light_shift,
         };
         // Exposure goes by itself as far as a zone, or else the level, lets it, from how bright

@@ -8072,6 +8072,8 @@ fn a_bright_spot_does_not_sway_exposure() {
 /// The square, dimly lit, with as much bloom as `strength` past `threshold`.
 fn bloom_square(strength: f32, threshold: f32) -> Map {
     let mut built = map(1);
+    // Light on a surface goes past 2, as on a level made for this engine.
+    built.look.light_most = None;
     built.look.bloom = strength;
     built.look.bloom_threshold = threshold;
     built.light = vec![[20, 20, 20]; 81];
@@ -8197,8 +8199,8 @@ fn a_level_says_how_much_glows() {
     // Dim enough that what glows doesn't reach the top of what a screen shows.
     let glow = |strength: f32, threshold: f32| -> Option<u32> {
         let built = || bloom_square(strength, threshold);
-        let off = bloomed(built(), Some(spot_of(100.0)), false)?;
-        let on = bloomed(built(), Some(spot_of(100.0)), true)?;
+        let off = bloomed(built(), Some(spot_of(30.0)), false)?;
+        let on = bloomed(built(), Some(spot_of(30.0)), true)?;
         Some(glow_round(&on, &off, spot_place(&off), 8))
     };
     let (some, more, higher) = (glow(0.5, 1.0), glow(1.0, 1.0), glow(1.0, 8.0));
@@ -8252,5 +8254,124 @@ fn a_very_bright_spot_is_held_down() {
     if let (Some(bright), Some(brighter)) = (glow(400.0), glow(4000.0)) {
         assert!(brighter >= bright, "{bright} {brighter}");
         assert!(brighter * 2 < bright * 3, "{bright} {brighter}");
+    }
+}
+
+/// The square lit at `style` of its light, exposed down so that bright doesn't top out, with
+/// the most a surface takes as `most`.
+fn exposed_down(style: f32, most: Option<f32>) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    // On a curve that keeps what's below its top as it is, and far below it.
+    built.look.tone = ToneCurve::Neutral;
+    built.look.exposure = 0.05;
+    built.look.light_most = most;
+    renderer.load_map(Arc::new(built)).expect("load");
+    let mut view = view_from_above();
+    view.styles[0] = style;
+    let capture = renderer
+        .capture(&view, Drawables::default(), 32, 32)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// Light on a surface goes past 2 on a level made for this engine, and stops there with the
+/// fixture's look.
+#[test]
+fn light_on_a_surface_goes_past_two() {
+    let (bright, brighter) = (exposed_down(2.0, None), exposed_down(4.0, None));
+    let (held, still_held) = (exposed_down(2.0, Some(2.0)), exposed_down(4.0, Some(2.0)));
+    if let (Some(bright), Some(brighter), Some(held), Some(still_held)) =
+        (bright, brighter, held, still_held)
+    {
+        assert!(
+            brighter[1] > bright[1].saturating_add(20),
+            "{bright:?} {brighter:?}"
+        );
+        assert_eq!(held, still_held, "the fixture's look stops at 2");
+    }
+}
+
+/// Baked light a bake brought down to fit a byte is multiplied back.
+#[test]
+fn baked_light_brought_down_is_multiplied_back() {
+    let lit = |level: u8, shift: u8| -> Option<[u8; 4]> {
+        let mut renderer = renderer()?;
+        let mut built = map(1);
+        built.light = vec![[level; 3]; 81];
+        built.light_shift = shift;
+        renderer.load_map(Arc::new(built)).expect("load");
+        let capture = renderer
+            .capture(&view_from_above(), Drawables::default(), 32, 32)
+            .expect("capture");
+        Some(centre(&capture))
+    };
+    if let (Some(half), Some(whole)) = (lit(50, 1), lit(100, 0)) {
+        for part in 0..3 {
+            assert!(half[part].abs_diff(whole[part]) <= 2, "{half:?} {whole:?}");
+        }
+    }
+}
+
+/// The fog grid's probes are multiplied back as baked light is.
+#[test]
+fn the_fog_grids_light_is_multiplied_back() {
+    let grid = PostSettings {
+        fog_grid: true,
+        ..PostSettings::default()
+    };
+    let shifted = || {
+        let mut built = fog_map(60);
+        built.light_shift = 1;
+        built
+    };
+    if let (Some(half), Some(whole)) = (
+        post_centre(shifted(), grid),
+        post_centre(fog_map(120), grid),
+    ) {
+        for part in 0..3 {
+            assert!(half[part].abs_diff(whole[part]) <= 3, "{half:?} {whole:?}");
+        }
+    }
+}
+
+/// How much a lamp lighting a pixel or so of the square, `bright` times as bright as usual, glows
+/// all round it, with a little bloom so that what's measured doesn't top out.
+fn sparkle_glow(bright: f32) -> Option<u32> {
+    let shot = |on: bool| -> Option<Capture> {
+        let mut built = bloom_square(0.05, 1.0);
+        built.light = vec![[0, 0, 0]; 81];
+        let mut renderer = renderer()?;
+        renderer.load_map(Arc::new(built)).expect("load");
+        renderer.set_post(PostSettings {
+            bloom: on,
+            ..PostSettings::default()
+        });
+        let lamp = [LiveLight {
+            spot_cosine: 0.9995,
+            color: [bright; 3],
+            ..spot_of(1.0)
+        }];
+        let drawables = Drawables {
+            live_lights: &lamp,
+            ..Drawables::default()
+        };
+        Some(
+            renderer
+                .capture(&view_from_above(), drawables, 64, 64)
+                .expect("capture"),
+        )
+    };
+    let (off, on) = (shot(false)?, shot(true)?);
+    Some(glow_ring(&on, &off, (15, 14), (0, 30)))
+}
+
+/// A sparkle a pixel or so across is weighted down on the first step, so that it doesn't flicker
+/// as it moves. With it, this one glows 3632; without, 6713, so it's held to between the two.
+#[test]
+fn a_sparkle_is_weighted_down() {
+    if let Some(glow) = sparkle_glow(30_000.0) {
+        assert!(glow > 1000, "it glows: {glow}");
+        assert!(glow < 5200, "{glow}");
     }
 }

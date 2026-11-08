@@ -1,6 +1,6 @@
 # Proposal 0150: light on screen
 
-Status: accepted for items 164, 163, 165 and 166, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 164, 163, 165, 166 and 167, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -78,6 +78,38 @@ Jimenez's way for Call of Duty: Advanced Warfare is what Unity and Blender's EEV
 - **Only what's brighter than a screen shows glows.** A blend with no threshold softens every pixel a little, which would change every level as it was built. With a soft threshold at 1, once exposed, only what a screen can't show glows: the sun, and bright lamps. A test holds a picture with nothing brighter to the same bytes.
 - **A level says how much** with `bloom`, 1 unless it says, and from how bright with `bloom_threshold`. What's carried over from the fixture has none. A player can turn it off with `r_bloom 0`.
 
+## HDR all the way through (167)
+
+### What cut brightness off
+
+Scenes are drawn in 16 bit floats, and the sky, live lights, a live sun, fog and what's emissive go into them as bright as they are. Four things stopped light before the final pass:
+
+| What | Where it stopped |
+|---|---|
+| Light on a surface | All of it, baked and live together, brought down to 2 with its hue kept |
+| Models | Quake's limits: ambient at 128 and all of it at 192, a half again on what their skin shows |
+| Baked light | A byte a colour, so 2 once doubled. A bake brought a colour down whole if it was brighter |
+| Probes | The same, which is what models and the fog grid are lit by |
+
+The first two are the fixture's look, and keep it. They needn't be on a level made for this engine.
+
+### How others store baked light
+
+| Way | What it holds | What's wrong with it for us |
+|---|---|---|
+| A byte a colour, over 0 to 2 | What a screen shows, twice over | What's brighter stops. It's what Unity does on phones, and what we had |
+| RGBM | A colour and a multiplier, in four bytes | The fourth byte is where a sample's shadow edge is, and where an arc sun's last eight bits are |
+| BC6H | 16 bit floats, compressed to a byte a texel | Compressing would garble an arc sun's bits, and tiles are written as they stream |
+| RGB9E5 | Three colours and an exponent, in four bytes | The same four bytes, so no room for edges or bits |
+| 16 bit floats | Anything | Twice the size, and the same want of room |
+
+Every way of holding more needs the fourth byte, or more bytes, and the fourth byte's taken.
+
+### What changes
+
+- **Light goes past 2 on a surface,** and models past Quake's limits, on a level made for this engine. Light goes on to the tone curve and bloom as it is. What's carried over from the fixture keeps both, as `Look::light_most`.
+- **A bake brings light down by a power of two** when some of it is brighter than a byte holds, all of a level's alike, and its probes with it, and the game multiplies it back. A level whose light fits is as it always was. An arc sun's bits aren't light, and are left as they are. A saved bake says how far.
+
 ## What came of it
 
 ### A tone curve (164)
@@ -113,6 +145,17 @@ Jimenez's way for Call of Duty: Advanced Warfare is what Unity and Blender's EEV
 - **Exposure comes first:** what's measured against the threshold is the scene as exposed, by the level and by exposure that goes by itself.
 - **Screens show light on a curve,** so twice the bloom is less than twice the bytes, which a test had to allow for.
 
+### HDR all the way through (167)
+
+- **Tried in the game:** a lamp of 300 by a wall at night, then 600, then 1500. They go from lit, to bright with a glow, to the wall washed out and glowing all round, where before all three stopped at the same brightness near it. Vesper Deep looks the same, as its light's within a byte.
+- **What it costs:** nothing to draw. A bake looks at all its light once more for the brightest.
+- **Where light's brought down, the dark loses a bit** for each power of two, as a byte covers more. It's only on a level with light that bright, and only by as much as it needs.
+- **A probe brighter still** than the brightest surface is brought down whole, as before. Probes are brought down by what surfaces need, as both are read together.
+- **Bloom's weighting of bright looks can be seen now.** With light stopped at 2, no test could make a spot bright enough to see it. It's only for what's smaller than its looks: a spot a few pixels across glows as much again when it's ten times as bright, as it should. A lamp lighting a pixel or so at 30,000 glows 3632 with it and 6713 without, and a test holds it between the two, so it fails with the weighting taken out.
+- **Light brought down in a dim place** shows what a byte loses: a floor at 3 of 255, brought down by four, is 0 or 1. A test compares rooms by their brightest, where it doesn't.
+- **Three tests of the bake were reading bytes,** and now read light as the game does, multiplied back. One of them, of a shadow round a corner, had passed only because bright light stopped at a byte: it read whichever floor face was biggest, which next to the post wasn't the one holding the point, and stopped bytes hid that. It reads the face that holds the point now.
+- **A model in bright light** has ambient and directional light going on as they were at Quake's 128, the directional half the ambient, so it's as bright as what's round it.
+
 ## Sources
 
 - [PBR Neutral, Khronos](https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/README.md)
@@ -133,5 +176,6 @@ Jimenez's way for Call of Duty: Advanced Warfare is what Unity and Blender's EEV
 - [Bloom, GameDev.net](https://gamedev.net/forums/topic/693388-bloom/)
 - [Bloom in Bevy](https://docs.rs/bevy/0.15.2/src/bloom_3d/bloom_3d.rs.html)
 - [Bloom, Diligent Engine](https://diligentgraphics.github.io/docs/df/de0/DiligentFX_PostProcess_Bloom_README.html)
+- [Lightmaps: technical information, Unity](https://docs.unity3d.com/Manual/Lightmaps-TechnicalInformation.html)
 - [Tweaking automatic exposure in Unreal, Versluis](https://www.versluis.com/2020/03/how-to-tweak-automatic-exposure-control-in-unreal-engine/)
 - [Ambient occlusion and baked light, Godot forum](https://forum.godotengine.org/t/global-ambient-light-levels/138068)

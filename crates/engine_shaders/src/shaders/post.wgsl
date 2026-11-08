@@ -249,7 +249,7 @@ fn probe_light(point: vec3<f32>) -> vec3<f32> {
     let second = vec2<f32>(across, (high * size.y + local.y + 0.5) / rows);
     let below = textureSampleLevel(probe_slices, scene_sampler, first, 0.0).rgb;
     let above = textureSampleLevel(probe_slices, scene_sampler, second, 0.0).rgb;
-    return pow(mix(below, above, local.z - low), vec3<f32>(frame.color_params.x));
+    return pow(mix(below, above, local.z - low) * frame.baked.x, vec3<f32>(frame.color_params.x));
 }
 
 // What moving lights add to fog at `point`.

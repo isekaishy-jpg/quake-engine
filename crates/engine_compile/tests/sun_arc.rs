@@ -245,3 +245,15 @@ fn a_sample_off_its_face_looks_from_on_it() {
         "{under:?}"
     );
 }
+
+/// Light brought down to fit a byte leaves the arc's bits as they are, as they're not light.
+#[test]
+fn bright_light_leaves_the_arcs_bits_alone() {
+    let lamp = "entity lamp { type = light origin = 100 100 48 intensity = 4000 }\n";
+    let map = baked(&yard("sun = arc", lamp), BakeLevel::Final);
+    assert!(map.light_shift >= 1, "{}", map.light_shift);
+    let open = bits_near(&ground_bits(&map), -200.0, -200.0);
+    for angle in 2..30 {
+        assert!(lit(open, angle), "{angle}: {open:032b}");
+    }
+}

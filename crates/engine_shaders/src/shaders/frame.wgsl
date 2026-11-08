@@ -116,6 +116,9 @@ struct Frame {
     ssao: vec4<f32>,
     // What the final pass multiplies what glows by, which is none without it.
     bloom: vec4<f32>,
+    // x what baked light and probes are multiplied by, and y the most light a surface takes,
+    // which is 0 for none.
+    baked: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

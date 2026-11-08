@@ -9,13 +9,36 @@ use crate::tree::NodeChild;
 /// How far down a point looks for the floor it takes its light from.
 const LOOK_DOWN: f32 = 2048.0;
 
+/// The most ambient light on a model, from `R_DrawEntitiesOnList`.
+const MAX_AMBIENT: f32 = 128.0;
+
+/// The most light on a model, ambient and directional together.
+const MAX_LIGHT: f32 = 192.0;
+
+/// Light at which a model's skin shows as it is.
+const NEUTRAL_LIGHT: f32 = 128.0;
+
 impl Map {
+    /// The ambient and directional light on a model in `light`, as multiples of
+    /// neutral. With the fixture's look, ambient stops at 128 and both together at 192,
+    /// as Quake had it. Without, they go on as they were at 128, the directional half the
+    /// ambient, so that a model in bright light is as bright as what's round it.
+    #[must_use]
+    pub fn model_light(&self, light: f32) -> (f32, f32) {
+        if self.look.light_most.is_none() && light > MAX_AMBIENT {
+            return (light / NEUTRAL_LIGHT, light * 0.5 / NEUTRAL_LIGHT);
+        }
+        let ambient = light.min(MAX_AMBIENT);
+        let shade = light.min(MAX_LIGHT - ambient);
+        (ambient / NEUTRAL_LIGHT, shade / NEUTRAL_LIGHT)
+    }
+
     /// The light on the floor under `point`, from 0 to 255 or so, with each
     /// style at the brightness in `styles`.
     #[must_use]
     pub fn light_at(&self, point: Vec3, styles: &[f32]) -> f32 {
         if let Some(sample) = self.probes.as_ref().and_then(|probes| probes.sample(point)) {
-            return sample.brightness;
+            return sample.brightness * self.light_scale();
         }
         if self.light.is_empty() {
             return 255.0;
@@ -23,6 +46,7 @@ impl Map {
         let end = point - Vec3::new(0.0, 0.0, LOOK_DOWN);
         self.light_below(NodeChild::Node(0), point, end, styles)
             .unwrap_or(0.0)
+            * self.light_scale()
     }
 
     /// `RecursiveLightPoint`: the light where the line first meets a face.
