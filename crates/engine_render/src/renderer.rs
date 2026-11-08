@@ -281,6 +281,9 @@ pub struct PostSettings {
     /// Whether highlights widen where a surface turns or its bumps spread within a pixel, so that
     /// they don't sparkle as they shrink with distance.
     pub steady_shine: bool,
+    /// How big the scene's drawn, against the screen: above 1 for a sharper picture that costs
+    /// more, below for a cheaper one brought up to the screen, and 0, the usual, the same.
+    pub render_scale: f32,
 }
 
 /// How surfaces are filtered.

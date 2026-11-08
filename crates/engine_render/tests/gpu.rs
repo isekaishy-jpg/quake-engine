@@ -9785,3 +9785,230 @@ fn a_live_lights_bounce_follows_it() {
     assert!(white[1] > 20, "{white:?}");
     assert!(magenta[1] < white[1] / 4, "{white:?} {magenta:?}");
 }
+
+/// Post settings with the scene drawn at `scale` of the screen, and `edge_smoothing`.
+fn scaled(scale: f32, edge_smoothing: u8) -> PostSettings {
+    PostSettings {
+        render_scale: scale,
+        edge_smoothing,
+        ..PostSettings::default()
+    }
+}
+
+/// The floor in black and white squares, from above and turned, `frames` frames at `post`.
+fn scaled_floor(renderer: &mut Renderer, post: PostSettings, frames: u32) -> Capture {
+    renderer.set_post(post);
+    let view = slanted_view();
+    let mut last = None;
+    for _ in 0..frames {
+        last = Some(
+            renderer
+                .capture(&view, Drawables::default(), 64, 64)
+                .expect("capture"),
+        );
+    }
+    last.expect("a frame")
+}
+
+/// A scene drawn at another size is still the screen's size when it's shown, and as it was where
+/// it's flat. Drawn at twice, its edges are smoothed, as there's more of each pixel.
+#[test]
+fn a_scene_drawn_at_another_size_fills_the_screen() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let plain = scaled_floor(&mut renderer, scaled(1.0, 0), 1);
+    let half = scaled_floor(&mut renderer, scaled(0.5, 0), 1);
+    let twice = scaled_floor(&mut renderer, scaled(2.0, 0), 1);
+    for shot in [&half, &twice] {
+        assert_eq!((shot.width, shot.height), (64, 64));
+        let flat = centre(shot)
+            .iter()
+            .zip(centre(&plain))
+            .all(|(a, b)| a.abs_diff(b) <= 2);
+        assert!(flat, "{:?} {:?}", centre(shot), centre(&plain));
+    }
+    assert!(
+        shades(&twice) > shades(&plain),
+        "{} {}",
+        shades(&plain),
+        shades(&twice)
+    );
+    let again = scaled_floor(&mut renderer, scaled(0.0, 0), 1);
+    assert_eq!(again.rgba, plain.rgba, "0 is the screen's size");
+}
+
+/// How much each pixel differs from the next across, over a capture: what's fine in it.
+fn fineness(capture: &Capture) -> u64 {
+    let mut total = 0;
+    for y in 0..capture.height {
+        for x in 1..capture.width {
+            total += u64::from(pixel(capture, x, y)[0].abs_diff(pixel(capture, x - 1, y)[0]));
+        }
+    }
+    total
+}
+
+/// Drawn at a half again each way, each of the screen's pixels takes all the scene's under it, so
+/// a fine pattern's averaged, not picked at.
+#[test]
+fn a_bigger_scene_is_averaged_under_each_pixel() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_floor(1)))
+        .expect("load");
+    let plain = scaled_floor(&mut renderer, scaled(1.0, 0), 1);
+    let bigger = scaled_floor(&mut renderer, scaled(1.5, 0), 1);
+    // Four blends across the pixel leave under a third of the fine pattern; one, more.
+    assert!(
+        fineness(&bigger) * 10 < fineness(&plain) * 3,
+        "{} {}",
+        fineness(&plain),
+        fineness(&bigger)
+    );
+}
+
+/// A grey floor with lighter stripes, 4 texels wide every 16.
+fn striped_floor() -> Map {
+    let mut built = map(1);
+    built.textures[0].mips = image_of(64, |x, _| {
+        if x % 16 < 4 {
+            [150, 150, 150, 255]
+        } else {
+            [100, 100, 100, 255]
+        }
+    });
+    built
+}
+
+/// Brought up to the screen, what's between pixels is never lighter or darker than the pixels
+/// round it, so an edge doesn't ring.
+#[test]
+fn what_is_brought_up_does_not_ring() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(striped_floor())).expect("load");
+    let plain = scaled_floor(&mut renderer, scaled(1.0, 0), 1);
+    let half = scaled_floor(&mut renderer, scaled(0.5, 0), 1);
+    // Inside the floor, away from its edges, which blend with what's past them.
+    let range = |shot: &Capture| {
+        let mut greens = Vec::new();
+        for y in 20..44 {
+            for x in 20..44 {
+                greens.push(pixel(shot, x, y)[1]);
+            }
+        }
+        greens.into_iter().fold((u8::MAX, 0), |(low, high), green| {
+            (low.min(green), high.max(green))
+        })
+    };
+    let (low, high) = range(&plain);
+    let (half_low, half_high) = range(&half);
+    assert!(
+        half_low + 2 >= low && half_high <= high + 2,
+        "{low}..{high} {half_low}..{half_high}"
+    );
+}
+
+/// With TAA, a scene drawn at half the screen's size comes nearer to one drawn at its size, over
+/// frames, than one brought up without it.
+#[test]
+fn taa_brings_a_smaller_scene_up_nearer() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_floor(1)))
+        .expect("load");
+    let full = scaled_floor(&mut renderer, scaled(1.0, 3), 64);
+    let brought_up = scaled_floor(&mut renderer, scaled(0.5, 0), 1);
+    let taa_up = scaled_floor(&mut renderer, scaled(0.5, 3), 64);
+    let (plain_off, taa_off) = (difference(&brought_up, &full), difference(&taa_up, &full));
+    // Each of the frame's pixels where it truly is, by how near in the screen's pixels, at the
+    // screen's size, with the moves going round four times as many frames as at the screen's
+    // size: under half as far off as bringing up alone. Any of those undone is nearer two
+    // thirds, and the shorter round half.
+    assert!(taa_off * 100 < plain_off * 49, "{taa_off} {plain_off}");
+    // Sharpened after, it has more shades than the screen's size has, where without it about as
+    // many as it would have soft.
+    assert!(
+        shades(&taa_up) > shades(&full) * 2,
+        "{} {}",
+        shades(&taa_up),
+        shades(&full)
+    );
+}
+
+/// The middle of a floor whose texture's first level is red and every other green, seen from
+/// above at `post`, `frames` frames.
+fn mip_colour(post: PostSettings, frames: u32) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    let mut mips = mip_chain(64, 64, [255, 0, 0, 255].repeat(64 * 64));
+    for level in &mut mips[1..] {
+        for texel in level.rgba.as_chunks_mut::<4>().0 {
+            *texel = [0, 255, 0, 255];
+        }
+    }
+    built.textures[0].mips = mips;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer
+        .set_filter(TextureFilter {
+            smooth: true,
+            trilinear: false,
+            anisotropy: 1.0,
+        })
+        .expect("filter");
+    renderer.set_post(post);
+    // Near enough that the screen's size reads the first level, and half of it the next.
+    let view = View {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        ..view_from_above()
+    };
+    let mut last = None;
+    for _ in 0..frames {
+        last = Some(
+            renderer
+                .capture(&view, Drawables::default(), 64, 64)
+                .expect("capture"),
+        );
+    }
+    Some(centre(&last.expect("a frame")))
+}
+
+/// Drawn smaller with TAA, textures are read as finely as at the screen's size, for TAA to find
+/// their detail; without TAA they're read as the scene's size says.
+#[test]
+fn a_smaller_scene_reads_fine_mips_only_with_taa() {
+    let Some(full) = mip_colour(scaled(1.0, 0), 1) else {
+        return;
+    };
+    let half = mip_colour(scaled(0.5, 0), 1).expect("it drew");
+    let half_taa = mip_colour(scaled(0.5, 3), 8).expect("it drew");
+    assert!(
+        full[0] > full[1],
+        "the first level at the screen's size: {full:?}"
+    );
+    assert!(half[1] > half[0], "a coarser one, drawn smaller: {half:?}");
+    assert!(
+        half_taa[0] > half_taa[1],
+        "the first, with TAA: {half_taa:?}"
+    );
+}
+
+/// SMAA's smoothing comes along when a smaller scene's brought up.
+#[test]
+fn smaa_comes_along_when_a_scene_is_brought_up() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let plain = scaled_floor(&mut renderer, scaled(0.5, 0), 1);
+    let smoothed = scaled_floor(&mut renderer, scaled(0.5, 2), 1);
+    assert_ne!(plain.rgba, smoothed.rgba);
+    assert_eq!(centre(&plain), centre(&smoothed), "what's flat stays");
+}

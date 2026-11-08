@@ -141,6 +141,121 @@ fn load_color(at: vec2<i32>) -> vec3<f32> {
     return load_scene(at);
 }
 
+// Whether the scene's drawn at the screen's size, one pixel to one.
+fn at_screen_size() -> bool {
+    return abs(render_scale() - 1.0) < 0.005;
+}
+
+// The scene between its pixels, blended.
+fn scene_between(uv: vec2<f32>) -> vec3<f32> {
+    return textureSampleLevel(scene, scene_sampler, uv, 0.0).rgb;
+}
+
+// The scene at `uv` from more pixels than the screen has: the screen's pixel takes what's under it,
+// from four blends across it.
+fn shrunk(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let quarter = 0.25 * render_scale() / size;
+    let sum = scene_between(uv + vec2<f32>(-quarter.x, -quarter.y))
+        + scene_between(uv + vec2<f32>(quarter.x, -quarter.y))
+        + scene_between(uv + vec2<f32>(-quarter.x, quarter.y))
+        + scene_between(uv + vec2<f32>(quarter.x, quarter.y));
+    return sum * 0.25;
+}
+
+// The scene at `uv` from fewer pixels than the screen has, by Catmull and Rom's curve through
+// the pixels round it, from five blends, kept between the four nearest so it doesn't ring.
+fn grown(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let place = uv * size;
+    let middle = floor(place - vec2<f32>(0.5)) + vec2<f32>(0.5);
+    let f = place - middle;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = -0.5 * f3 + f2 - 0.5 * f;
+    let w1 = 1.5 * f3 - 2.5 * f2 + vec2<f32>(1.0);
+    let w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+    let w3 = 0.5 * f3 - 0.5 * f2;
+    let w12 = w1 + w2;
+    let at12 = (middle + w2 / w12) / size;
+    let at0 = (middle - vec2<f32>(1.0)) / size;
+    let at3 = (middle + vec2<f32>(2.0)) / size;
+    let sum = scene_between(vec2<f32>(at12.x, at0.y)) * w12.x * w0.y
+        + scene_between(vec2<f32>(at0.x, at12.y)) * w0.x * w12.y
+        + scene_between(at12) * w12.x * w12.y
+        + scene_between(vec2<f32>(at3.x, at12.y)) * w3.x * w12.y
+        + scene_between(vec2<f32>(at12.x, at3.y)) * w12.x * w3.y;
+    let weight = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    let corner = vec2<i32>(middle);
+    let a = load_scene(corner);
+    let b = load_scene(corner + vec2<i32>(1, 0));
+    let c = load_scene(corner + vec2<i32>(0, 1));
+    let d = load_scene(corner + vec2<i32>(1, 1));
+    let low = min(min(a, b), min(c, d));
+    let high = max(max(a, b), max(c, d));
+    return clamp(sum / max(weight, 0.0001), low, high);
+}
+
+// SMAA's picture at `uv` from fewer pixels than the screen has, blended between the four nearest.
+fn grown_smaa(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let place = uv * size - vec2<f32>(0.5);
+    let corner = vec2<i32>(floor(place));
+    let f = place - floor(place);
+    let top = mix(smaa_blended(corner), smaa_blended(corner + vec2<i32>(1, 0)), f.x);
+    let bottom = mix(
+        smaa_blended(corner + vec2<i32>(0, 1)),
+        smaa_blended(corner + vec2<i32>(1, 1)),
+        f.x,
+    );
+    return mix(top, bottom, f.y);
+}
+
+// What TAA made at `at`, held to its edges, squeezed as it's blended.
+fn taa_tamed(at: vec2<i32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(taa_light));
+    return tamed(textureLoad(taa_light, clamp(at, vec2<i32>(0), size - vec2<i32>(1)), 0).rgb);
+}
+
+// How hard what TAA brings up is sharpened.
+const SHARPEN: f32 = 0.5;
+
+// What TAA brought up to the screen's size at `uv`, sharpened by how much contrast there is round
+// it, so that what's flat or already sharp isn't made to ring, as AMD's RCAS does.
+fn sharpened(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<i32>(textureDimensions(taa_light));
+    let at = clamp(vec2<i32>(uv * vec2<f32>(size)), vec2<i32>(0), size - vec2<i32>(1));
+    let middle = taa_tamed(at);
+    let up = taa_tamed(at + vec2<i32>(0, -1));
+    let down = taa_tamed(at + vec2<i32>(0, 1));
+    let left = taa_tamed(at + vec2<i32>(-1, 0));
+    let right = taa_tamed(at + vec2<i32>(1, 0));
+    let least = min(middle, min(min(up, down), min(left, right)));
+    let most = max(middle, max(max(up, down), max(left, right)));
+    let room = clamp(min(least, vec3<f32>(1.0) - most) / max(most, vec3<f32>(0.0001)), vec3<f32>(0.0), vec3<f32>(1.0));
+    let weight = -sqrt(room) / (8.0 - 3.0 * SHARPEN);
+    let sharp = (middle + weight * (up + down + left + right)) / (vec3<f32>(1.0) + 4.0 * weight);
+    return untamed(clamp(sharp, least, most));
+}
+
+// The scene at `uv` of a screen it isn't the size of: what TAA made of it at the screen's size,
+// or more of its pixels taken into each of the screen's, or fewer brought up.
+fn resized(uv: vec2<f32>) -> vec3<f32> {
+    if frame.taa.x > 0.5 {
+        if render_scale() < 1.0 {
+            return sharpened(uv);
+        }
+        return textureSampleLevel(taa_light, scene_sampler, uv, 0.0).rgb;
+    }
+    if render_scale() > 1.0 {
+        return shrunk(uv);
+    }
+    if frame.post_params.x > 1.5 {
+        return grown_smaa(uv);
+    }
+    return grown(uv);
+}
+
 // Interleaved gradient noise at `clip`: an even dither, not grain. With TAA it moves each
 // frame, so that what's dithered comes out even over frames.
 fn frame_noise(clip: vec2<f32>) -> f32 {
@@ -1167,7 +1282,9 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
     let depth = load_depth(at);
     var color = load_color(at);
-    if frame.post_params.x > 2.5 {
+    if !at_screen_size() {
+        color = resized(in.uv);
+    } else if frame.post_params.x > 2.5 {
         // TAA's done its part, and load_color has it.
     } else if frame.post_params.x > 1.5 {
         color = smaa_blended(at);
@@ -1256,7 +1373,14 @@ const TAA_TAKES: f32 = 0.1;
 fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
     let size = vec2<f32>(textureDimensions(scene));
     let at = vec2<i32>(in.uv * size);
-    let current = load_scene(at);
+    var current = load_scene(at);
+    var takes = TAA_TAKES;
+    if !at_screen_size() {
+        let rebuilt = rebuilt_at(in.uv);
+        current = rebuilt.rgb;
+        // A pixel of the scene that's near takes more, as what it saw is nearly here.
+        takes = TAA_TAKES * clamp(rebuilt.a * 1.5, 0.3, 1.0);
+    }
     if frame.taa.y < 0.5 {
         return vec4<f32>(current, 1.0);
     }
@@ -1273,7 +1397,11 @@ fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
     let spread = sqrt(max(squares / 9.0 - mean * mean, vec3<f32>(0.0)));
     let low = mean - spread * 1.25;
     let high = mean + spread * 1.25;
-    let middle = (vec2<f32>(at) + vec2<f32>(0.5)) / size;
+    var middle = (vec2<f32>(at) + vec2<f32>(0.5)) / size;
+    if !at_screen_size() {
+        // What's kept is the screen's size, so it's found from where this pixel of it is.
+        middle = in.uv;
+    }
     let world = world_at(middle, load_depth(at));
     // What moves says how far it went, if it's what's seen here. The rest went as far as depth
     // and the view now and last frame say. Both go by the view with nothing off, so that a pixel
@@ -1296,8 +1424,52 @@ fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
     }
     let kept = to_ycocg(tamed(textureSampleLevel(taa_kept, scene_sampler, back, 0.0).rgb));
     let held = clamp(kept, low, high);
-    let blended = mix(held, to_ycocg(tamed(current)), TAA_TAKES);
+    let blended = mix(held, to_ycocg(tamed(current)), takes);
     return vec4<f32>(untamed(from_ycocg(blended)), 1.0);
+}
+
+// How far this frame's view is moved, in the scene's pixels: the moved view's matrix less the
+// unmoved one's, which is the move times depth.
+fn moved_pixels() -> vec2<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    // Any column will do whose depth part isn't nothing, and the most is surest.
+    var column = 0;
+    for (var at = 1; at < 4; at = at + 1) {
+        if abs(frame.steady_view_projection[at][3]) > abs(frame.steady_view_projection[column][3]) {
+            column = at;
+        }
+    }
+    let deep = frame.steady_view_projection[column][3];
+    let across = (frame.view_projection[column][0] - frame.steady_view_projection[column][0]) / deep;
+    let down = (frame.view_projection[column][1] - frame.steady_view_projection[column][1]) / deep;
+    return vec2<f32>(across * size.x * 0.5, -down * size.y * 0.5);
+}
+
+// This frame's scene at `uv` of a screen it isn't the size of, for TAA to take, with alpha how
+// near the nearest of what it's made of is: each pixel round it, at where what it saw truly is
+// with the view's move taken out, by how near that is (Blackman and Harris's window, near
+// enough), so that over frames the moves fill the screen's pixels in.
+fn rebuilt_at(uv: vec2<f32>) -> vec4<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let place = uv * size;
+    let nearest = vec2<i32>(floor(place));
+    let moved = moved_pixels();
+    var sum = vec3<f32>(0.0);
+    var weights = 0.0;
+    var most = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let pixel = nearest + vec2<i32>(x, y);
+            let truly = vec2<f32>(pixel) + vec2<f32>(0.5) - moved;
+            // How far, in the screen's pixels, so that it's as sharp as they are.
+            let apart = (truly - place) / render_scale();
+            let weight = exp(-2.29 * dot(apart, apart));
+            sum = sum + tamed(load_scene(pixel)) * weight;
+            weights = weights + weight;
+            most = max(most, weight);
+        }
+    }
+    return vec4<f32>(untamed(sum / max(weights, 0.0001)), most);
 }
 
 // What TAA made, kept for the next frame.

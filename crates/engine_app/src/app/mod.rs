@@ -622,6 +622,7 @@ impl Engine {
         console.register_cvar("r_exposure_auto", "1", saved);
         console.register_cvar("r_bloom", "1", saved);
         console.register_cvar("r_steady_shine", "1", saved);
+        console.register_cvar("r_scale", "1", saved);
         console.register_cvar("r_hdr", "0", saved);
         console.register_cvar("r_hdr_white", "200", saved);
         console.register_cvar("r_hdr_peak", "1000", saved);
@@ -824,6 +825,7 @@ impl Engine {
             auto_exposure: self.cvar_number("r_exposure_auto") != 0.0,
             bloom: self.cvar_number("r_bloom") != 0.0,
             steady_shine: self.cvar_number("r_steady_shine") != 0.0,
+            render_scale: self.cvar_number("r_scale").clamp(0.5, 2.0) as f32,
             hdr: self.cvar_number("r_hdr") != 0.0,
             white_nits: self.cvar_number("r_hdr_white").clamp(80.0, 1000.0) as f32,
             peak_nits: self.cvar_number("r_hdr_peak").clamp(100.0, 10_000.0) as f32,

@@ -50,7 +50,7 @@ struct SpriteColor {
 // Where alpha's below half is a hole, whose edges are smoothed as a masked surface's are.
 @fragment
 fn fs_sprite(in: SpriteOut) -> SpriteColor {
-    let texel = textureSample(picture, picture_sampler, in.uv);
+    let texel = textureSampleBias(picture, picture_sampler, in.uv, texture_bias());
     let count = cut_samples(cut_coverage(texel.a, 0.5), frame.stencil_params.w);
     if count == 0u {
         discard;

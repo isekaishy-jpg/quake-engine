@@ -329,6 +329,19 @@ local function screen_rows(state)
 					{ { "Off", 1 }, { "2x", 2 }, { "4x", 4 }, { "8x", 8 } },
 					"Smooths edges by drawing more of each pixel. Each step costs more."
 				),
+				pick(
+					"Render Scale",
+					"r_scale",
+					{
+						{ "50%", 0.5 },
+						{ "67%", 0.67 },
+						{ "75%", 0.75 },
+						{ "100%", 1 },
+						{ "150%", 1.5 },
+						{ "200%", 2 },
+					},
+					"How big the picture's drawn. Under 100% is faster and softer, brought up to the screen, best with TAA. Over is sharper and costs more."
+				),
 				switch("Rounded Corners", "r_edges", "Softens the hard corners of walls a little."),
 				switch(
 					"Lit Fog",

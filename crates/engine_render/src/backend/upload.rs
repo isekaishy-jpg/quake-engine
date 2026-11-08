@@ -18,6 +18,7 @@ use vulkane::safe::{
 
 use super::bloom::BloomStep;
 use super::exposure::Exposure;
+use super::post::render_scale;
 use super::ripple::GpuRipples;
 use super::shadow::{SUN_CASCADES, ShadowRange, SunShadow, shadow_figures};
 use super::{
@@ -1709,8 +1710,17 @@ impl Backend {
             view.fov,
             aspect,
         );
+        // Drawn smaller than the screen, more moves of the view go round, so that more places in
+        // each of its pixels are seen.
+        let scale = render_scale(self.post.render_scale);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a short round"
+        )]
+        let frames = (TAA_FRAMES as f32 / scale.min(1.0).powi(2)).ceil() as u32;
         let (jitter, taa) = if self.taa_on {
-            let round = self.taa_frame % TAA_FRAMES + 1;
+            let round = self.taa_frame % frames + 1;
             let (width, height) = self.scene_size();
             #[expect(
                 clippy::cast_precision_loss,
@@ -1723,9 +1733,9 @@ impl Backend {
             let kept = self.taa_kept && self.last_view_projection.is_some();
             #[expect(clippy::cast_precision_loss, reason = "a short round")]
             let which = round as f32;
-            (jitter, [1.0, f32::from(u8::from(kept)), which, 0.0])
+            (jitter, [1.0, f32::from(u8::from(kept)), which, scale])
         } else {
-            ([0.0; 2], [0.0; 4])
+            ([0.0; 2], [0.0, 0.0, 0.0, scale])
         };
         let last_view_projection = self.last_view_projection.unwrap_or(steady);
         if self.taa_on {

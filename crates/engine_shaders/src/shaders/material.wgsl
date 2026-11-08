@@ -335,8 +335,10 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     if !PLAIN {
         uv0 = moved_uv(uv0);
     }
-    let dx = dpdx(in.uv);
-    let dy = dpdy(in.uv);
+    // Smaller steps across a pixel read finer mips, as a render scale wants with TAA.
+    let finer = exp2(texture_bias());
+    let dx = dpdx(in.uv) * finer;
+    let dy = dpdy(in.uv) * finer;
     let surface_at = surface_frame(in.world, in.uv, in.normal.xyz);
     let to_eye = normalize(frame.eye.xyz - in.world);
     var uv = uv0;

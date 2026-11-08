@@ -1,6 +1,6 @@
 # Proposal 0151: anti-aliasing
 
-Status: accepted for items 172 to 175, 2026-11-07. Items 176 and 177 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 172 to 176, 2026-11-07. Item 177 of the [work list](../research/work-list.md) is added to this when it's reached.
 
 ## Why
 
@@ -129,6 +129,29 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 - **Quake's own pictures with holes** have their own mips, made by its tools, and alpha all or nothing, so scaling them changes nothing. They keep theirs.
 - **What no test reaches:** a screenshot settling with TAA, as no test runs the game with a renderer; it was seen in the game, where the grates and E1M1 above were taken that way.
 
+## Drawing at another size (176)
+
+### What's done elsewhere
+
+- **Drawing above the screen's size** and taking each screen pixel from those under it, supersampling: the surest anti-aliasing, at twice the cost of pixels for a half again each way.
+- **Bringing a smaller picture up** by a filter alone: bilinear, which is soft; a cubic such as Catmull and Rom's, sharper; AMD's FSR 1, an edge-following one with sharpening after, which is MIT-licensed and a few hundred lines of shader.
+- **Bringing it up over frames**, with what TAA keeps at the screen's size: Unreal's TSR and TAAU, AMD's FSR 2 and 3, Intel's XeSS and NVIDIA's DLSS. XeSS and DLSS need their makers' libraries, and DLSS a card of its maker's. FSR 2 is open, and many passes, of which this engine's TAA already does the heart: moves of the view, what's kept found where it went, held to what's round it. What it adds is each of the frame's pixels taken where it truly is, by how near that is to each of the screen's, textures read as finely as the screen's size would, and sharpening after.
+
+### What's done here
+
+- **`r_scale`,** "Render Scale" in the options, from 50% to 200%, 100% unless a player says. The scene and all that's drawn at its size are that much of the screen each way: light in the air, how open corners are, what glows, SMAA and what moves. The final pass and TAA are the screen's size, and everything over the view after.
+- **Above 100%** the final pass takes each pixel from four blends across the scene's pixels under it.
+- **Below 100%, without TAA,** it's brought up by Catmull and Rom's curve, from five blends, kept between the four nearest pixels so that an edge doesn't ring. With SMAA, SMAA's picture is blended between the four nearest.
+- **Below 100%, with TAA,** TAA keeps the screen's size. Each of the frame's pixels round a screen pixel is where what it saw truly is, with the view's move taken out, and counts by how near that is in the screen's pixels, by a window near enough Blackman and Harris's; one that's near counts for more of what's kept. The moves go round more frames the smaller it is, eight over the scale squared, so that more places in each pixel are seen. Textures are read as finely as the screen's size would have them, and what TAA makes is sharpened after by how much contrast there is round it, as AMD's RCAS does, held between the pixels round it. Without TAA finer textures would only shimmer, so they're as the scene's size says.
+- **Capturing and screenshots** draw at the scale, at the size asked for.
+
+### What came of it
+
+- **Tried in the game,** at the start of E1M1 in a window, with what `gpu_times` says. With SMAA: at 50% the scene takes 0.12 ms, against 0.31 at 100% and 0.6 to 1.0 at 200%, which also puts SMAA up to 0.8 ms. With TAA at 50% the scene, final pass and edges take about 0.6 ms together, against about 1 ms at 100%. Against TAA at 100%, a picture at 50% with SMAA is off by 1.9 a pixel and TAA at 50% by 1.2, as sharp as SMAA's at a third less off; it went from 1.6 to 1.4 when how near was measured in the screen's pixels and not the scene's, and to 1.2 with textures read finer, and sharpening brought its sharpness from 1.47 to 1.67 of TAA at 100%'s 1.85.
+- **Found on the way:** the scene's passes were told the screen's size for what to draw into, and drew a corner of it; TAA's move was read from a part of the view's matrix that's nothing when the view's level, and came out black.
+- **Tests:** a scene at half and at twice the size fills the screen and is as it was where it's flat, twice smooths edges, and 0 is the screen's size. At a half again, a fine pattern is averaged under each pixel, to under a third of it, where one blend leaves more. What's brought up doesn't ring past the pixels round it. TAA at half comes under half as far from TAA at the screen's size as bringing up alone, and sharpening gives it more shades than the screen's size has; any of its parts undone, or the shorter round, comes further off, the round by only 5%, so that test's margin is narrow. Textures are read finer drawn smaller only with TAA. SMAA comes along when it's brought up. The options show it and turn it.
+- **What no test reaches:** `r_scale` held between a half and twice in the game, as with every setting beside it.
+
 ## Sources
 
 - [Proposal 0082: anti-aliasing and alpha](0082-antialiasing-and-alpha.md)
@@ -141,3 +164,5 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 - Marc Olano and Dan Baker, "LEAN Mapping", I3D 2010
 - Ignacio Castaño, "Computing Alpha Mipmaps", 2010: scaling each mip's alpha so as much of it passes the cutoff
 - Ben Golus, "Anti-aliased Alpha Test: The Esoteric Alpha To Coverage", 2017: alpha sharpened to a pixel's width
+- AMD, FidelityFX Super Resolution 1 and 2, and Contrast Adaptive Sharpening: MIT-licensed upscaling and sharpening
+- Brian Karis, "High Quality Temporal Supersampling", SIGGRAPH 2014: taking each pixel where it truly is, by a window

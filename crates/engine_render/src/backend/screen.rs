@@ -185,7 +185,7 @@ impl Backend {
             return Err(RenderError("no HDR passes".to_owned()));
         };
         let recorded = self.queue.one_shot(&self.device, self.queue_family, |rec| {
-            self.record_scene(rec, scene, view, shown);
+            self.record_scene(rec, scene, view);
             rec.begin_render_pass_ext(
                 &pipes.capture_pass,
                 &attachments.framebuffer,

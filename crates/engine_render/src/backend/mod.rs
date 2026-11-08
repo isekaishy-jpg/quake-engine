@@ -1728,13 +1728,14 @@ impl Backend {
         rec: &mut vulkane::safe::CommandBufferRecording<'_>,
         scene: Option<&Scene<'_>>,
         view: &View,
-        size: (u32, u32),
     ) {
         self.clock.begin(rec, self.slot);
         self.record_values(rec);
         let Some(target) = &self.scene_target else {
             return;
         };
+        // The scene's drawn at its own size, which a render scale can make other than the screen's.
+        let size = target.size;
         self.clock.start(rec, self.slot, Span::Deform);
         self.record_deform(rec);
         self.record_fields(rec);
@@ -2074,7 +2075,7 @@ impl Backend {
         let mut commands = self.command_pool.allocate_primary()?;
         {
             let mut rec = commands.begin()?;
-            self.record_scene(&mut rec, scene, view, shown);
+            self.record_scene(&mut rec, scene, view);
             rec.begin_render_pass_ext(
                 &self.present_pass,
                 &window.framebuffers[at],
@@ -2167,7 +2168,7 @@ impl Backend {
         self.upload_canvas(quads, (width, height))?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
-                self.record_scene(rec, scene, view, shown);
+                self.record_scene(rec, scene, view);
                 rec.begin_render_pass_ext(
                     &self.capture_pass,
                     &attachments.framebuffer,

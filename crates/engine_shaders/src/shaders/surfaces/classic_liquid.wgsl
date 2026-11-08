@@ -4,6 +4,6 @@ fn shader_whole(in: VertexOut) -> vec4<f32> {
     let texels = in.uv * size;
     let time = frame.params.x;
     let warped = texels + 8.0 * sin(texels.yx * 0.125 + time);
-    let texel = textureSample(surface, surface_sampler, warped / size);
+    let texel = textureSampleBias(surface, surface_sampler, warped / size, texture_bias());
     return vec4<f32>(scene_color(texel.rgb), 1.0);
 }

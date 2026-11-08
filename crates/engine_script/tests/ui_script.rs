@@ -460,6 +460,14 @@ fn anti_aliasing_is_in_the_options() {
     shows(2.0, 4.0, "Multisampling", "4x");
     shows(0.0, 1.0, "Anti-aliasing", "Off");
     shows(0.0, 1.0, "Multisampling", "Off");
+    let (script, mut told) = video_at(2.0, 1.0, 0);
+    told.settings.insert("r_scale".to_owned(), 0.5);
+    let drawn = words(&script.draw_menu(&told).expect("draws"));
+    let at = drawn.iter().position(|text| text == "Render Scale");
+    assert_eq!(
+        at.and_then(|at| drawn.get(at + 1)).map(String::as_str),
+        Some("50%")
+    );
 }
 
 /// Turning them sets the setting to the next of its own values, going round.
@@ -475,6 +483,9 @@ fn turning_anti_aliasing_sets_it() {
     assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_msaa 2"]);
     let (script, told) = video_at(2.0, 8.0, 4);
     assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_msaa 1"]);
+    let (script, mut told) = video_at(2.0, 1.0, 5);
+    told.settings.insert("r_scale".to_owned(), 1.0);
+    assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_scale 1.5"]);
     let (script, told) = video_at(2.0, 3.0, 4);
     assert_eq!(
         runs(&script, &told, "RIGHTARROW"),

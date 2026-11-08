@@ -132,6 +132,21 @@ struct Frame {
     shine: vec4<f32>,
 }
 
+// How big the scene's drawn against the screen (proposal 0154).
+fn render_scale() -> f32 {
+    return select(frame.taa.w, 1.0, frame.taa.w <= 0.0);
+}
+
+// How many mips finer pictures are read than the scene's size says: drawn smaller than the
+// screen with TAA, as fine as the screen's size would have them, so that what TAA brings up over
+// frames has their detail to find. Without TAA, finer would only shimmer.
+fn texture_bias() -> f32 {
+    if frame.taa.x > 0.5 && render_scale() < 1.0 {
+        return log2(render_scale());
+    }
+    return 0.0;
+}
+
 // How much of a pixel a cut-out covers at `alpha`, from how far that's past its `cutoff`, as
 // far as alpha changes across a pixel: an edge is a pixel wide, however near or far.
 fn cut_coverage(alpha: f32, cutoff: f32) -> f32 {

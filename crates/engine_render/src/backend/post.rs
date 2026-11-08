@@ -47,8 +47,10 @@ pub(super) struct SceneTarget {
     pub(super) smaa: SmaaTarget,
     /// What glows.
     pub(super) bloom: BloomTarget,
-    /// What TAA makes and keeps.
+    /// What TAA makes and keeps, at the screen's size.
     pub(super) taa: TaaTarget,
+    /// The screen's size, which the final pass and TAA draw at.
+    pub(super) shown: (u32, u32),
     /// Which way what moves went, for TAA.
     pub(super) motion: MotionTarget,
     /// Where light in the air is drawn.
@@ -260,6 +262,30 @@ fn probe_slices(probes: &ProbeGrid) -> (u32, u32, Vec<u8>) {
         rgba.push(u8::MAX);
     }
     (width, depth * slices, rgba)
+}
+
+/// The size a scene's drawn at for a screen `shown` big, at `scale`: the same at 0 or 1, and
+/// never less than a pixel.
+pub(super) fn scaled_size(shown: (u32, u32), scale: f32) -> (u32, u32) {
+    let scale = render_scale(scale);
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        clippy::cast_precision_loss,
+        reason = "window sizes are far below 2^24"
+    )]
+    let at = |side: u32| ((side as f32 * scale).round() as u32).max(1);
+    (at(shown.0), at(shown.1))
+}
+
+/// How big a scene's drawn against the screen, as a player's `scale` says: 1 for 0, and from a
+/// half to twice.
+pub(super) fn render_scale(scale: f32) -> f32 {
+    if scale <= 0.0 {
+        1.0
+    } else {
+        scale.clamp(0.5, 2.0)
+    }
 }
 
 impl Backend {
@@ -541,11 +567,12 @@ impl Backend {
     }
 
     /// Makes sure the scene target is `size`.
-    pub(super) fn ensure_scene_target(&mut self, size: (u32, u32)) -> Result<(), RenderError> {
+    pub(super) fn ensure_scene_target(&mut self, screen: (u32, u32)) -> Result<(), RenderError> {
+        let size = scaled_size(screen, self.post.render_scale);
         if self
             .scene_target
             .as_ref()
-            .is_some_and(|target| target.size == size)
+            .is_some_and(|target| target.size == size && target.shown == screen)
         {
             return Ok(());
         }
@@ -686,8 +713,8 @@ impl Backend {
         self.write_sky_pictures(&set);
         self.write_stencils(&set)?;
         let taa = TaaTarget {
-            out: self.full_target(size, &self.taa_pass, TAA_FORMAT)?,
-            kept: self.full_target(size, &self.taa_pass, TAA_FORMAT)?,
+            out: self.full_target(screen, &self.taa_pass, TAA_FORMAT)?,
+            kept: self.full_target(screen, &self.taa_pass, TAA_FORMAT)?,
         };
         set.write_sampled_image(
             21,
@@ -721,6 +748,7 @@ impl Backend {
             smaa,
             bloom,
             taa,
+            shown: screen,
             motion,
             rays,
             corners,
