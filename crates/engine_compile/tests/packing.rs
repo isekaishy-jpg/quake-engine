@@ -509,3 +509,161 @@ fn a_compiled_normal_map_keeps_how_much_its_bumps_agree() {
     let data = picture_levels(16, 16, &rgba, Role::Data);
     assert_eq!(data[1].rgba[2], 0, "a measure's blue is averaged as it is");
 }
+
+/// Solid in scattered spots, about a third of it, as leaves are, 16 pixels a side.
+fn spots() -> Vec<u8> {
+    (0..16 * 16_u32)
+        .flat_map(|at| {
+            let mut hashed = at ^ (at >> 16);
+            hashed = hashed.wrapping_mul(0x7feb_352d);
+            hashed ^= hashed >> 15;
+            hashed = hashed.wrapping_mul(0x846c_a68b);
+            let alpha = if (hashed ^ (hashed >> 16)) & 0xffff < 21_000 {
+                255
+            } else {
+                0
+            };
+            [90, 90, 90, alpha]
+        })
+        .collect()
+}
+
+/// The share of a level's texels whose alpha is at least half.
+fn solid(level: &engine_map::MipLevel) -> f32 {
+    let texels = level.rgba.as_chunks::<4>().0;
+    let count = texels.iter().filter(|texel| texel[3] >= 128).count();
+    count as f32 / texels.len() as f32
+}
+
+/// A masked material's picture is a cut-out, with its cutoff, and its mips are as solid as it is.
+#[test]
+fn a_masked_materials_picture_is_a_cut_out() {
+    let roles = |text: &str| {
+        let document = from_text(&format!(
+            "format 1 material
+surface {{
+{text}
+}}
+"
+        ));
+        picture_roles(&document.expect("reads"))
+    };
+    assert_eq!(
+        roles(
+            "base = a.png
+alpha = mask"
+        )[0]
+        .1,
+        Role::Cutout(128)
+    );
+    assert_eq!(
+        roles(
+            "base = a.png
+alpha = mask
+cutoff = 0.3"
+        )[0]
+        .1,
+        Role::Cutout(77)
+    );
+    assert_eq!(
+        roles(
+            "base = a.png
+alpha = blend"
+        )[0]
+        .1,
+        Role::Colour
+    );
+    let rgba = spots();
+    let cut = picture_levels(16, 16, &rgba, Role::Cutout(128));
+    let colour = picture_levels(16, 16, &rgba, Role::Colour);
+    let wanted = solid(&cut[0]);
+    assert!(solid(&colour[2]) < wanted / 2.0, "as colour it thins");
+    assert!(
+        (solid(&cut[2]) - wanted).abs() < 0.1,
+        "{} {wanted}",
+        solid(&cut[2])
+    );
+}
+
+/// A masked material's own picture keeps as solid in its mips, and another's doesn't change.
+#[test]
+fn a_masked_materials_mips_are_as_solid_as_it_is() {
+    let root = folder("cut-out");
+    write_picture(&root, "textures/leaves.png", &spots());
+    write_material(
+        &root,
+        "leaves",
+        "base = textures/leaves.png
+alpha = mask",
+    );
+    write_material(&root, "plain", "base = textures/leaves.png");
+    let filesystem = mounted(&root);
+    let mut library = MaterialLibrary::new(&filesystem);
+    let leaves = library.load("leaves").expect("loads");
+    let plain = library.load("plain").expect("loads");
+    let wanted = solid(&leaves.mips[0]);
+    assert!(
+        (solid(&leaves.mips[2]) - wanted).abs() < 0.1,
+        "{}",
+        solid(&leaves.mips[2])
+    );
+    assert!(
+        solid(&plain.mips[2]) < wanted / 2.0,
+        "{}",
+        solid(&plain.mips[2])
+    );
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// A picture compiled as colour is compiled again once its material is a cut-out, as its mips
+/// differ, and not again after that.
+#[test]
+fn a_picture_that_becomes_a_cut_out_is_compiled_again() {
+    let root = folder("becomes-cut-out");
+    write_picture(&root, "textures/leaves.png", &spots());
+    write_material(&root, "leaves", "base = textures/leaves.png");
+    assert_eq!(pack_textures(&root).expect("compiles"), (1, 1));
+    // As it was compiled before compiled pictures said their role.
+    let packed = root.join(packed_path("textures/leaves.png"));
+    let mut bytes = fs::read(&packed).expect("compiled");
+    let at = bytes
+        .windows(4)
+        .position(|window| window == b"role")
+        .expect("says its role");
+    bytes[at..at + 4].copy_from_slice(b"rold");
+    fs::write(&packed, &bytes).expect("write");
+    assert_eq!(
+        pack_textures(&root).expect("compiles"),
+        (0, 1),
+        "colour's as it was"
+    );
+    write_material(
+        &root,
+        "leaves",
+        "base = textures/leaves.png
+alpha = mask",
+    );
+    assert_eq!(
+        pack_textures(&root).expect("compiles"),
+        (1, 1),
+        "compiled again"
+    );
+    assert_eq!(
+        pack_textures(&root).expect("compiles"),
+        (0, 1),
+        "up to date"
+    );
+    write_material(
+        &root,
+        "leaves",
+        "base = textures/leaves.png
+alpha = mask
+cutoff = 0.3",
+    );
+    assert_eq!(
+        pack_textures(&root).expect("compiles"),
+        (1, 1),
+        "another cutoff"
+    );
+    fs::remove_dir_all(&root).expect("clean up");
+}

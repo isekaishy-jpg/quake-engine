@@ -46,8 +46,8 @@ pub use map::{
 };
 pub use material::{
     AlphaMode, FieldDef, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough,
-    PAINT_MASK, SHADER_IMAGES, SHADER_PARAMS, ShaderCode, Shading, SlotImage, mip_chain,
-    normal_chain, normal_of_texel, texel_of_normals,
+    PAINT_MASK, SHADER_IMAGES, SHADER_PARAMS, ShaderCode, Shading, SlotImage, keep_coverage,
+    mip_chain, normal_chain, normal_of_texel, texel_of_normals,
 };
 pub use nav::{LINKS, NAV_WAYS, NavGrid, NavLeap, NavLeaps, NavPlace, NavStep, NavWay, Spline};
 pub use nav_chunks::{CHUNK_COLUMNS, ChunkedNav, NavChunk, NavShape, SideFiles, chunks_of};

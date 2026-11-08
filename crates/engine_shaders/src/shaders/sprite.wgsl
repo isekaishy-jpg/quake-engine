@@ -1,11 +1,4 @@
-// Sprites (proposal 0036).
-
-struct Frame {
-    view_projection: mat4x4<f32>,
-    eye: vec4<f32>,
-    // x is the time in seconds, and y the width over the height.
-    params: vec4<f32>,
-}
+// Sprites (proposal 0036). This follows frame.wgsl in one module.
 
 struct Draw {
     origin: vec4<f32>,
@@ -49,11 +42,21 @@ fn vs_sprite(@builtin(vertex_index) index: u32) -> SpriteOut {
     return out;
 }
 
+struct SpriteColor {
+    @location(0) color: vec4<f32>,
+    @builtin(sample_mask) mask: u32,
+}
+
+// Where alpha's below half is a hole, whose edges are smoothed as a masked surface's are.
 @fragment
-fn fs_sprite(in: SpriteOut) -> @location(0) vec4<f32> {
+fn fs_sprite(in: SpriteOut) -> SpriteColor {
     let texel = textureSample(picture, picture_sampler, in.uv);
-    if texel.a < 0.5 {
+    let count = cut_samples(cut_coverage(texel.a, 0.5), frame.stencil_params.w);
+    if count == 0u {
         discard;
     }
-    return vec4<f32>(texel.rgb, 1.0);
+    var out: SpriteColor;
+    out.color = vec4<f32>(texel.rgb, 1.0);
+    out.mask = (1u << count) - 1u;
+    return out;
 }

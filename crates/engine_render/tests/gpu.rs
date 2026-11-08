@@ -21,8 +21,8 @@ use engine_map::{
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
     MovingDraw, ParticleColor, ParticleDraw, ParticleShape, ParticleSim, PostSettings, Renderer,
-    ScreenOutput, SimForce, SkyRayFloor, SpriteDraw, SunDraw, Target, TileStreamer, View,
-    build_world,
+    ScreenOutput, SimForce, SkyRayFloor, SpriteDraw, SunDraw, Target, TextureFilter, TileStreamer,
+    View, build_world,
 };
 
 /// A renderer with no window, or `None` with no Vulkan device. Any other
@@ -9382,4 +9382,310 @@ fn a_flat_surface_shines_as_it_did() {
     let steady = shiny_floor(flat(), true).expect("it drew");
     assert!(centre(&sharp)[0] > 100, "it shines");
     assert_eq!(sharp.rgba, steady.rgba);
+}
+
+/// Textures smoothed, with `samples` a pixel.
+fn smooth_with_samples(renderer: &mut Renderer, samples: u32) {
+    renderer
+        .set_filter(TextureFilter {
+            smooth: true,
+            trilinear: true,
+            anisotropy: 1.0,
+        })
+        .expect("filter");
+    renderer.set_antialiasing(samples).expect("samples");
+}
+
+/// How many pixels inside a capture, away from its edge, are between `low` and `high` in red:
+/// neither the surface nor what's behind it.
+fn between(capture: &Capture, low: u8, high: u8) -> usize {
+    let mut count = 0;
+    for y in 4..capture.height - 4 {
+        for x in 4..capture.width - 4 {
+            let red = pixel(capture, x, y)[0];
+            if red > low && red < high {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+/// The floor as one of Quake's pictures with holes and no material, holed past a slanted line,
+/// from just above, with smoothed textures and `samples` a pixel.
+fn quake_cut_out(samples: u32) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].kind = TextureKind::Cutout;
+    built.textures[0].mips = image_of(64, |x, y| {
+        if x * 3 + y < 120 {
+            [255, 255, 255, 255]
+        } else {
+            [0, 0, 0, 0]
+        }
+    });
+    renderer.load_map(Arc::new(built)).expect("load");
+    smooth_with_samples(&mut renderer, samples);
+    // Near, so that a texel is a few pixels.
+    let view = View {
+        origin: Vec3::new(27.0, 40.0, 16.0),
+        ..view_from_above()
+    };
+    Some(
+        renderer
+            .capture(&view, Drawables::default(), 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// One of Quake's pictures with holes keeps them, and with several samples a pixel their edges
+/// get shades between, as a masked material's do, where a hole's edge was all or nothing.
+#[test]
+fn a_quake_picture_with_holes_smooths_their_edges() {
+    let Some(plain) = quake_cut_out(1) else {
+        return;
+    };
+    let soft = quake_cut_out(4).expect("it drew");
+    for shot in [&plain, &soft] {
+        let (pixels, _) = shot.rgba.as_chunks::<4>();
+        let solid = pixels.iter().filter(|pixel| pixel[0] > 150).count();
+        let holes = pixels.iter().filter(|pixel| pixel[0] < 20).count();
+        assert!(
+            solid > 300 && holes > 300,
+            "solid and holes: {solid} {holes}"
+        );
+    }
+    let (hard, smooth) = (between(&plain, 20, 230), between(&soft, 20, 230));
+    assert!(smooth > hard + 10, "{hard} {smooth}");
+}
+
+/// A sprite with a slanted hole, as `half_sprite`, but holed past a diagonal.
+fn slanted_sprite() -> Sprite {
+    let mut sprite = half_sprite();
+    let image = &mut sprite.images[0];
+    image.rgba = (0..32 * 32)
+        .flat_map(|at: u32| {
+            if at % 32 > at / 32 {
+                [0, 0, 0, 0]
+            } else {
+                [255, 0, 255, 255]
+            }
+        })
+        .collect();
+    sprite
+}
+
+/// A sprite drawn close, with smoothed textures and `samples` a pixel.
+fn sprite_with_samples(samples: u32) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    smooth_with_samples(&mut renderer, samples);
+    let number = renderer
+        .add_sprite(Arc::new(slanted_sprite()))
+        .expect("sprite");
+    let sprites = [SpriteDraw {
+        sprite: number,
+        image: 0,
+        origin: Vec3::new(40.0, 0.0, 0.0),
+        angles: Vec3::ZERO,
+    }];
+    let drawables = Drawables {
+        sprites: &sprites,
+        ..Drawables::default()
+    };
+    Some(
+        renderer
+            .capture(&level_view(), drawables, 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// A sprite's holes get shades between at their edges with several samples a pixel, as a masked
+/// surface's do.
+#[test]
+fn a_sprite_smooths_its_holes_edges() {
+    let Some(plain) = sprite_with_samples(1) else {
+        return;
+    };
+    let soft = sprite_with_samples(4).expect("it drew");
+    assert!(magenta(&soft, 0..64) > 100, "it shows");
+    let (hard, smooth) = (between(&plain, 40, 200), between(&soft, 40, 200));
+    assert!(smooth > hard + 10, "{hard} {smooth}");
+}
+
+/// A masked texture of one `alpha` all over: all hole at 0, and all solid at 255.
+fn cut_out_texture(alpha: u8) -> Texture {
+    let mut texture = map(1).textures[0].clone();
+    texture.name = "cut".to_owned();
+    texture.mips = image_of(4, |_, _| [255, 255, 255, alpha]);
+    texture.material = Some(Arc::new(Material {
+        alpha: AlphaMode::Mask,
+        cutoff: 0.5,
+        ..Material::default()
+    }));
+    texture
+}
+
+/// What casts a shadow, with holes in it.
+#[derive(Clone, Copy, Debug)]
+enum CutCaster {
+    /// A brush model.
+    Brush,
+    /// A brush model in one of Quake's pictures with holes, with no material.
+    Quake,
+    /// A face of the world.
+    World,
+    /// A moving mesh.
+    Moving,
+    /// A moving mesh after another, whose places on the picture are its own.
+    SecondMoving,
+    /// A copy of a shared mesh.
+    Copy,
+}
+
+/// How blue the floor is where `caster`, in a cut-out of `alpha`, would shade it from a light to
+/// one side, without and with the light's shadows.
+fn shade_of_a_cut_out(caster: CutCaster, alpha: u8) -> Option<[u8; 2]> {
+    let mut renderer = renderer()?;
+    let mut built = map(2);
+    built.textures.push(cut_out_texture(alpha));
+    let mut instances = Vec::new();
+    let mut draws = Vec::new();
+    let mut rows = NO_MOVE;
+    rows[2][3] = 30.0;
+    if matches!(caster, CutCaster::Quake) {
+        let quake = &mut built.textures[1];
+        quake.kind = TextureKind::Cutout;
+        quake.material = None;
+    }
+    match caster {
+        CutCaster::Brush | CutCaster::Quake => {
+            built.faces[1].texture = 1;
+            instances.push(ModelInstance {
+                model: 1,
+                origin: Vec3::new(64.0, 0.0, 30.0),
+                visible: true,
+                ..ModelInstance::default()
+            });
+        }
+        CutCaster::World => {
+            built.faces[1].texture = 1;
+            for point in &mut built.points[4..8] {
+                *point = *point + Vec3::new(64.0, 0.0, 30.0);
+            }
+            built.models.truncate(1);
+            built.models[0].face_count = 2;
+            built.tree.leaf_faces = vec![0, 1];
+            built.tree.leaves[1].face_count = 2;
+        }
+        CutCaster::Moving | CutCaster::SecondMoving | CutCaster::Copy => {
+            built.models.truncate(1);
+            let mut square = square_of(1);
+            // Where light from the lamp to the pixel looked at crosses its height.
+            for corner in &mut square.mesh.corners {
+                corner.position[0] += 16.0;
+            }
+            if matches!(caster, CutCaster::SecondMoving) {
+                // The picture's left half is `alpha` and its right the other way, and the mesh
+                // before is on its right, where this one's on its left.
+                built.textures[1].mips = image_of(4, |x, _| {
+                    let solid = if x < 2 { alpha } else { 255 - alpha };
+                    [255, 255, 255, solid]
+                });
+                let mut before = square.clone();
+                for corner in &mut before.mesh.corners {
+                    corner.uv = [0.75, 0.5];
+                }
+                for corner in &mut square.mesh.corners {
+                    corner.uv = [0.25, 0.5];
+                }
+                built.moving_meshes = vec![before, square];
+                draws.push(MovingDraw {
+                    mesh: 1,
+                    rows,
+                    joint_count: 1,
+                    center: Vec3::new(80.0, 64.0, 30.0),
+                    radius: 30.0,
+                    ..MovingDraw::default()
+                });
+            } else if matches!(caster, CutCaster::Moving) {
+                built.moving_meshes = vec![square];
+                draws.push(MovingDraw {
+                    rows,
+                    joint_count: 1,
+                    center: Vec3::new(80.0, 64.0, 30.0),
+                    radius: 30.0,
+                    ..MovingDraw::default()
+                });
+            } else {
+                built.shared_meshes.push(SharedMesh {
+                    center: Vec3::new(80.0, 64.0, 30.0),
+                    radius: 30.0,
+                    level_sizes: Vec::new(),
+                    ..square.mesh
+                });
+                let stand_in = built.faces[0].clone();
+                built.faces[1] = stand_in;
+                built.models[0].face_count = 2;
+                built.tree.leaf_faces = vec![0, 1];
+                built.tree.leaves[1].face_count = 2;
+                built.mesh_instances.push(MeshInstance {
+                    mesh: 0,
+                    rows,
+                    first_face: 1,
+                    face_count: 1,
+                });
+            }
+        }
+    }
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        live_shadows: true,
+        ..PostSettings::default()
+    });
+    let palette = [NO_MOVE];
+    let shade = |renderer: &mut Renderer, shadows: bool| {
+        let lights = [blue_light(Vec3::new(128.0, 64.0, 60.0), shadows)];
+        let drawables = Drawables {
+            instances: &instances,
+            moving: &draws,
+            palette: &palette,
+            live_lights: &lights,
+            ..Drawables::default()
+        };
+        let capture = renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture");
+        pixel(&capture, 16, 32)[2]
+    };
+    Some([shade(&mut renderer, false), shade(&mut renderer, true)])
+}
+
+/// Light goes through a cut-out's holes to what's behind, and is stopped where it's solid, of a
+/// brush model, one of Quake's pictures with holes, the world, a moving mesh and a copy of a
+/// shared mesh alike.
+#[test]
+fn light_goes_through_a_cut_outs_holes_to_a_shadow() {
+    for caster in [
+        CutCaster::Brush,
+        CutCaster::Quake,
+        CutCaster::World,
+        CutCaster::Moving,
+        CutCaster::SecondMoving,
+        CutCaster::Copy,
+    ] {
+        let Some([open, through]) = shade_of_a_cut_out(caster, 0) else {
+            return;
+        };
+        let [_, blocked] = shade_of_a_cut_out(caster, 255).expect("it drew");
+        assert!(open > 60, "{caster:?} is lit: {open}");
+        assert!(
+            through + 10 > open,
+            "through {caster:?}'s holes: {open} {through}"
+        );
+        assert!(
+            blocked + 20 < open,
+            "not where {caster:?}'s solid: {open} {blocked}"
+        );
+    }
 }

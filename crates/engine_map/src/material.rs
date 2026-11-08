@@ -285,6 +285,59 @@ pub fn normal_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<MipLevel> {
     levels
 }
 
+/// How much of `level` is solid with `cutoff`, from 0 to 1: the share of its texels whose alpha,
+/// times `scale`, is at least the cutoff.
+fn covered(level: &MipLevel, cutoff: f32, scale: f32) -> f32 {
+    let texels = level.rgba.as_chunks::<4>().0;
+    let solid = texels
+        .iter()
+        .filter(|texel| f32::from(texel[3]) * scale >= cutoff * 255.0)
+        .count();
+    #[expect(clippy::cast_precision_loss, reason = "a share of a picture's texels")]
+    let share = solid as f32 / texels.len().max(1) as f32;
+    share
+}
+
+/// Makes each of a cut-out's mips below the first as solid as the first with `cutoff`, by scaling
+/// its alpha, or as near as its texels let it, and the solider of two as near. Averaged, a thin
+/// bar's alpha falls below the cutoff, so far off a fence or a leaf would thin and go (Castaño,
+/// 2010). Compressed levels are left as they are.
+pub fn keep_coverage(levels: &mut [MipLevel], cutoff: f32) {
+    let Some((first, rest)) = levels.split_first_mut() else {
+        return;
+    };
+    if first.form != crate::PixelForm::Rgba {
+        return;
+    }
+    let wanted = covered(first, cutoff, 1.0);
+    for level in rest
+        .iter_mut()
+        .filter(|level| level.form == crate::PixelForm::Rgba)
+    {
+        // More scale is never less solid, so the scale that's as solid is found by halves.
+        let (mut low, mut high) = (0.0_f32, 64.0_f32);
+        for _ in 0..20 {
+            let middle = (low + high) * 0.5;
+            if covered(level, cutoff, middle) < wanted {
+                low = middle;
+            } else {
+                high = middle;
+            }
+        }
+        let off = |scale: f32| (covered(level, cutoff, scale) - wanted).abs();
+        let scale = if off(low) < off(high) { low } else { high };
+        for texel in level.rgba.as_chunks_mut::<4>().0 {
+            #[expect(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "clamped to a byte"
+            )]
+            let scaled = (f32::from(texel[3]) * scale).round().clamp(0.0, 255.0) as u8;
+            texel[3] = scaled;
+        }
+    }
+}
+
 /// A full chain of mips from `rgba`, box filtered, largest first.
 #[must_use]
 pub fn mip_chain(width: u32, height: u32, rgba: Vec<u8>) -> Vec<MipLevel> {

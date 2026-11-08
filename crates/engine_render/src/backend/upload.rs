@@ -43,7 +43,7 @@ use crate::sprite::{MAX_PARTICLE_DRAWS, behind_first};
 use crate::surface::built_in_for;
 use crate::terrain::terrain_nodes;
 use crate::world::{BatchKind, batch_kind, uses_material};
-use crate::world::{TileImage, VertexPatch, shadow_groups};
+use crate::world::{ShadowGroup, TileImage, VertexPatch, shadow_groups};
 use crate::world::{Vertex, WorldMesh};
 
 /// A buffer the CPU can write.
@@ -92,6 +92,23 @@ fn copy_into_atlas(
             AccessFlags::SHADER_READ,
         ),
     );
+}
+
+/// Each texture of `map`'s cutoff, if it has holes: a masked material's, or half for a picture
+/// with holes and no material.
+fn shadow_cutoffs(map: &Map) -> Vec<Option<f32>> {
+    map.textures
+        .iter()
+        .map(|texture| {
+            (batch_kind(texture) == Some(BatchKind::Masked)).then(|| {
+                texture
+                    .material
+                    .as_ref()
+                    .filter(|_| uses_material(texture))
+                    .map_or(0.5, |material| material.cutoff)
+            })
+        })
+        .collect()
 }
 
 /// Whether a material of `map` casts shadows: what's solid, and not a liquid.
@@ -1041,26 +1058,53 @@ impl Backend {
             )],
             Format::R8G8B8A8_UNORM,
         )?;
-        // Every opaque face of the world, then every moving model, for shadows.
+        // Every opaque face of the world, then every moving model, for shadows. What has holes
+        // goes a picture at a time, as light goes through them.
+        let shadow_cutoffs = shadow_cutoffs(map);
         let opaque_batch = |batch: &Option<u32>| {
             batch.is_some_and(|batch| {
                 let batch = &mesh.batches[batch as usize];
                 let liquid = map.textures.get(batch.texture as usize);
                 let liquid = liquid.is_some_and(|texture| texture.kind == TextureKind::Liquid);
-                !liquid && !matches!(batch.kind, BatchKind::Sky | BatchKind::Blended)
+                !liquid
+                    && !matches!(
+                        batch.kind,
+                        BatchKind::Sky | BatchKind::Blended | BatchKind::Masked
+                    )
             })
         };
-        let groups = shadow_groups(map, mesh, opaque_batch);
+        let mut cut_textures: Vec<u32> = mesh
+            .batches
+            .iter()
+            .filter(|batch| batch.kind == BatchKind::Masked)
+            .filter(|batch| casts_shadow(map, batch.texture))
+            .map(|batch| batch.texture)
+            .collect();
+        cut_textures.sort_unstable();
+        cut_textures.dedup();
         let mut shadow_world = Vec::new();
-        let mut shadow_parts = Vec::with_capacity(groups.len());
-        for group in groups {
-            shadow_parts.push(ShadowRange {
-                first: u32::try_from(shadow_world.len()).unwrap_or(0),
-                count: u32::try_from(group.indices.len()).unwrap_or(0),
-                offset: Vec3::ZERO,
-                bounds: group.bounds,
-            });
-            shadow_world.extend(group.indices);
+        let mut shadow_parts = Vec::new();
+        let mut add_groups = |groups: Vec<ShadowGroup>, cut: Option<u32>| {
+            for group in groups {
+                shadow_parts.push(ShadowRange {
+                    first: u32::try_from(shadow_world.len()).unwrap_or(0),
+                    count: u32::try_from(group.indices.len()).unwrap_or(0),
+                    offset: Vec3::ZERO,
+                    bounds: group.bounds,
+                    cut,
+                });
+                shadow_world.extend(group.indices);
+            }
+        };
+        add_groups(shadow_groups(map, mesh, opaque_batch), None);
+        for texture in cut_textures {
+            let of_it = |batch: &Option<u32>| {
+                batch.is_some_and(|batch| {
+                    let batch = &mesh.batches[batch as usize];
+                    batch.kind == BatchKind::Masked && batch.texture == texture
+                })
+            };
+            add_groups(shadow_groups(map, mesh, of_it), Some(texture));
         }
         let shadow_world_count = u32::try_from(shadow_world.len()).unwrap_or(0);
         let mut shadow_indices = host_buffer(
@@ -1142,6 +1186,11 @@ impl Backend {
         let mut texture_sets = Vec::with_capacity(map.textures.len());
         let mut texture_shaders = Vec::with_capacity(map.textures.len());
         let plain_material = Material::default();
+        // A picture with holes and no material is solid where it's more than half.
+        let plain_cutout = Material {
+            cutoff: 0.5,
+            ..Material::default()
+        };
         for texture in &map.textures {
             if texture.kind == TextureKind::Hidden {
                 material_sets.push(false);
@@ -1157,7 +1206,12 @@ impl Backend {
             let format = compiled_format(&texture.mips).unwrap_or(Format::R8G8B8A8_SRGB);
             let image = self.upload_image(&levels, format)?;
             let own = texture.material.as_ref().filter(|_| uses_material(texture));
-            let material = own.map_or(&plain_material, |material| material.as_ref());
+            let plain = if texture.kind == TextureKind::Cutout {
+                &plain_cutout
+            } else {
+                &plain_material
+            };
+            let material = own.map_or(plain, |material| material.as_ref());
             texture_shaders.push(self.shader_of(texture, material)?);
             let set = pool.allocate(&self.material_layout)?;
             set.write_sampled_image(0, &image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -1251,6 +1305,7 @@ impl Backend {
             indices_stale: [true; FRAMES],
             shadow_indices,
             shadow_world_count,
+            shadow_cutoffs,
             shadow_parts,
             texture_sets,
             _material_params: material_params,

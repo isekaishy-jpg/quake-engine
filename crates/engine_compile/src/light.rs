@@ -12,7 +12,7 @@ use engine_core::math::Vec3;
 use engine_map::{
     ARC_ANGLES, AlphaMode, BOUNCE_STYLE, CRISP_STYLES, Face, FaceLight, LightTrack, Map, Material,
     MegaImage, MipLevel, ProbeGrid, RESIDENT, SUN_BOUNCE_STYLE, SUN_STYLE, SunMode, TerrainSheet,
-    TextureKind,
+    Texture, TextureKind,
 };
 
 use crate::charts::{Chart, map_charts};
@@ -117,6 +117,17 @@ struct Glass {
     axes: [(Point, f64); 2],
     /// The picture of what it lets through.
     image: Arc<Vec<MipLevel>>,
+    /// If it's a cut-out, the alpha below which its picture is a hole that lets all through,
+    /// where the rest lets nothing.
+    cutoff: Option<f64>,
+}
+
+/// A picture with holes, and the alpha below which it's a hole.
+type CutOut = (Arc<Vec<MipLevel>>, f64);
+
+/// Whether light gets through `picture`, a cut-out with `cutoff`, at `u` and `v`.
+fn through_hole((picture, cutoff): &CutOut, u: f64, v: f64) -> bool {
+    texel(picture, u, v)[3] < *cutoff
 }
 
 impl Glass {
@@ -244,11 +255,18 @@ struct MeshShadow {
     high: Point,
     /// Its triangles.
     triangles: Vec<[Point; 3]>,
+    /// Each triangle's picture with holes, if it's a cut-out, and where its corners are on it.
+    cuts: Vec<Option<(CutOut, [[f64; 2]; 3])>>,
 }
 
 impl MeshShadow {
-    /// The shadow of `mesh`, if it has triangles that block light.
-    fn of(mesh: &PlacedMesh, see_through: &dyn Fn(&str) -> bool) -> Option<Self> {
+    /// The shadow of `mesh`, if it has triangles that block light, with the holes `cut_out` says
+    /// a material's picture has.
+    fn of(
+        mesh: &PlacedMesh,
+        see_through: &dyn Fn(&str) -> bool,
+        cut_out: &dyn Fn(&str) -> Option<CutOut>,
+    ) -> Option<Self> {
         let blocking = || {
             mesh.triangles
                 .iter()
@@ -263,10 +281,14 @@ impl MeshShadow {
             }
         }
         let triangles = blocking().map(|triangle| triangle.points).collect();
+        let cuts = blocking()
+            .map(|triangle| cut_out(&triangle.material).map(|cut| (cut, triangle.uvs)))
+            .collect();
         Some(Self {
             low,
             high,
             triangles,
+            cuts,
         })
     }
 
@@ -294,28 +316,41 @@ impl MeshShadow {
     fn hit(&self, a: Point, b: Point) -> bool {
         let ray = add_scaled(b, a, -1.0);
         self.near(a, b)
-            && self.triangles.iter().any(|triangle| {
-                let first = add_scaled(triangle[1], triangle[0], -1.0);
-                let second = add_scaled(triangle[2], triangle[0], -1.0);
-                let across = cross(ray, second);
-                let determinant = dot(first, across);
-                if determinant.abs() < 1e-9 {
-                    return false;
-                }
-                let inverse = 1.0 / determinant;
-                let offset = add_scaled(a, triangle[0], -1.0);
-                let u = dot(offset, across) * inverse;
-                if !(0.0..=1.0).contains(&u) {
-                    return false;
-                }
-                let up = cross(offset, first);
-                let v = dot(ray, up) * inverse;
-                if v < 0.0 || u + v > 1.0 {
-                    return false;
-                }
-                let along = dot(second, up) * inverse;
-                along > 0.001 && along < 0.999
-            })
+            && self
+                .triangles
+                .iter()
+                .zip(&self.cuts)
+                .any(|(triangle, cut)| {
+                    let first = add_scaled(triangle[1], triangle[0], -1.0);
+                    let second = add_scaled(triangle[2], triangle[0], -1.0);
+                    let across = cross(ray, second);
+                    let determinant = dot(first, across);
+                    if determinant.abs() < 1e-9 {
+                        return false;
+                    }
+                    let inverse = 1.0 / determinant;
+                    let offset = add_scaled(a, triangle[0], -1.0);
+                    let u = dot(offset, across) * inverse;
+                    if !(0.0..=1.0).contains(&u) {
+                        return false;
+                    }
+                    let up = cross(offset, first);
+                    let v = dot(ray, up) * inverse;
+                    if v < 0.0 || u + v > 1.0 {
+                        return false;
+                    }
+                    let along = dot(second, up) * inverse;
+                    if along <= 0.001 || along >= 0.999 {
+                        return false;
+                    }
+                    // Through a cut-out's hole, light goes on.
+                    cut.as_ref().is_none_or(|(cut, [first, second, third])| {
+                        let rest = 1.0 - u - v;
+                        let at =
+                            |axis: usize| first[axis] * rest + second[axis] * u + third[axis] * v;
+                        !through_hole(cut, at(0), at(1))
+                    })
+                })
     }
 }
 
@@ -503,6 +538,12 @@ fn through_glass(scene: &Scene<'_>, a: Point, b: Point) -> [f64; 3] {
         });
         let u = (dot(hit, glass.axes[0].0) + glass.axes[0].1) / size[0];
         let v = (dot(hit, glass.axes[1].0) + glass.axes[1].1) / size[1];
+        if let Some(cutoff) = glass.cutoff {
+            if !through_hole(&(Arc::clone(&glass.image), cutoff), u, v) {
+                out = [0.0; 3];
+            }
+            return false;
+        }
         let color = texel(&glass.image, u, v);
         for (part, tint) in out.iter_mut().zip(color) {
             *part *= tint;
@@ -2462,6 +2503,40 @@ fn material_of<'a>(map: &'a Map, face: &Face) -> Option<&'a Material> {
     map.textures.get(face.texture as usize)?.material.as_deref()
 }
 
+/// `texture`'s picture with holes and their cutoff, if it has any: a masked material's, or one
+/// with holes and no material at half.
+fn cut_out_of(texture: &Texture) -> Option<CutOut> {
+    let cutoff = match texture.material.as_deref() {
+        Some(material) if material.alpha == AlphaMode::Mask => f64::from(material.cutoff),
+        None if texture.kind == TextureKind::Cutout => 0.5,
+        _ => return None,
+    };
+    Some((Arc::new(texture.mips.clone()), cutoff))
+}
+
+/// `face` as a pane of glass with nothing yet to let through, if it has a shape.
+fn glass_of(map: &Map, face: &Face) -> Option<Glass> {
+    let space = face_space(map, face)?;
+    let first = face.first_point as usize;
+    let points = map.points.get(first..first + face.point_count as usize)?;
+    Some(Glass {
+        plane: space.plane,
+        points: points.iter().map(|point| wide(*point)).collect(),
+        axes: [
+            (
+                [space.rows[0][0], space.rows[0][1], space.rows[0][2]],
+                space.rows[0][3],
+            ),
+            (
+                [space.rows[1][0], space.rows[1][1], space.rows[1][2]],
+                space.rows[1][3],
+            ),
+        ],
+        image: Arc::new(Vec::new()),
+        cutoff: None,
+    })
+}
+
 /// Bakes the light of `map`.
 ///
 /// # Errors
@@ -2528,7 +2603,8 @@ pub fn bake_light_as(
         }
     }
 
-    // Light passes what's see-through, so those brushes aren't in its tree.
+    // Light passes what's see-through, so those brushes aren't in its tree, and what has holes
+    // goes as glass does, which light gets through where it's a hole.
     let see_through = |name: &str| {
         map.textures
             .iter()
@@ -2536,12 +2612,21 @@ pub fn bake_light_as(
             .and_then(|texture| texture.material.as_ref())
             .is_some_and(|material| material.alpha == AlphaMode::Blend)
     };
+    let cut_outs: HashMap<&str, CutOut> = map
+        .textures
+        .iter()
+        .filter_map(|texture| Some((texture.name.as_str(), cut_out_of(texture)?)))
+        .collect();
+    let cut_out = |name: &str| cut_outs.get(name).cloned();
     let solid: Vec<_> = working
         .brushes
         .iter()
         .filter(|brush| {
             brush.contents == engine_map::Contents::Solid
-                && !brush.faces.iter().any(|face| see_through(&face.material))
+                && !brush
+                    .faces
+                    .iter()
+                    .any(|face| see_through(&face.material) || cut_out(&face.material).is_some())
         })
         .cloned()
         .collect();
@@ -2550,7 +2635,18 @@ pub fn bake_light_as(
     let mut glass = Vec::new();
     let model_faces = map.models.first().map_or(0, |model| model.face_count) as usize;
     for face in map.faces.iter().take(model_faces) {
-        let Some(material) = material_of(map, face) else {
+        let cut = map
+            .textures
+            .get(face.texture as usize)
+            .and_then(|texture| cut_outs.get(texture.name.as_str()));
+        let Some(material) = material_of(map, face).filter(|_| cut.is_none()) else {
+            if let (Some((image, cutoff)), Some(glass_face)) = (cut, glass_of(map, face)) {
+                glass.push(Glass {
+                    image: Arc::clone(image),
+                    cutoff: Some(*cutoff),
+                    ..glass_face
+                });
+            }
             continue;
         };
         if material.alpha != AlphaMode::Blend {
@@ -2581,6 +2677,7 @@ pub fn bake_light_as(
                 ),
             ],
             image,
+            cutoff: None,
         });
     }
     let land = map.terrain.clone();
@@ -2589,7 +2686,7 @@ pub fn bake_light_as(
         .placed
         .iter()
         .filter(|mesh| !mesh.only_seen)
-        .filter_map(|mesh| MeshShadow::of(mesh, &see_through))
+        .filter_map(|mesh| MeshShadow::of(mesh, &see_through, &cut_out))
         .collect();
     let scene = Scene {
         tree,

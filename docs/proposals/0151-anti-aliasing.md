@@ -1,6 +1,6 @@
 # Proposal 0151: anti-aliasing
 
-Status: accepted for items 172 to 174, 2026-11-07. Items 175 to 177 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 172 to 175, 2026-11-07. Items 176 and 177 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -104,6 +104,31 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 - **Found on the way:** the test maps have no tangents, so a normal map's direction does nothing in the GPU tests, only how much its bumps agree. Turning there is made with corners' normals, and with land's heights. Land far off is drawn with fewer points, so a ripple a point across is gone before it can sparkle; one a few points across isn't.
 - **Layers' bumps** go into a surface picture whose blue is height, so how much they agree isn't kept. Where a layer covers a surface, how much the base's bumps agree counts for as much as the base shows, and the rest goes by how far the normal turns.
 
+## Cut-out edges (175)
+
+### What there was
+
+- **A masked material** already covered some of a pixel's samples by how far alpha is past its cutoff, sharpened to a pixel's width, so with several samples a pixel its edges had shades between. With one, as is usual, it's all or nothing.
+- **One of Quake's pictures with holes** had none of that: its shader threw away what's under half, so samples didn't smooth it. Nor did sprites.
+- **Mips** average alpha, so a bar thinner than a texel of a mip falls under the cutoff and goes: far off, fences and leaves thin out and vanish.
+- **Shadows** were solid. A shadow map draws depth alone, and the bake's light tree had what's masked as solid as a wall, so a grate cast a black square. The human saw this on trying it.
+
+### What's done
+
+- **Mips as solid as the first level** (Castaño, 2010): each level's alpha is scaled until as many of its texels pass the cutoff as the first level's do, or as near as whole texels let it, the solider of two as near. That's for a masked material's picture as a level loads, and as it's compiled, which now says it's a cut-out, with its cutoff, so a picture compiled as colour before is compiled again.
+- **Quake's pictures with holes and sprites** are drawn as masked materials are, at a cutoff of half, so several samples a pixel smooth their edges too.
+- **One sample a pixel stays all or nothing.** TAA moving the view each frame moves the edge with it and smooths it by itself, and SMAA smooths the picture it's given; a first try that dithered the cutoff with TAA was only noise over what TAA does anyway, and was taken out.
+- **Light goes through holes.** Shadow maps draw what has holes a picture at a time, reading it and leaving out what's under its cutoff: the world's faces, brush models, moving meshes and copies of meshes. The bake takes a masked brush out of its tree and has light cross it as it crosses glass, through where its picture is a hole and stopped where it isn't, and a mesh's triangle with holes is looked up where a ray meets it.
+- **A screenshot with TAA** was the first frame at its own size, which TAA has nothing to go on for. It's drawn for a few rounds first now, as on screen.
+
+### What came of it
+
+- **Tried in the game:** grates near and far against the sky. With TAA settled, SMAA or several samples their edges are smooth, and the far ones are still grates. Their shadow in a live sun is a lattice, where it was a black square.
+- **Tests:** scattered spots, as leaves are, stay within 7% of as solid down three levels, where averaged they thin to under half; thin bars stay; the cutoff is the material's; compressed levels are left alone. A masked material's mips keep as solid, as compiled and as a level loads, and a picture that becomes a cut-out is compiled again, and once more for another cutoff. With several samples a pixel, one of Quake's pictures with holes and a sprite get shades at their edges. Light goes through a cut-out's holes and is stopped where it's solid, for a brush model, one of Quake's pictures, the world, a moving mesh and a copy of a mesh, and in the bake for a wall and a mesh.
+- **Found on the way:** every screenshot taken with TAA, including those that 173 was judged by, was a frame with nothing kept. E1M1 taken again, settled, is as 173 says: smooth, and a little soft.
+- **Quake's own pictures with holes** have their own mips, made by its tools, and alpha all or nothing, so scaling them changes nothing. They keep theirs.
+- **What no test reaches:** a screenshot settling with TAA, as no test runs the game with a renderer; it was seen in the game, where the grates and E1M1 above were taken that way.
+
 ## Sources
 
 - [Proposal 0082: anti-aliasing and alpha](0082-antialiasing-and-alpha.md)
@@ -114,3 +139,5 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 - Yusuke Tokuyoshi and Anton Kaplanyan, "Improved Geometric Specular Antialiasing", I3D 2019: the derivatives of the normal, and the limit of 0.18
 - Michael Toksvig, "Mipmapping Normal Maps", 2004: how much shorter an average of normals is
 - Marc Olano and Dan Baker, "LEAN Mapping", I3D 2010
+- Ignacio Castaño, "Computing Alpha Mipmaps", 2010: scaling each mip's alpha so as much of it passes the cutoff
+- Ben Golus, "Anti-aliased Alpha Test: The Esoteric Alpha To Coverage", 2017: alpha sharpened to a pixel's width

@@ -8,7 +8,7 @@ use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
     AlphaMode, LandPicture, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough,
     MipLevel, PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, TerrainData, Texture,
-    TextureKind, mip_chain, normal_chain,
+    TextureKind, keep_coverage, mip_chain, normal_chain,
 };
 
 use crate::convex::fit_convex;
@@ -730,11 +730,14 @@ impl<'a> MaterialLibrary<'a> {
         material.field_images = filler.fields;
         material.slots = filler.slots;
         let flatten = block.get("flatten").and_then(Value::flag) == Some(true);
-        let mips = if flatten {
+        let mut mips = if flatten {
             flatten_layers(&mut material, mips)
         } else {
             mips
         };
+        if material.alpha == AlphaMode::Mask {
+            keep_coverage(&mut mips, material.cutoff);
+        }
         let kind = match block.get("kind").and_then(Value::text) {
             None | Some("solid") => TextureKind::Solid,
             Some("cutout") => TextureKind::Cutout,

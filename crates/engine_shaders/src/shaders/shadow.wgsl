@@ -2,7 +2,7 @@
 
 struct Tile {
     matrix: mat4x4<f32>,
-    // Where the model being drawn has moved to.
+    // Where the model being drawn has moved to, and w a cut-out's cutoff.
     offset: vec4<f32>,
 }
 
@@ -60,6 +60,32 @@ fn fs_land(in: LandOut) {
     let cell = vec2<u32>((in.place - sheet.origin.xy) / sheet.origin.w);
     let at = cell.y * (sheet.shape.x - 1u) + cell.x;
     if (land_holes[sheet.shape.w - 1u + at / 32u] >> (at % 32u) & 1u) != 0u {
+        discard;
+    }
+}
+
+// A cut-out's picture, from its material's set, whose holes light goes through.
+@group(1) @binding(0) var cut_picture: texture_2d<f32>;
+@group(1) @binding(1) var cut_sampler: sampler;
+
+struct CutOut {
+    @builtin(position) clip: vec4<f32>,
+    @location(0) uv: vec2<f32>,
+}
+
+// Something with holes in it: where it is, and where on its picture.
+@vertex
+fn vs_cut(@location(0) position: vec3<f32>, @location(1) uv: vec2<f32>) -> CutOut {
+    var out: CutOut;
+    out.clip = tile.matrix * vec4<f32>(position + tile.offset.xyz, 1.0);
+    out.uv = uv;
+    return out;
+}
+
+// Light goes through a cut-out's holes, as the view sees through them.
+@fragment
+fn fs_cut(in: CutOut) {
+    if textureSample(cut_picture, cut_sampler, in.uv).a < tile.offset.w {
         discard;
     }
 }

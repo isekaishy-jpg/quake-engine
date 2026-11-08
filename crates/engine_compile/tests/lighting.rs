@@ -481,6 +481,61 @@ fn stained_glass_tints_what_passes_through() {
     );
 }
 
+/// The most light on the east wall, behind a wall of `texture` from a lamp to the west.
+fn light_behind(texture: Texture) -> u8 {
+    let name = texture.name.clone();
+    let text = format!(
+        "{ROOM}brush {{ material = {name} cuboid = -8 -256 -256 8 256 256 }}\nentity lamp {{ type = light origin = -128 0 0 intensity = 900 }}\n"
+    );
+    let map = baked(&text, &[texture]);
+    let east = face_of(&map, "east");
+    let light = east.light.expect("light");
+    // With none of the lamp's light, there's no layer of it.
+    let Some(layer) = light.styles.iter().position(|s| *s == 0) else {
+        return 0;
+    };
+    let count = (light.width * light.height) as usize;
+    let first = light.first_sample as usize + layer * count;
+    map.light[first..first + count]
+        .iter()
+        .map(|sample| sample[0])
+        .max()
+        .expect("samples")
+}
+
+/// A wall with holes lets light through them, as glass does, where a solid one doesn't, and one
+/// of Quake's pictures with holes and no material does too.
+#[test]
+fn light_goes_through_a_cut_outs_holes() {
+    let half_holes = |name: &str, material: Option<Material>| Texture {
+        name: name.to_owned(),
+        kind: TextureKind::Cutout,
+        mips: vec![MipLevel {
+            width: 2,
+            height: 1,
+            rgba: vec![200, 200, 200, 255, 200, 200, 200, 0],
+            form: engine_map::PixelForm::Rgba,
+        }],
+        animation: None,
+        alternate: None,
+        material: material.map(Arc::new),
+    };
+    let masked = Material {
+        alpha: AlphaMode::Mask,
+        cutoff: 0.5,
+        ..Material::default()
+    };
+    let through = light_behind(half_holes("grate", Some(masked)));
+    let quake = light_behind(half_holes("quake_grate", None));
+    let solid = light_behind(Texture {
+        kind: TextureKind::Solid,
+        ..half_holes("wall", Some(Material::default()))
+    });
+    assert!(through > 20, "light got through: {through}");
+    assert!(through > solid * 2, "{through} {solid}");
+    assert!(quake > solid * 2, "{quake} {solid}");
+}
+
 #[test]
 fn keyframes_each_get_a_style_and_probes_follow_the_light() {
     let text = format!(

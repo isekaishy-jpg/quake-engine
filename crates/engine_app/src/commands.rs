@@ -20,6 +20,9 @@ use crate::app::{MOVE_BINDINGS, World};
 use crate::keys::to_hex;
 use crate::saves;
 
+/// How many frames a screenshot with TAA is drawn for: a few of its rounds.
+const SCREENSHOT_TAA_FRAMES: u32 = 32;
+
 /// The width of a screenshot, unless it's given.
 const SCREENSHOT_WIDTH: u32 = 1280;
 
@@ -699,14 +702,28 @@ fn screenshot(console: &mut Console<World>, world: &mut World, args: &Args) {
     let height = args.get(3).parse().unwrap_or(SCREENSHOT_HEIGHT);
     let mut picture = world.view(0.0, 1.0, 0.0);
     picture.quads = world.overlay((width, height));
+    // TAA starts afresh at a picture's size, so it's given a few rounds to settle, as on screen.
+    let antialias = console
+        .cvar("r_antialias")
+        .map_or(0.0, engine_console::Cvar::number);
+    let frames = if antialias == 3.0 {
+        SCREENSHOT_TAA_FRAMES
+    } else {
+        1
+    };
     let Some(renderer) = &mut world.renderer else {
         console.print("no renderer");
         return;
     };
-    let result = renderer
-        .capture(&picture.view, picture.drawables(), width, height)
+    let mut shot = Ok(None);
+    for _ in 0..frames {
+        shot = renderer
+            .capture(&picture.view, picture.drawables(), width, height)
+            .map(Some);
+    }
+    let result = shot
         .map_err(Into::into)
-        .and_then(|capture| write_png(&capture, path));
+        .and_then(|capture| capture.map_or(Ok(()), |capture| write_png(&capture, path)));
     match result {
         Ok(()) => console.print(format!("wrote {path}")),
         Err(error) => console.print(format!("couldn't write {path}: {error}")),

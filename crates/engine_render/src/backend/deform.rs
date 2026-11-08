@@ -352,6 +352,14 @@ impl GpuMoving {
         }
     }
 
+    /// Where `job`'s corners are on their pictures, which don't move.
+    pub(super) fn looks_of(&self, job: &MovingJob) -> (&GpuBuffer, u64) {
+        (
+            &self.uvs,
+            u64::from(self.first_corner(job)) * LOOK_BYTES as u64,
+        )
+    }
+
     /// Where `job`'s mesh starts among everyone's corners.
     fn first_corner(&self, job: &MovingJob) -> u32 {
         self.meshes

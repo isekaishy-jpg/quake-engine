@@ -596,12 +596,8 @@ struct MaskedOut {
 @fragment
 fn fs_masked(in: VertexOut) -> MaskedOut {
     let shaded = shader_whole(in);
-    let coverage = clamp(
-        (shaded.a - material.more.z) / max(fwidth(shaded.a), 0.0001) + 0.5,
-        0.0,
-        1.0,
-    );
-    let count = u32(coverage * frame.stencil_params.w + 0.5);
+    let coverage = cut_coverage(shaded.a, material.more.z);
+    let count = cut_samples(coverage, frame.stencil_params.w);
     if count == 0u {
         discard;
     }

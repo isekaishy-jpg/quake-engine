@@ -5,7 +5,7 @@ use std::cell::Cell;
 
 use engine_core::entity::ModelInstance;
 use engine_core::math::Vec3;
-use engine_map::Map;
+use engine_map::{Map, SharedPart};
 use engine_shaders::{Module, spirv};
 use vulkane::safe::{
     AttachmentDescription, AttachmentLoadOp, AttachmentStoreOp, CompareOp, CullMode,
@@ -19,10 +19,10 @@ use super::deform::GpuMoving;
 use super::deform::bind_moving;
 use super::pipelines::land_vertices;
 use super::upload::device_image;
-use super::{DEPTH_FORMAT, GpuAlias, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
+use super::{DEPTH_FORMAT, GpuAlias, GpuBuffer, GpuImage, GpuMap, INDEX_TYPE_U32, ShadowInstance};
 use crate::alias::{EntityDraw, model_matrix};
 use crate::error::RenderError;
-use crate::instances::PLACE_BYTES;
+use crate::instances::{LOOK_BYTES, PLACE_BYTES};
 use crate::live::{LiveLight, MAX_SHADOW_LIGHTS, cube_face};
 use crate::matrix::multiply;
 use crate::world::Vertex;
@@ -41,6 +41,14 @@ const REDRAWS_PER_FRAME: usize = 2;
 
 /// Bytes of what a tile's draws push: a matrix and an offset.
 const PUSH_SIZE: u32 = 80;
+
+/// What reads it: where things are, and a cut-out's cutoff.
+fn push_stages() -> ShaderStageFlags {
+    ShaderStageFlags::VERTEX | ShaderStageFlags::FRAGMENT
+}
+
+/// Where a world vertex's place on its picture is.
+const UV_OFFSET: u32 = 12;
 
 /// The most an alias model's stored position can be along an axis.
 const POSE_RANGE: f32 = 255.0;
@@ -149,6 +157,8 @@ pub(super) struct ShadowRange {
     pub(super) offset: Vec3,
     /// The middle and size of it, if a light can miss it.
     pub(super) bounds: Option<(Vec3, f32)>,
+    /// The texture whose holes it has, if it's a cut-out.
+    pub(super) cut: Option<u32>,
 }
 
 /// What a shadow slot was last drawn for.
@@ -249,6 +259,10 @@ pub(super) struct Shadows {
     mesh_pipeline: GraphicsPipeline,
     /// Land.
     land_pipeline: GraphicsPipeline,
+    /// What has holes, which light goes through.
+    cut_pipeline: GraphicsPipeline,
+    /// The same, for meshes.
+    mesh_cut_pipeline: GraphicsPipeline,
     /// Empties a tile.
     clear: GraphicsPipeline,
     /// Whether the atlas has been started off.
@@ -307,7 +321,7 @@ impl Shadows {
     pub(super) fn new(
         device: &Device,
         physical: &PhysicalDevice,
-        land_layout: &DescriptorSetLayout,
+        (land_layout, material_layout): (&DescriptorSetLayout, &DescriptorSetLayout),
     ) -> Result<Self, RenderError> {
         let image = Image::new_2d(
             device,
@@ -338,9 +352,9 @@ impl Shadows {
             Framebuffer::new(device, &pass, &[&sun_atlas.view], sun_width, SUN_TILE)?;
         let layout = PipelineLayout::with_push_constants(
             device,
-            &[land_layout],
+            &[land_layout, material_layout],
             &[PushConstantRange {
-                stage_flags: ShaderStageFlags::VERTEX,
+                stage_flags: push_stages(),
                 offset: 0,
                 size: PUSH_SIZE,
             }],
@@ -382,6 +396,37 @@ impl Shadows {
             .depth_test(true, true)
             .depth_bias(1.5, 2.0, 0.0)
             .build(device)?;
+        let uv = |binding, offset| VertexInputAttribute {
+            location: 1,
+            binding,
+            format: Format::R32G32_SFLOAT,
+            offset,
+        };
+        let cut_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_cut")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_cut")
+            .color_attachment_count(0)
+            .vertex_input(&bindings, &[attributes[0], uv(0, UV_OFFSET)])
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .depth_bias(1.5, 2.0, 0.0)
+            .build(device)?;
+        let looks = VertexInputBinding {
+            binding: 1,
+            stride: u32::try_from(LOOK_BYTES).unwrap_or(0),
+            input_rate: InputRate::VERTEX,
+        };
+        let mesh_cut_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
+            .stage(GraphicsShaderStage::Vertex, &shader, "vs_cut")
+            .stage(GraphicsShaderStage::Fragment, &shader, "fs_cut")
+            .color_attachment_count(0)
+            .vertex_input(&[mesh_bindings[0], looks], &[attributes[0], uv(1, 0)])
+            .dynamic_viewport_scissor()
+            .cull_mode(CullMode::NONE)
+            .depth_test(true, true)
+            .depth_bias(1.5, 2.0, 0.0)
+            .build(device)?;
         let (land_bindings, land_attributes) = land_vertices();
         let land_pipeline = GraphicsPipelineBuilder::new(&layout, &pass)
             .stage(GraphicsShaderStage::Vertex, &shader, "vs_land")
@@ -411,6 +456,8 @@ impl Shadows {
             pipeline,
             mesh_pipeline,
             land_pipeline,
+            cut_pipeline,
+            mesh_cut_pipeline,
             clear,
             ready: Cell::new(false),
             kept: vec![None; MAX_SHADOW_LIGHTS],
@@ -717,13 +764,82 @@ impl Shadows {
                 .bounds
                 .is_none_or(|(middle, size)| reach.touches(middle, size))
         };
-        for range in ranges.iter().filter(reached) {
+        for range in ranges
+            .iter()
+            .filter(reached)
+            .filter(|range| range.cut.is_none())
+        {
             let offset = range.offset;
             let tail = [offset.x, offset.y, offset.z, 0.0];
             self.push(rec, matrix, tail);
             rec.draw_indexed(range.count, 1, range.first, 0, 0);
         }
+        rec.bind_graphics_pipeline(&self.cut_pipeline);
+        for range in ranges.iter().filter(reached) {
+            let Some(cutoff) = range
+                .cut
+                .and_then(|texture| self.bind_cut(rec, map, texture))
+            else {
+                continue;
+            };
+            let offset = range.offset;
+            self.push(rec, matrix, [offset.x, offset.y, offset.z, cutoff]);
+            rec.draw_indexed(range.count, 1, range.first, 0, 0);
+        }
         self.record_instances(rec, map, matrix, reach);
+    }
+
+    /// Binds the picture of `texture`, a cut-out, and says its cutoff, if it is one.
+    fn bind_cut(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        texture: u32,
+    ) -> Option<f32> {
+        let cutoff = map
+            .shadow_cutoffs
+            .get(texture as usize)
+            .copied()
+            .flatten()?;
+        let set = map.texture_sets.get(texture as usize)?.as_ref()?;
+        rec.bind_graphics_descriptor_sets(&self.layout, 1, &[set]);
+        Some(cutoff)
+    }
+
+    /// Draws a mesh's `parts` that's bound, as `matrix` places it: what's solid, then what has
+    /// holes, which needs where it is on its picture, from `looks`.
+    fn record_parts(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        map: &GpuMap,
+        (parts, looks): (&[SharedPart], (&GpuBuffer, u64)),
+        matrix: &[f32; 16],
+    ) {
+        rec.bind_graphics_pipeline(&self.mesh_pipeline);
+        self.push(rec, matrix, [0.0; 4]);
+        let cut = |part: &&SharedPart| {
+            map.shadow_cutoffs
+                .get(part.texture as usize)
+                .copied()
+                .flatten()
+                .is_some()
+        };
+        for part in parts.iter().filter(|part| !cut(part)) {
+            rec.draw_indexed(part.count, 1, part.first, 0, 0);
+        }
+        let mut bound = false;
+        for part in parts.iter().filter(cut) {
+            if !bound {
+                rec.bind_graphics_pipeline(&self.mesh_cut_pipeline);
+                rec.bind_vertex_buffers(1, &[(&looks.0.buffer, looks.1)]);
+                bound = true;
+            }
+            let Some(cutoff) = self.bind_cut(rec, map, part.texture) else {
+                continue;
+            };
+            self.push(rec, matrix, [0.0, 0.0, 0.0, cutoff]);
+            rec.draw_indexed(part.count, 1, part.first, 0, 0);
+        }
     }
 
     /// Draws the moving meshes a light reaches into the tile that's set up.
@@ -736,7 +852,6 @@ impl Shadows {
         reach: Reach,
     ) {
         let moving = &map.moving;
-        rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for job in moving.jobs(frame) {
             if !reach.touches(job.center, job.radius) {
                 continue;
@@ -747,10 +862,8 @@ impl Shadows {
             let Some(mesh) = moving.meshes.get(job.mesh as usize) else {
                 continue;
             };
-            self.push(rec, &multiply(matrix, &job.placed), [0.0; 4]);
-            for part in mesh.shadow_parts(job.level) {
-                rec.draw_indexed(part.count, 1, part.first, 0, 0);
-            }
+            let parts = (mesh.shadow_parts(job.level), moving.looks_of(job));
+            self.record_parts(rec, map, parts, &multiply(matrix, &job.placed));
         }
     }
 
@@ -763,17 +876,14 @@ impl Shadows {
         reach: Reach,
     ) {
         let reached = |caster: &&ShadowInstance| reach.touches(caster.center, caster.radius);
-        rec.bind_graphics_pipeline(&self.mesh_pipeline);
         for caster in map.shadow_instances.iter().filter(reached) {
             let Some(mesh) = map.shared_meshes.get(caster.mesh as usize) else {
                 continue;
             };
             rec.bind_vertex_buffers(0, &[(&mesh.places.buffer, 0)]);
             rec.bind_index_buffer(&mesh.indices.buffer, 0, INDEX_TYPE_U32);
-            self.push(rec, &multiply(matrix, &caster.placed), [0.0; 4]);
-            for part in &mesh.shadow_parts {
-                rec.draw_indexed(part.count, 1, part.first, 0, 0);
-            }
+            let parts = (&mesh.shadow_parts[..], (&mesh.uvs, 0));
+            self.record_parts(rec, map, parts, &multiply(matrix, &caster.placed));
         }
     }
 
@@ -789,7 +899,7 @@ impl Shadows {
         for (chunk, value) in bytes.as_chunks_mut::<4>().0.iter_mut().zip(values) {
             *chunk = value.to_le_bytes();
         }
-        rec.push_constants(&self.layout, ShaderStageFlags::VERTEX, 0, &bytes);
+        rec.push_constants(&self.layout, push_stages(), 0, &bytes);
     }
 
     /// Draws the land a light reaches into the tile that's set up.

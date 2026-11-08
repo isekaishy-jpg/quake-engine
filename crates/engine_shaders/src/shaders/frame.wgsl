@@ -132,6 +132,18 @@ struct Frame {
     shine: vec4<f32>,
 }
 
+// How much of a pixel a cut-out covers at `alpha`, from how far that's past its `cutoff`, as
+// far as alpha changes across a pixel: an edge is a pixel wide, however near or far.
+fn cut_coverage(alpha: f32, cutoff: f32) -> f32 {
+    return clamp((alpha - cutoff) / max(fwidth(alpha), 0.0001) + 0.5, 0.0, 1.0);
+}
+
+// How many of a pixel's `samples` a cut-out covering `coverage` of it keeps. With one, it's kept
+// where it covers half: TAA's moving the view each frame then smooths the edge by itself.
+fn cut_samples(coverage: f32, samples: f32) -> u32 {
+    return u32(coverage * max(samples, 1.0) + 0.5);
+}
+
 // A colour as it's shown, in the linear light scenes are drawn in.
 fn to_linear(color: vec3<f32>) -> vec3<f32> {
     let low = color / 12.92;

@@ -280,7 +280,7 @@ fn a_tiled_maps_chart_keeps_its_samples_together() {
     }
 }
 
-/// Plain textures, with one of glass.
+/// Plain textures, with one of glass, and one half holes.
 struct WithGlass;
 
 impl TextureSource for WithGlass {
@@ -289,6 +289,20 @@ impl TextureSource for WithGlass {
         if name == "glass" {
             texture.material = Some(Arc::new(Material {
                 alpha: AlphaMode::Blend,
+                ..Material::default()
+            }));
+        }
+        if name == "holes" {
+            // Solid down one half, a hole down the other.
+            texture.mips = vec![MipLevel {
+                width: 2,
+                height: 1,
+                rgba: vec![200, 200, 200, 255, 200, 200, 200, 0],
+                form: PixelForm::Rgba,
+            }];
+            texture.material = Some(Arc::new(Material {
+                alpha: AlphaMode::Mask,
+                cutoff: 0.5,
                 ..Material::default()
             }));
         }
@@ -302,6 +316,13 @@ fn light_under(material: Option<&str>) -> u64 {
     if let Some(material) = material {
         let mut mesh = flat_sheet(4);
         mesh.parts[0].material = material.to_owned();
+        // Across the sheet once, so that half of it is on each half of its picture.
+        let part = &mut mesh.parts[0];
+        part.uvs = part
+            .points
+            .iter()
+            .map(|point| [point[0] / 64.0 * 0.999, 0.0])
+            .collect();
         let placement = MeshPlacement {
             only_seen: false,
             ..placed(false)
@@ -343,6 +364,16 @@ fn a_mesh_of_glass_casts_no_shadow() {
     let glass = light_under(Some("glass"));
     assert!(solid < open, "{solid} of {open}");
     assert_eq!(glass, open);
+}
+
+/// Light goes through a mesh's holes, where it's a cut-out, and not through the rest.
+#[test]
+fn light_goes_through_a_meshs_holes() {
+    let open = light_under(None);
+    let solid = light_under(Some("solid"));
+    let holes = light_under(Some("holes"));
+    assert!(holes > solid, "{holes} {solid}");
+    assert!(holes < open, "{holes} {open}");
 }
 
 /// Land's lit by its slopes, and shades itself: the far side of a ridge from the sun gets less.

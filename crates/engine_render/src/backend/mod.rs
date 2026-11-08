@@ -360,6 +360,8 @@ struct GpuMap {
     shadow_world_count: u32,
     /// The world's, a part at a time.
     shadow_parts: Vec<shadow::ShadowRange>,
+    /// Each texture's cutoff, if it has holes that light goes through.
+    shadow_cutoffs: Vec<Option<f32>>,
     /// The light atlas.
     atlas: GpuImage,
     /// Where the atlas's light comes from.
@@ -1151,7 +1153,8 @@ impl Backend {
             FrameValues::new(&device, &physical)?,
             FrameValues::new(&device, &physical)?,
         ];
-        let shadows = shadow::Shadows::new(&device, &physical, &terrain_set_layout)?;
+        let shadows =
+            shadow::Shadows::new(&device, &physical, (&terrain_set_layout, &material_layout))?;
         let field_layout = FieldLayout::new(&device)?;
         let shadow_sampler = Sampler::new(
             &device,
@@ -1865,8 +1868,10 @@ impl Backend {
         for instance in scene.drawables.instances.iter().filter(|i| i.visible) {
             let found = scene.mesh.model_ranges.get(instance.model as usize);
             for range in found.into_iter().flatten() {
-                let blended = scene.mesh.batches.get(range.batch as usize);
-                if blended.is_some_and(|batch| batch.kind == BatchKind::Blended) {
+                let Some(batch) = scene.mesh.batches.get(range.batch as usize) else {
+                    continue;
+                };
+                if batch.kind == BatchKind::Blended {
                     continue;
                 }
                 let first = map.shadow_world_count + range.first;
@@ -1875,6 +1880,7 @@ impl Backend {
                     count: range.count,
                     offset: instance.origin,
                     bounds: None,
+                    cut: (batch.kind == BatchKind::Masked).then_some(batch.texture),
                 });
             }
         }

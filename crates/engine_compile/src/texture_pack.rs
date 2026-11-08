@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use engine_format::{Block, Document, Value, from_binary, from_text, to_binary};
-use engine_map::{MipLevel, PixelForm, normal_chain};
+use engine_map::{MipLevel, PixelForm, keep_coverage, normal_chain};
 use rusty_dds::{Dds, DecodeContent, EncodeLayout};
 
 use crate::error::CompileError;
@@ -28,6 +28,8 @@ pub enum Role {
     Data,
     /// A normal map.
     Normal,
+    /// Colour, in sRGB, of a cut-out with this cutoff in 255ths, whose mips are as solid as it is.
+    Cutout(u8),
 }
 
 /// A number from a colour byte, in linear light.
@@ -84,7 +86,9 @@ impl Level {
             .0
             .iter()
             .flat_map(|[r, g, b, a]| match role {
-                Role::Colour => [linear(*r), linear(*g), linear(*b), f32::from(*a) / 255.0],
+                Role::Colour | Role::Cutout(_) => {
+                    [linear(*r), linear(*g), linear(*b), f32::from(*a) / 255.0]
+                }
                 Role::Data | Role::Normal => [*r, *g, *b, *a].map(|byte| f32::from(byte) / 255.0),
             })
             .collect();
@@ -126,7 +130,7 @@ impl Level {
         pixels
             .iter()
             .flat_map(|[r, g, b, a]| match role {
-                Role::Colour => [
+                Role::Colour | Role::Cutout(_) => [
                     colour_byte(*r),
                     colour_byte(*g),
                     colour_byte(*b),
@@ -141,7 +145,7 @@ impl Level {
 /// The compression for a role.
 const fn form_of(role: Role) -> PixelForm {
     match role {
-        Role::Colour => PixelForm::Bc7Srgb,
+        Role::Colour | Role::Cutout(_) => PixelForm::Bc7Srgb,
         // A normal map keeps how much its bumps agree in blue, which two channels haven't room
         // for.
         Role::Data | Role::Normal => PixelForm::Bc7,
@@ -188,6 +192,7 @@ pub fn pack_picture(
     let mut source = Block::new("source");
     source.set("hash", Value::Text(format!("{hash:016x}")));
     source.set("form", Value::Text(form_name(form).to_owned()));
+    source.set("role", Value::Text(role_name(role)));
     document.blocks.push(source);
     for level in picture_levels(width, height, rgba, role) {
         let (across, down) = (level.width, level.height);
@@ -229,7 +234,27 @@ pub fn picture_levels(width: u32, height: u32, rgba: &[u8], role: Role) -> Vec<M
         }
         level = level.halved();
     }
+    if let Role::Cutout(cutoff) = role {
+        keep_coverage(&mut levels, f32::from(cutoff) / 255.0);
+    }
     levels
+}
+
+/// What a compiled picture says of its role, as only a cut-out's mips differ from colour's.
+fn role_name(role: Role) -> String {
+    match role {
+        Role::Cutout(cutoff) => format!("cutout {cutoff}"),
+        Role::Colour => "colour".to_owned(),
+        Role::Data => "data".to_owned(),
+        Role::Normal => "normal".to_owned(),
+    }
+}
+
+/// The role compiled `bytes` say they were made for, if they say.
+fn packed_role(bytes: &[u8]) -> Option<String> {
+    let document = from_binary(bytes).ok()?;
+    let source = document.blocks_of("source").next()?;
+    Some(source.get("role")?.text()?.to_owned())
 }
 
 /// Whether compiled `mips` are of a form still made. A normal map was once two channels, with
@@ -283,9 +308,25 @@ pub fn picture_roles(document: &Document) -> Vec<(String, Role)> {
     };
     let mut found = Vec::new();
     for block in &document.blocks {
+        // A cut-out's picture has mips as solid as it is, by its cutoff.
+        let cut = block.get("alpha").and_then(Value::text) == Some("mask");
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a cutoff from 0 to 1, as a byte"
+        )]
+        let cutoff = {
+            let cutoff = block.get("cutoff").and_then(Value::number).unwrap_or(0.5);
+            (cutoff.clamp(0.0, 1.0) * 255.0).round() as u8
+        };
         for (key, value) in &block.fields {
             if let Some(path) = value.text().filter(|path| path.ends_with(".png")) {
-                found.push((path.to_owned(), role_of(key)));
+                let role = if cut && key == "base" {
+                    Role::Cutout(cutoff)
+                } else {
+                    role_of(key)
+                };
+                found.push((path.to_owned(), role));
             }
         }
         for inner in &block.children {
@@ -318,9 +359,16 @@ fn pack_one(root: &Path, picture: &str, role: Role) -> Result<bool, CompileError
     let hash = bytes_hash(&bytes);
     let out = root.join(packed_path(picture));
     let kept = std::fs::read(&out).ok();
-    if kept.is_some_and(|kept| {
-        read_packed(&kept).is_some_and(|(known, mips)| known == hash && still_made(&mips))
-    }) {
+    let current = |kept: &[u8]| {
+        // Before roles were kept, only a cut-out's would be wrong.
+        let same_role = packed_role(kept).map_or(!matches!(role, Role::Cutout(_)), |made| {
+            made == role_name(role)
+        });
+        let made =
+            read_packed(kept).is_some_and(|(known, mips)| known == hash && still_made(&mips));
+        made && same_role
+    };
+    if kept.is_some_and(|kept| current(&kept)) {
         return Ok(false);
     }
     let (width, height, rgba) = decode_png(&bytes)?;

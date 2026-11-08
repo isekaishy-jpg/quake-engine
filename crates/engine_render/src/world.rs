@@ -262,10 +262,11 @@ pub(crate) fn batch_kind(texture: &Texture) -> Option<BatchKind> {
             AlphaMode::Opaque => BatchKind::Material,
         });
     }
-    Some(if texture.kind == TextureKind::Sky {
-        BatchKind::Sky
-    } else {
-        BatchKind::Material
+    Some(match texture.kind {
+        TextureKind::Sky => BatchKind::Sky,
+        // Its holes have edges smoothed as a masked material's are.
+        TextureKind::Cutout => BatchKind::Masked,
+        _ => BatchKind::Material,
     })
 }
 
