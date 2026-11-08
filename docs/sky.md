@@ -150,6 +150,8 @@ entity world {
 | `ssao_radius` | How far round a point that looks, in world units. 32 unless it says |
 | `exposure_range` | How far exposure goes by itself, down and up in stops from `exposure`, as eyes do going from the dark into the sun: `exposure_range = -1 2`. None unless it says, as levels are built by eye |
 | `exposure_speed` | How fast it goes, in stops a second, into light and then into the dark. `3 1` unless it says |
+| `bloom` | How much what's brighter than a screen shows glows, from 0 for none. 1 unless it says. What's carried over from the fixture has none |
+| `bloom_threshold` | How bright light has to be, once exposed, to glow. 1, the brightest a screen shows, unless it says |
 
 | `tone` | Means |
 |---|---|
@@ -164,6 +166,10 @@ Darkening in corners is on light that comes from all round: baked light, and the
 It's worked out from what's solid before anything's shaded. What's see-through, cut out, or moved by its shader isn't in that, so it isn't darkened, and nor are models, which have their capsules' shade.
 
 A player sets `r_ssao` to 0 for none, 1 for some, which is the usual, or 2 for more and smoother.
+
+### Bloom
+
+What's brighter than a screen shows glows, blurred wide, so the sun and bright lamps do and the rest is as it was. A player can turn it off with `r_bloom 0`.
 
 ### Exposure that goes by itself
 

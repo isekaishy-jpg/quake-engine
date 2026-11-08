@@ -114,6 +114,8 @@ struct Frame {
     day_light: vec4<f32>,
     // How much corners darken, how far that looks, and how many looks it takes.
     ssao: vec4<f32>,
+    // What the final pass multiplies what glows by, which is none without it.
+    bloom: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

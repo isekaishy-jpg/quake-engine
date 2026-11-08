@@ -72,6 +72,9 @@ const DEFORM_SHADER: &str = include_str!("shaders/deform.wgsl");
 /// Edge smoothing.
 const SMAA_SHADER: &str = include_str!("shaders/smaa.wgsl");
 
+/// What glows.
+const BLOOM_SHADER: &str = include_str!("shaders/bloom.wgsl");
+
 /// The hooks of a surface, and what each does if a shader leaves it alone.
 const SURFACE_HOOKS: [(&str, &str); 4] = [
     (
@@ -180,6 +183,7 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Sprite => SPRITE_SHADER.to_owned(),
         Module::Shadow => SHADOW_SHADER.to_owned(),
         Module::Smaa => SMAA_SHADER.to_owned(),
+        Module::Bloom => BLOOM_SHADER.to_owned(),
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::Field(code) => field_source(code),

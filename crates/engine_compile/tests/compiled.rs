@@ -129,6 +129,7 @@ entity world { type = worldspawn }
     let expected = Look {
         tone: ToneCurve::Neutral,
         ssao: 0.6,
+        bloom: 1.0,
         ..Look::default()
     };
     assert_eq!(usual.look, expected);

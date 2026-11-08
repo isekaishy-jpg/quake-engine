@@ -61,6 +61,8 @@ pub enum Module<'a> {
     Shadow,
     /// Edge smoothing.
     Smaa,
+    /// What glows.
+    Bloom,
     /// What moves meshes.
     Deform,
     /// A surface with this surface code.
@@ -104,6 +106,7 @@ impl Module<'_> {
             Self::Ripple => "ripple".to_owned(),
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
+            Self::Bloom => "bloom".to_owned(),
             Self::Deform => "deform".to_owned(),
             Self::PlainSurface => "plain".to_owned(),
             Self::Surface(code) => format!("surface_{:016x}", code_id(code)),
@@ -198,6 +201,7 @@ pub fn all_modules<'a>(
         Module::Sprite,
         Module::Shadow,
         Module::Smaa,
+        Module::Bloom,
         Module::Deform,
         Module::Water,
         Module::Ripple,

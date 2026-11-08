@@ -564,6 +564,11 @@ pub struct Look {
     /// How fast it goes, in stops a second: into light, then into the dark, which eyes are slower
     /// at.
     pub exposure_speed: [f32; 2],
+    /// How much what's brighter than a screen shows glows, from 0 for none.
+    pub bloom: f32,
+    /// How bright light has to be, once exposed, before it glows. 1 is the brightest a screen
+    /// shows.
+    pub bloom_threshold: f32,
 }
 
 /// How fast exposure goes by itself unless a level says, in stops a second: into light, then into
@@ -580,6 +585,8 @@ impl Default for Look {
             ssao_radius: 32.0,
             exposure_range: [0.0; 2],
             exposure_speed: USUAL_EXPOSURE_SPEED,
+            bloom: 0.0,
+            bloom_threshold: 1.0,
         }
     }
 }

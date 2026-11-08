@@ -423,3 +423,30 @@ fn a_zone_says_how_far_exposure_goes() {
     assert_eq!(range("cave"), Some([0.0, 3.0]));
     assert_eq!(range("hall"), None);
 }
+
+/// A level glows where it's brighter than a screen shows unless it says otherwise, by as much as
+/// it says, from as bright as it says.
+#[test]
+fn a_level_says_how_much_glows() {
+    let usual = look_of("");
+    assert!((usual.bloom - 1.0).abs() < 1e-6, "{}", usual.bloom);
+    assert!((usual.bloom_threshold - 1.0).abs() < 1e-6);
+    let said = look_of("bloom = 0.3 bloom_threshold = 2");
+    assert!((said.bloom - 0.3).abs() < 1e-6);
+    assert!((said.bloom_threshold - 2.0).abs() < 1e-6);
+    assert!(look_of("bloom = 0").bloom.abs() < 1e-6, "none");
+    let wild = look_of("bloom = 9 bloom_threshold = -1");
+    assert!((wild.bloom - 4.0).abs() < 1e-6, "{}", wild.bloom);
+    assert!(
+        wild.bloom_threshold.abs() < 1e-6,
+        "{}",
+        wild.bloom_threshold
+    );
+    assert!(look_of("bloom = -1").bloom.abs() < 1e-6);
+}
+
+/// What's carried over from the fixture, with no level to say, doesn't glow.
+#[test]
+fn a_map_with_no_say_has_no_bloom() {
+    assert!(Look::default().bloom.abs() < 1e-6);
+}

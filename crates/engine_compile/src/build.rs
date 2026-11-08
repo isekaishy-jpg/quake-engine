@@ -1635,6 +1635,9 @@ fn day_of(working: &WorkingMap) -> Option<DayCycle> {
     })
 }
 
+/// How much a level glows that doesn't say.
+const LEVEL_BLOOM: f32 = 1.0;
+
 /// How much corners darken in a level that doesn't say.
 const LEVEL_SSAO: f32 = 0.6;
 
@@ -1713,6 +1716,12 @@ fn look_of(working: &WorkingMap) -> Result<Look, CompileError> {
         exposure_range: exposure_range_of(world.and_then(|world| world.field("exposure_range")))
             .unwrap_or(usual.exposure_range),
         exposure_speed: exposure_speed_of(world.and_then(|world| world.field("exposure_speed"))),
+        // A level made for this engine glows where it's brighter than a screen shows, and what's
+        // carried over from the fixture doesn't.
+        bloom: field("bloom").unwrap_or(LEVEL_BLOOM).clamp(0.0, 4.0),
+        bloom_threshold: field("bloom_threshold")
+            .unwrap_or(usual.bloom_threshold)
+            .max(0.0),
     })
 }
 

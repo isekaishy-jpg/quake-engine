@@ -1,5 +1,6 @@
 //! The Vulkan side of the renderer. Only this file knows `vulkane`.
 
+mod bloom;
 mod clock;
 mod deform;
 mod exposure;
@@ -112,6 +113,7 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 256 * 4
     + 12
     + 256
+    + 4
     + 4
     + 4
     + 4;
@@ -611,6 +613,12 @@ pub(crate) struct Backend {
     post: PostSettings,
     /// SMAA's passes.
     smaa: smaa::Smaa,
+    /// What glows.
+    bloom: bloom::Bloom,
+    /// Whether this frame glows.
+    bloom_shown: bool,
+    /// What the chain's told this frame.
+    bloom_step: bloom::BloomStep,
     /// A picture for unused stencils.
     blank_stencil: Option<GpuImage>,
     /// The stencils' pictures.
@@ -890,6 +898,7 @@ impl Backend {
                 image_binding(17, DescriptorType::SAMPLED_IMAGE),
                 image_binding(18, DescriptorType::SAMPLED_IMAGE),
                 image_binding(19, DescriptorType::SAMPLED_IMAGE),
+                image_binding(20, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -1093,6 +1102,7 @@ impl Backend {
         let corner_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &corner_pass, 1, "fs_corners", "")?;
         let smaa = smaa::Smaa::new(&device)?;
+        let bloom = bloom::Bloom::new(&device)?;
         let mut backend = Self {
             saved_pipelines,
             shader_problems: Vec::new(),
@@ -1140,6 +1150,9 @@ impl Backend {
             corner_pass,
             corner_pipeline,
             smaa,
+            bloom,
+            bloom_shown: false,
+            bloom_step: bloom::BloomStep::default(),
             post_set_layout,
             post_layout,
             post: PostSettings::default(),
@@ -1574,6 +1587,10 @@ impl Backend {
         );
         let wanted = self.post.edge_smoothing >= SMAA_SETTING;
         self.smaa.record(rec, &target.smaa, target.size, wanted);
+        self.clock.start(rec, self.slot, Span::Glow);
+        self.bloom
+            .record(rec, &target.bloom, self.bloom_step, self.bloom_shown);
+        self.clock.end(rec, self.slot, Span::Glow);
         if self.fog_marched
             || self.sky_rays_shown
             || (self.post.rays != 0 && !self.stencil_images.is_empty())

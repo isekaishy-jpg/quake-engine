@@ -239,6 +239,8 @@ pub struct PostSettings {
     pub ssao: u8,
     /// Whether exposure goes by itself, as far as a level lets it.
     pub auto_exposure: bool,
+    /// Whether what's brighter than a screen shows glows, as much as a level says.
+    pub bloom: bool,
 }
 
 /// How surfaces are filtered.

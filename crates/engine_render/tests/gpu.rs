@@ -8068,3 +8068,189 @@ fn a_bright_spot_does_not_sway_exposure() {
         assert!((plain - spotted).abs() < 0.1, "{plain} {spotted}");
     }
 }
+
+/// The square, dimly lit, with as much bloom as `strength` past `threshold`.
+fn bloom_square(strength: f32, threshold: f32) -> Map {
+    let mut built = map(1);
+    built.look.bloom = strength;
+    built.look.bloom_threshold = threshold;
+    built.light = vec![[20, 20, 20]; 81];
+    built
+}
+
+/// A bright spot on the square, off to one side, `bright` times as bright as a dim one.
+fn spot_of(bright: f32) -> LiveLight {
+    LiveLight {
+        spot: Vec3::new(0.0, 0.0, -1.0),
+        spot_cosine: 0.995,
+        color: [bright; 3],
+        ..blue_light(Vec3::new(30.0, 100.0, 60.0), false)
+    }
+}
+
+/// The square from above with `spot` on it, with bloom on if `on`.
+fn bloomed(built: Map, spot: Option<LiveLight>, on: bool) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        bloom: on,
+        ..PostSettings::default()
+    });
+    let lamps: Vec<LiveLight> = spot.into_iter().collect();
+    let drawables = Drawables {
+        live_lights: &lamps,
+        ..Drawables::default()
+    };
+    Some(
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// Where the spot is in the picture: the middle of what's at the top.
+fn spot_place(shot: &Capture) -> (u32, u32) {
+    let lit: Vec<(u32, u32)> = (0..64)
+        .flat_map(|y| (0..64).map(move |x| (x, y)))
+        .filter(|(x, y)| pixel(shot, *x, *y)[1] == 255)
+        .collect();
+    assert!(!lit.is_empty(), "the spot shows");
+    #[expect(clippy::cast_possible_truncation, reason = "a small picture")]
+    let count = lit.len() as u32;
+    let x = lit.iter().map(|(x, _)| x).sum::<u32>() / count;
+    let y = lit.iter().map(|(_, y)| y).sum::<u32>() / count;
+    (x, y)
+}
+
+/// How much brighter `on` is than `off` round `at`, out to `reach` pixels, leaving out the spot.
+fn glow_round(on: &Capture, off: &Capture, at: (u32, u32), reach: u32) -> u32 {
+    let mut total = 0;
+    for y in at.1.saturating_sub(reach)..(at.1 + reach).min(64) {
+        for x in at.0.saturating_sub(reach)..(at.0 + reach).min(64) {
+            if pixel(off, x, y)[1] < 250 {
+                total += u32::from(pixel(on, x, y)[1].saturating_sub(pixel(off, x, y)[1]));
+            }
+        }
+    }
+    total
+}
+
+/// How much brighter `on` is than `off` between `inner` and `outer` pixels from `at`.
+fn glow_ring(on: &Capture, off: &Capture, at: (u32, u32), (inner, outer): (u32, u32)) -> u32 {
+    let mut total = 0;
+    for y in 0..64_u32 {
+        for x in 0..64_u32 {
+            let away = x.abs_diff(at.0).max(y.abs_diff(at.1));
+            if (inner..outer).contains(&away) {
+                total += u32::from(pixel(on, x, y)[1].saturating_sub(pixel(off, x, y)[1]));
+            }
+        }
+    }
+    total
+}
+
+/// What's brighter than a screen shows glows round where it is, and not across the picture from
+/// it.
+#[test]
+fn what_is_bright_glows_round_it() {
+    let built = || bloom_square(1.0, 1.0);
+    let off = bloomed(built(), Some(spot_of(400.0)), false);
+    let on = bloomed(built(), Some(spot_of(400.0)), true);
+    if let (Some(off), Some(on)) = (off, on) {
+        let at = spot_place(&off);
+        let near = glow_round(&on, &off, at, 8);
+        assert!(near > 300, "{near}");
+        let mirrored = (at.0, 63 - at.1);
+        let across = glow_round(&on, &off, mirrored, 8);
+        assert!(across * 4 < near, "{near} {across}");
+        // It spreads wide, as each image on the way up adds what's below it.
+        let wide = glow_ring(&on, &off, at, (10, 16));
+        assert!(wide > 100, "{wide}");
+    }
+}
+
+/// What a screen can show doesn't glow, so a level that has nothing brighter is as it was built.
+#[test]
+fn what_a_screen_can_show_does_not_glow() {
+    let off = bloomed(bloom_square(1.0, 1.0), None, false);
+    let on = bloomed(bloom_square(1.0, 1.0), None, true);
+    if let (Some(off), Some(on)) = (off, on) {
+        assert_eq!(off.rgba, on.rgba);
+    }
+}
+
+/// Bloom is only there if a level has some and a player has it on.
+#[test]
+fn bloom_needs_a_level_and_a_player() {
+    let plain = bloomed(bloom_square(0.0, 1.0), Some(spot_of(400.0)), false);
+    let level_none = bloomed(bloom_square(0.0, 1.0), Some(spot_of(400.0)), true);
+    let player_off = bloomed(bloom_square(1.0, 1.0), Some(spot_of(400.0)), false);
+    if let (Some(plain), Some(level_none), Some(player_off)) = (plain, level_none, player_off) {
+        assert_eq!(plain.rgba, level_none.rgba);
+        assert_eq!(plain.rgba, player_off.rgba);
+    }
+}
+
+/// A level says how much, and from how bright.
+#[test]
+fn a_level_says_how_much_glows() {
+    // Dim enough that what glows doesn't reach the top of what a screen shows.
+    let glow = |strength: f32, threshold: f32| -> Option<u32> {
+        let built = || bloom_square(strength, threshold);
+        let off = bloomed(built(), Some(spot_of(100.0)), false)?;
+        let on = bloomed(built(), Some(spot_of(100.0)), true)?;
+        Some(glow_round(&on, &off, spot_place(&off), 8))
+    };
+    let (some, more, higher) = (glow(0.5, 1.0), glow(1.0, 1.0), glow(1.0, 8.0));
+    if let (Some(some), Some(more), Some(higher)) = (some, more, higher) {
+        // Screens show light on a curve, so twice the light is less than twice the bytes.
+        assert!(more * 10 > some * 13, "{some} {more}");
+        assert!(
+            higher * 2 < more,
+            "a higher threshold glows less: {more} {higher}"
+        );
+    }
+}
+
+/// What's measured against the threshold is exposed first, so a level exposed down glows less.
+#[test]
+fn bloom_goes_by_exposed_light() {
+    // Half the light at twice the exposure is the same light, once exposed, so it glows the same.
+    // Dim, so that it's only a little past the threshold, and light on a surface doesn't stop.
+    let shot = |bright: f32, exposure: f32| -> Option<(Capture, Capture)> {
+        let mut built = bloom_square(1.0, 1.0);
+        built.light = vec![[0, 0, 0]; 81];
+        // So that half the light is half as bright.
+        built.look.light_curve = 1.0;
+        built.look.exposure = exposure;
+        let off = bloomed(built.clone(), Some(spot_of(bright)), false)?;
+        let on = bloomed(built, Some(spot_of(bright)), true)?;
+        Some((off, on))
+    };
+    let at =
+        bloomed(bloom_square(1.0, 1.0), Some(spot_of(400.0)), false).map(|shot| spot_place(&shot));
+    if let (Some(plain), Some(bright), Some(at)) = (shot(30.0, 1.0), shot(15.0, 2.0), at) {
+        let (glow, again) = (
+            glow_ring(&plain.1, &plain.0, at, (0, 16)),
+            glow_ring(&bright.1, &bright.0, at, (0, 16)),
+        );
+        assert!(glow > 50, "it glows: {glow}");
+        assert!(glow.abs_diff(again) * 5 < glow, "{glow} {again}");
+    }
+}
+
+/// One very bright spot is weighted down on the first step, so that it doesn't flicker as it
+/// moves: ten times as bright doesn't glow ten times as much.
+#[test]
+fn a_very_bright_spot_is_held_down() {
+    // Far out, where the glow is dim, so that what a screen shows doesn't top out.
+    let glow = |bright: f32| -> Option<u32> {
+        let off = bloomed(bloom_square(1.0, 1.0), Some(spot_of(bright)), false)?;
+        let on = bloomed(bloom_square(1.0, 1.0), Some(spot_of(bright)), true)?;
+        Some(glow_ring(&on, &off, spot_place(&off), (8, 16)))
+    };
+    if let (Some(bright), Some(brighter)) = (glow(400.0), glow(4000.0)) {
+        assert!(brighter >= bright, "{bright} {brighter}");
+        assert!(brighter * 2 < bright * 3, "{bright} {brighter}");
+    }
+}

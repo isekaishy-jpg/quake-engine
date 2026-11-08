@@ -11,6 +11,7 @@ use vulkane::safe::{
 use engine_map::{MOST_CLOUDS, Map, ProbeGrid, ShaderCode, SlotImage};
 use engine_shaders::{Module, spirv};
 
+use super::bloom::BloomTarget;
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
 use super::water::WaterTarget;
@@ -43,6 +44,8 @@ pub(super) struct SceneTarget {
     _resolved: Option<GpuImage>,
     /// What SMAA draws.
     pub(super) smaa: SmaaTarget,
+    /// What glows.
+    pub(super) bloom: BloomTarget,
     /// Where light in the air is drawn.
     pub(super) rays: RayTarget,
     /// How open each pixel is to light from all round.
@@ -541,7 +544,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 12,
+                    descriptor_count: 13,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -588,6 +591,14 @@ impl Backend {
             &smaa.weights().view,
             ImageLayout::SHADER_READ_ONLY_OPTIMAL,
         );
+        let bloom = self
+            .bloom
+            .target(&self.device, &self.physical, size, shown)?;
+        set.write_sampled_image(
+            20,
+            &bloom.image().view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
         let rays = self.ray_target(size, &self.ray_pass, SCENE_FORMAT)?;
         set.write_sampled_image(10, &rays.image.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         let corners = self.ray_target(size, &self.corner_pass, CORNER_FORMAT)?;
@@ -628,6 +639,7 @@ impl Backend {
             _depth: depth,
             _resolved: resolved,
             smaa,
+            bloom,
             rays,
             corners,
             water,

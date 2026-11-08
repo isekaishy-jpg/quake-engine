@@ -25,6 +25,8 @@
 @group(0) @binding(17) var cloud_picture_2: texture_2d<f32>;
 @group(0) @binding(18) var cloud_picture_3: texture_2d<f32>;
 @group(0) @binding(19) var sky_ray_picture: texture_2d<f32>;
+// What glows, blurred wide.
+@group(0) @binding(20) var bloom_light: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -1139,6 +1141,9 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     if frame.stencil_params.x > 0.5 || frame.fog_counts.w > 0.5 || frame.sky_rays.y > 0.5 {
         let air = textureSampleLevel(ray_light, scene_sampler, in.uv, 0.0);
         color = color * air.a + air.rgb;
+    }
+    if frame.bloom.x > 0.0 {
+        color = color + textureSampleLevel(bloom_light, scene_sampler, in.uv, 0.0).rgb * frame.bloom.x;
     }
     return vec4<f32>(to_screen(shader_post(color, in.uv), noise), 1.0);
 }

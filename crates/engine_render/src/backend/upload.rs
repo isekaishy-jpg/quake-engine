@@ -16,6 +16,7 @@ use vulkane::safe::{
     MemoryPropertyFlags, PhysicalDevice, PipelineStage,
 };
 
+use super::bloom::BloomStep;
 use super::exposure::Exposure;
 use super::ripple::GpuRipples;
 use super::shadow::{SUN_CASCADES, ShadowRange, SunShadow, shadow_figures};
@@ -308,6 +309,8 @@ pub(super) struct FrameExtras<'a> {
     look: Look,
     /// What exposure that goes by itself multiplies light by.
     exposure_scale: f32,
+    /// What the final pass multiplies what glows by.
+    bloom: f32,
     /// What a zone does to the light.
     light_shift: [f32; 3],
     /// Bodies of liquid.
@@ -511,6 +514,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     };
     let strength = if looks > 0.0 { extra.look.ssao } else { 0.0 };
     out[base + 8..base + 11].copy_from_slice(&[strength, extra.look.ssao_radius, looks]);
+    out[base + 12] = extra.bloom;
     out
 }
 
@@ -1537,6 +1541,7 @@ impl Backend {
             probes: scene.and_then(|scene| scene.map.probes.as_ref()),
             look: scene.map_or_else(Look::default, |scene| scene.map.look),
             exposure_scale: 1.0,
+            bloom: 0.0,
             light_shift: view.light_shift,
         };
         // Exposure goes by itself as far as a zone, or else the level, lets it, from how bright
@@ -1552,8 +1557,28 @@ impl Backend {
             self.exposure = Exposure::default();
             self.brightness = None;
         }
+        // What glows is what's past the threshold once exposed, and each image of the chain adds
+        // its share.
+        let exposure = extra.look.exposure * self.exposure.scale();
+        self.bloom_shown = self.post.bloom && extra.look.bloom > 0.0 && scene.is_some();
+        self.bloom_step = BloomStep {
+            threshold: extra.look.bloom_threshold,
+            knee: extra.look.bloom_threshold * 0.5,
+            exposure,
+        };
+        let levels = self
+            .scene_target
+            .as_ref()
+            .map_or(1, |target| target.bloom.count());
+        #[expect(clippy::cast_precision_loss, reason = "a few levels")]
+        let bloom = if self.bloom_shown {
+            extra.look.bloom / levels as f32
+        } else {
+            0.0
+        };
         let extra = FrameExtras {
             exposure_scale: self.exposure.scale(),
+            bloom,
             ..extra
         };
         self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());

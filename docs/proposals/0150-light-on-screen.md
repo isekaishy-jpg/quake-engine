@@ -1,6 +1,6 @@
 # Proposal 0150: light on screen
 
-Status: accepted for items 164, 163 and 165, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 164, 163, 165 and 166, 2026-11-07. Items 163 and 165 to 168 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -66,6 +66,18 @@ Unreal and Unity measure how bright a scene is from the average of its brightnes
 - **It's the author's.** Levels are built by eye on what they show, so one adjusts only if it says how far. A zone can say how far in it, in place of the level's, and a zone's light still multiplies after, so a zone that darkens stays darker. A player can turn it off with `r_exposure_auto 0`.
 - **`exposure` at the console** says how bright what's seen is and how far it's gone, to tune a range by.
 
+## Bloom (166)
+
+### How others do it
+
+Jimenez's way for Call of Duty: Advanced Warfare is what Unity and Blender's EEVEE use. A chain of images, each half the last, is made going down with 13 looks a pixel, and the first step weights each look down by how bright it is, so that one bright pixel doesn't flicker as it moves. Going back up, each image adds what's below it, spread by a tent of nine. Newer engines blend that into the picture by a small share with no threshold, as that keeps energy, and Unity says a threshold breaks it. Bevy has both, a blend and an add with a threshold.
+
+### What changes
+
+- **The chain goes down to six images,** from half the scene's size, and back up. The final pass adds it before exposure.
+- **Only what's brighter than a screen shows glows.** A blend with no threshold softens every pixel a little, which would change every level as it was built. With a soft threshold at 1, once exposed, only what a screen can't show glows: the sun, and bright lamps. A test holds a picture with nothing brighter to the same bytes.
+- **A level says how much** with `bloom`, 1 unless it says, and from how bright with `bloom_threshold`. What's carried over from the fixture has none. A player can turn it off with `r_bloom 0`.
+
 ## What came of it
 
 ### A tone curve (164)
@@ -92,6 +104,15 @@ Unreal and Unity measure how bright a scene is from the average of its brightnes
 - **What's measured is the scene,** before fog and what's drawn in the final pass, and before a zone's light, so a zone isn't undone.
 - **A setting a player saves** carries over to the next run, which made a level look as if it ignored its range while trying it.
 
+### Bloom (166)
+
+- **Tried in the game:** looking at the sun, it glows round its disc, and more as `bloom` goes up: 0.5 is faint, 1 clear, 2 strong. Vesper Deep looks the same with it and without, as nothing there is brighter than a screen shows.
+- **At first the glow was a second sun,** across the picture from the first. The scene's held upside down and the final pass turns it over, so the chain has to turn the same way. A test now puts a spot off to one side and looks for its glow round it, not across from it.
+- **What a single bright pixel adds is weighted down** on the first step, so it doesn't flicker as it moves. It works: a moon smaller than a pixel glows 16% less with it than without. No test sees that by itself yet, as light on a surface stops at 2 and a spot can't be made bright enough, and the sky's are either too dim to glow or bright enough to fill what's measured. Item 167 takes away the stop, and then the test of a spot ten times as bright has to see it, with the bug put back.
+- **What it costs:** about 0.1 ms in a window, and nothing with it off. `gpu_times` shows it as glow.
+- **Exposure comes first:** what's measured against the threshold is the scene as exposed, by the level and by exposure that goes by itself.
+- **Screens show light on a curve,** so twice the bloom is less than twice the bytes, which a test had to allow for.
+
 ## Sources
 
 - [PBR Neutral, Khronos](https://github.com/KhronosGroup/ToneMapping/blob/main/PBR_Neutral/README.md)
@@ -107,5 +128,10 @@ Unreal and Unity measure how bright a scene is from the average of its brightnes
 - [Automatic exposure, Unreal Engine 4.27](https://docs.unrealengine.com/4.27/RenderingAndGraphics/PostProcessEffects/AutomaticExposure)
 - [Auto exposure in Unreal Engine](https://dev.epicgames.com/documentation/en-us/unreal-engine/auto-exposure-in-unreal-engine)
 - [Auto exposure, Unity post processing](https://docs.unity3d.com/Packages/com.unity.postprocessing@3.4/manual/Auto-Exposure.html)
+- [Next generation post processing in Call of Duty: Advanced Warfare, Jimenez](https://www.iryoku.com/next-generation-post-processing-in-call-of-duty-advanced-warfare)
+- [Bloom, Unity HDRP](https://docs.unity3d.com/Packages/com.unity.render-pipelines.high-definition@17.0/manual/Post-Processing-Bloom.html)
+- [Bloom, GameDev.net](https://gamedev.net/forums/topic/693388-bloom/)
+- [Bloom in Bevy](https://docs.rs/bevy/0.15.2/src/bloom_3d/bloom_3d.rs.html)
+- [Bloom, Diligent Engine](https://diligentgraphics.github.io/docs/df/de0/DiligentFX_PostProcess_Bloom_README.html)
 - [Tweaking automatic exposure in Unreal, Versluis](https://www.versluis.com/2020/03/how-to-tweak-automatic-exposure-control-in-unreal-engine/)
 - [Ambient occlusion and baked light, Godot forum](https://forum.godotengine.org/t/global-ambient-light-levels/138068)
