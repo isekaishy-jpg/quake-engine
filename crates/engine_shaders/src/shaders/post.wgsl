@@ -1354,16 +1354,6 @@ fn from_ycocg(color: vec3<f32>) -> vec3<f32> {
     return vec3<f32>(less + color.y, color.x + color.z, less - color.y);
 }
 
-// Light brought down by how bright it is, so that a very bright pixel doesn't swing what TAA
-// keeps, and back.
-fn tamed(color: vec3<f32>) -> vec3<f32> {
-    return color / (1.0 + dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)));
-}
-
-fn untamed(color: vec3<f32>) -> vec3<f32> {
-    return color / max(1.0 - dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
-}
-
 // How much of this frame TAA takes, and of those before the rest.
 const TAA_TAKES: f32 = 0.1;
 
@@ -1395,8 +1385,12 @@ fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
     }
     let mean = sum / 9.0;
     let spread = sqrt(max(squares / 9.0 - mean * mean, vec3<f32>(0.0)));
-    let low = mean - spread * 1.25;
-    let high = mean + spread * 1.25;
+    // The box always holds what this pixel is now: something a pixel thin is so unlike what's
+    // round it that the spread can leave it out, and it'd be lightened each frame though nothing
+    // moved.
+    let now = to_ycocg(tamed(current));
+    let low = min(mean - spread * 1.25, now);
+    let high = max(mean + spread * 1.25, now);
     var middle = (vec2<f32>(at) + vec2<f32>(0.5)) / size;
     if !at_screen_size() {
         // What's kept is the screen's size, so it's found from where this pixel of it is.
@@ -1422,10 +1416,43 @@ fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
     if any(back < vec2<f32>(0.0)) || any(back > vec2<f32>(1.0)) {
         return vec4<f32>(current, 1.0);
     }
-    let kept = to_ycocg(tamed(textureSampleLevel(taa_kept, scene_sampler, back, 0.0).rgb));
+    let kept = to_ycocg(tamed(kept_at(back)));
     let held = clamp(kept, low, high);
-    let blended = mix(held, to_ycocg(tamed(current)), takes);
+    let blended = mix(held, now, takes);
     return vec4<f32>(untamed(from_ycocg(blended)), 1.0);
+}
+
+// What TAA kept, at `uv`, by Catmull and Rom's curve through the sixteen pixels round it, in five
+// reads. Blended between the four nearest, what moves a fraction of a pixel a frame softens
+// frame on frame, and something thin spreads into what's round it, where the box cuts it, and
+// fades. The box takes out what the curve overshoots.
+fn kept_at(uv: vec2<f32>) -> vec3<f32> {
+    let size = vec2<f32>(textureDimensions(taa_kept));
+    let place = uv * size;
+    let middle = floor(place - vec2<f32>(0.5)) + vec2<f32>(0.5);
+    let f = place - middle;
+    let f2 = f * f;
+    let f3 = f2 * f;
+    let w0 = -0.5 * f3 + f2 - 0.5 * f;
+    let w1 = 1.5 * f3 - 2.5 * f2 + vec2<f32>(1.0);
+    let w2 = -1.5 * f3 + 2.0 * f2 + 0.5 * f;
+    let w3 = 0.5 * f3 - 0.5 * f2;
+    let w12 = w1 + w2;
+    let at12 = (middle + w2 / w12) / size;
+    let at0 = (middle - vec2<f32>(1.0)) / size;
+    let at3 = (middle + vec2<f32>(2.0)) / size;
+    let sum = kept_between(vec2<f32>(at12.x, at0.y)) * w12.x * w0.y
+        + kept_between(vec2<f32>(at0.x, at12.y)) * w0.x * w12.y
+        + kept_between(at12) * w12.x * w12.y
+        + kept_between(vec2<f32>(at3.x, at12.y)) * w3.x * w12.y
+        + kept_between(vec2<f32>(at12.x, at3.y)) * w12.x * w3.y;
+    let weight = w12.x * w0.y + w0.x * w12.y + w12.x * w12.y + w3.x * w12.y + w12.x * w3.y;
+    return max(sum / max(weight, 0.0001), vec3<f32>(0.0));
+}
+
+// What TAA kept at `uv`, blended between the four nearest.
+fn kept_between(uv: vec2<f32>) -> vec3<f32> {
+    return textureSampleLevel(taa_kept, scene_sampler, uv, 0.0).rgb;
 }
 
 // How far this frame's view is moved, in the scene's pixels: the moved view's matrix less the

@@ -11,6 +11,7 @@ mod pipeline_cache;
 mod pipelines;
 mod post;
 mod record;
+mod resolve;
 mod ripple;
 mod screen;
 mod shadow;
@@ -641,6 +642,8 @@ pub(crate) struct Backend {
     motion_pass: RenderPass,
     /// What draws it.
     motion_pipelines: motion::MotionPipelines,
+    /// What brings the scene's samples to one a pixel.
+    resolver: resolve::Resolver,
     /// Where each brush model was last frame.
     last_brush_origins: HashMap<u32, Vec3>,
     /// The brush models that moved since then, in view.
@@ -1194,6 +1197,7 @@ impl Backend {
             Self::make_post_pipeline(&device, &post_layout, &taa_pass, 1, "fs_taa_keep", "")?;
         let motion_pass = motion::make_motion_pass(&device)?;
         let motion_pipelines = motion::MotionPipelines::new(&device, &frame_layout, &motion_pass)?;
+        let resolver = resolve::Resolver::new(&device)?;
         let meter_pass = exposure::make_meter_pass(&device)?;
         let meter_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &meter_pass, 1, "fs_meter", "")?;
@@ -1250,6 +1254,7 @@ impl Backend {
             last_view_projection: None,
             motion_pass,
             motion_pipelines,
+            resolver,
             last_brush_origins: HashMap::new(),
             moved_brushes: Vec::new(),
             meter_pass,
@@ -1799,6 +1804,16 @@ impl Backend {
         {
             let rest = self.particles_behind..self.particle_order.len();
             self.record_particle_pass(rec, &recorder, scene, target, (size, rest));
+        }
+        if let Some(resolve) = &target.resolve {
+            // It reads every sample of what's drawn.
+            rec.memory_barrier(
+                PipelineStage::ALL_GRAPHICS,
+                PipelineStage::FRAGMENT_SHADER,
+                AccessFlags::COLOR_ATTACHMENT_WRITE,
+                AccessFlags::SHADER_READ,
+            );
+            self.resolver.record(rec, resolve);
         }
         target.drawn.set(true);
         self.record_water(rec, target);

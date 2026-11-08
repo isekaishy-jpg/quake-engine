@@ -149,8 +149,59 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 
 - **Tried in the game,** at the start of E1M1 in a window, with what `gpu_times` says. With SMAA: at 50% the scene takes 0.12 ms, against 0.31 at 100% and 0.6 to 1.0 at 200%, which also puts SMAA up to 0.8 ms. With TAA at 50% the scene, final pass and edges take about 0.6 ms together, against about 1 ms at 100%. Against TAA at 100%, a picture at 50% with SMAA is off by 1.9 a pixel and TAA at 50% by 1.2, as sharp as SMAA's at a third less off; it went from 1.6 to 1.4 when how near was measured in the screen's pixels and not the scene's, and to 1.2 with textures read finer, and sharpening brought its sharpness from 1.47 to 1.67 of TAA at 100%'s 1.85.
 - **Found on the way:** the scene's passes were told the screen's size for what to draw into, and drew a corner of it; TAA's move was read from a part of the view's matrix that's nothing when the view's level, and came out black.
-- **Tests:** a scene at half and at twice the size fills the screen and is as it was where it's flat, twice smooths edges, and 0 is the screen's size. At a half again, a fine pattern is averaged under each pixel, to under a third of it, where one blend leaves more. What's brought up doesn't ring past the pixels round it. TAA at half comes under half as far from TAA at the screen's size as bringing up alone, and sharpening gives it more shades than the screen's size has; any of its parts undone, or the shorter round, comes further off, the round by only 5%, so that test's margin is narrow. Textures are read finer drawn smaller only with TAA. SMAA comes along when it's brought up. The options show it and turn it.
+- **Tests:** a scene at half and at twice the size fills the screen and is as it was where it's flat, twice smooths edges, and 0 is the screen's size. At a half again, a fine pattern is averaged under each pixel, to under a third of it, where one blend leaves more. What's brought up doesn't ring past the pixels round it. TAA at half comes under half as far from TAA at the screen's size as bringing up alone, and sharpening makes its edges a fifth as steep as the screen's size's, all told, where without it they're under that (177 changed how this is measured); any of its parts undone, or the shorter round, comes further off, the round by only 5%, so that test's margin is narrow. Textures are read finer drawn smaller only with TAA. SMAA comes along when it's brought up. The options show it and turn it.
 - **What no test reaches:** `r_scale` held between a half and twice in the game, as with every setting beside it.
+
+## Thin things (177)
+
+### What there was
+
+Something thinner than a pixel, a wire, a pole or a grate's bar far off, is in a pixel only where a sample falls on it. With one sample it comes and goes as the view moves, and SMAA can't help, as in a frame it isn't in there's no edge to find. A test of a black strip a third of a pixel wide over the square, the view creeping a twentieth of a pixel a frame, measured how much of it shows as it's shown and how much that swings:
+
+| | Shows | Swings |
+|---|---|---|
+| Nothing | 883 | 1310 |
+| SMAA | 883 | 1310 |
+| 4 samples, before | 4 | |
+| TAA, before | 11 | |
+
+So samples and TAA both lost it, where they should be the answer. Each had its own reason, found by taking frames apart:
+
+- **Samples were averaged as light, not as they're shown.** The square's light is 2.7 times what the screen shows at its brightest, as a bright wall in a level made for this engine is, and the final pass brings a colour that's past that down to fit, keeping its hue. A pixel with three of its four samples on the square and one on the strip averages to twice that brightest, which is shown as the square. Only a pixel nearly all strip looked any darker, so the strip was eroded to almost nothing, and a white strip on a dark floor was widened.
+- **TAA blended as light squeezed by Karis's 1 over 1 and how bright,** which is milder than the final pass, so the same happened more slowly.
+- **TAA held what it kept to the mean and spread of the pixels round it,** and a line a pixel wide is so unlike what's round it that the spread left it out: a still black line came to rest at 31, not 0.
+- **TAA read what it kept blended between the four nearest pixels.** As the view moves a fraction of a pixel a frame, that softens it frame on frame, and something thin spreads into the pixels beside it, where the box cuts it, and fades.
+- **TAA alone can't keep what most of its frames don't see.** The strip is in three of eight moves of the view. In the other five there's nothing dark round it now, so the box closes on the square, and what was kept of it goes.
+
+### What's done elsewhere
+
+- **Resolving samples as they'll be shown:** Pettineo's experiments with MSAA resolve filters, and Karis, who weighs each sample by 1 over 1 and how bright before averaging, then takes it back. Unreal and others resolve their own way for the same reason.
+- **Reading what TAA kept by a sharper curve** than a blend: Catmull and Rom's, in five reads, from Jimenez's Filmic SMAA, which Unreal's TAA also uses.
+- **Keeping thin things with TAA alone:** Unreal's TSR spots thin geometry and how much it flickers, and trusts what it kept more there; other TAAs trust what's kept where nothing moved. Either keeps a trail of what passes in front of something still unless it also knows what was where last frame, which this engine doesn't keep.
+
+### What's done here
+
+- **Samples are brought to one a pixel by a pass of their own,** after everything's drawn into them, in place of the card's resolve. Each is tamed as the screen will show it, near enough, averaged, and taken back to light, so that what's brighter than the screen shows stays as bright for what glows, exposure and TAA.
+- **Taming** is shared by that pass and TAA. It goes by the brightest of a colour's channels at the light that reaches the eye, against the brightest the screen shows, as the final pass does. Below 0.9 of that, light is as it is, so what's within the screen is averaged as plainly as before; above, it rolls off smoothly towards the brightest, never reaching it, so it can be taken back. Karis's 1 over 1 and how bright is the same curve started at 0; started at 0.9 it's near the final pass's, and a pixel a quarter dark comes out 0.74 of the way, against 0.75 shown sample by sample.
+- **TAA's box always holds what this pixel is now.**
+- **What TAA kept is read by Catmull and Rom's curve,** in five reads, and the box takes out what it overshoots.
+- **TAA alone is left losing what most of its frames miss.** Trusting what it kept where nothing moved would leave a monster's trail on a still wall, and this engine keeps nothing of where things were last frame to tell. The answer here is samples, with TAA over them or not, and the options say so: "Multisampling" keeps what's thinner than a pixel, far off.
+
+### What came of it
+
+| | Shows | Swings |
+|---|---|---|
+| 4 samples | 510 | 198 |
+| TAA | 85 | 63 |
+| TAA over 4 samples | 336 | 60 |
+
+- **Each change carries part:** with Karis's taming, samples showed 211; taming from 0.5, TAA over samples showed 68, and from 0.9 but with what's kept blended, 140.
+- **While the view turns,** TAA is nearer what's drawn without it than before: 2.0 million off in all, against 2.8 with what's kept blended and 2.5 with Karis's taming, and over samples 1.2, against 2.4 and 1.7.
+- **Tried in the game,** the grate yard from 175, from one place, with nothing, 4 samples, TAA over them, and TAA. With nothing the far grate breaks into pieces; with samples it's an even mesh, and the sky and snow are as bright. It was watched while the view was turned and while the game shared the machine with tests, which made shadows seem to creep and flicker; they didn't once it had the machine to itself, and the same frames taken on the commit before showed the same.
+- **Found on the way:** the research before this measured how dark the whole picture was, and with the strip on a square that filled a third of it, what it measured was mostly the square's edges. A thin strip over a floor much wider than the light map drew dark beyond it, as the test map's light covers only the square, so the test keeps to the square.
+- **Seen and left for later:** a dark line along the top of a far grate, which comes and goes as the view tips. It's on the commit before too.
+- **Tests:** the strip with 4 samples shows, steadily, where with one it comes and goes and SMAA doesn't help, and TAA over samples keeps half of it, steadier. With TAA a still line a pixel wide stays black. Light past what the screen shows glows as much with samples as without. Half the light at twice the exposure is resolved the same at a strip's edges. Each change undone fails one of them.
+- **What no test reaches:** HDR screens, where taming goes by their brightest, which needs a person with one.
 
 ## Sources
 
@@ -166,3 +217,6 @@ A normal map's mips make it worse. Averaged, bumps leaning every way face out, s
 - Ben Golus, "Anti-aliased Alpha Test: The Esoteric Alpha To Coverage", 2017: alpha sharpened to a pixel's width
 - AMD, FidelityFX Super Resolution 1 and 2, and Contrast Adaptive Sharpening: MIT-licensed upscaling and sharpening
 - Brian Karis, "High Quality Temporal Supersampling", SIGGRAPH 2014: taking each pixel where it truly is, by a window
+- Matt Pettineo, "Experimenting with Reconstruction Filters for MSAA Resolve", 2012: resolving samples as they'll be shown
+- Jorge Jimenez and others, "Filmic SMAA: Sharp Morphological and Temporal Antialiasing", SIGGRAPH 2016: Catmull and Rom's curve in five reads, for what TAA kept
+- Lei Yang, Shiqiu Liu and Marco Salvi, "A Survey of Temporal Antialiasing Techniques", Eurographics 2020: thin things, and what trusting what's kept costs

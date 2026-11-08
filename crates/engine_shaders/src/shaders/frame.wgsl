@@ -159,6 +159,44 @@ fn cut_samples(coverage: f32, samples: f32) -> u32 {
     return u32(coverage * max(samples, 1.0) + 0.5);
 }
 
+// How far past what a screen shows as its brightest the brightest of `color`'s channels is, at
+// the light that reaches the eye: past 1, the final pass brings the colour down to fit.
+fn shown_peak(color: vec3<f32>) -> f32 {
+    let shown = color * frame.color_params.y * frame.zone_light.rgb;
+    let most = select(1.0, max(frame.screen.z, 1.0), frame.screen.x > 0.5);
+    return max(shown.r, max(shown.g, shown.b)) / most;
+}
+
+// Where taming starts: below, light's as it is.
+const TAME_START: f32 = 0.9;
+
+// Light brought down near enough as the screen will show it, so that what's averaged counts as
+// it's seen: as it is, where the screen shows it as it is, and above, rolled off smoothly
+// towards the screen's brightest, which is never reached, so it can be taken back (`untamed`).
+// A pixel a quarter dark and the rest brighter than the screen shows then still looks a
+// quarter dark, where light averaged as it is would be brought down to the screen's brightest
+// and hide it. It's Karis's 1 over 1 and how bright, with nothing changed below the start.
+fn tamed(color: vec3<f32>) -> vec3<f32> {
+    let light = clamp(color, vec3<f32>(0.0), vec3<f32>(65504.0));
+    let peak = shown_peak(light);
+    if peak <= TAME_START {
+        return light;
+    }
+    let room = 1.0 - TAME_START;
+    let rolled = 1.0 - room * room / (peak + 1.0 - 2.0 * TAME_START);
+    return light * (rolled / peak);
+}
+
+fn untamed(color: vec3<f32>) -> vec3<f32> {
+    let rolled = shown_peak(color);
+    if rolled <= TAME_START {
+        return color;
+    }
+    let room = 1.0 - TAME_START;
+    let peak = room * room / max(1.0 - rolled, 0.000001) - 1.0 + 2.0 * TAME_START;
+    return min(color * (peak / rolled), vec3<f32>(65504.0));
+}
+
 // A colour as it's shown, in the linear light scenes are drawn in.
 fn to_linear(color: vec3<f32>) -> vec3<f32> {
     let low = color / 12.92;

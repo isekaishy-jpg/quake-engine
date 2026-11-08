@@ -9850,6 +9850,21 @@ fn fineness(capture: &Capture) -> u64 {
     total
 }
 
+/// How steep a capture's changes are, all told: each green step to the pixels left and above, by
+/// itself. An edge made sharper is steeper, where how far it goes in all is the same.
+fn steepness(capture: &Capture) -> u64 {
+    let mut total = 0;
+    for y in 1..capture.height {
+        for x in 1..capture.width {
+            let here = pixel(capture, x, y)[1];
+            for other in [pixel(capture, x - 1, y)[1], pixel(capture, x, y - 1)[1]] {
+                total += u64::from(here.abs_diff(other)).pow(2);
+            }
+        }
+    }
+    total
+}
+
 /// Drawn at a half again each way, each of the screen's pixels takes all the scene's under it, so
 /// a fine pattern's averaged, not picked at.
 #[test]
@@ -9933,13 +9948,14 @@ fn taa_brings_a_smaller_scene_up_nearer() {
     // size: under half as far off as bringing up alone. Any of those undone is nearer two
     // thirds, and the shorter round half.
     assert!(taa_off * 100 < plain_off * 49, "{taa_off} {plain_off}");
-    // Sharpened after, it has more shades than the screen's size has, where without it about as
-    // many as it would have soft.
+    // Sharpened after, its edges are a fifth as steep as at the screen's size, all told, where
+    // without it they'd be under that. How many shades it has would say little: light past what
+    // the screen shows is tamed nearly to its brightest, so there's no room to sharpen it.
     assert!(
-        shades(&taa_up) > shades(&full) * 2,
+        steepness(&taa_up) * 5 > steepness(&full),
         "{} {}",
-        shades(&taa_up),
-        shades(&full)
+        steepness(&taa_up),
+        steepness(&full)
     );
 }
 
@@ -10011,4 +10027,224 @@ fn smaa_comes_along_when_a_scene_is_brought_up() {
     let smoothed = scaled_floor(&mut renderer, scaled(0.5, 2), 1);
     assert_ne!(plain.rgba, smoothed.rgba);
     assert_eq!(centre(&plain), centre(&smoothed), "what's flat stays");
+}
+
+/// The square, and over it, if there's a `strip` width, a black strip that wide along y at
+/// x = 64, a little above it.
+fn floor_with_strip(strip: Option<f32>) -> Map {
+    let mut built = map(2);
+    built.textures.push(Texture {
+        name: "black".to_owned(),
+        mips: image_of(4, |_, _| [0, 0, 0, 255]),
+        ..built.textures[0].clone()
+    });
+    let half = strip.unwrap_or(0.0) * 0.5;
+    built.points[4..8].copy_from_slice(&[
+        Vec3::new(64.0 - half, 0.0, 1.0),
+        Vec3::new(64.0 + half, 0.0, 1.0),
+        Vec3::new(64.0 + half, 128.0, 1.0),
+        Vec3::new(64.0 - half, 128.0, 1.0),
+    ]);
+    built.faces[1].texture = 1;
+    built.models.truncate(1);
+    let faces = if strip.is_some() { 2 } else { 1 };
+    built.models[0].face_count = faces;
+    built.tree.leaf_faces = (0..faces).collect();
+    built.tree.leaves[1].face_count = faces;
+    built
+}
+
+/// How dark a capture is in all, as it's shown.
+fn darkness(capture: &Capture) -> f64 {
+    let (pixels, _) = capture.rgba.as_chunks::<4>();
+    pixels.iter().map(|pixel| f64::from(255 - pixel[1])).sum()
+}
+
+/// From above at `x`, high enough that a unit's a sixth of a pixel.
+fn high_above(x: f32) -> View {
+    View {
+        origin: Vec3::new(x, 64.0, 256.0),
+        ..view_from_above()
+    }
+}
+
+/// How much of a strip 2 units wide shows on average, as it's shown, and how much that swings,
+/// as the view creeps across it a twentieth of a pixel a frame, from high enough that it's a
+/// third of a pixel wide, with `samples` a pixel and `post`. The square's light is past what
+/// the screen shows.
+fn thin_strip_shown(samples: u32, post: PostSettings) -> Option<(f64, f64)> {
+    let mut renderer = renderer()?;
+    renderer.set_antialiasing(samples).expect("samples");
+    renderer.set_post(post);
+    #[expect(clippy::cast_precision_loss, reason = "a few steps")]
+    let at = |step: u32| high_above(64.0 + step as f32 * 0.28);
+    let mut shown = |strip: Option<f32>| {
+        renderer
+            .load_map(Arc::new(floor_with_strip(strip)))
+            .expect("load");
+        // TAA settles first.
+        for step in 0..32 {
+            renderer
+                .capture(&at(step), Drawables::default(), 64, 64)
+                .expect("capture");
+        }
+        (32..64)
+            .map(|step| {
+                darkness(
+                    &renderer
+                        .capture(&at(step), Drawables::default(), 64, 64)
+                        .expect("capture"),
+                )
+            })
+            .collect::<Vec<f64>>()
+    };
+    let floor = shown(None);
+    let with = shown(Some(2.0));
+    let seen: Vec<f64> = with
+        .iter()
+        .zip(&floor)
+        .map(|(with, floor)| with - floor)
+        .collect();
+    #[expect(clippy::cast_precision_loss, reason = "a few frames")]
+    let count = seen.len() as f64;
+    let mean = seen.iter().sum::<f64>() / count;
+    let spread = (seen.iter().map(|value| (value - mean).powi(2)).sum::<f64>() / count).sqrt();
+    Some((mean, spread))
+}
+
+/// Something a third of a pixel wide, as a wire or pole far off is, comes and goes with a sample
+/// a pixel, and SMAA can't help, as there's no edge to find in a frame it isn't in. Several
+/// samples show it steadily, even before what's brighter than the screen shows, as they're
+/// brought to one a pixel as they're seen; TAA over them keeps it, steadier still (proposal
+/// 0151).
+#[test]
+fn something_thinner_than_a_pixel_shows_steadily_with_samples() {
+    let post = |edge_smoothing| PostSettings {
+        edge_smoothing,
+        ..PostSettings::default()
+    };
+    let Some((bare, bare_swings)) = thin_strip_shown(1, post(0)) else {
+        return;
+    };
+    let (_, smaa_swings) = thin_strip_shown(1, post(2)).expect("it drew");
+    let (samples, samples_swing) = thin_strip_shown(4, post(0)).expect("it drew");
+    let (both, both_swing) = thin_strip_shown(4, post(3)).expect("it drew");
+    assert!(
+        bare_swings > bare,
+        "it comes and goes: {bare} {bare_swings}"
+    );
+    assert!(
+        smaa_swings > bare_swings * 0.8,
+        "SMAA can't help: {smaa_swings}"
+    );
+    assert!(samples > 400.0, "samples show it: {samples}");
+    assert!(
+        samples_swing < samples * 0.5,
+        "steadily: {samples} {samples_swing}"
+    );
+    assert!(
+        both > samples * 0.5,
+        "TAA over samples keeps it: {both} {samples}"
+    );
+    assert!(
+        both_swing < samples_swing * 0.5,
+        "steadier: {both_swing} {samples_swing}"
+    );
+}
+
+/// With TAA, a line a pixel wide that stays where it is stays as dark, though what's round it
+/// is so unlike it that the spread of what's near would leave it out.
+#[test]
+fn taa_keeps_a_still_line_a_pixel_wide() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    // 8 units is a pixel and a third, and from here it's on the middle of a row, so that every
+    // move of the view still covers that row.
+    renderer
+        .load_map(Arc::new(floor_with_strip(Some(8.0))))
+        .expect("load");
+    renderer.set_post(PostSettings {
+        edge_smoothing: 3,
+        ..PostSettings::default()
+    });
+    let mut last = None;
+    for _ in 0..48 {
+        last = Some(
+            renderer
+                .capture(&high_above(73.0), Drawables::default(), 64, 64)
+                .expect("capture"),
+        );
+    }
+    let shot = last.expect("a frame");
+    let darkest = (28..40).map(|y| pixel(&shot, 25, y)[1]).min();
+    assert!(darkest.is_some_and(|green| green < 8), "{darkest:?}");
+}
+
+/// Light brighter than the screen shows stays as bright through being brought to one a pixel,
+/// so that it glows as much with samples as without.
+#[test]
+fn samples_keep_light_past_what_the_screen_shows() {
+    let glow = |samples: u32| -> Option<u32> {
+        let shot = |on: bool| -> Option<Capture> {
+            let mut renderer = renderer()?;
+            renderer.set_antialiasing(samples).expect("samples");
+            renderer
+                .load_map(Arc::new(bloom_square(1.0, 1.0)))
+                .expect("load");
+            renderer.set_post(PostSettings {
+                bloom: on,
+                ..PostSettings::default()
+            });
+            let lamps = [spot_of(30.0)];
+            let drawables = Drawables {
+                live_lights: &lamps,
+                ..Drawables::default()
+            };
+            Some(
+                renderer
+                    .capture(&view_from_above(), drawables, 64, 64)
+                    .expect("capture"),
+            )
+        };
+        let (off, on) = (shot(false)?, shot(true)?);
+        Some(glow_ring(&on, &off, spot_place(&off), (0, 16)))
+    };
+    if let (Some(one), Some(four)) = (glow(1), glow(4)) {
+        assert!(one > 50, "it glows: {one}");
+        assert!(one.abs_diff(four) * 5 < one, "{one} {four}");
+    }
+}
+
+/// Samples are brought to one by light as it's shown: half the light at twice the exposure looks
+/// the same, at the edges of a strip too, where how they're weighed shows.
+#[test]
+fn samples_are_weighed_by_light_as_its_shown() {
+    let shot = |light: u8, exposure: f32| -> Option<Capture> {
+        let mut renderer = renderer()?;
+        renderer.set_antialiasing(4).expect("samples");
+        let mut built = floor_with_strip(Some(8.0));
+        // So that half the light is half as bright.
+        built.look.light_curve = 1.0;
+        built.look.exposure = exposure;
+        built.light = vec![[light; 3]; 81];
+        renderer.load_map(Arc::new(built)).expect("load");
+        Some(
+            renderer
+                .capture(&high_above(75.0), Drawables::default(), 64, 64)
+                .expect("capture"),
+        )
+    };
+    if let (Some(bright), Some(exposed)) = (shot(240, 1.0), shot(120, 2.0)) {
+        let edges = |shot: &Capture| (28..40).map(|y| pixel(shot, 25, y)[1]).collect::<Vec<u8>>();
+        let (a, b) = (edges(&bright), edges(&exposed));
+        assert!(
+            a.iter().any(|green| (20..200).contains(green)),
+            "an edge: {a:?}"
+        );
+        assert!(
+            a.iter().zip(&b).all(|(a, b)| a.abs_diff(*b) <= 3),
+            "{a:?} {b:?}"
+        );
+    }
 }

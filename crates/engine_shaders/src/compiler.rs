@@ -84,6 +84,12 @@ const MOTION_VECTORS_SHADER: &str = concat!(
     include_str!("shaders/motion_vectors.wgsl"),
 );
 
+/// The scene's samples brought to one a pixel.
+const RESOLVE_SHADER: &str = concat!(
+    include_str!("shaders/frame.wgsl"),
+    include_str!("shaders/resolve.wgsl"),
+);
+
 /// The hooks of a surface, and what each does if a shader leaves it alone.
 const SURFACE_HOOKS: [(&str, &str); 4] = [
     (
@@ -194,6 +200,7 @@ fn source_of(module: &Module<'_>) -> String {
         Module::Smaa => SMAA_SHADER.to_owned(),
         Module::Bloom => BLOOM_SHADER.to_owned(),
         Module::MotionVectors => MOTION_VECTORS_SHADER.to_owned(),
+        Module::Resolve => RESOLVE_SHADER.to_owned(),
         Module::Deform => DEFORM_SHADER.to_owned(),
         Module::Surface(code) => surface_source(code),
         Module::Field(code) => field_source(code),

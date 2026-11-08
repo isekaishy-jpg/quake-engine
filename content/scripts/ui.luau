@@ -327,7 +327,7 @@ local function screen_rows(state)
 					"Multisampling",
 					"r_msaa",
 					{ { "Off", 1 }, { "2x", 2 }, { "4x", 4 }, { "8x", 8 } },
-					"Smooths edges by drawing more of each pixel. Each step costs more."
+					"Smooths edges by drawing more of each pixel, and keeps what's thinner than one, far off. Each step costs more."
 				),
 				pick(
 					"Render Scale",

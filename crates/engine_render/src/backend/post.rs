@@ -13,6 +13,7 @@ use engine_shaders::{Module, spirv};
 
 use super::bloom::BloomTarget;
 use super::motion::MotionTarget;
+use super::resolve::ResolveTarget;
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
 use super::water::WaterTarget;
@@ -41,8 +42,10 @@ pub(super) struct SceneTarget {
     _color: GpuImage,
     /// Kept alive for the framebuffer.
     _depth: GpuImage,
-    /// Kept alive for the framebuffer, with several samples a pixel.
+    /// With several samples a pixel, what they're brought to one in, which the final pass reads.
     _resolved: Option<GpuImage>,
+    /// What brings them to one there.
+    pub(super) resolve: Option<ResolveTarget>,
     /// What SMAA draws.
     pub(super) smaa: SmaaTarget,
     /// What glows.
@@ -138,21 +141,9 @@ pub(super) fn make_corner_pass(device: &Device) -> Result<RenderPass, RenderErro
 }
 
 /// The render pass of a scene, leaving what the final pass reads ready to
-/// read. With several samples a pixel, colour resolves to an attachment after
-/// the others, and depth stays as it is.
+/// read. With several samples a pixel, colour and depth stay as they are, and
+/// colour's brought to one a pixel once everything's drawn (`resolve`).
 pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPass, RenderError> {
-    let resolved = AttachmentDescription {
-        format: SCENE_FORMAT,
-        load_op: AttachmentLoadOp::DONT_CARE,
-        store_op: AttachmentStoreOp::STORE,
-        initial_layout: ImageLayout::UNDEFINED,
-        final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    };
-    let (color_end, resolve) = if samples > 1 {
-        (ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(resolved))
-    } else {
-        (ImageLayout::SHADER_READ_ONLY_OPTIMAL, None)
-    };
     Ok(RenderPass::new_multisampled(
         device,
         RenderPassCreateInfo {
@@ -161,7 +152,7 @@ pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPas
                 load_op: AttachmentLoadOp::CLEAR,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
-                final_layout: color_end,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             }],
             depth_attachment: Some(AttachmentDescription {
                 format: DEPTH_FORMAT,
@@ -172,7 +163,7 @@ pub(super) fn make_scene_pass(device: &Device, samples: u32) -> Result<RenderPas
             }),
         },
         samples,
-        resolve,
+        None,
     )?)
 }
 
@@ -182,18 +173,6 @@ pub(super) fn make_scene_again_pass(
     device: &Device,
     samples: u32,
 ) -> Result<RenderPass, RenderError> {
-    let resolved = AttachmentDescription {
-        format: SCENE_FORMAT,
-        load_op: AttachmentLoadOp::DONT_CARE,
-        store_op: AttachmentStoreOp::STORE,
-        initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    };
-    let (color_end, resolve) = if samples > 1 {
-        (ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(resolved))
-    } else {
-        (ImageLayout::SHADER_READ_ONLY_OPTIMAL, None)
-    };
     Ok(RenderPass::new_multisampled(
         device,
         RenderPassCreateInfo {
@@ -201,8 +180,8 @@ pub(super) fn make_scene_again_pass(
                 format: SCENE_FORMAT,
                 load_op: AttachmentLoadOp::LOAD,
                 store_op: AttachmentStoreOp::STORE,
-                initial_layout: color_end,
-                final_layout: color_end,
+                initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             }],
             depth_attachment: Some(AttachmentDescription {
                 format: DEPTH_FORMAT,
@@ -213,25 +192,13 @@ pub(super) fn make_scene_again_pass(
             }),
         },
         samples,
-        resolve,
+        None,
     )?)
 }
 
 /// The pass particles are drawn in: what the scene left, with nothing of its depth attached, as
 /// they read that.
 pub(super) fn make_particle_pass(device: &Device, samples: u32) -> Result<RenderPass, RenderError> {
-    let resolved = AttachmentDescription {
-        format: SCENE_FORMAT,
-        load_op: AttachmentLoadOp::DONT_CARE,
-        store_op: AttachmentStoreOp::STORE,
-        initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-        final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
-    };
-    let (color_end, resolve) = if samples > 1 {
-        (ImageLayout::COLOR_ATTACHMENT_OPTIMAL, Some(resolved))
-    } else {
-        (ImageLayout::SHADER_READ_ONLY_OPTIMAL, None)
-    };
     Ok(RenderPass::new_multisampled(
         device,
         RenderPassCreateInfo {
@@ -239,13 +206,13 @@ pub(super) fn make_particle_pass(device: &Device, samples: u32) -> Result<Render
                 format: SCENE_FORMAT,
                 load_op: AttachmentLoadOp::LOAD,
                 store_op: AttachmentStoreOp::STORE,
-                initial_layout: color_end,
-                final_layout: color_end,
+                initial_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
             }],
             depth_attachment: None,
         },
         samples,
-        resolve,
+        None,
     )?)
 }
 
@@ -615,8 +582,7 @@ impl Backend {
         } else {
             None
         };
-        let mut attachments = vec![&color.view, &depth.view];
-        attachments.extend(resolved.as_ref().map(|image| &image.view));
+        let attachments = [&color.view, &depth.view];
         let framebuffer =
             Framebuffer::new(&self.device, &self.scene_pass, &attachments, size.0, size.1)?;
         let pool = DescriptorPool::new(
@@ -645,12 +611,10 @@ impl Backend {
             0,
             FRAME_SIZE as u64,
         );
-        let mut drawn_over = vec![&color.view];
-        drawn_over.extend(resolved.as_ref().map(|image| &image.view));
         let particle_framebuffer = Framebuffer::new(
             &self.device,
             &self.particle_pass,
-            &drawn_over,
+            &[&color.view],
             size.0,
             size.1,
         )?;
@@ -664,6 +628,14 @@ impl Backend {
         )?;
         let particle_set = particle_pool.allocate(&self.particle_depth_layout)?;
         particle_set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
+        let resolve = resolved
+            .as_ref()
+            .map(|into| {
+                let images = (&color.view, &into.view);
+                self.resolver
+                    .target(&self.device, images, &self.uniforms.buffer, size)
+            })
+            .transpose()?;
         let shown = resolved.as_ref().unwrap_or(&color);
         set.write_sampled_image(1, &shown.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
         set.write_sampled_image(2, &depth.view, ImageLayout::SHADER_READ_ONLY_OPTIMAL);
@@ -745,6 +717,7 @@ impl Backend {
             _color: color,
             _depth: depth,
             _resolved: resolved,
+            resolve,
             smaa,
             bloom,
             taa,
