@@ -278,6 +278,9 @@ pub struct PostSettings {
     pub white_nits: f32,
     /// The brightest a screen shows in HDR, in nits, with 0 for [`USUAL_PEAK_NITS`].
     pub peak_nits: f32,
+    /// Whether highlights widen where a surface turns or its bumps spread within a pixel, so that
+    /// they don't sparkle as they shrink with distance.
+    pub steady_shine: bool,
 }
 
 /// How surfaces are filtered.

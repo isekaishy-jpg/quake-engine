@@ -220,6 +220,32 @@ fn parallax_uv(
 // for all of them, even where it's off, so `plain` leaves it out.
 const PLAIN: bool = false;
 
+// How much rougher a highlight should be here, as roughness squared to add: from how far the
+// normal turns across the pixel, as Tokuyoshi and Kaplanyan's geometric specular anti-aliasing
+// has it, and from how much a normal map's bumps too small to see spread, as Toksvig has it, with
+// `agree` how much they agree, from 1 for all one way down. Without it a highlight on what turns
+// or is bumpy sparkles as it shrinks with distance (proposal 0151).
+fn shine_spread(normal: vec3<f32>, agree: f32) -> f32 {
+    let across = dpdx(normal);
+    let down = dpdy(normal);
+    let turn = min(0.5 * (dot(across, across) + dot(down, down)), 0.18);
+    let bumps = 2.0 * (1.0 - agree) / max(agree, 0.001);
+    return (turn + bumps) * frame.shine.x;
+}
+
+// `gloss` as rough as `spread` makes it: x the gloss, and y what the same light is multiplied by,
+// as a wider highlight is dimmer.
+fn steadied(gloss: f32, spread: f32) -> vec2<f32> {
+    if spread <= 0.0 {
+        return vec2<f32>(gloss, 1.0);
+    }
+    let rough = 2.0 / (gloss + 2.0);
+    let wider = min(rough + spread, 1.0);
+    // Never sharper than it was, nor flatter than the flattest it might have been.
+    let steady = clamp(2.0 / wider - 2.0, min(gloss, 1.0), gloss);
+    return vec2<f32>(steady, (steady + 8.0) / (gloss + 8.0));
+}
+
 // Specular light from the dynamic lights, on a bumped surface.
 fn specular_light(world: vec3<f32>, normal: vec3<f32>, to_eye: vec3<f32>, gloss: f32) -> f32 {
     var total = 0.0;
@@ -389,6 +415,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     base = vec4<f32>(base.rgb * ground.tint, base.a);
 
     var normal = surface_at.normal;
+    var agree = 1.0;
     if ground.painted {
         normal = ground.normal;
     } else if material.slots_a.x >= 0 || layer_cover > 0.0 {
@@ -403,6 +430,8 @@ fn material_color(in: VertexOut) -> vec4<f32> {
                 coded_bump = read_slot(material.slots_a.x, uv, dx, dy);
             }
             flat_bump = coded_bump.xy * 2.0 - vec2<f32>(1.0);
+            // A compiled normal map says in blue how much the bumps under a texel agree.
+            agree = mix(1.0, coded_bump.z, 1.0 - layer_cover);
         }
         flat_bump = flat_bump * (1.0 - layer_cover) + layer_bump;
         let rise = sqrt(max(1.0 - dot(flat_bump, flat_bump), 0.0));
@@ -421,6 +450,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
     coded = shader_surface(coded);
     base = coded.base;
     normal = coded.normal;
+    let spread = shine_spread(normal, agree);
 
     // Where baked light comes from, so bumps and shine answer it too.
     let stored = textureSampleLevel(light_direction, lightmap_sampler, in.light_uv, 0.0);
@@ -453,7 +483,7 @@ fn material_color(in: VertexOut) -> vec4<f32> {
         shine_tint = mix(vec3<f32>(0.04), base.rgb, metal);
         // Roughness says the same thing as gloss, the other way round.
         let squared = rough * rough;
-        shine_gloss = max(2.0 / (squared * squared) - 2.0, 1.0);
+        shine_gloss = steadied(max(2.0 / (squared * squared) - 2.0, 1.0), spread).x;
     }
 
     var color = base.rgb;
@@ -497,8 +527,9 @@ fn material_color(in: VertexOut) -> vec4<f32> {
 
     if ground.painted {
         if ground.shine > 0.0 {
-            let lit_shine = shine_at(in, normal, to_eye, ground.gloss, baked, baked_from, has_direction);
-            color = color + vec3<f32>(ground.shine) * lit_shine;
+            let wide = steadied(ground.gloss, spread);
+            let lit_shine = shine_at(in, normal, to_eye, wide.x, baked, baked_from, has_direction);
+            color = color + vec3<f32>(ground.shine) * lit_shine * wide.y;
         }
     } else if material.slots_a.y >= 0 || layer_cover > 0.0 {
         var specular = vec4<f32>(0.0);
@@ -506,8 +537,9 @@ fn material_color(in: VertexOut) -> vec4<f32> {
             specular = read_slot(material.slots_a.y, uv, dx, dy) * (1.0 - layer_cover);
         }
         specular = specular + vec4<f32>(vec3<f32>(layer_shine), layer_cover);
-        let gloss = material.values.y * max(specular.a, 0.05);
-        color = color + specular.rgb * shine_at(in, normal, to_eye, gloss, baked, baked_from, has_direction) * material.values.x;
+        let wide = steadied(material.values.y * max(specular.a, 0.05), spread);
+        let lit_shine = shine_at(in, normal, to_eye, wide.x, baked, baked_from, has_direction);
+        color = color + specular.rgb * lit_shine * wide.y * material.values.x;
     }
     if described {
         // Sharper highlights are brighter, as the same light is in a smaller spot.

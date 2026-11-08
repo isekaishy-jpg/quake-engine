@@ -543,6 +543,7 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 24..base + 28].copy_from_slice(&extra.taa);
     out[base + 28..base + 44].copy_from_slice(&extra.last_view_projection);
     out[base + 44..base + 60].copy_from_slice(&extra.steady_view_projection);
+    out[base + 60] = f32::from(u8::from(post.steady_shine));
     out
 }
 

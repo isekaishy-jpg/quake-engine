@@ -85,5 +85,6 @@ pub use terrain::{TerrainSource, read_terrain_data, write_terrain};
 pub use texture::placeholder_texture;
 pub use texture_check::{Repeat, check_picture};
 pub use texture_pack::{
-    Role, bytes_hash, pack_picture, pack_textures, packed_path, picture_roles, read_packed,
+    Role, bytes_hash, pack_picture, pack_textures, packed_path, picture_levels, picture_roles,
+    read_packed,
 };

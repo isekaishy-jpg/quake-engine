@@ -5,7 +5,7 @@ use std::collections::BTreeMap;
 use std::path::Path;
 
 use engine_format::{Block, Document, Value, from_binary, from_text, to_binary};
-use engine_map::{MipLevel, PixelForm};
+use engine_map::{MipLevel, PixelForm, normal_chain};
 use rusty_dds::{Dds, DecodeContent, EncodeLayout};
 
 use crate::error::CompileError;
@@ -95,9 +95,8 @@ impl Level {
         }
     }
 
-    /// The next level down. Pictures repeat, so an odd edge wraps. A normal is
-    /// made a unit again, as an average of them is shorter.
-    fn halved(&self, role: Role) -> Self {
+    /// The next level down. Pictures repeat, so an odd edge wraps.
+    fn halved(&self) -> Self {
         let (width, height) = ((self.width / 2).max(1), (self.height / 2).max(1));
         let mut values = Vec::with_capacity(width * height * 4);
         for y in 0..height {
@@ -109,14 +108,6 @@ impl Level {
                     let at = (from_y * self.width + from_x) * 4;
                     for (sum, value) in pixel.iter_mut().zip(&self.values[at..at + 4]) {
                         *sum += value * 0.25;
-                    }
-                }
-                if role == Role::Normal {
-                    let unit = [pixel[0], pixel[1], pixel[2]].map(|part| part * 2.0 - 1.0);
-                    let length = unit.iter().map(|part| part * part).sum::<f32>().sqrt();
-                    let scale = 1.0 / length.max(1e-4);
-                    for (out, part) in pixel.iter_mut().zip(unit) {
-                        *out = part * scale * 0.5 + 0.5;
                     }
                 }
                 values.extend(pixel);
@@ -151,8 +142,9 @@ impl Level {
 const fn form_of(role: Role) -> PixelForm {
     match role {
         Role::Colour => PixelForm::Bc7Srgb,
-        Role::Data => PixelForm::Bc7,
-        Role::Normal => PixelForm::Bc5,
+        // A normal map keeps how much its bumps agree in blue, which two channels haven't room
+        // for.
+        Role::Data | Role::Normal => PixelForm::Bc7,
     }
 }
 
@@ -191,37 +183,60 @@ pub fn pack_picture(
     hash: u64,
 ) -> Result<Vec<u8>, CompileError> {
     let form = form_of(role);
-    let content = if role == Role::Normal {
-        DecodeContent::Bc5UNorm
-    } else {
-        DecodeContent::Bc7
-    };
+    let content = DecodeContent::Bc7;
     let mut document = Document::new("texture");
     let mut source = Block::new("source");
     source.set("hash", Value::Text(format!("{hash:016x}")));
     source.set("form", Value::Text(form_name(form).to_owned()));
     document.blocks.push(source);
-    let mut level = Level::from_bytes(width, height, rgba, role);
-    loop {
-        let (across, down) = (
-            u32::try_from(level.width).unwrap_or(1),
-            u32::try_from(level.height).unwrap_or(1),
-        );
+    for level in picture_levels(width, height, rgba, role) {
+        let (across, down) = (level.width, level.height);
         let layout = EncodeLayout::flat_2d(content, across, down);
         let bad = |error| CompileError::Bad(format!("compressing a picture: {error:?}"));
-        let encoded = Dds::encode_from_rgba8(&level.bytes(role), layout).map_err(bad)?;
+        let encoded = Dds::encode_from_rgba8(&level.rgba, layout).map_err(bad)?;
         let mut block = Block::new("level");
         block.set("width", Value::Number(f64::from(across)));
         block.set("height", Value::Number(f64::from(down)));
         let blocks = encoded.get_data(0).map_err(bad)?;
         block.set("blocks", Value::Bytes(blocks.to_vec()));
         document.blocks.push(block);
+    }
+    Ok(to_binary(&document))
+}
+
+/// Each level of a picture `role` as it's compressed, largest first. A normal map's are made as one
+/// that isn't compiled has them, keeping how much its bumps agree.
+#[must_use]
+pub fn picture_levels(width: u32, height: u32, rgba: &[u8], role: Role) -> Vec<MipLevel> {
+    if role == Role::Normal {
+        return normal_chain(width, height, rgba);
+    }
+    let mut levels = Vec::new();
+    let mut level = Level::from_bytes(width, height, rgba, role);
+    loop {
+        let (across, down) = (
+            u32::try_from(level.width).unwrap_or(1),
+            u32::try_from(level.height).unwrap_or(1),
+        );
+        levels.push(MipLevel {
+            width: across,
+            height: down,
+            rgba: level.bytes(role),
+            form: PixelForm::Rgba,
+        });
         if level.width == 1 && level.height == 1 {
             break;
         }
-        level = level.halved(role);
+        level = level.halved();
     }
-    Ok(to_binary(&document))
+    levels
+}
+
+/// Whether compiled `mips` are of a form still made. A normal map was once two channels, with
+/// nothing of how much its bumps agree.
+#[must_use]
+pub(crate) fn still_made(mips: &[MipLevel]) -> bool {
+    mips.iter().all(|level| level.form != PixelForm::Bc5)
 }
 
 /// The mips in a compiled picture, and the hash of its source, if it reads.
@@ -303,7 +318,9 @@ fn pack_one(root: &Path, picture: &str, role: Role) -> Result<bool, CompileError
     let hash = bytes_hash(&bytes);
     let out = root.join(packed_path(picture));
     let kept = std::fs::read(&out).ok();
-    if kept.is_some_and(|kept| read_packed(&kept).is_some_and(|(known, _)| known == hash)) {
+    if kept.is_some_and(|kept| {
+        read_packed(&kept).is_some_and(|(known, mips)| known == hash && still_made(&mips))
+    }) {
         return Ok(false);
     }
     let (width, height, rgba) = decode_png(&bytes)?;

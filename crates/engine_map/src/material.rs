@@ -187,6 +187,104 @@ impl Material {
     }
 }
 
+/// Which way a normal map's texel faces, as a unit vector: from its red and green, as a shader has
+/// it, since its blue may not be kept.
+#[must_use]
+pub fn normal_of_texel(red: u8, green: u8) -> [f32; 3] {
+    let x = f32::from(red) / 127.5 - 1.0;
+    let y = f32::from(green) / 127.5 - 1.0;
+    [x, y, (1.0 - x * x - y * y).max(0.0).sqrt()]
+}
+
+/// A normal map's texel for `average`, the average of the unit normals under it, and `alpha`: which
+/// way they face on average in red and green, and how much they agree in blue. That's the
+/// average's length, which is 1 where they all face one way and less as they spread.
+#[must_use]
+pub fn texel_of_normals(average: [f32; 3], alpha: u8) -> [u8; 4] {
+    let length = average.iter().map(|part| part * part).sum::<f32>().sqrt();
+    let [x, y, _] = if length > 1e-4 {
+        average.map(|part| part / length)
+    } else {
+        [0.0, 0.0, 1.0]
+    };
+    #[expect(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "clamped to a byte"
+    )]
+    let byte = |value: f32| (value * 255.0).round().clamp(0.0, 255.0) as u8;
+    [
+        byte(x * 0.5 + 0.5),
+        byte(y * 0.5 + 0.5),
+        byte(length.min(1.0)),
+        alpha,
+    ]
+}
+
+/// A normal map's chain of mips, largest first. Each level keeps which way its texels' bumps face
+/// on average, and in blue how much they agree (see [`texel_of_normals`]), from all the texels of
+/// the first level under it. A bump too small to see is gone from the direction, but not from how
+/// rough a highlight on it is (proposal 0151). The first level keeps its red and green as they
+/// are, with blue at the top, as each texel is one bump. An odd last row or column is left out, as
+/// halving goes, as [`mip_chain`] leaves it.
+#[must_use]
+pub fn normal_chain(width: u32, height: u32, rgba: &[u8]) -> Vec<MipLevel> {
+    let texels = rgba.as_chunks::<4>().0;
+    let mut sums: Vec<([f32; 3], f32)> = texels
+        .iter()
+        .map(|[red, green, _, alpha]| (normal_of_texel(*red, *green), f32::from(*alpha)))
+        .collect();
+    let (mut across, mut down) = (width.max(1) as usize, height.max(1) as usize);
+    let first = texels
+        .iter()
+        .flat_map(|[red, green, _, alpha]| [*red, *green, u8::MAX, *alpha])
+        .collect();
+    let mut levels = vec![MipLevel {
+        width: u32::try_from(across).unwrap_or(1),
+        height: u32::try_from(down).unwrap_or(1),
+        rgba: first,
+        form: crate::PixelForm::Rgba,
+    }];
+    while across > 1 || down > 1 {
+        let (half_across, half_down) = ((across / 2).max(1), (down / 2).max(1));
+        let mut next = Vec::with_capacity(half_across * half_down);
+        for y in 0..half_down {
+            for x in 0..half_across {
+                let mut normal = [0.0; 3];
+                let mut alpha = 0.0;
+                for (dx, dy) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
+                    let (from_x, from_y) =
+                        ((x * 2 + dx).min(across - 1), (y * 2 + dy).min(down - 1));
+                    let (under, under_alpha) = sums[from_y * across + from_x];
+                    for (sum, part) in normal.iter_mut().zip(under) {
+                        *sum += part * 0.25;
+                    }
+                    alpha += under_alpha * 0.25;
+                }
+                next.push((normal, alpha));
+            }
+        }
+        sums = next;
+        (across, down) = (half_across, half_down);
+        #[expect(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "an average of bytes"
+        )]
+        let rgba = sums
+            .iter()
+            .flat_map(|(normal, alpha)| texel_of_normals(*normal, alpha.round() as u8))
+            .collect();
+        levels.push(MipLevel {
+            width: u32::try_from(across).unwrap_or(1),
+            height: u32::try_from(down).unwrap_or(1),
+            rgba,
+            form: crate::PixelForm::Rgba,
+        });
+    }
+    levels
+}
+
 /// A full chain of mips from `rgba`, box filtered, largest first.
 #[must_use]
 pub fn mip_chain(width: u32, height: u32, rgba: Vec<u8>) -> Vec<MipLevel> {

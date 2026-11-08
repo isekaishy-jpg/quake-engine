@@ -8,7 +8,7 @@ use engine_format::{Block, Document, Value, from_binary, from_text};
 use engine_map::{
     AlphaMode, LandPicture, MATERIAL_SLOTS, MAX_LAYERS, Material, MaterialLayer, MetalRough,
     MipLevel, PAINT_MASK, SHADER_PARAMS, ShaderCode, Shading, SlotImage, TerrainData, Texture,
-    TextureKind, mip_chain,
+    TextureKind, mip_chain, normal_chain,
 };
 
 use crate::convex::fit_convex;
@@ -19,7 +19,7 @@ use crate::shader_graph::{graph_code, read_graph};
 use crate::source::{WorkingMap, read_map};
 use crate::terrain::{read_terrain_data, write_terrain};
 use crate::texture::placeholder_texture;
-use crate::texture_pack::{bytes_hash, packed_path, picture_roles, read_packed};
+use crate::texture_pack::{bytes_hash, packed_path, picture_roles, read_packed, still_made};
 use crate::tiles::{check_tiles, merge_tile};
 
 /// Decodes a PNG into RGBA bytes.
@@ -338,6 +338,10 @@ impl SlotFiller<'_, '_> {
             self.fields.push((slot, name.to_owned()));
             return Ok(Some(slot));
         }
+        if key == "normal" {
+            let image = self.library.normal_image(path)?;
+            return self.keep(image).map(Some);
+        }
         self.add(path).map(Some)
     }
 }
@@ -391,7 +395,7 @@ impl<'a> MaterialLibrary<'a> {
         let (hash, mips) = read_packed(&bytes)?;
         let source = self.filesystem.read(path).ok();
         let current = source.is_none_or(|source| bytes_hash(&source) == hash);
-        current.then(|| Arc::new(mips))
+        (current && still_made(&mips)).then(|| Arc::new(mips))
     }
 
     /// The image at `path`, with all its mips.
@@ -416,6 +420,32 @@ impl<'a> MaterialLibrary<'a> {
         let (width, height, rgba) = decode_png(&bytes)?;
         let image = Arc::new(mip_chain(width, height, rgba));
         self.images.insert(path.to_owned(), Arc::clone(&image));
+        Ok(image)
+    }
+
+    /// The normal map at `path`, whose mips keep how much its bumps agree.
+    fn normal_image(&mut self, path: &str) -> Result<SlotImage, CompileError> {
+        if self.compiled_pictures {
+            let key = packed_path(path);
+            if let Some(image) = self.images.get(&key) {
+                return Ok(Arc::clone(image));
+            }
+            if let Some(image) = self.packed(path) {
+                self.images.insert(key, Arc::clone(&image));
+                return Ok(image);
+            }
+        }
+        let key = format!("normal:{path}");
+        if let Some(image) = self.images.get(&key) {
+            return Ok(Arc::clone(image));
+        }
+        let bytes = self
+            .filesystem
+            .read(path)
+            .map_err(|error| CompileError::Bad(error.to_string()))?;
+        let (width, height, rgba) = decode_png(&bytes)?;
+        let image = Arc::new(normal_chain(width, height, &rgba));
+        self.images.insert(key, Arc::clone(&image));
         Ok(image)
     }
 

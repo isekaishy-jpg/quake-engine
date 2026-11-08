@@ -1,6 +1,6 @@
 # Proposal 0151: anti-aliasing
 
-Status: accepted for item 172, 2026-11-07. Items 173 to 177 of the [work list](../research/work-list.md) are added to this as each is reached.
+Status: accepted for items 172 to 174, 2026-11-07. Items 175 to 177 of the [work list](../research/work-list.md) are added to this as each is reached.
 
 ## Why
 
@@ -74,9 +74,43 @@ Off unless a player picks it. SMAA stays the usual one, as TAA softens a little,
 - **Tests:** the view moves by less than a pixel, edges settle and keep their colours, and turning it off leaves nothing behind. As the view moves, as a brush model, a model or a moving mesh moves, and with the weapon held in front, one frame after is near what many frames after are. Without an id, the weapon is fifteen times as far off. Something moving under the floor leaves the floor alone. A moving mesh and a model with the same number and id are told apart, what's left where something was is let go of at once, and a new size starts afresh. Each bug put back, 24 of them, fails a test.
 - **What no test reaches:** the game passing each entity's id to what it draws, and `r_antialias` going up to 3, as no test runs the game with a renderer; in the game TAA is on at 3, and the weapon, by its id, stays sharp as the view turns. Leaving a brush model out of view out of the motion image only saves work, as the distance check would pass it over anyway.
 
+## Shading that shimmers (174)
+
+### Why it shimmers
+
+A highlight is worked out once a pixel, at its middle. Where the surface's normal turns a long way across a pixel, from far off or on bumps, a sharp highlight falls between pixels' middles or on one of them, and it flashes as the view moves. Anti-aliasing doesn't help: SMAA looks for edges, and TAA averages what flashes into a dimmer crawl.
+
+A normal map's mips make it worse. Averaged, bumps leaning every way face out, so far off the surface is flat to a highlight, and as sharp as a mirror, where the bumps it can't show would have spread it.
+
+### What's done elsewhere
+
+- **Geometric specular anti-aliasing** (Kaplanyan and others, 2016; Tokuyoshi and Kaplanyan, 2019): how far the normal turns across a pixel, from its screen derivatives, is added to the roughness, squared, up to a limit, so a highlight is never smaller than a pixel.
+- **Toksvig's** (2004), and LEAN and CLEAN mapping after it: the average of unit normals is shorter the more they spread, and how much shorter says how much rougher a highlight on them is. It needs the average kept as it is, where mips normally make it a unit again.
+- **Rougher mips of a roughness map**, from the normal map's spread, which needs the two kept together, the same size, and not shared.
+
+### What's done here
+
+- **Both, on every highlight:** a material's specular map, its metal and roughness, and painted land. `steadied` takes a gloss and how much rougher it should be, and gives the gloss and what the same light is multiplied by, as a wider highlight is dimmer. Where nothing turns it gives the gloss as it was.
+- **How far the normal turns** is from its derivatives, as the 2019 paper has it, limited to 0.18 of roughness squared.
+- **How much bumps spread** is kept in a normal map's mips, in blue. The shader works a normal's third part out from red and green, so blue was free. Each level down averages every texel of the first level under it, keeps which way they face in red and green, and how long the average is in blue. The first level keeps its red and green as they are. Toksvig's length then adds 2(1 - length) / length to roughness squared. That works whatever a material's roughness comes from, a map or a number, which a rougher roughness map wouldn't.
+- **Compiled normal maps are BC7 now,** as BC5 has only two channels. They're the same size. A normal map compiled as BC5 is old whatever its source, and is compiled again; a game reads its source meanwhile.
+- **`r_steady_shine`,** on unless a player turns it off, as it only takes away what flashes.
+- **A picture that's a normal map in a material and something else too,** such as its height, takes two slots now, as its mips aren't the same. No material here does that.
+
+### What came of it
+
+- **Tried in the game:** a floor of a small shiny metal tiled with brick bumps, under a low sun, with anti-aliasing off. Without it the brick edges were full of white specks, 128 pixels at the top in a strip of the floor. With it there were none, and the highlight was a sheen. It costs nothing measurable: the scene took 1.806 ms and 1.807 ms.
+- **Tests:** bumps too small to see, two texels to a pixel, take a sharp highlight from 233 to 64, and metal said to be smooth shines as the rougher thing it looks. Far off, where a floor turns across a pixel, its brightest swings by 192 as the view moves across a pixel, where steadied it swings by 14 and never drops below 55. Rippling land's light flickers by 18% as the view moves, and by 1.3% steadied. Near, a highlight is much as it was, and a flat surface's exactly. A normal map's mips keep how much its bumps agree, from the first level and wrapping at an edge; a compiled one has the same levels; a mega texture's does; and one compiled as BC5 is compiled again and not read.
+- **Found on the way:** the test maps have no tangents, so a normal map's direction does nothing in the GPU tests, only how much its bumps agree. Turning there is made with corners' normals, and with land's heights. Land far off is drawn with fewer points, so a ripple a point across is gone before it can sparkle; one a few points across isn't.
+- **Layers' bumps** go into a surface picture whose blue is height, so how much they agree isn't kept. Where a layer covers a surface, how much the base's bumps agree counts for as much as the base shows, and the rest goes by how far the normal turns.
+
 ## Sources
 
 - [Proposal 0082: anti-aliasing and alpha](0082-antialiasing-and-alpha.md)
 - [Proposal 0093: what increment 11 left](0093-what-increment-11-left.md)
 - Brian Karis, "High Quality Temporal Supersampling", SIGGRAPH 2014: moving the view round a pattern, and squeezing bright light before blending
 - Marco Salvi, "An Excursion in Temporal Supersampling", GDC 2016: holding what's kept to the mean and spread of the pixels round it
+- Anton Kaplanyan, Stephen Hill, Anjul Patney, Aaron Lefohn, "Filtering Distributions of Normals for Shading Antialiasing", HPG 2016
+- Yusuke Tokuyoshi and Anton Kaplanyan, "Improved Geometric Specular Antialiasing", I3D 2019: the derivatives of the normal, and the limit of 0.18
+- Michael Toksvig, "Mipmapping Normal Maps", 2004: how much shorter an average of normals is
+- Marc Olano and Dan Baker, "LEAN Mapping", I3D 2010

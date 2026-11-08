@@ -6,7 +6,7 @@ use std::sync::Arc;
 use engine_core::math::Vec3;
 use engine_map::{
     Face, Map, Material, MegaMaps, MipLevel, PAINT_MASK, SlotImage, TexelAxis, Texture,
-    TextureKind, mip_chain,
+    TextureKind, mip_chain, normal_chain,
 };
 
 use crate::source::PaintStroke;
@@ -383,15 +383,19 @@ pub(crate) fn bake_mega(
 /// The material of a mega texture with `maps`.
 fn mega_material(maps: &MegaMaps) -> Material {
     let mut material = Material::default();
-    let mut slot = |image: &Option<Vec<u8>>| {
+    let mut slot = |image: &Option<Vec<u8>>, normal: bool| {
         let rgba = image.as_ref()?;
-        let mips = mip_chain(MEGA_SIZE, MEGA_SIZE, rgba.clone());
+        let mips = if normal {
+            normal_chain(MEGA_SIZE, MEGA_SIZE, rgba)
+        } else {
+            mip_chain(MEGA_SIZE, MEGA_SIZE, rgba.clone())
+        };
         material_slots_push(&mut material.slots, mips)
     };
     let (normal, specular, emissive) = (
-        slot(&maps.normal),
-        slot(&maps.specular),
-        slot(&maps.emissive),
+        slot(&maps.normal, true),
+        slot(&maps.specular, false),
+        slot(&maps.emissive, false),
     );
     material.normal = normal;
     material.specular = specular;

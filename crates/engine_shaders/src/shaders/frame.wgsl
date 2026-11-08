@@ -128,6 +128,8 @@ struct Frame {
     last_view_projection: mat4x4<f32>,
     // Where the view is, with nothing off, for TAA.
     steady_view_projection: mat4x4<f32>,
+    // x 1 if highlights widen where a surface turns or its bumps spread within a pixel.
+    shine: vec4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

@@ -45,7 +45,7 @@ fn container(name: &str, materials: &[(&str, &str)]) -> (FileSystem, PathBuf) {
 
 #[test]
 fn a_material_fills_its_slots_and_shares_repeats() {
-    let text = "format 1 material\nsurface {\n base = textures/0.png\n normal = textures/1.png\n specular = textures/2.png\n height = textures/1.png\n shading = cel\n alpha = mask\n gloss = 12\n layer { base = textures/3.png mask = textures/4.png }\n}\n";
+    let text = "format 1 material\nsurface {\n base = textures/0.png\n normal = textures/1.png\n specular = textures/2.png\n height = textures/2.png\n shading = cel\n alpha = mask\n gloss = 12\n layer { base = textures/3.png mask = textures/4.png }\n}\n";
     let (filesystem, root) = container("fill", &[("wall", text)]);
     let mut library = MaterialLibrary::new(&filesystem);
     let texture = library.load("wall").expect("loads");
@@ -55,7 +55,7 @@ fn a_material_fills_its_slots_and_shares_repeats() {
     assert_eq!(material.gloss, 12.0);
     assert_eq!(material.normal, Some(1));
     assert_eq!(material.specular, Some(2));
-    assert_eq!(material.height, Some(1), "the same image takes one slot");
+    assert_eq!(material.height, Some(2), "the same image takes one slot");
     assert_eq!(material.layers.len(), 1);
     assert_eq!(material.slot_count(), 5);
     assert_eq!(texture.kind, TextureKind::Solid);

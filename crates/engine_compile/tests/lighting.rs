@@ -745,7 +745,8 @@ fn a_mega_surface_keeps_its_other_maps() {
             image.rgba[at + 3],
         ]
     };
-    assert_eq!(texel_of(material.normal), [10, 20, 250, 255]);
+    // As a normal map's first level, its bumps all agree.
+    assert_eq!(texel_of(material.normal), [10, 20, 255, 255]);
     assert_eq!(texel_of(material.specular), [100, 50, 0, 64], "scaled");
     assert_eq!(texel_of(material.emissive), [0, 20, 40, 255], "scaled");
     assert!((material.specular_strength - 4.0).abs() < f32::EPSILON);

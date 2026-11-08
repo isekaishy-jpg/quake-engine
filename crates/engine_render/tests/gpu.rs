@@ -16,7 +16,7 @@ use engine_map::{
     SUN_BOUNCE_STYLE, SUN_STYLE, ShaderCode, Shading, SharedMesh, SharedMorph, SharedPart,
     SideFiles, Skeleton, Sky, SkyRays, Sprite, SpriteFacing, SpriteFrame, SpriteImage,
     SurfacePoint, TerrainData, TerrainLayer, TerrainSheet, Texture, TextureKind, TileLight,
-    ToneCurve, WaterOverlay, WaterPush, WaterSheet, mip_chain,
+    ToneCurve, WaterOverlay, WaterPush, WaterSheet, mip_chain, normal_chain,
 };
 use engine_render::{
     BatchKind, CapsuleDraw, Capture, Drawables, EntityDraw, GpuParticles, LightDraw, LiveLight,
@@ -9106,4 +9106,280 @@ fn taa_lets_go_of_what_moved_away() {
         (&view, with_entity(&gone)),
     );
     assert!(off * 4 < apart, "{off} {apart}");
+}
+
+/// A black floor under a white light, shining sharply, with `normals` as its normal map, seen from
+/// above, with highlights steadied or not.
+fn shiny_floor(normals: Vec<MipLevel>, steady: bool) -> Option<Capture> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].mips = image_of(2, |_, _| [0, 0, 0, 255]);
+    built.textures[0].material = Some(Arc::new(Material {
+        specular_strength: 1.0,
+        gloss: 200.0,
+        slots: vec![
+            Arc::new(normals),
+            Arc::new(image_of(2, |_, _| [255, 255, 255, 255])),
+        ],
+        normal: Some(1),
+        specular: Some(2),
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        steady_shine: steady,
+        ..PostSettings::default()
+    });
+    let lights = [LightDraw {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        radius: 300.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    Some(
+        renderer
+            .capture(&view_from_above(), drawables, 64, 64)
+            .expect("capture"),
+    )
+}
+
+/// A normal map 64 texels a side whose texels lean `lean` across, one way and then the other, in
+/// stripes `width` texels wide.
+fn striped_normals(width: u32, lean: u8) -> Vec<u8> {
+    (0..64 * 64)
+        .flat_map(|at: u32| {
+            if (at % 64 / width).is_multiple_of(2) {
+                [128 + lean, 128, 255, 255]
+            } else {
+                [128 - lean, 128, 255, 255]
+            }
+        })
+        .collect()
+}
+
+/// Bumps too small to see, two texels to a pixel, average to a flat surface further down a normal
+/// map, but its mips keep that they spread, and a sharp highlight on them is dimmer and wider.
+#[test]
+fn bumps_too_small_to_see_dim_a_sharp_highlight() {
+    let normals = || normal_chain(64, 64, &striped_normals(1, 64));
+    let Some(sharp) = shiny_floor(normals(), false) else {
+        return;
+    };
+    let steady = shiny_floor(normals(), true).expect("it drew");
+    let (sharp, steady) = (centre(&sharp)[0], centre(&steady)[0]);
+    assert!(sharp > 100, "a sharp highlight: {sharp}");
+    assert!(u32::from(steady) * 2 < u32::from(sharp), "{sharp} {steady}");
+}
+
+/// The brightest of a black floor whose corners' normals lean apart across it, so that it turns,
+/// under a white light, shining sharply, seen from `height` above and `aside` across, steadied or
+/// not.
+fn brightest_turning_floor(height: f32, aside: f32, steady: bool) -> Option<u8> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].mips = image_of(2, |_, _| [0, 0, 0, 255]);
+    built.textures[0].material = Some(Arc::new(Material {
+        specular_strength: 1.0,
+        gloss: 200.0,
+        slots: vec![Arc::new(image_of(2, |_, _| [255, 255, 255, 255]))],
+        specular: Some(1),
+        ..Material::default()
+    }));
+    built.normals = vec![[-90, 0, 90], [90, 0, 90], [90, 0, 90], [-90, 0, 90]];
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        steady_shine: steady,
+        ..PostSettings::default()
+    });
+    let lights = [LightDraw {
+        origin: Vec3::new(64.0, 64.0, height),
+        radius: height * 4.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    let view = View {
+        origin: Vec3::new(64.0 + aside, 64.0, height),
+        ..view_from_above()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    let (pixels, _) = capture.rgba.as_chunks::<4>();
+    pixels.iter().map(|pixel| pixel[0]).max()
+}
+
+/// How far the brightest of `brightest` swings as the view moves across a pixel from `height`
+/// above, and the least of it.
+fn swing(height: f32, brightest: impl Fn(f32) -> Option<u8>) -> Option<(u8, u8)> {
+    // A pixel is this far across from there.
+    let pixel = height * 2.0 / 64.0;
+    let mut seen = Vec::new();
+    for step in 0..8_u8 {
+        seen.push(brightest(pixel * f32::from(step) / 8.0)?);
+    }
+    let (least, most) = (*seen.iter().min()?, *seen.iter().max()?);
+    Some((most - least, least))
+}
+
+/// How far the brightest of the turning floor swings from `height` above, steadied or not.
+fn turning_floor_swing(height: f32, steady: bool) -> Option<(u8, u8)> {
+    swing(height, |aside| {
+        brightest_turning_floor(height, aside, steady)
+    })
+}
+
+/// Where the surface turns a long way across a pixel, as one far off does, a sharp highlight
+/// falls between pixels and flashes as the view moves. Steadied, it's wider and dimmer, and
+/// always there. Near, where it turns little across one, it's much as it was.
+#[test]
+fn a_surface_that_turns_across_a_pixel_shines_steadily() {
+    let Some((sharp, sharp_least)) = turning_floor_swing(2000.0, false) else {
+        return;
+    };
+    let (steady, steady_least) = turning_floor_swing(2000.0, true).expect("it drew");
+    assert!(steady * 2 < sharp, "{sharp} {steady}");
+    assert!(steady_least > sharp_least, "{sharp_least} {steady_least}");
+    let near = brightest_turning_floor(64.0, 0.0, false).expect("it drew");
+    let near_steady = brightest_turning_floor(64.0, 0.0, true).expect("it drew");
+    assert!(near > 100, "{near}");
+    assert!(near.abs_diff(near_steady) < 20, "{near} {near_steady}");
+}
+
+/// How fast land ripples, a turn every few grid points, which land kept to fewer points far off
+/// still has.
+const RIPPLE: f32 = 0.8;
+
+/// All the light of black rippling land under a white light, shining sharply, seen from `height`
+/// above and `aside` across, steadied or not.
+fn rippling_land_light(height: f32, aside: f32, steady: bool) -> Option<u64> {
+    let mut renderer = renderer()?;
+    let mut built = painted_land([128, 128], |_| [255, 0]);
+    let data = &mut built.terrain[0].data;
+    let across = data.across();
+    for (at, high) in (0_u32..).zip(&mut data.heights) {
+        let (x, y) = (at % across, at / across);
+        #[expect(clippy::cast_precision_loss, reason = "a small grid")]
+        let (x, y) = (x as f32, y as f32);
+        *high = ((x * RIPPLE).sin() + (y * RIPPLE).sin()) * 30.0;
+    }
+    let black = [0, 0, 0, 255].repeat(16);
+    built.land_pictures[0].color = Arc::new(mip_chain(4, 4, black));
+    built.land_pictures[0].surface = Arc::new(mip_chain(4, 4, [128, 128, 128, 255].repeat(16)));
+    built.land_pictures[0].gloss = 200.0;
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        steady_shine: steady,
+        ..PostSettings::default()
+    });
+    // Away from the map's square, which is white.
+    let over = Vec3::new(aside - 1000.0, -1000.0, height);
+    let lights = [LightDraw {
+        origin: over,
+        radius: height * 4.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    let view = View {
+        origin: over,
+        ..view_from_above()
+    };
+    let capture = renderer.capture(&view, drawables, 64, 64).expect("capture");
+    let (pixels, _) = capture.rgba.as_chunks::<4>();
+    Some(pixels.iter().map(|pixel| u64::from(pixel[0])).sum())
+}
+
+/// How much all the light of the rippling land swings as the view moves across a pixel, steadied
+/// or not, against how much there is.
+fn rippling_land_flicker(height: f32, steady: bool) -> Option<(u64, u64)> {
+    let pixel = height * 2.0 / 64.0;
+    let mut seen = Vec::new();
+    for step in 0..8_u8 {
+        seen.push(rippling_land_light(
+            height,
+            pixel * f32::from(step) / 8.0,
+            steady,
+        )?);
+    }
+    let (least, most) = (*seen.iter().min()?, *seen.iter().max()?);
+    Some((most - least, most))
+}
+
+/// Land shines as steadily, where it turns across a pixel: its sparkle comes and goes less as
+/// the view moves.
+#[test]
+fn land_that_turns_across_a_pixel_shines_steadily() {
+    let Some((sharp, sharp_all)) = rippling_land_flicker(1500.0, false) else {
+        return;
+    };
+    let (steady, steady_all) = rippling_land_flicker(1500.0, true).expect("it drew");
+    assert!(
+        steady * sharp_all * 2 < sharp * steady_all,
+        "{sharp} {steady}"
+    );
+}
+
+/// The middle of white metal, smooth, with bumps too small to see, under a white light from above,
+/// steadied or not.
+fn bumpy_metal(steady: bool) -> Option<[u8; 4]> {
+    let mut renderer = renderer()?;
+    let mut built = map(1);
+    built.textures[0].material = Some(Arc::new(Material {
+        metal_rough: Some(MetalRough {
+            metallic: 1.0,
+            roughness: 0.2,
+            map: None,
+        }),
+        slots: vec![Arc::new(normal_chain(64, 64, &striped_normals(1, 64)))],
+        normal: Some(1),
+        ..Material::default()
+    }));
+    renderer.load_map(Arc::new(built)).expect("load");
+    renderer.set_post(PostSettings {
+        steady_shine: steady,
+        ..PostSettings::default()
+    });
+    let lights = [LightDraw {
+        origin: Vec3::new(64.0, 64.0, 40.0),
+        radius: 300.0,
+        min_light: 0.0,
+    }];
+    let drawables = Drawables {
+        lights: &lights,
+        ..Drawables::default()
+    };
+    let capture = renderer
+        .capture(&view_from_above(), drawables, 64, 64)
+        .expect("capture");
+    Some(centre(&capture))
+}
+
+/// Metal said to be smooth, with bumps too small to see, shines as the rougher thing it looks.
+#[test]
+fn bumps_too_small_to_see_roughen_metal() {
+    let Some(sharp) = bumpy_metal(false) else {
+        return;
+    };
+    let steady = bumpy_metal(true).expect("it drew");
+    // Red is at the top with the floor's light, so green and blue tell.
+    let bright = |pixel: [u8; 4]| u32::from(pixel[1]) + u32::from(pixel[2]);
+    assert!(bright(steady) + 30 < bright(sharp), "{sharp:?} {steady:?}");
+}
+
+/// A flat surface shines just as it did, steadied or not.
+#[test]
+fn a_flat_surface_shines_as_it_did() {
+    let flat = || normal_chain(64, 64, &[128, 128, 255, 255].repeat(64 * 64));
+    let Some(sharp) = shiny_floor(flat(), false) else {
+        return;
+    };
+    let steady = shiny_floor(flat(), true).expect("it drew");
+    assert!(centre(&sharp)[0] > 100, "it shines");
+    assert_eq!(sharp.rgba, steady.rgba);
 }

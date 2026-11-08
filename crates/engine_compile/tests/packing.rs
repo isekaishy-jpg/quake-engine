@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use engine_assets::{Archive, DirectoryArchive, FileSystem, PackArchive};
 use engine_compile::{
     MaterialLibrary, Role, bytes_hash, encode_png, pack_content, pack_picture, pack_textures,
-    packed_path, picture_roles, placeholder_texture, play_map, read_packed,
+    packed_path, picture_levels, picture_roles, placeholder_texture, play_map, read_packed,
 };
 use engine_format::from_text;
 use engine_map::PixelForm;
@@ -113,7 +113,8 @@ fn each_role_has_its_own_form() {
     };
     assert_eq!(form(Role::Colour, &picture(16)), PixelForm::Bc7Srgb);
     assert_eq!(form(Role::Data, &picture(16)), PixelForm::Bc7);
-    assert_eq!(form(Role::Normal, &flat_normals(16)), PixelForm::Bc5);
+    // A normal map keeps how much its bumps agree in blue, which two channels haven't room for.
+    assert_eq!(form(Role::Normal, &flat_normals(16)), PixelForm::Bc7);
 }
 
 #[test]
@@ -159,7 +160,7 @@ fn a_game_reads_compiled_pictures_and_a_bake_reads_pixels() {
         .expect("loads");
     assert_eq!(played.mips[0].form, PixelForm::Bc7Srgb);
     let material = played.material.expect("a material");
-    assert_eq!(material.slots[0][0].form, PixelForm::Bc5);
+    assert_eq!(material.slots[0][0].form, PixelForm::Bc7);
     let baked = MaterialLibrary::new(&filesystem)
         .load("wall")
         .expect("loads");
@@ -403,4 +404,108 @@ outputs { emissive = wave }
         "{refused}"
     );
     fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// Bumps leaning two ways in turn, as a normal map 16 pixels a side.
+fn leaning_normals() -> Vec<u8> {
+    (0..16 * 16)
+        .flat_map(|at| {
+            if at % 2 == 0 {
+                [191, 128, 0, 255]
+            } else {
+                [64, 128, 0, 255]
+            }
+        })
+        .collect()
+}
+
+/// A material's normal map keeps, in its mips, how much its bumps agree, which a bake's pixels
+/// show, and a mega texture's too.
+#[test]
+fn a_normal_maps_mips_keep_how_much_its_bumps_agree() {
+    let root = folder("normal-mips");
+    write_picture(&root, "textures/wall.png", &picture(16));
+    write_picture(&root, "textures/wall_normal.png", &leaning_normals());
+    write_material(
+        &root,
+        "wall",
+        "base = textures/wall.png
+normal = textures/wall_normal.png",
+    );
+    let filesystem = mounted(&root);
+    let wall = MaterialLibrary::new(&filesystem)
+        .load("wall")
+        .expect("loads");
+    let material = wall.material.expect("a material");
+    let slot = usize::from(material.normal.expect("a normal map")) - 1;
+    let normals = &material.slots[slot];
+    assert_eq!(
+        normals[0].rgba[2], 255,
+        "the first level's bumps are each one way"
+    );
+    assert!(normals[1].rgba[2] < 230, "{}", normals[1].rgba[2]);
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// A normal map compiled as two channels, before they kept how much its bumps agree, is old
+/// whatever its source: it's compiled again, and a game doesn't read it meanwhile.
+#[test]
+fn a_two_channel_normal_map_is_compiled_again() {
+    let root = folder("two-channel");
+    write_picture(&root, "textures/wall.png", &picture(16));
+    write_picture(&root, "textures/wall_normal.png", &leaning_normals());
+    write_material(
+        &root,
+        "wall",
+        "base = textures/wall.png
+normal = textures/wall_normal.png",
+    );
+    assert_eq!(pack_textures(&root).expect("compiles"), (2, 2));
+    let packed = root.join(packed_path("textures/wall_normal.png"));
+    let mut bytes = fs::read(&packed).expect("compiled");
+    let at = bytes
+        .windows(3)
+        .position(|window| window == b"bc7")
+        .expect("says its form");
+    bytes[at..at + 3].copy_from_slice(b"bc5");
+    fs::write(&packed, &bytes).expect("write");
+    assert_eq!(
+        read_packed(&bytes).expect("reads").1[0].form,
+        PixelForm::Bc5
+    );
+    let filesystem = mounted(&root);
+    let played = MaterialLibrary::for_play(&filesystem)
+        .load("wall")
+        .expect("loads");
+    let material = played.material.expect("a material");
+    assert_eq!(
+        material.slots[0][0].form,
+        PixelForm::Rgba,
+        "read from its source"
+    );
+    assert_eq!(
+        pack_textures(&root).expect("compiles"),
+        (1, 2),
+        "compiled again"
+    );
+    let again = fs::read(&packed).expect("compiled");
+    assert_eq!(
+        read_packed(&again).expect("reads").1[0].form,
+        PixelForm::Bc7
+    );
+    fs::remove_dir_all(&root).expect("clean up");
+}
+
+/// A compiled normal map's levels are a normal map's, which keep how much its bumps agree, and
+/// there are as many as are compressed.
+#[test]
+fn a_compiled_normal_map_keeps_how_much_its_bumps_agree() {
+    let rgba = leaning_normals();
+    let levels = picture_levels(16, 16, &rgba, Role::Normal);
+    assert_eq!(levels, engine_map::normal_chain(16, 16, &rgba));
+    assert!(levels[1].rgba[2] < 230, "{}", levels[1].rgba[2]);
+    let bytes = pack_picture(16, 16, &rgba, Role::Normal, 0).expect("packs");
+    assert_eq!(read_packed(&bytes).expect("reads").1.len(), levels.len());
+    let data = picture_levels(16, 16, &rgba, Role::Data);
+    assert_eq!(data[1].rgba[2], 0, "a measure's blue is averaged as it is");
 }
