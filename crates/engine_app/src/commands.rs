@@ -391,6 +391,8 @@ fn remove_bots(_console: &mut Console<World>, world: &mut World, _args: &Args) {
 /// Settings a Quake `config.cfg` holds for things this engine doesn't have, such as modems
 /// and video modes. They mean nothing here, and each would say it's unknown at every start.
 const ORIGINAL_SETTINGS: &[&str] = &[
+    // What `r_antialias` was called, which an older config of this engine still has.
+    "r_aa",
     "_cl_color",
     "_cl_name",
     "_config_com_baud",
@@ -774,6 +776,15 @@ fn screen(console: &mut Console<World>, world: &mut World, _args: &Args) {
         name(renderer.screen_output()),
         offers.join(", ")
     ));
+    // What the driver says, for when a screen that has HDR doesn't seem to: Windows lists HDR
+    // only while it's on in its display settings.
+    let (says, formats) = renderer.screen_formats();
+    if !says {
+        console.print("the system doesn't say what colour spaces there are");
+    }
+    for format in formats {
+        console.print(format!("  {format}"));
+    }
 }
 
 /// `setpos x y z [yaw pitch]`: moves the player, through the server.

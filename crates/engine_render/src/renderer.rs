@@ -350,6 +350,13 @@ impl Renderer {
         self.backend.screen_output()
     }
 
+    /// Every format and colour space the screen's said to take, as the driver names them, and
+    /// whether the system says what colour spaces there are at all.
+    #[must_use]
+    pub fn screen_formats(&self) -> (bool, Vec<String>) {
+        self.backend.screen_formats()
+    }
+
     /// What the screen can be sent, best first. A screen that has no HDR, or a system that can't
     /// say, offers only [`ScreenOutput::Standard`].
     #[must_use]

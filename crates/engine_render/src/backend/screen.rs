@@ -10,23 +10,16 @@ use vulkane::safe::{
 
 use super::pipelines::{canvas_pipeline, make_pass};
 use super::upload::{device_image, host_buffer};
-use super::{Attachments, Backend, HDR10_FORMAT, SCRGB_FORMAT, Scene, depth_image};
+use super::{Attachments, Backend, HDR10_BLUE_FIRST, SCRGB_FORMAT, Scene, depth_image};
 use crate::error::RenderError;
 use crate::renderer::{ScreenCapture, ScreenOutput, USUAL_PEAK_NITS, USUAL_WHITE_NITS, View};
-
-/// What `output` is sent as.
-pub(super) fn output_format(output: ScreenOutput) -> Format {
-    match output {
-        ScreenOutput::Standard => super::COLOR_FORMAT,
-        ScreenOutput::ScRgb => SCRGB_FORMAT,
-        ScreenOutput::Hdr10 => HDR10_FORMAT,
-    }
-}
 
 /// An HDR output's passes and pipelines.
 pub(super) struct ScreenPipes {
     /// Which output they're for.
     pub(super) output: ScreenOutput,
+    /// What it's sent as.
+    format: Format,
     /// Drawing to a window.
     pub(super) window_pass: RenderPass,
     /// Drawing to be read back.
@@ -38,17 +31,26 @@ pub(super) struct ScreenPipes {
 }
 
 impl Backend {
+    /// What `output` is sent as.
+    pub(super) fn output_format(&self, output: ScreenOutput) -> Format {
+        match output {
+            ScreenOutput::Standard => super::COLOR_FORMAT,
+            ScreenOutput::ScRgb => SCRGB_FORMAT,
+            ScreenOutput::Hdr10 => self.hdr10,
+        }
+    }
+
     /// Makes sure there are passes and pipelines for `output`, if it isn't standard.
     pub(super) fn ensure_screen_pipes(&mut self, output: ScreenOutput) -> Result<(), RenderError> {
+        let format = self.output_format(output);
         if output == ScreenOutput::Standard
             || self
                 .screen_pipes
                 .as_ref()
-                .is_some_and(|pipes| pipes.output == output)
+                .is_some_and(|pipes| pipes.output == output && pipes.format == format)
         {
             return Ok(());
         }
-        let format = output_format(output);
         let window_pass = make_pass(&self.device, format, ImageLayout::PRESENT_SRC_KHR)?;
         let capture_pass = make_pass(&self.device, format, ImageLayout::TRANSFER_SRC_OPTIMAL)?;
         let post = Self::make_post_pipeline(
@@ -66,6 +68,7 @@ impl Backend {
             .transpose()?;
         self.screen_pipes = Some(ScreenPipes {
             output,
+            format,
             window_pass,
             capture_pass,
             post,
@@ -132,7 +135,8 @@ impl Backend {
         self.wait_for_frame()?;
         self.device.wait_idle()?;
         self.ensure_screen_pipes(output)?;
-        let format = output_format(output);
+        let format = self.output_format(output);
+        let blue_first = format == HDR10_BLUE_FIRST;
         let color = Image::new_2d(
             &self.device,
             Image2dCreateInfo {
@@ -239,12 +243,12 @@ impl Backend {
                     let part = |shift: u32| {
                         f32::from(u16::try_from(packed >> shift & 0x3ff).unwrap_or(0)) / 1023.0
                     };
-                    [
-                        part(0),
-                        part(10),
-                        part(20),
-                        f32::from(u8::try_from(packed >> 30).unwrap_or(0)) / 3.0,
-                    ]
+                    let alpha = f32::from(u8::try_from(packed >> 30).unwrap_or(0)) / 3.0;
+                    if blue_first {
+                        [part(20), part(10), part(0), alpha]
+                    } else {
+                        [part(0), part(10), part(20), alpha]
+                    }
                 })
                 .collect(),
         };

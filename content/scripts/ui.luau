@@ -21,6 +21,8 @@ settings = {
 	"crosshair",
 	"r_edges",
 	"r_fog_grid",
+	"r_antialias",
+	"r_msaa",
 	"topcolor",
 	"bottomcolor",
 }
@@ -150,6 +152,22 @@ end
 -- A row that turns a setting on and off.
 local function switch(title, name, about)
 	return { title = title, switch = name, about = about }
+end
+
+-- A row that sets a setting to one of `options`, each a name and the value it sets.
+local function pick(title, name, options, about)
+	return { title = title, pick = name, options = options, about = about }
+end
+
+-- Which of a picking row's options the setting is at, or the first.
+local function picked(state, row)
+	local value = state.settings[row.pick]
+	for index, option in row.options do
+		if option[2] == value then
+			return index
+		end
+	end
+	return 1
 end
 
 -- A row of choices kept here.
@@ -299,7 +317,19 @@ local function screen_rows(state)
 				slider("Brightness", "gamma", 0.5, 1.5, 0.05, "How bright the picture is."),
 				slider("Field of View", "fov", 60, 130, 5, "How wide the view is, in degrees."),
 				switch("Vertical Sync", "vid_vsync", "Stops tearing, and adds a little delay."),
-				switch("Smooth Edges", "r_edges", "Smooths jagged edges, for a small cost."),
+				pick(
+					"Anti-aliasing",
+					"r_antialias",
+					{ { "Off", 0 }, { "SMAA", 2 } },
+					"Smooths jagged edges, for next to nothing."
+				),
+				pick(
+					"Multisampling",
+					"r_msaa",
+					{ { "Off", 1 }, { "2x", 2 }, { "4x", 4 }, { "8x", 8 } },
+					"Smooths edges by drawing more of each pixel. Each step costs more."
+				),
+				switch("Rounded Corners", "r_edges", "Softens the hard corners of walls a little."),
 				switch(
 					"Lit Fog",
 					"r_fog_grid",
@@ -482,6 +512,9 @@ local function turn(state, row, steps)
 	elseif row.choice then
 		values[row.choice] = (values[row.choice] - 1 + steps) % #row.options + 1
 		ui.sound(CHANGE)
+	elseif row.pick then
+		local next = (picked(state, row) - 1 + steps) % #row.options + 1
+		set(row.pick, row.options[next][2])
 	end
 end
 
@@ -837,7 +870,7 @@ end
 -- The line of what can be pressed, along the foot of the screen.
 local function draw_hints(state, row)
 	local text = "Enter chooses"
-	if row and (row.slider or row.choice or row.switch or row.sign) then
+	if row and (row.slider or row.choice or row.pick or row.switch or row.sign) then
 		text = "Left and Right change this"
 	elseif row and row.bind then
 		text = "Enter changes this key     Backspace clears it"
@@ -910,8 +943,11 @@ local function draw_list(state, title, list)
 			draw_chosen(state, x, y, if two then width - 80 else 140, blade)
 		end
 		local color = if chosen then shades.on else shades.off
-		if row.choice then
-			local text = row.title .. ":  " .. row.options[values[row.choice]]
+		if row.choice or row.pick then
+			local option = if row.choice
+				then row.options[values[row.choice]]
+				else row.options[picked(state, row)][1]
+			local text = row.title .. ":  " .. option
 			ui.text(text, { x = x, y = y, size = size_to_fit(text, width, 15), color = color })
 		else
 			local text = if #row.title < 22 then string.upper(row.title) else row.title
@@ -985,9 +1021,11 @@ local function draw_control(state, row, chosen, left, right, y)
 			size = size_to_fit(text .. "_", right - left - 18, 12),
 			color = INK,
 		})
-	elseif row.choice then
+	elseif row.choice or row.pick then
 		ui.frame(if chosen then "field-focus" else "field-normal", { left, y, right, y + 24 })
-		local text = row.options[values[row.choice]]
+		local text = if row.choice
+			then row.options[values[row.choice]]
+			else row.options[picked(state, row)][1]
 		ui.text(text, {
 			x = left + 9,
 			y = y + 5,

@@ -180,6 +180,7 @@ On either, white isn't the top: a player says how bright white is, and the tone 
 - **Tried in the game:** this screen takes only standard, so with `r_hdr 1` it's sent standard, `screen` says so, and the picture is the same to the byte as with it off. **HDR itself needs a person with an HDR screen** to see, with HDR on in Windows: tests check what's sent, but not how a screen shows it.
 - **What's sent is checked in numbers.** A sky of 0.5, which a sky takes as sRGB, is 0.214 of white in light: 0.535 as scRGB at 200 nits, and 0.426 up the PQ curve as HDR10. Three times white is three times as bright, and what's brighter stops at the peak. Pure red has green and blue in Rec. 2020. The HUD's grey is white's share of it.
 - **The scene isn't drawn twice.** Only the final pass and the HUD know the screen, and their pipelines for HDR are made when it's wanted.
+- **A screen that has HDR may not say so.** The human's has HDR, and it was said to take only standard: Windows offers HDR only while it's on in its display settings. So `screen` lists what the driver says it takes, format by format, which showed 10 bits a colour in sRGB and no HDR colour space. Some drivers offer HDR10 blue lowest in place of red lowest, and that's taken too.
 - **A part only a person can try:** a window sending HDR tells its final pass so each frame, and no test has a window. If HDR looks wrong on an HDR screen, that's where to look.
 
 ## Sources

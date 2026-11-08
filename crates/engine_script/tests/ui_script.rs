@@ -413,3 +413,69 @@ fn a_game_in_progress_resumes_first() {
     let commands = script.menu_key(&told, "ENTER").expect("chooses");
     assert!(commands.contains(&UiCommand::Close), "{commands:?}");
 }
+
+/// The video screen on a tall window, so its rows are in one column, with `antialias` and
+/// `msaa` as they're set, moved down to row `row`.
+fn video_at(antialias: f64, msaa: f64, row: usize) -> (UiScript, UiState) {
+    let (script, mut told) = shipped((640.0, 1138.0), false);
+    told.settings.insert("r_antialias".to_owned(), antialias);
+    told.settings.insert("r_msaa".to_owned(), msaa);
+    let _opened = script.open_menu(&told, "video").expect("opens");
+    for _ in 0..row {
+        let _down = script.menu_key(&told, "DOWNARROW").expect("moves");
+    }
+    (script, told)
+}
+
+/// What a key on the video screen runs.
+fn runs(script: &UiScript, told: &UiState, key: &str) -> Vec<String> {
+    script
+        .menu_key(told, key)
+        .expect("heard")
+        .into_iter()
+        .filter_map(|command| match command {
+            UiCommand::Run(line) => Some(line),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Anti-aliasing and multisampling are on the video screen by names a player knows, showing what
+/// they're set to.
+#[test]
+fn anti_aliasing_is_in_the_options() {
+    // In one column, a row's name is drawn and then what it's set to.
+    let shows = |antialias: f64, msaa: f64, name: &str, value: &str| {
+        let (script, told) = video_at(antialias, msaa, 0);
+        let drawn = words(&script.draw_menu(&told).expect("draws"));
+        let at = drawn.iter().position(|text| text == name);
+        assert_eq!(
+            at.and_then(|at| drawn.get(at + 1)).map(String::as_str),
+            Some(value),
+            "{drawn:?}"
+        );
+    };
+    shows(2.0, 4.0, "Anti-aliasing", "SMAA");
+    shows(2.0, 4.0, "Multisampling", "4x");
+    shows(0.0, 1.0, "Anti-aliasing", "Off");
+    shows(0.0, 1.0, "Multisampling", "Off");
+}
+
+/// Turning them sets the setting to the next of its own values, going round.
+#[test]
+fn turning_anti_aliasing_sets_it() {
+    let (script, told) = video_at(2.0, 1.0, 3);
+    assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_antialias 0"]);
+    let (script, told) = video_at(0.0, 1.0, 3);
+    assert_eq!(runs(&script, &told, "LEFTARROW"), vec!["r_antialias 2"]);
+    let (script, told) = video_at(2.0, 1.0, 4);
+    assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_msaa 2"]);
+    let (script, told) = video_at(2.0, 8.0, 4);
+    assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_msaa 1"]);
+    let (script, told) = video_at(2.0, 3.0, 4);
+    assert_eq!(
+        runs(&script, &told, "RIGHTARROW"),
+        vec!["r_msaa 2"],
+        "a value it doesn't list counts as the first"
+    );
+}

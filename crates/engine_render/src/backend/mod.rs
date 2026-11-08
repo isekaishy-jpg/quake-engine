@@ -68,8 +68,11 @@ use vulkane::raw::bindings::{VkColorSpaceKHR, VkFormat};
 /// The colour format of every target. UNORM keeps the original's sums.
 const COLOR_FORMAT: Format = Format::B8G8R8A8_UNORM;
 
-/// What HDR10 is sent as: 10 bits a colour and 2 of alpha.
+/// What HDR10 is sent as: 10 bits a colour and 2 of alpha, red lowest.
 const HDR10_FORMAT: Format = Format(VkFormat::FORMAT_A2B10G10R10_UNORM_PACK32);
+
+/// HDR10 the other way round, blue lowest, which some drivers offer in its place.
+const HDR10_BLUE_FIRST: Format = Format(VkFormat::FORMAT_A2R10G10B10_UNORM_PACK32);
 
 /// What scRGB is sent as: linear light in 16 bit floats.
 const SCRGB_FORMAT: Format = Format::R16G16B16A16_SFLOAT;
@@ -86,7 +89,7 @@ const CLEAR_COLOR: [f32; 4] = [0.02, 0.02, 0.03, 1.0];
 /// The same in a scene, which holds linear light.
 const SCENE_CLEAR_COLOR: [f32; 4] = [0.001_548, 0.001_548, 0.002_322, 1.0];
 
-/// The `r_aa` setting that's SMAA.
+/// The `r_antialias` setting that's SMAA.
 const SMAA_SETTING: u8 = 2;
 
 /// The size of the push constant holding a model's position.
@@ -730,6 +733,8 @@ pub(crate) struct Backend {
     screen: ScreenOutput,
     /// What this frame's final pass encodes for.
     encoding: ScreenOutput,
+    /// Which way round HDR10 is sent.
+    hdr10: Format,
     /// An HDR output's passes and pipelines, once one's wanted.
     screen_pipes: Option<screen::ScreenPipes>,
     /// The surface, if drawing to a window. It drops after the swapchain.
@@ -1249,6 +1254,7 @@ impl Backend {
             hdr_metadata,
             screen: ScreenOutput::Standard,
             encoding: ScreenOutput::Standard,
+            hdr10: HDR10_FORMAT,
             screen_pipes: None,
             physical,
             device,
@@ -1277,6 +1283,43 @@ impl Backend {
         self.screen
     }
 
+    /// Every format and colour space the screen's said to take, as the driver names them, and
+    /// whether the system says at all.
+    pub(crate) fn screen_formats(&self) -> (bool, Vec<String>) {
+        let formats = self
+            .surface
+            .as_ref()
+            .and_then(|surface| surface.formats(&self.physical).ok())
+            .unwrap_or_default();
+        let named = formats
+            .iter()
+            .map(|found| match (found.format(), found.color_space()) {
+                (Some(format), Some(space)) => format!("{:?} {space:?}", format.0),
+                _ => format!("{} {}", found.format_raw(), found.color_space_raw()),
+            })
+            .collect();
+        (self.colour_spaces, named)
+    }
+
+    /// The HDR10 format the screen takes, red lowest unless it only takes blue lowest.
+    fn hdr10_format(&self) -> Format {
+        let Some(surface) = self.surface.as_ref() else {
+            return HDR10_FORMAT;
+        };
+        let formats = surface.formats(&self.physical).unwrap_or_default();
+        let space = VkColorSpaceKHR::COLOR_SPACE_HDR10_ST2084_EXT;
+        let offered = |format: Format| {
+            formats
+                .iter()
+                .any(|found| found.format() == Some(format) && found.color_space() == Some(space))
+        };
+        if !offered(HDR10_FORMAT) && offered(HDR10_BLUE_FIRST) {
+            HDR10_BLUE_FIRST
+        } else {
+            HDR10_FORMAT
+        }
+    }
+
     /// What the screen can be sent, best first.
     pub(crate) fn screen_offers(&self) -> Vec<ScreenOutput> {
         let mut offers = Vec::new();
@@ -1293,7 +1336,8 @@ impl Backend {
             ) {
                 offers.push(ScreenOutput::ScRgb);
             }
-            if offered(HDR10_FORMAT, VkColorSpaceKHR::COLOR_SPACE_HDR10_ST2084_EXT) {
+            let hdr10 = VkColorSpaceKHR::COLOR_SPACE_HDR10_ST2084_EXT;
+            if offered(HDR10_FORMAT, hdr10) || offered(HDR10_BLUE_FIRST, hdr10) {
                 offers.push(ScreenOutput::Hdr10);
             }
         }
@@ -1357,6 +1401,7 @@ impl Backend {
         } else {
             ScreenOutput::Standard
         };
+        self.hdr10 = self.hdr10_format();
         self.ensure_screen_pipes(output)?;
         let color_space = match output {
             ScreenOutput::Standard => VkColorSpaceKHR::COLOR_SPACE_SRGB_NONLINEAR_KHR,
@@ -1367,7 +1412,7 @@ impl Backend {
             &self.device,
             &surface,
             SwapchainCreateInfo {
-                format: screen::output_format(output),
+                format: self.output_format(output),
                 color_space,
                 width,
                 height,

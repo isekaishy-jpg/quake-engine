@@ -173,7 +173,7 @@ What's brighter than a screen shows glows, blurred wide, so the sun and bright l
 
 ### HDR screens
 
-`r_hdr 1` sends HDR to a screen that takes it, with HDR on in Windows: scRGB if it does, HDR10 if not, and what every screen shows otherwise. `r_hdr_white` is how bright white is in nits, 200 unless a player says, and `r_hdr_peak` the brightest the screen shows, 1000. What's brighter than white goes on to the peak. `screen` at the console says what's being sent and what the screen takes. Pictures, from `screenshot`, stay standard.
+`r_hdr 1` sends HDR to a screen that takes it, with HDR on in Windows: scRGB if it does, HDR10 if not, and what every screen shows otherwise. `r_hdr_white` is how bright white is in nits, 200 unless a player says, and `r_hdr_peak` the brightest the screen shows, 1000. What's brighter than white goes on to the peak. `screen` at the console says what's being sent and what the screen takes, and every format the driver says the screen takes. A screen with HDR is only said to take it while HDR's on in Windows' display settings. Pictures, from `screenshot`, stay standard.
 
 ### Exposure that goes by itself
 

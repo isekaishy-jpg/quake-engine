@@ -14,7 +14,7 @@ Status: accepted, 2026-11-05, increment 11.
 - `vulkane` gains sample counts: `Image::new_2d_multisampled`, `RenderPass::new_multisampled` with a resolve attachment, `GraphicsPipelineBuilder::samples`, and `PhysicalDevice::max_samples`.
 - `r_msaa` sets samples a pixel, as far as the device goes. Changing it rebuilds the scene pass, the scene pipelines, the final pipeline and the target.
 - Colour resolves in the pass. Depth isn't resolved, so the final pass reads it as multisampled, in a variant of its shader.
-- `r_aa` is 0 for none, 1 for the quick blend, 2 for the edge search, which [proposal 0093](0093-what-increment-11-left.md) replaced with SMAA.
+- `r_aa` is 0 for none, 1 for the quick blend, 2 for the edge search, which [proposal 0093](0093-what-increment-11-left.md) replaced with SMAA. [Proposal 0151](0151-anti-aliasing.md) renamed it `r_antialias`, with SMAA on unless a player says.
 - Masked materials get a pipeline of their own, which covers samples by how far alpha is past the cutoff here, using its screen rate of change. With one sample this is the same as a cutoff.
 - Blended faces each stand alone in a batch with a centre, and draw far to near, along with those on moving models.
 
