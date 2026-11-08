@@ -31,7 +31,7 @@ pub(super) struct Recorder<'a> {
     /// The pipelines.
     pipelines: &'a Pipelines,
     /// Every model.
-    models: &'a [GpuAlias],
+    pub(super) models: &'a [GpuAlias],
     /// Every sprite.
     sprites: &'a [GpuSprite],
     /// The particles to draw.
@@ -41,9 +41,9 @@ pub(super) struct Recorder<'a> {
     /// The shader of each particle, in the order they're drawn.
     particle_order: &'a [u32],
     /// The map.
-    map: &'a GpuMap,
+    pub(super) map: &'a GpuMap,
     /// Its visible indices, for this frame.
-    indices: &'a GpuBuffer,
+    pub(super) indices: &'a GpuBuffer,
     /// The copies of shared meshes to draw, for this frame.
     instances: &'a GpuBuffer,
     /// Where each mesh's copies are.
@@ -51,7 +51,7 @@ pub(super) struct Recorder<'a> {
     /// The middle of each copy.
     instance_centers: &'a [Vec3],
     /// Which frame in flight this is.
-    slot: usize,
+    pub(super) slot: usize,
     /// Times what the GPU does.
     clock: &'a GpuClock,
     /// Whether models get hull outlines.

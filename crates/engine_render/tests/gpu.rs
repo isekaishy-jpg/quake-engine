@@ -8573,3 +8573,537 @@ fn a_picture_after_an_hdr_one_is_standard() {
         .expect("capture");
     assert_eq!(before.rgba, after.rgba);
 }
+
+/// How many frames TAA's moves of the view take to come round again.
+const TAA_ROUND: u32 = 8;
+
+/// TAA on.
+fn taa() -> PostSettings {
+    PostSettings {
+        edge_smoothing: 3,
+        ..PostSettings::default()
+    }
+}
+
+/// How far apart two captures are, over every pixel's colour.
+fn difference(a: &Capture, b: &Capture) -> u64 {
+    a.rgba
+        .iter()
+        .zip(&b.rgba)
+        .map(|(a, b)| u64::from(a.abs_diff(*b)))
+        .sum()
+}
+
+/// How many pixels two captures differ at by more than a little.
+fn pixels_apart(a: &Capture, b: &Capture) -> usize {
+    let (a, _) = a.rgba.as_chunks::<4>();
+    let (b, _) = b.rgba.as_chunks::<4>();
+    a.iter()
+        .zip(b)
+        .filter(|(a, b)| a.iter().zip(*b).any(|(a, b)| a.abs_diff(*b) > 8))
+        .count()
+}
+
+/// `frames` frames of `drawables` from `view`, and the last of them.
+fn frames_of(
+    renderer: &mut Renderer,
+    view: &View,
+    drawables: Drawables<'_>,
+    frames: u32,
+) -> Capture {
+    let mut last = None;
+    for _ in 0..frames {
+        last = Some(renderer.capture(view, drawables, 64, 64).expect("capture"));
+    }
+    last.expect("a frame")
+}
+
+/// Black and white squares, `cell` texels a side, on a texture `size` texels a side.
+fn checker(size: u32, cell: u32) -> Vec<MipLevel> {
+    image_of(size, |x, y| {
+        if (x / cell + y / cell).is_multiple_of(2) {
+            [255, 255, 255, 255]
+        } else {
+            [0, 0, 0, 255]
+        }
+    })
+}
+
+/// TAA moves the view by less than a pixel each frame, round a pattern, so even a frame with
+/// nothing kept has its edges a little off, and what's flat stays as it is.
+#[test]
+fn taa_moves_the_view_by_less_than_a_pixel() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = slanted_view();
+    let plain = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    renderer.set_post(taa());
+    let first = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    let second = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    // Each move of a round is less than a pixel, taken with nothing kept.
+    for _ in 0..TAA_ROUND {
+        renderer.set_post(taa());
+        let one = frames_of(&mut renderer, &view, Drawables::default(), 1);
+        let moved = pixels_apart(&one, &plain);
+        assert!(moved < 400, "only along edges: {moved}");
+        renderer.set_post(PostSettings::default());
+        frames_of(&mut renderer, &view, Drawables::default(), 1);
+    }
+    // Light's read a little off too, which is a shade at most.
+    let flat = centre(&first)
+        .iter()
+        .zip(centre(&plain))
+        .all(|(a, b)| a.abs_diff(b) <= 1);
+    assert!(flat, "what's flat stays");
+    assert_ne!(first.rgba, plain.rgba, "edges move");
+    assert_ne!(second.rgba, first.rgba, "and move again");
+    assert!(pixels_apart(&first, &plain) > 0);
+}
+
+/// Over a few frames TAA puts shades between an edge's two sides, and then holds still, and
+/// turning it off leaves nothing behind.
+#[test]
+fn taa_settles_an_edge_over_a_few_frames() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let view = slanted_view();
+    let plain = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    renderer.set_post(taa());
+    let first = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    let settled = frames_of(
+        &mut renderer,
+        &view,
+        Drawables::default(),
+        TAA_ROUND * 4 - 1,
+    );
+    let later = frames_of(&mut renderer, &view, Drawables::default(), TAA_ROUND);
+    assert!(
+        shades(&settled) > shades(&plain) + 4,
+        "{} {}",
+        shades(&plain),
+        shades(&settled)
+    );
+    assert!(
+        difference(&settled, &later) * 4 < difference(&first, &plain),
+        "it settles"
+    );
+    let near = centre(&settled)
+        .iter()
+        .zip(centre(&plain))
+        .all(|(a, b)| a.abs_diff(b) <= 1);
+    assert!(near, "and keeps its colours: {:?}", centre(&settled));
+    renderer.set_post(PostSettings::default());
+    let again = frames_of(&mut renderer, &view, Drawables::default(), 1);
+    assert_eq!(
+        plain.rgba, again.rgba,
+        "turning it off leaves nothing behind"
+    );
+}
+
+/// How far one frame of `after` is from many, after many of `before`, and how far apart many of
+/// each are: what TAA kept is found where it went, or the frame after a move is off.
+fn taa_after_a_move(
+    renderer: &mut Renderer,
+    (view_before, before): (&View, Drawables<'_>),
+    (view_after, after): (&View, Drawables<'_>),
+) -> (u64, u64) {
+    // Each frame takes a tenth of what's new, so it's long enough for what's kept to be there.
+    renderer.set_post(taa());
+    let settled_before = frames_of(renderer, view_before, before, TAA_ROUND * 8);
+    let once = frames_of(renderer, view_after, after, 1);
+    // Whole rounds later, so that the view's moved the same way as it was for that frame.
+    let settled_after = frames_of(renderer, view_after, after, TAA_ROUND * 8);
+    renderer.set_post(PostSettings::default());
+    (
+        difference(&once, &settled_after),
+        difference(&settled_before, &settled_after),
+    )
+}
+
+/// The floor in black and white squares, two pixels a side from above.
+fn checkered_floor(models: u32) -> Map {
+    let mut built = map(models);
+    built.textures[0].mips = checker(64, 4);
+    built
+}
+
+/// As the view moves, what TAA kept is found where it was from depth and where the view was.
+#[test]
+fn taa_finds_where_a_pixel_was_as_the_view_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_floor(1)))
+        .expect("load");
+    let before = view_from_above();
+    let after = View {
+        origin: before.origin + Vec3::new(6.0, 0.0, 0.0),
+        ..before
+    };
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&before, Drawables::default()),
+        (&after, Drawables::default()),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+}
+
+/// A brush model that moves takes what TAA kept of it along.
+#[test]
+fn taa_follows_a_brush_model_that_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    let mut two = checkered_floor(2);
+    two.tree.leaves[1].face_count = 0;
+    two.tree.leaf_faces.clear();
+    renderer.load_map(Arc::new(two)).expect("load");
+    let at = |x: f32| ModelInstance {
+        model: 1,
+        origin: Vec3::new(x, 0.0, 0.0),
+        visible: true,
+        frame: 0,
+        solid: true,
+    };
+    let (before, after) = ([at(0.0)], [at(6.0)]);
+    let view = view_from_above();
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&view, with_instance(&before)),
+        (&view, with_instance(&after)),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+}
+
+/// A model 40 units square in black and white squares, two units a side.
+fn checkered_model() -> AliasModel {
+    let vertex = |x, y| AliasVertex {
+        position: [x, y, 0],
+        normal: [127, 0, 0],
+    };
+    let corner = |vertex, u, v| AliasCorner { vertex, uv: [u, v] };
+    let skin = checker(20, 1).remove(0).rgba;
+    AliasModel {
+        scale: Vec3::new(4.0, 4.0, 1.0),
+        offset: Vec3::new(-20.0, -20.0, 0.0),
+        skin_width: 20,
+        skin_height: 20,
+        skins: vec![skin],
+        // Wound as Quake winds them, the other way from a mesh.
+        corners: vec![
+            corner(0, 0.0, 0.0),
+            corner(2, 1.0, 1.0),
+            corner(1, 1.0, 0.0),
+            corner(0, 0.0, 0.0),
+            corner(3, 0.0, 1.0),
+            corner(2, 1.0, 1.0),
+        ],
+        poses: vec![vec![
+            vertex(0, 0),
+            vertex(10, 0),
+            vertex(10, 10),
+            vertex(0, 10),
+        ]],
+        frames: vec![AliasFrame {
+            first_pose: 0,
+            pose_count: 1,
+            pose_ends: Vec::new(),
+        }],
+        spins: false,
+        flags: 0,
+    }
+}
+
+/// A model that moves takes what TAA kept of it along, as one with no id, which is no one in
+/// particular, doesn't.
+#[test]
+fn taa_follows_a_model_that_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let number = renderer
+        .add_model(Arc::new(checkered_model()))
+        .expect("add");
+    let at = |x: f32, id: u64| EntityDraw {
+        id,
+        origin: Vec3::new(64.0 + x, 64.0, 32.0),
+        ..draw_of(number)
+    };
+    let view = view_from_above();
+    let (before, after) = ([at(0.0, 7)], [at(3.0, 7)]);
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&view, with_entity(&before)),
+        (&view, with_entity(&after)),
+    );
+    let (before, after) = ([at(0.0, 0)], [at(3.0, 0)]);
+    let (unknown, _) = taa_after_a_move(
+        &mut renderer,
+        (&view, with_entity(&before)),
+        (&view, with_entity(&after)),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+    assert!(off * 3 < unknown, "{off} {unknown}");
+}
+
+/// A square 32 units a side in black and white squares, as a moving mesh.
+fn checkered_square() -> Map {
+    let mut built = map(1);
+    let mut texture = built.textures[0].clone();
+    texture.mips = checker(16, 1);
+    built.textures.push(texture);
+    let corner = |x: f32, y: f32| MeshCorner {
+        position: [x, y, 0.0],
+        uv: [x / 32.0, y / 32.0],
+        normal: [0, 0, 127],
+    };
+    built.moving_meshes = vec![MovingMesh {
+        name: "checkered".to_owned(),
+        mesh: SharedMesh {
+            corners: vec![
+                corner(0.0, 0.0),
+                corner(32.0, 0.0),
+                corner(32.0, 32.0),
+                corner(0.0, 32.0),
+            ],
+            joints: vec![[0, 0, 0, 0]; 4],
+            weights: vec![[255, 0, 0, 0]; 4],
+            indices: vec![0, 1, 2, 0, 2, 3],
+            levels: vec![vec![SharedPart {
+                texture: 1,
+                first: 0,
+                count: 6,
+            }]],
+            ..SharedMesh::default()
+        },
+        skeleton: Skeleton::default(),
+    }];
+    built
+}
+
+/// A moving mesh that moves takes what TAA kept of it along.
+#[test]
+fn taa_follows_a_moving_mesh_that_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_square()))
+        .expect("load");
+    let at = |x: f32| {
+        let mut rows = NO_MOVE;
+        rows[0][3] = 48.0 + x;
+        rows[1][3] = 48.0;
+        rows[2][3] = 32.0;
+        MovingDraw {
+            mesh: 0,
+            rows,
+            joint_count: 1,
+            light: [1.0; 3],
+            center: Vec3::new(64.0 + x, 64.0, 32.0),
+            radius: 30.0,
+            id: 7,
+            ..MovingDraw::default()
+        }
+    };
+    let palette = [NO_MOVE];
+    let (before, after) = ([at(0.0)], [at(3.0)]);
+    let drawn = |moving| Drawables {
+        moving,
+        palette: &palette,
+        ..Drawables::default()
+    };
+    let view = view_from_above();
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&view, drawn(&before)),
+        (&view, drawn(&after)),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+}
+
+/// What's kept in front and goes along with the view, as the player's weapon does, stays where
+/// it is on the screen to TAA, though its depth is squeezed.
+#[test]
+fn taa_holds_what_is_kept_in_front_as_the_view_moves() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_floor(1)))
+        .expect("load");
+    let number = renderer
+        .add_model(Arc::new(checkered_model()))
+        .expect("add");
+    let before = view_from_above();
+    let after = View {
+        origin: before.origin + Vec3::new(6.0, 0.0, 0.0),
+        ..before
+    };
+    let held = |view: &View, id: u64| EntityDraw {
+        id,
+        in_front: true,
+        origin: view.origin - Vec3::new(0.0, 0.0, 32.0),
+        ..draw_of(number)
+    };
+    let (first, second) = ([held(&before, u64::MAX)], [held(&after, u64::MAX)]);
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&before, with_entity(&first)),
+        (&after, with_entity(&second)),
+    );
+    let (first, second) = ([held(&before, 0)], [held(&after, 0)]);
+    let (unknown, _) = taa_after_a_move(
+        &mut renderer,
+        (&before, with_entity(&first)),
+        (&after, with_entity(&second)),
+    );
+    assert!(off < apart, "{off} {apart}");
+    assert!(off * 4 < unknown, "{off} {unknown}");
+}
+
+/// At a new size TAA has nothing kept, so its first frame is that frame alone, as the first
+/// frame of all is, the view moved the same way.
+#[test]
+fn taa_starts_afresh_at_a_new_size() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    renderer.set_post(taa());
+    let view = slanted_view();
+    let first = renderer
+        .capture(&view, Drawables::default(), 48, 48)
+        .expect("capture");
+    frames_of(
+        &mut renderer,
+        &view,
+        Drawables::default(),
+        TAA_ROUND * 3 - 1,
+    );
+    let again = renderer
+        .capture(&view, Drawables::default(), 48, 48)
+        .expect("capture");
+    assert_eq!(first.rgba, again.rgba);
+}
+
+/// What moves where it's hidden doesn't move what hides it to TAA.
+#[test]
+fn taa_leaves_what_hides_a_moving_model_where_it_is() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_floor(1)))
+        .expect("load");
+    let number = renderer
+        .add_model(Arc::new(checkered_model()))
+        .expect("add");
+    let at = |x: f32| EntityDraw {
+        id: 7,
+        origin: Vec3::new(64.0 + x, 64.0, -32.0),
+        ..draw_of(number)
+    };
+    let view = view_from_above();
+    let (before, after) = ([at(0.0)], [at(6.0)]);
+    let (off, _) = taa_after_a_move(
+        &mut renderer,
+        (&view, with_entity(&before)),
+        (&view, with_entity(&after)),
+    );
+    let (still, _) = taa_after_a_move(
+        &mut renderer,
+        (&view, Drawables::default()),
+        (&view, Drawables::default()),
+    );
+    // What's left of the frames before is a few hundred at most, where taking the hidden model's
+    // move is tens of thousands.
+    assert!(off < still + 2000, "{off} {still}");
+}
+
+/// A moving mesh and a model of the same number and id are told apart, as is where each was.
+#[test]
+fn taa_tells_a_moving_mesh_from_a_model() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer
+        .load_map(Arc::new(checkered_square()))
+        .expect("load");
+    let number = renderer
+        .add_model(Arc::new(checkered_model()))
+        .expect("add");
+    assert_eq!(number, 0, "the same number as the mesh");
+    let mesh_at = |x: f32| {
+        let mut rows = NO_MOVE;
+        rows[0][3] = 48.0 + x;
+        rows[1][3] = 48.0;
+        rows[2][3] = 32.0;
+        MovingDraw {
+            mesh: 0,
+            rows,
+            joint_count: 1,
+            light: [1.0; 3],
+            center: Vec3::new(64.0 + x, 64.0, 32.0),
+            radius: 30.0,
+            id: 7,
+            ..MovingDraw::default()
+        }
+    };
+    // Still, under the mesh, so that taking where it was for where the mesh was is seen.
+    let away = [EntityDraw {
+        id: 7,
+        origin: Vec3::new(64.0, 64.0, 2.0),
+        ..draw_of(number)
+    }];
+    let palette = [NO_MOVE];
+    let (before, after) = ([mesh_at(0.0)], [mesh_at(3.0)]);
+    let drawn = |moving| Drawables {
+        moving,
+        palette: &palette,
+        entities: &away,
+        ..Drawables::default()
+    };
+    let view = view_from_above();
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&view, drawn(&before)),
+        (&view, drawn(&after)),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+}
+
+/// What's left where something was, as it goes, is let go of at once: what TAA kept there is held
+/// to what's round it now.
+#[test]
+fn taa_lets_go_of_what_moved_away() {
+    let Some(mut renderer) = renderer() else {
+        return;
+    };
+    renderer.load_map(Arc::new(map(1))).expect("load");
+    let number = renderer
+        .add_model(Arc::new(checkered_model()))
+        .expect("add");
+    let there = [EntityDraw {
+        id: 7,
+        ..draw_of(number)
+    }];
+    let gone = [EntityDraw {
+        id: 7,
+        origin: Vec3::new(5000.0, 64.0, 32.0),
+        ..draw_of(number)
+    }];
+    let view = view_from_above();
+    let (off, apart) = taa_after_a_move(
+        &mut renderer,
+        (&view, with_entity(&there)),
+        (&view, with_entity(&gone)),
+    );
+    assert!(off * 4 < apart, "{off} {apart}");
+}

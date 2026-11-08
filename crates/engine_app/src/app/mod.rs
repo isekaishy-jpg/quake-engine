@@ -606,7 +606,8 @@ impl Engine {
         console.register_cvar("show_fps", "1", saved);
         console.register_cvar("vid_vsync", "0", saved);
         console.register_cvar("r_filter", "0", saved);
-        // Edge smoothing: 0 none, 1 a quick blend across edges, 2 SMAA, which is the usual. It's
+        // Edge smoothing: 0 none, 1 a quick blend across edges, 2 SMAA, which is the usual, and 3
+        // TAA. It's
         // a new name for what was `r_aa`, so that a config that had it off takes the new usual.
         console.register_cvar("r_antialias", "2", saved);
         console.register_cvar("r_outline", "0", saved);
@@ -807,7 +808,7 @@ impl Engine {
             reason = "small settings"
         )]
         let post = PostSettings {
-            edge_smoothing: self.cvar_number("r_antialias").clamp(0.0, 2.0) as u8,
+            edge_smoothing: self.cvar_number("r_antialias").clamp(0.0, 3.0) as u8,
             outline: self.cvar_number("r_outline").clamp(0.0, 2.0) as u8,
             outline_width: self.cvar_number("r_outline_width") as f32,
             outline_fade: self.cvar_number("r_outline_fade") as f32,

@@ -1,6 +1,8 @@
 //! Moving meshes: a compute pass moves their corners into plain vertices, and from there on
 //! they're drawn like any other mesh (proposal 0140).
 
+use std::collections::HashMap;
+
 use engine_core::math::Vec3;
 use engine_map::{Map, Rows, SharedMorph, SharedPart};
 use engine_shaders::{Module, spirv};
@@ -10,6 +12,7 @@ use vulkane::safe::{
     PipelineStage2, PushConstantRange, ShaderModule, ShaderStageFlags,
 };
 
+use super::motion::LAST_ROWS_BYTES;
 use super::upload::host_buffer;
 use super::{Backend, FRAMES, GpuAlias, GpuBuffer, INDEX_TYPE_U32};
 use crate::alias::{EntityDraw, POSE_CORNER_BYTES, model_matrix, rows_of_matrix};
@@ -28,6 +31,12 @@ const MOST_JOINTS: usize = 1 << 14;
 
 /// Moving meshes and models in a frame. A workgroup says which in twelve bits.
 const MOST_MOVING: usize = 1 << 12;
+
+/// What tells a moving mesh from a model of the same number, among what was seen.
+const MOVING_MESH_KEY: u32 = 1 << 31;
+
+/// Who something drawn is, across frames: its draw's id, and its mesh or model.
+type Seen = HashMap<(u64, u32), Rows>;
 
 /// How many bits of a workgroup's word say which job it does.
 const JOB_BITS: u32 = 12;
@@ -269,6 +278,8 @@ struct MovingFrame {
     used_groups: usize,
     /// Where each mesh is, as instances.
     instances: GpuBuffer,
+    /// Where each was last frame, by the same places, for TAA. What wasn't seen is where it is.
+    last_rows: GpuBuffer,
     /// The set reading and writing those.
     set: DescriptorSet,
     /// What's to do.
@@ -291,8 +302,36 @@ pub(super) struct GpuMoving {
     pub(super) meshes: Vec<GpuMovingMesh>,
     /// Each frame in flight's.
     frames: Vec<MovingFrame>,
+    /// Where each that has an id was last frame.
+    seen: Seen,
+    /// Where each is this frame, for the next.
+    seen_next: Seen,
     /// Kept alive for the sets.
     _pool: DescriptorPool,
+}
+
+/// Writes where `key` was last frame to `out`, from `seen`, or `rows` if it wasn't seen or has
+/// no id, and keeps `rows` for the next frame in `seen_next`.
+fn write_last_rows(
+    key: (u64, u32),
+    rows: &Rows,
+    (seen, seen_next): (&Seen, &mut Seen),
+    out: &mut [u8; LAST_ROWS_BYTES],
+) {
+    let last = if key.0 == 0 {
+        rows
+    } else {
+        seen_next.insert(key, *rows);
+        seen.get(&key).unwrap_or(rows)
+    };
+    for (chunk, number) in out
+        .as_chunks_mut::<4>()
+        .0
+        .iter_mut()
+        .zip(last.iter().flatten())
+    {
+        *chunk = number.to_le_bytes();
+    }
 }
 
 /// The rows of `rows`, by columns.
@@ -345,6 +384,11 @@ impl GpuMoving {
         &self.frames[slot].instances
     }
 
+    /// Where this frame's instances were last frame.
+    pub(super) fn last_rows(&self, slot: usize) -> &GpuBuffer {
+        &self.frames[slot].last_rows
+    }
+
     /// Writes this frame's joints and instances, and works out what's to do. Says if anything
     /// had to be drawn at rest for want of room.
     pub(super) fn prepare(
@@ -354,7 +398,10 @@ impl GpuMoving {
         (palette, morph_weights): (&[Rows], &[f32]),
         planes: &[[f32; 4]; 6],
     ) -> Result<bool, RenderError> {
+        std::mem::swap(&mut self.seen, &mut self.seen_next);
+        self.seen_next.clear();
         let meshes = &self.meshes;
+        let seen = (&self.seen, &mut self.seen_next);
         let frame = &mut self.frames[slot];
         frame.jobs.clear();
         let mut over = false;
@@ -377,15 +424,23 @@ impl GpuMoving {
             .as_chunks_mut::<INSTANCE_BYTES>()
             .0
             .iter_mut();
+        let mut last_rows = frame.last_rows.memory.map()?;
+        let mut lasts = last_rows
+            .as_slice_mut()
+            .as_chunks_mut::<LAST_ROWS_BYTES>()
+            .0
+            .iter_mut();
         for draw in draws {
             let Some(mesh) = meshes.get(draw.mesh as usize) else {
                 continue;
             };
             let in_view = ball_in_view(planes, draw.center, draw.radius);
-            let Some(instance) = slots.next() else {
+            let (Some(instance), Some(last)) = (slots.next(), lasts.next()) else {
                 over = true;
                 break;
             };
+            let key = (draw.id, draw.mesh | MOVING_MESH_KEY);
+            write_last_rows(key, &draw.rows, (seen.0, &mut *seen.1), last);
             let first = draw.first_joint as usize;
             let own = palette.get(first..first + draw.joint_count as usize);
             let corners = mesh.corners_at(draw.level);
@@ -475,6 +530,7 @@ impl GpuMoving {
         models: &[GpuAlias],
         planes: &[[f32; 4]; 6],
     ) -> Result<bool, RenderError> {
+        let seen = (&self.seen, &mut self.seen_next);
         let frame = &mut self.frames[slot];
         frame.runs.clear();
         frame.figures.clear();
@@ -494,13 +550,20 @@ impl GpuMoving {
             .0
             .iter_mut()
             .skip(frame.instance_count);
+        let mut last_rows = frame.last_rows.memory.map()?;
+        let mut lasts = last_rows
+            .as_slice_mut()
+            .as_chunks_mut::<LAST_ROWS_BYTES>()
+            .0
+            .iter_mut()
+            .skip(frame.instance_count);
         let mut moved_jobs = 0_usize;
         for at in order {
             let draw = &entities[at];
             let Some(gpu) = models.get(draw.model as usize) else {
                 continue;
             };
-            let Some(instance) = slots.next() else {
+            let (Some(instance), Some(last)) = (slots.next(), lasts.next()) else {
                 over = true;
                 break;
             };
@@ -552,6 +615,7 @@ impl GpuMoving {
             };
             let rows = rows_of_matrix(&model_matrix(draw.origin, draw.angles));
             write_instance(&rows, &light, instance.as_mut_slice());
+            write_last_rows((draw.id, draw.model), &rows, (seen.0, &mut *seen.1), last);
             let instance = u32::try_from(frame.instance_count).unwrap_or(0);
             frame.instance_count += 1;
             // What's kept in front is the view's own, so it's always there to see.
@@ -696,6 +760,12 @@ impl Backend {
                 MOST_MOVING * INSTANCE_BYTES,
                 BufferUsage::VERTEX_BUFFER,
             )?;
+            let last_rows = host_buffer(
+                &self.device,
+                &self.physical,
+                MOST_MOVING * LAST_ROWS_BYTES,
+                BufferUsage::VERTEX_BUFFER,
+            )?;
             let work = host_buffer(
                 &self.device,
                 &self.physical,
@@ -771,6 +841,7 @@ impl Backend {
                 used_corners: 0,
                 used_groups: 0,
                 instances,
+                last_rows,
                 set,
                 jobs: Vec::new(),
             });
@@ -783,6 +854,8 @@ impl Backend {
             _morphs: morphs,
             meshes,
             frames,
+            seen: HashMap::new(),
+            seen_next: HashMap::new(),
             _pool: pool,
         })
     }

@@ -5,6 +5,7 @@ mod clock;
 mod deform;
 mod exposure;
 mod field;
+mod motion;
 mod pipeline_cache;
 mod pipelines;
 mod post;
@@ -92,6 +93,12 @@ const SCENE_CLEAR_COLOR: [f32; 4] = [0.001_548, 0.001_548, 0.002_322, 1.0];
 /// The `r_antialias` setting that's SMAA.
 const SMAA_SETTING: u8 = 2;
 
+/// The `r_antialias` setting that's TAA.
+const TAA_SETTING: u8 = 3;
+
+/// How many frames TAA's view goes round, a little off each time.
+const TAA_FRAMES: u32 = 8;
+
 /// The size of the push constant holding a model's position.
 const MODEL_OFFSET_SIZE: u32 = 16;
 
@@ -130,7 +137,10 @@ const EXTRA_FLOATS: usize = 4 * 16
     + 4
     + 4
     + 4
-    + 4;
+    + 4
+    + 4
+    + 16
+    + 16;
 
 /// How many pools can show in a frame.
 const MAX_POOLS: usize = 8;
@@ -607,6 +617,28 @@ pub(crate) struct Backend {
     ray_pass: RenderPass,
     /// Light in the air.
     ray_pipeline: GraphicsPipeline,
+    /// The pass TAA draws in.
+    taa_pass: RenderPass,
+    /// What TAA makes of this frame and those before.
+    taa_pipeline: GraphicsPipeline,
+    /// That, kept for the next frame.
+    taa_keep_pipeline: GraphicsPipeline,
+    /// Whether this frame has TAA.
+    taa_on: bool,
+    /// How many frames TAA's had.
+    taa_frame: u32,
+    /// Whether what TAA kept is this view's, to go on from.
+    taa_kept: bool,
+    /// Where the view was last frame, with nothing off, for TAA to find where a pixel was.
+    last_view_projection: Option<[f32; 16]>,
+    /// The pass which way what moves went is drawn in.
+    motion_pass: RenderPass,
+    /// What draws it.
+    motion_pipelines: motion::MotionPipelines,
+    /// Where each brush model was last frame.
+    last_brush_origins: HashMap<u32, Vec3>,
+    /// The brush models that moved since then, in view.
+    moved_brushes: Vec<motion::MovedBrush>,
     /// The pass how bright a scene is gets measured in.
     meter_pass: RenderPass,
     /// How bright a scene is.
@@ -947,6 +979,9 @@ impl Backend {
                 image_binding(18, DescriptorType::SAMPLED_IMAGE),
                 image_binding(19, DescriptorType::SAMPLED_IMAGE),
                 image_binding(20, DescriptorType::SAMPLED_IMAGE),
+                image_binding(21, DescriptorType::SAMPLED_IMAGE),
+                image_binding(22, DescriptorType::SAMPLED_IMAGE),
+                image_binding(23, DescriptorType::SAMPLED_IMAGE),
             ],
         )?;
         let post_layout = PipelineLayout::new(&device, &[&post_set_layout])?;
@@ -1142,6 +1177,13 @@ impl Backend {
         let ray_pass = post::make_ray_pass(&device)?;
         let ray_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &ray_pass, 1, "fs_rays", "")?;
+        let taa_pass = post::make_taa_pass(&device)?;
+        let taa_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &taa_pass, 1, "fs_taa", "")?;
+        let taa_keep_pipeline =
+            Self::make_post_pipeline(&device, &post_layout, &taa_pass, 1, "fs_taa_keep", "")?;
+        let motion_pass = motion::make_motion_pass(&device)?;
+        let motion_pipelines = motion::MotionPipelines::new(&device, &frame_layout, &motion_pass)?;
         let meter_pass = exposure::make_meter_pass(&device)?;
         let meter_pipeline =
             Self::make_post_pipeline(&device, &post_layout, &meter_pass, 1, "fs_meter", "")?;
@@ -1189,6 +1231,17 @@ impl Backend {
             post_pipeline,
             ray_pass,
             ray_pipeline,
+            taa_pass,
+            taa_pipeline,
+            taa_keep_pipeline,
+            taa_on: false,
+            taa_frame: 0,
+            taa_kept: false,
+            last_view_projection: None,
+            motion_pass,
+            motion_pipelines,
+            last_brush_origins: HashMap::new(),
+            moved_brushes: Vec::new(),
             meter_pass,
             meter_pipeline,
             meter,
@@ -1744,8 +1797,23 @@ impl Backend {
             AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::DEPTH_STENCIL_ATTACHMENT_WRITE,
             AccessFlags::SHADER_READ,
         );
-        let wanted = self.post.edge_smoothing >= SMAA_SETTING;
+        self.clock.start(rec, self.slot, Span::Edges);
+        if self.taa_on {
+            if let (Some(scene), Some(recorder)) = (scene, self.recorder()) {
+                let drawn = (&self.motion_pass, &target.motion, &self.motion_pipelines);
+                recorder.record_motion(rec, drawn, scene, &self.moved_brushes);
+                rec.memory_barrier(
+                    PipelineStage::ALL_GRAPHICS,
+                    PipelineStage::FRAGMENT_SHADER,
+                    AccessFlags::COLOR_ATTACHMENT_WRITE,
+                    AccessFlags::SHADER_READ,
+                );
+            }
+            self.record_taa(rec, target);
+        }
+        let wanted = self.post.edge_smoothing == SMAA_SETTING;
         self.smaa.record(rec, &target.smaa, target.size, wanted);
+        self.clock.end(rec, self.slot, Span::Edges);
         self.clock.start(rec, self.slot, Span::Glow);
         self.bloom
             .record(rec, &target.bloom, self.bloom_step, self.bloom_shown);
@@ -1814,6 +1882,37 @@ impl Backend {
 
     /// Records the final pass.
     /// Draws light in the air, for the final pass to add.
+    /// Records TAA: this frame with those before, and that kept for the next.
+    fn record_taa(
+        &self,
+        rec: &mut vulkane::safe::CommandBufferRecording<'_>,
+        target: &post::SceneTarget,
+    ) {
+        let steps = [
+            (&self.taa_pipeline, &target.taa.out),
+            (&self.taa_keep_pipeline, &target.taa.kept),
+        ];
+        for (pipeline, drawn) in steps {
+            rec.begin_render_pass_ext(&self.taa_pass, &drawn.framebuffer, &[]);
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "window sizes are far below 2^24"
+            )]
+            rec.set_viewport(0.0, 0.0, drawn.size.0 as f32, drawn.size.1 as f32);
+            rec.set_scissor(0, 0, drawn.size.0, drawn.size.1);
+            rec.bind_graphics_pipeline(pipeline);
+            rec.bind_graphics_descriptor_sets(&self.post_layout, 0, &[&target.set]);
+            rec.draw(3, 1, 0, 0);
+            rec.end_render_pass();
+            rec.memory_barrier(
+                PipelineStage::ALL_GRAPHICS,
+                PipelineStage::ALL_GRAPHICS,
+                AccessFlags::COLOR_ATTACHMENT_WRITE | AccessFlags::SHADER_READ,
+                AccessFlags::SHADER_READ | AccessFlags::COLOR_ATTACHMENT_WRITE,
+            );
+        }
+    }
+
     /// Works out how open each pixel is to light from all round, from the depth drawn so far.
     fn record_corners(
         &self,
@@ -1949,9 +2048,10 @@ impl Backend {
         )]
         let aspect = shown.0 as f32 / shown.1.max(1) as f32;
         self.encoding = self.screen;
+        // The target comes first, as what's kept of frames before goes with it.
+        self.ensure_scene_target(shown)?;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, extent)?;
-        self.ensure_scene_target(shown)?;
         let Some(window) = &self.window else {
             return Ok(());
         };
@@ -2046,9 +2146,10 @@ impl Backend {
         )]
         let aspect = shown.0 as f32 / shown.1.max(1) as f32;
         self.encoding = ScreenOutput::Standard;
+        // The target comes first, as what's kept of frames before goes with it.
+        self.ensure_scene_target(shown)?;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, (width, height))?;
-        self.ensure_scene_target(shown)?;
         self.queue
             .one_shot(&self.device, self.queue_family, |rec| {
                 self.record_scene(rec, scene, view, shown);

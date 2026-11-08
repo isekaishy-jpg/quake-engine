@@ -176,9 +176,10 @@ impl Backend {
         )]
         let aspect = shown.0 as f32 / shown.1.max(1) as f32;
         self.encoding = output;
+        // The target comes first, as what's kept of frames before goes with it.
+        self.ensure_scene_target(shown)?;
         self.upload_frame(view, scene, aspect)?;
         self.upload_canvas(quads, (width, height))?;
-        self.ensure_scene_target(shown)?;
         let screen = self.screen_values(output);
         let Some(pipes) = self.screen_pipes.as_ref() else {
             return Err(RenderError("no HDR passes".to_owned()));

@@ -456,6 +456,7 @@ fn anti_aliasing_is_in_the_options() {
         );
     };
     shows(2.0, 4.0, "Anti-aliasing", "SMAA");
+    shows(3.0, 4.0, "Anti-aliasing", "TAA");
     shows(2.0, 4.0, "Multisampling", "4x");
     shows(0.0, 1.0, "Anti-aliasing", "Off");
     shows(0.0, 1.0, "Multisampling", "Off");
@@ -465,9 +466,11 @@ fn anti_aliasing_is_in_the_options() {
 #[test]
 fn turning_anti_aliasing_sets_it() {
     let (script, told) = video_at(2.0, 1.0, 3);
+    assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_antialias 3"]);
+    let (script, told) = video_at(3.0, 1.0, 3);
     assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_antialias 0"]);
     let (script, told) = video_at(0.0, 1.0, 3);
-    assert_eq!(runs(&script, &told, "LEFTARROW"), vec!["r_antialias 2"]);
+    assert_eq!(runs(&script, &told, "LEFTARROW"), vec!["r_antialias 3"]);
     let (script, told) = video_at(2.0, 1.0, 4);
     assert_eq!(runs(&script, &told, "RIGHTARROW"), vec!["r_msaa 2"]);
     let (script, told) = video_at(2.0, 8.0, 4);

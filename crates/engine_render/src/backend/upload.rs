@@ -25,6 +25,7 @@ use super::{
     GpuImage, GpuMap, GpuMesh, GpuPicture, GpuSprite, LIVE_BYTES, MAX_FOG_VOLUMES, MAX_POOLS,
     POST_BYTES, SKY_BYTES, Scene, ShadowInstance, TileWrite,
 };
+use super::{TAA_FRAMES, TAA_SETTING};
 use crate::alias::{look_bytes, pose_bytes, rest_bytes, weld_corners};
 use crate::canvas::{VERTEX_FLOATS, canvas_vertices};
 use crate::error::RenderError;
@@ -241,12 +242,19 @@ pub(super) fn frame_bytes(
     extra: &FrameExtras<'_>,
 ) -> Vec<u8> {
     let lights = lights.get(..MAX_LIGHT_DRAWS).unwrap_or(lights);
-    let matrix = view_projection(
+    let mut matrix = view_projection(
         view.origin,
         [view.yaw, view.pitch, view.roll],
         view.fov,
         aspect,
     );
+    // TAA's moves the view a fraction of a pixel, by adding it in proportion to depth.
+    let [across, down] = extra.jitter;
+    for column in 0..4 {
+        let w = matrix[column * 4 + 3];
+        matrix[column * 4] += across * w;
+        matrix[column * 4 + 1] += down * w;
+    }
     let eye = [view.origin.x, view.origin.y, view.origin.z, 1.0];
     let params = [view.time, aspect, lights.len() as f32, view.gamma];
     let mut positions = [0.0; MAX_LIGHT_DRAWS * 4];
@@ -316,6 +324,15 @@ pub(super) struct FrameExtras<'a> {
     /// What the final pass encodes for: which screen output, white in nits, and the brightest
     /// next to white.
     screen: [f32; 4],
+    /// How far TAA moves the view this frame, as a share of the screen each way.
+    jitter: [f32; 2],
+    /// Whether there's TAA, whether there's a frame before to go on from, and which frame of
+    /// its round this is.
+    taa: [f32; 4],
+    /// Where the view was last frame, with nothing off.
+    last_view_projection: [f32; 16],
+    /// Where the view is, with nothing off.
+    steady_view_projection: [f32; 16],
     /// What a zone does to the light.
     light_shift: [f32; 3],
     /// Bodies of liquid.
@@ -523,6 +540,26 @@ fn extra_values(extra: &FrameExtras<'_>, post: &PostSettings) -> Vec<f32> {
     out[base + 16] = extra.light_scale;
     out[base + 17] = extra.look.light_most.unwrap_or(0.0);
     out[base + 20..base + 24].copy_from_slice(&extra.screen);
+    out[base + 24..base + 28].copy_from_slice(&extra.taa);
+    out[base + 28..base + 44].copy_from_slice(&extra.last_view_projection);
+    out[base + 44..base + 60].copy_from_slice(&extra.steady_view_projection);
+    out
+}
+
+/// The `index`th of Halton's sequence in `base`, from 0 to 1, which spreads evenly however many
+/// are taken.
+fn halton(mut index: u32, base: u32) -> f32 {
+    let mut fraction = 1.0;
+    let mut out = 0.0;
+    #[expect(clippy::cast_precision_loss, reason = "a small base")]
+    let size = base as f32;
+    while index > 0 {
+        fraction /= size;
+        #[expect(clippy::cast_precision_loss, reason = "a digit")]
+        let digit = (index % base) as f32;
+        out += fraction * digit;
+        index /= base;
+    }
     out
 }
 
@@ -865,9 +902,13 @@ impl Backend {
         self.wait_for_frame()?;
         self.device.wait_idle()?;
         self.map = None;
-        // A new level starts where its own exposure should be.
+        // A new level starts where its own exposure should be, and TAA with nothing kept.
         self.exposure = Exposure::default();
         self.brightness = None;
+        self.taa_kept = false;
+        self.last_view_projection = None;
+        self.last_brush_origins.clear();
+        self.moved_brushes.clear();
         self.tile_writes.borrow_mut().clear();
         let mut vertex_bytes = Vec::with_capacity(mesh.vertices.len() * Vertex::SIZE);
         for vertex in &mesh.vertices {
@@ -1552,6 +1593,10 @@ impl Backend {
             bloom: 0.0,
             light_scale: scene.map_or(1.0, |scene| scene.map.light_scale()),
             screen: self.screen_values(self.encoding),
+            jitter: [0.0; 2],
+            taa: [0.0; 4],
+            last_view_projection: [0.0; 16],
+            steady_view_projection: [0.0; 16],
             light_shift: view.light_shift,
         };
         // Exposure goes by itself as far as a zone, or else the level, lets it, from how bright
@@ -1586,11 +1631,52 @@ impl Backend {
         } else {
             0.0
         };
+        // TAA moves the view a little each frame, round a pattern that covers a pixel evenly,
+        // and finds where each pixel was last frame from where the view was.
+        self.taa_on = self.post.edge_smoothing == TAA_SETTING && scene.is_some();
+        let steady = view_projection(
+            view.origin,
+            [view.yaw, view.pitch, view.roll],
+            view.fov,
+            aspect,
+        );
+        let (jitter, taa) = if self.taa_on {
+            let round = self.taa_frame % TAA_FRAMES + 1;
+            let (width, height) = self.scene_size();
+            #[expect(
+                clippy::cast_precision_loss,
+                reason = "window sizes are far below 2^24"
+            )]
+            let jitter = [
+                (halton(round, 2) - 0.5) * 2.0 / width.max(1) as f32,
+                (halton(round, 3) - 0.5) * 2.0 / height.max(1) as f32,
+            ];
+            let kept = self.taa_kept && self.last_view_projection.is_some();
+            #[expect(clippy::cast_precision_loss, reason = "a short round")]
+            let which = round as f32;
+            (jitter, [1.0, f32::from(u8::from(kept)), which, 0.0])
+        } else {
+            ([0.0; 2], [0.0; 4])
+        };
+        let last_view_projection = self.last_view_projection.unwrap_or(steady);
+        if self.taa_on {
+            self.taa_frame = self.taa_frame.wrapping_add(1);
+            self.last_view_projection = Some(steady);
+            self.taa_kept = true;
+        } else {
+            self.last_view_projection = None;
+            self.taa_kept = false;
+        }
         let extra = FrameExtras {
             exposure_scale: self.exposure.scale(),
             bloom,
+            jitter,
+            taa,
+            last_view_projection,
+            steady_view_projection: steady,
             ..extra
         };
+        self.note_moved_brushes(scene);
         self.sky_rays_shown = self.post.rays != 0 && sky.is_some_and(|sky| sky.rays.is_some());
         self.ssao_shown = self.post.ssao != 0 && extra.look.ssao > 0.0;
         self.fog_marched = extra.fog_volumes.iter().any(FogVolume::marched);

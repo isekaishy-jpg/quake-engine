@@ -43,6 +43,8 @@ pub struct MovingDraw {
     pub center: Vec3,
     /// How far it reaches from there.
     pub radius: f32,
+    /// Who it is across frames, so that TAA knows where it was, or 0 for no one in particular.
+    pub id: u64,
 }
 
 /// The copies of one level of one mesh that are drawn together.

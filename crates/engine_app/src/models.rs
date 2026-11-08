@@ -24,6 +24,9 @@ const SPIN_SPEED: f32 = 100.0;
 /// The least light on the player's weapon.
 const MIN_WEAPON_LIGHT: f32 = 24.0;
 
+/// Who the player's weapon is across frames, which no entity is.
+const WEAPON_ID: u64 = u64::MAX;
+
 /// How long a change of clip takes to blend, in seconds.
 const CLIP_BLEND_SECONDS: f32 = 0.2;
 
@@ -177,6 +180,7 @@ fn draw_moving(
         level: u32::try_from(seen.level).unwrap_or(0),
         center,
         radius,
+        id: state.id,
     });
 }
 
@@ -445,6 +449,7 @@ impl ModelBank {
                 ambient,
                 shade,
                 in_front: false,
+                id: state.id,
             };
             lists.entities.push(draw);
             lists.shades.push(posed_shade(&loaded.occlusion, &draw));
@@ -511,6 +516,7 @@ impl ModelBank {
             ambient,
             shade,
             in_front: true,
+            id: WEAPON_ID,
         })
     }
 }

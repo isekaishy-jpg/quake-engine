@@ -26,10 +26,12 @@ pub(super) enum Span {
     Air,
     /// What glows, down the chain and back up.
     Glow,
+    /// Edge smoothing: SMAA, or TAA with which way what moves went.
+    Edges,
 }
 
 /// How many spans there are.
-const SPANS: usize = 8;
+const SPANS: usize = 9;
 
 /// How long a frame's parts took on the GPU, in milliseconds, on average since this was last
 /// asked. A part that wasn't drawn counts as nothing.
@@ -53,6 +55,8 @@ pub struct GpuTimes {
     pub air: f64,
     /// What glows, down the chain and back up.
     pub glow: f64,
+    /// Edge smoothing: SMAA, or TAA with which way what moves went.
+    pub edges: f64,
 }
 
 /// The GPU's clock. It's off until it's wanted, and costs nothing then.
@@ -153,8 +157,17 @@ impl GpuClock {
     /// What's been timed since this was last asked.
     pub(super) fn take(&mut self) -> GpuTimes {
         let frames = std::mem::take(&mut self.frames);
-        let [deform, shadows, moving, models, scene, post, air, glow] =
-            std::mem::take(&mut self.totals).map(|total| total / f64::from(frames.max(1)));
+        let [
+            deform,
+            shadows,
+            moving,
+            models,
+            scene,
+            post,
+            air,
+            glow,
+            edges,
+        ] = std::mem::take(&mut self.totals).map(|total| total / f64::from(frames.max(1)));
         GpuTimes {
             frames,
             deform,
@@ -165,6 +178,7 @@ impl GpuClock {
             post,
             air,
             glow,
+            edges,
         }
     }
 }

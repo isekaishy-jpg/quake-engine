@@ -731,10 +731,11 @@ fn gpu_times(console: &mut Console<World>, world: &mut World, args: &Args) {
         return;
     }
     console.print(format!(
-        "over {} frames, in ms: scene {:.3}, post {:.3}, air {:.3}, glow {:.3}, shadows {:.3}, moving {:.3}, deform {:.3}, models {:.3}",
+        "over {} frames, in ms: scene {:.3}, post {:.3}, edges {:.3}, air {:.3}, glow {:.3}, shadows {:.3}, moving {:.3}, deform {:.3}, models {:.3}",
         times.frames,
         times.scene,
         times.post,
+        times.edges,
         times.air,
         times.glow,
         times.shadows,

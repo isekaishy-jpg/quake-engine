@@ -12,6 +12,7 @@ use engine_map::{MOST_CLOUDS, Map, ProbeGrid, ShaderCode, SlotImage};
 use engine_shaders::{Module, spirv};
 
 use super::bloom::BloomTarget;
+use super::motion::MotionTarget;
 use super::smaa::SmaaTarget;
 use super::upload::device_image;
 use super::water::WaterTarget;
@@ -46,6 +47,10 @@ pub(super) struct SceneTarget {
     pub(super) smaa: SmaaTarget,
     /// What glows.
     pub(super) bloom: BloomTarget,
+    /// What TAA makes and keeps.
+    pub(super) taa: TaaTarget,
+    /// Which way what moves went, for TAA.
+    pub(super) motion: MotionTarget,
     /// Where light in the air is drawn.
     pub(super) rays: RayTarget,
     /// How open each pixel is to light from all round.
@@ -71,6 +76,34 @@ pub(super) fn make_ray_pass(device: &Device) -> Result<RenderPass, RenderError> 
         RenderPassCreateInfo {
             color_attachments: &[AttachmentDescription {
                 format: SCENE_FORMAT,
+                load_op: AttachmentLoadOp::DONT_CARE,
+                store_op: AttachmentStoreOp::STORE,
+                initial_layout: ImageLayout::UNDEFINED,
+                final_layout: ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+            }],
+            depth_attachment: None,
+        },
+    )?)
+}
+
+/// What TAA draws into: this frame with those before, and that kept for the next.
+pub(super) struct TaaTarget {
+    /// This frame's, which the final pass reads.
+    pub(super) out: RayTarget,
+    /// What's kept for the next.
+    pub(super) kept: RayTarget,
+}
+
+/// What TAA holds: light, which can be brighter than a screen shows.
+const TAA_FORMAT: Format = Format::R16G16B16A16_SFLOAT;
+
+/// The render pass of TAA, every pixel of which is drawn.
+pub(super) fn make_taa_pass(device: &Device) -> Result<RenderPass, RenderError> {
+    Ok(RenderPass::new(
+        device,
+        RenderPassCreateInfo {
+            color_attachments: &[AttachmentDescription {
+                format: TAA_FORMAT,
                 load_op: AttachmentLoadOp::DONT_CARE,
                 store_op: AttachmentStoreOp::STORE,
                 initial_layout: ImageLayout::UNDEFINED,
@@ -263,7 +296,16 @@ impl Backend {
         pass: &RenderPass,
         format: Format,
     ) -> Result<RayTarget, RenderError> {
-        let size = (size.0.div_ceil(2), size.1.div_ceil(2));
+        self.full_target((size.0.div_ceil(2), size.1.div_ceil(2)), pass, format)
+    }
+
+    /// Makes what's drawn into with `pass`, of `size`.
+    fn full_target(
+        &self,
+        size: (u32, u32),
+        pass: &RenderPass,
+        format: Format,
+    ) -> Result<RayTarget, RenderError> {
         let image = Image::new_2d(
             &self.device,
             Image2dCreateInfo {
@@ -421,6 +463,22 @@ impl Backend {
             "fs_rays",
             "",
         )?;
+        self.taa_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.taa_pass,
+            samples,
+            "fs_taa",
+            "",
+        )?;
+        self.taa_keep_pipeline = Self::make_post_pipeline(
+            &self.device,
+            &self.post_layout,
+            &self.taa_pass,
+            samples,
+            "fs_taa_keep",
+            "",
+        )?;
         self.meter_pipeline = Self::make_post_pipeline(
             &self.device,
             &self.post_layout,
@@ -544,7 +602,7 @@ impl Backend {
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLED_IMAGE,
-                    descriptor_count: 13,
+                    descriptor_count: 16,
                 },
                 DescriptorPoolSize {
                     descriptor_type: DescriptorType::SAMPLER,
@@ -627,6 +685,28 @@ impl Backend {
         }
         self.write_sky_pictures(&set);
         self.write_stencils(&set)?;
+        let taa = TaaTarget {
+            out: self.full_target(size, &self.taa_pass, TAA_FORMAT)?,
+            kept: self.full_target(size, &self.taa_pass, TAA_FORMAT)?,
+        };
+        set.write_sampled_image(
+            21,
+            &taa.out.image.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        set.write_sampled_image(
+            22,
+            &taa.kept.image.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        let motion = MotionTarget::new(&self.device, &self.physical, &self.motion_pass, size)?;
+        set.write_sampled_image(
+            23,
+            &motion.image.view,
+            ImageLayout::SHADER_READ_ONLY_OPTIMAL,
+        );
+        // A new target has nothing kept to go on from.
+        self.taa_kept = false;
         self.scene_target = Some(SceneTarget {
             particle_framebuffer,
             particle_set,
@@ -640,6 +720,8 @@ impl Backend {
             _resolved: resolved,
             smaa,
             bloom,
+            taa,
+            motion,
             rays,
             corners,
             water,

@@ -27,6 +27,11 @@
 @group(0) @binding(19) var sky_ray_picture: texture_2d<f32>;
 // What glows, blurred wide.
 @group(0) @binding(20) var bloom_light: texture_2d<f32>;
+// What TAA made of this frame with those before, and what it kept of the last.
+@group(0) @binding(21) var taa_light: texture_2d<f32>;
+@group(0) @binding(22) var taa_kept: texture_2d<f32>;
+// Which way what moves went, and where it was in depth.
+@group(0) @binding(23) var motion: texture_2d<f32>;
 
 struct PostOut {
     @builtin(position) clip: vec4<f32>,
@@ -121,9 +126,26 @@ fn to_screen(light: vec3<f32>, noise: f32) -> vec3<f32> {
     return select(high, low, raised <= vec3<f32>(0.0031308)) + (noise - 0.5) / 255.0;
 }
 
-fn load_color(at: vec2<i32>) -> vec3<f32> {
+// The scene as it was drawn this frame.
+fn load_scene(at: vec2<i32>) -> vec3<f32> {
     let size = vec2<i32>(textureDimensions(scene));
     return textureLoad(scene, clamp(at, vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+}
+
+// The scene as the final pass takes it: with TAA, what that made of it.
+fn load_color(at: vec2<i32>) -> vec3<f32> {
+    if frame.taa.x > 0.5 {
+        let size = vec2<i32>(textureDimensions(taa_light));
+        return textureLoad(taa_light, clamp(at, vec2<i32>(0), size - vec2<i32>(1)), 0).rgb;
+    }
+    return load_scene(at);
+}
+
+// Interleaved gradient noise at `clip`: an even dither, not grain. With TAA it moves each
+// frame, so that what's dithered comes out even over frames.
+fn frame_noise(clip: vec2<f32>) -> f32 {
+    let moved = clip + vec2<f32>(5.588238 * frame.taa.z);
+    return fract(52.9829189 * fract(dot(moved, vec2<f32>(0.06711056, 0.00583715))));
 }
 
 fn load_depth(at: vec2<i32>) -> f32 {
@@ -1145,14 +1167,16 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
     let depth = load_depth(at);
     var color = load_color(at);
-    if frame.post_params.x > 1.5 {
+    if frame.post_params.x > 2.5 {
+        // TAA's done its part, and load_color has it.
+    } else if frame.post_params.x > 1.5 {
         color = smaa_blended(at);
     } else if frame.post_params.x > 0.5 {
         color = smoothed(at, in.uv);
     }
     color = rounded_edges(color, at, in.uv, depth);
     // Interleaved gradient noise: an even dither, not grain.
-    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let noise = frame_noise(in.clip.xy);
     let shine = 1.0 - textureLoad(scene, at, 0).a;
     if shine > 0.02 && depth < 1.0 {
         let size = vec2<f32>(textureDimensions(scene));
@@ -1179,7 +1203,7 @@ fn fs_post(in: PostOut) -> @location(0) vec4<f32> {
 @fragment
 fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
     let at = vec2<i32>(in.uv * vec2<f32>(textureDimensions(scene)));
-    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let noise = frame_noise(in.clip.xy);
     let stop = world_at(in.uv, min(load_depth(at), 0.9999));
     var color = vec3<f32>(0.0);
     let count = i32(frame.stencil_params.x);
@@ -1196,6 +1220,91 @@ fn fs_rays(in: PostOut) -> @location(0) vec4<f32> {
         through = through * level_through(ray);
     }
     return vec4<f32>(fog.rgb + color * (3.0 - through * 2.0), fog.w);
+}
+
+// A colour as YCoCg: brightness, then orange against blue and green against purple, where
+// TAA's box round what's near is tighter than in RGB.
+fn to_ycocg(color: vec3<f32>) -> vec3<f32> {
+    return vec3<f32>(
+        dot(color, vec3<f32>(0.25, 0.5, 0.25)),
+        dot(color, vec3<f32>(0.5, 0.0, -0.5)),
+        dot(color, vec3<f32>(-0.25, 0.5, -0.25)),
+    );
+}
+
+fn from_ycocg(color: vec3<f32>) -> vec3<f32> {
+    let less = color.x - color.z;
+    return vec3<f32>(less + color.y, color.x + color.z, less - color.y);
+}
+
+// Light brought down by how bright it is, so that a very bright pixel doesn't swing what TAA
+// keeps, and back.
+fn tamed(color: vec3<f32>) -> vec3<f32> {
+    return color / (1.0 + dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)));
+}
+
+fn untamed(color: vec3<f32>) -> vec3<f32> {
+    return color / max(1.0 - dot(color, vec3<f32>(0.2126, 0.7152, 0.0722)), 0.0001);
+}
+
+// How much of this frame TAA takes, and of those before the rest.
+const TAA_TAKES: f32 = 0.1;
+
+// TAA: this frame, with what was kept of those before where each pixel was, held to what's near
+// it now so that what's moved or come into view doesn't trail.
+@fragment
+fn fs_taa(in: PostOut) -> @location(0) vec4<f32> {
+    let size = vec2<f32>(textureDimensions(scene));
+    let at = vec2<i32>(in.uv * size);
+    let current = load_scene(at);
+    if frame.taa.y < 0.5 {
+        return vec4<f32>(current, 1.0);
+    }
+    var sum = vec3<f32>(0.0);
+    var squares = vec3<f32>(0.0);
+    for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+            let near = to_ycocg(tamed(load_scene(at + vec2<i32>(x, y))));
+            sum = sum + near;
+            squares = squares + near * near;
+        }
+    }
+    let mean = sum / 9.0;
+    let spread = sqrt(max(squares / 9.0 - mean * mean, vec3<f32>(0.0)));
+    let low = mean - spread * 1.25;
+    let high = mean + spread * 1.25;
+    let middle = (vec2<f32>(at) + vec2<f32>(0.5)) / size;
+    let world = world_at(middle, load_depth(at));
+    // What moves says how far it went, if it's what's seen here. The rest went as far as depth
+    // and the view now and last frame say. Both go by the view with nothing off, so that a pixel
+    // that didn't move finds itself, and not a blur of those round it.
+    var went = textureLoad(motion, at, 0);
+    let distance = length(world - frame.eye.xyz);
+    if went.a < 0.5 || abs(went.b - distance) > max(1.0, distance * 0.02) {
+        let now = frame.steady_view_projection * vec4<f32>(world, 1.0);
+        let before = frame.last_view_projection * vec4<f32>(world, 1.0);
+        if before.w <= 0.0 || now.w <= 0.0 {
+            return vec4<f32>(current, 1.0);
+        }
+        let ndc_now = now.xy / now.w;
+        let ndc_before = before.xy / before.w;
+        went = vec4<f32>((ndc_now.x - ndc_before.x) * 0.5, (ndc_before.y - ndc_now.y) * 0.5, 0.0, 0.0);
+    }
+    let back = middle - went.xy;
+    if any(back < vec2<f32>(0.0)) || any(back > vec2<f32>(1.0)) {
+        return vec4<f32>(current, 1.0);
+    }
+    let kept = to_ycocg(tamed(textureSampleLevel(taa_kept, scene_sampler, back, 0.0).rgb));
+    let held = clamp(kept, low, high);
+    let blended = mix(held, to_ycocg(tamed(current)), TAA_TAKES);
+    return vec4<f32>(untamed(from_ycocg(blended)), 1.0);
+}
+
+// What TAA made, kept for the next frame.
+@fragment
+fn fs_taa_keep(in: PostOut) -> @location(0) vec4<f32> {
+    let size = vec2<f32>(textureDimensions(taa_light));
+    return vec4<f32>(textureLoad(taa_light, vec2<i32>(in.uv * size), 0).rgb, 1.0);
 }
 
 // How bright each of a few cells of the scene is on average, as a power of two, for exposure to
@@ -1228,7 +1337,7 @@ fn fs_corners(in: PostOut) -> @location(0) vec4<f32> {
     if depth >= 1.0 {
         return vec4<f32>(1.0, -1.0, 0.0, 1.0);
     }
-    let noise = fract(52.9829189 * fract(dot(in.clip.xy, vec2<f32>(0.06711056, 0.00583715))));
+    let noise = frame_noise(in.clip.xy);
     let point = depth_point(at, size);
     let open = ambient_occlusion(at, point, size, noise);
     return vec4<f32>(open, length(point - frame.eye.xyz), 0.0, 1.0);

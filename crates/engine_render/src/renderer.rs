@@ -243,8 +243,8 @@ pub const USUAL_PEAK_NITS: f32 = 1000.0;
 /// What the final pass does (proposal 0075).
 #[derive(Clone, Copy, Debug, Default, PartialEq)]
 pub struct PostSettings {
-    /// How hard edges are smoothed: 0 not at all, 1 by a quick blend, 2 by
-    /// searching along each edge for its ends.
+    /// How hard edges are smoothed: 0 not at all, 1 by a quick blend, 2 by SMAA, which searches
+    /// along each edge for its ends, and 3 by TAA, which blends frames each a little off.
     pub edge_smoothing: u8,
     /// Outlines: 0 for none, 1 for full, 2 for semi.
     pub outline: u8,

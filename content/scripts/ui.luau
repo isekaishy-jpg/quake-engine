@@ -320,8 +320,8 @@ local function screen_rows(state)
 				pick(
 					"Anti-aliasing",
 					"r_antialias",
-					{ { "Off", 0 }, { "SMAA", 2 } },
-					"Smooths jagged edges, for next to nothing."
+					{ { "Off", 0 }, { "SMAA", 2 }, { "TAA", 3 } },
+					"Smooths jagged edges. TAA also settles shimmer, over a few frames."
 				),
 				pick(
 					"Multisampling",

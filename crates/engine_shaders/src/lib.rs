@@ -63,6 +63,8 @@ pub enum Module<'a> {
     Smaa,
     /// What glows.
     Bloom,
+    /// Which way what moves went, for TAA.
+    MotionVectors,
     /// What moves meshes.
     Deform,
     /// A surface with this surface code.
@@ -107,6 +109,7 @@ impl Module<'_> {
             Self::Shadow => "shadow".to_owned(),
             Self::Smaa => "smaa".to_owned(),
             Self::Bloom => "bloom".to_owned(),
+            Self::MotionVectors => "motion_vectors".to_owned(),
             Self::Deform => "deform".to_owned(),
             Self::PlainSurface => "plain".to_owned(),
             Self::Surface(code) => format!("surface_{:016x}", code_id(code)),
@@ -202,6 +205,7 @@ pub fn all_modules<'a>(
         Module::Shadow,
         Module::Smaa,
         Module::Bloom,
+        Module::MotionVectors,
         Module::Deform,
         Module::Water,
         Module::Ripple,

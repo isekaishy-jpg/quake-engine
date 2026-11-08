@@ -122,6 +122,12 @@ struct Frame {
     // What the final pass encodes for: x 0 for a standard screen, 1 scRGB and 2 HDR10, y how
     // bright white is in nits, and z how many times as bright the brightest is.
     screen: vec4<f32>,
+    // x 1 with TAA, y 1 if there's a frame before to go on from, and z which frame of its round.
+    taa: vec4<f32>,
+    // Where the view was last frame, with nothing off, for TAA.
+    last_view_projection: mat4x4<f32>,
+    // Where the view is, with nothing off, for TAA.
+    steady_view_projection: mat4x4<f32>,
 }
 
 // A colour as it's shown, in the linear light scenes are drawn in.

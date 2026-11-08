@@ -33,6 +33,8 @@ pub struct EntityDraw {
     pub shade: f32,
     /// Whether it stays in front of everything, as the player's weapon does.
     pub in_front: bool,
+    /// Who it is across frames, so that TAA knows where it was, or 0 for no one in particular.
+    pub id: u64,
 }
 
 /// A model's corners, shared where triangles share them, as a mesh's are.
